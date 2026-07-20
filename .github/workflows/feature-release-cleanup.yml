@@ -34,7 +34,7 @@ jobs:
   # ── Immediate cleanup on PR close ─────────────────────────────────────────
   cleanup-on-pr-close:
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       # For fork PRs, pull_request: closed gets a read-only GITHUB_TOKEN, so
       # the delete below can fail silently for those builds; the daily
@@ -72,7 +72,7 @@ jobs:
   # ── Daily expiry sweep (7-day cutoff) ─────────────────────────────────────
   cleanup-expired:
     if: github.event_name == 'schedule'
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - name: Delete feature builds older than 7 days
         env:

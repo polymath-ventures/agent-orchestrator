@@ -22,7 +22,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest, macos-latest, blacksmith-4vcpu-windows-2025]
     runs-on: ${{ matrix.os }}
     defaults:
       run:
@@ -44,7 +44,7 @@ jobs:
   # --init gives a real PID-1 reaper so the daemon the check starts is reaped
   # after `stop` instead of lingering as a zombie.
   container:
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - uses: actions/checkout@v4
 
