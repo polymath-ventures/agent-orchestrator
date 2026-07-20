@@ -117,15 +117,16 @@ func TestDoctorWarnsWhenTmuxMissing(t *testing.T) {
 func TestDoctorChecksHarnessVersions(t *testing.T) {
 	setConfigEnv(t)
 	cmdPath := map[string]string{
-		"git":    "/bin/git",
-		"claude": "/bin/claude",
-		"codex":  "/bin/codex",
+		"git":        "/bin/git",
+		"claude":     "/bin/claude",
+		"codex":      "/bin/codex",
+		"codex-fugu": "/bin/codex-fugu",
 	}
 	c := doctorContext(t, cmdPath, func(_ context.Context, name string, args ...string) ([]byte, error) {
 		switch name {
 		case "/bin/git":
 			return []byte("git version 2.43.0\n"), nil
-		case "/bin/claude", "/bin/codex":
+		case "/bin/claude", "/bin/codex", "/bin/codex-fugu":
 			if len(args) == 1 && args[0] == "--version" {
 				return []byte(strings.TrimPrefix(name, "/bin/") + " 1.2.3\n"), nil
 			}
@@ -142,7 +143,7 @@ func TestDoctorChecksHarnessVersions(t *testing.T) {
 	})
 
 	checks := c.runDoctor(context.Background())
-	for _, name := range []string{"claude-code", "codex"} {
+	for _, name := range []string{"claude-code", "codex", "codex-fugu"} {
 		check := findDoctorCheck(t, checks, name)
 		if check.Level != doctorPass || !strings.Contains(check.Message, "resolves to") {
 			t.Fatalf("%s check = %+v, want PASS with path/version", name, check)
@@ -156,9 +157,12 @@ func TestDoctorWarnsWhenHarnessMissing(t *testing.T) {
 		return []byte("git version 2.43.0\n"), nil
 	})
 
-	check := findDoctorCheck(t, c.runDoctor(context.Background()), "codex")
-	if check.Level != doctorWarn || !strings.Contains(check.Message, "not found in PATH") {
-		t.Fatalf("codex check = %+v, want WARN missing binary", check)
+	checks := c.runDoctor(context.Background())
+	for _, name := range []string{"codex", "codex-fugu"} {
+		check := findDoctorCheck(t, checks, name)
+		if check.Level != doctorWarn || !strings.Contains(check.Message, "not found in PATH") {
+			t.Fatalf("%s check = %+v, want WARN missing binary", name, check)
+		}
 	}
 }
 

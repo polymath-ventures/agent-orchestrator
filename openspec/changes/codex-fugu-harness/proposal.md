@@ -22,7 +22,8 @@ appear in an upstream PR.
   indirection stays gated on `binaryName == "codex"`.
 - **Suppress the fugu wrapper's update prompt.** `codex-fugu` is an auto-updating
   wrapper that blocks on a prompt. A `--no-update` flag is emitted as the *first*
-  argument — before any subcommand — on launch, restore, and probe.
+  argument — before any subcommand — on the launch and restore commands. (This
+  fork has no `exec`-style probe path, so there is no third site.)
 - **Route fugu's hooks to its own token.** `appendSessionHookFlags` splits into
   `appendSessionHookFlagsFor(cmd, agentToken)` so fugu sessions emit
   `ao hooks codex-fugu …` rather than colliding with Codex's callbacks.
@@ -68,13 +69,17 @@ None. `openspec/specs/` carries no existing capability whose requirements change
 - `backend/internal/httpd/controllers/dto.go` — spawn enum tag; `openapi.yaml` and
   `frontend/src/api/schema.ts` regenerate from it.
 - `backend/internal/cli/spawn.go`, `backend/internal/cli/doctor.go`,
-  `backend/internal/skillassets/using-ao/commands/spawn.md`, `README.md`.
+  `backend/internal/skillassets/using-ao/commands/spawn.md`.
 
 **Frontend**
 
 - `frontend/src/renderer/lib/agent-options.ts`,
-  `frontend/src/renderer/types/workspace.ts` (union **and** `toAgentProvider` case),
-  `frontend/src/landing/components/LandingAgentsBar.tsx`.
+  `frontend/src/renderer/types/workspace.ts` (union **and** `toAgentProvider` case).
+
+`README.md` and `frontend/src/landing/components/LandingAgentsBar.tsx` are
+deliberately **not** touched: they are public marketing surfaces for a binary
+nobody outside the fleet can install, and high-churn upstream files (see
+`design.md`).
 
 **Deliberately out of scope** — each has zero consumers in this fork today, so
 building it now would be speculative surface:

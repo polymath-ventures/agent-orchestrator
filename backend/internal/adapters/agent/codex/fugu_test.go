@@ -228,7 +228,11 @@ func TestFuguAuthStatusDoesNotConsultCodexOnUnrelatedFailure(t *testing.T) {
 	dir := t.TempDir()
 	sentinel := filepath.Join(dir, "codex-was-consulted")
 	fugu := writeFakeBinary(t, dir, "codex-fugu", `echo "boom" >&2; exit 1`)
-	writeFakeBinary(t, dir, "codex", `touch `+sentinel+`; echo "Logged in as dev@example.com"`)
+	// Record the consultation with a shell redirect, not `touch`: PATH is the
+	// temp dir only, so an external `touch` may not resolve and the sentinel
+	// would never be written even if codex ran — which would let this test pass
+	// on a broken implementation.
+	writeFakeBinary(t, dir, "codex", `echo consulted > `+sentinel+`; echo "Logged in as dev@example.com"`)
 	t.Setenv("PATH", dir)
 
 	plugin := NewFugu()
