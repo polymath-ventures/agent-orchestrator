@@ -2571,6 +2571,8 @@ components:
           additionalProperties:
             type: string
           type: object
+        maxLiveWorkers:
+          type: integer
         orchestrator:
           $ref: '#/components/schemas/RoleOverride'
         orchestratorRules:

@@ -989,6 +989,7 @@ export interface components {
             env?: {
                 [key: string]: string;
             };
+            maxLiveWorkers?: number;
             orchestrator?: components["schemas"]["RoleOverride"];
             orchestratorRules?: string;
             postCreate?: string[];

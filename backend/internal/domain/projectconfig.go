@@ -60,6 +60,13 @@ type ProjectConfig struct {
 	// buckets. It is opt-in and has no default: an empty mix leaves harness
 	// resolution to the Worker role override exactly as before.
 	WorkerMix WorkerMix `json:"workerMix,omitempty"`
+
+	// MaxLiveWorkers optionally caps the number of concurrently-live worker
+	// sessions a project may run. Zero (the default) means unbounded: worker
+	// spawns are not limited by this field, which preserves the pre-cap
+	// behavior and keeps the zero value out of IsZero so an unset config still
+	// persists SQL NULL. A negative value is invalid.
+	MaxLiveWorkers int `json:"maxLiveWorkers,omitempty"`
 }
 
 // ReviewerConfig names one reviewer agent by harness. The harness is drawn from
@@ -163,6 +170,10 @@ func (c ProjectConfig) Validate() error {
 	// apportioned deterministically out of storage entirely.
 	if err := c.WorkerMix.Validate(); err != nil {
 		return err
+	}
+	// A negative cap is meaningless; zero means unbounded and is the default.
+	if c.MaxLiveWorkers < 0 {
+		return fmt.Errorf("maxLiveWorkers: must not be negative, got %d", c.MaxLiveWorkers)
 	}
 	return nil
 }

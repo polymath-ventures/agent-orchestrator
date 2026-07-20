@@ -43,6 +43,13 @@ var (
 	// unavailable, so no bucket could be selected. The mix never substitutes a
 	// harness it does not list, so an exhausted mix fails loudly instead.
 	ErrWorkerMixExhausted = errors.New("session: no worker mix bucket available")
+	// ErrWorkerConcurrencyCap means the project already has as many live workers
+	// as its configured cap allows, so a further worker spawn is refused. It is a
+	// capacity condition, not a launch failure: Spawn returns it before creating
+	// any durable state, so a refusal leaves nothing to roll back and marks no
+	// candidate down — being busy is not evidence a harness is broken. Tracker
+	// intake matches it with errors.Is to defer an issue rather than fail it.
+	ErrWorkerConcurrencyCap = errors.New("session: worker concurrency cap reached")
 	// ErrNotResumable means a terminated session cannot be relaunched: its adapter
 	// cannot natively resume it AND it has no prompt to fresh-launch from, and it is
 	// not an orchestrator (orchestrators are promptless by design and relaunch fresh
@@ -296,6 +303,22 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	project, err := m.loadProject(ctx, cfg.ProjectID)
 	if err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("spawn: %w", err)
+	}
+	// Enforce the per-project live-worker cap before anything else: no durable
+	// row, no workspace, no mix or candidate-health consultation. Placed ahead
+	// of resolveSpawnTarget so a refusal at capacity leaves nothing to roll back
+	// and never perturbs the mix census or a candidate's health. The cap is a
+	// project-level ceiling on workers, so it applies to every worker spawn —
+	// pinned or mix-selected alike — and an orchestrator is neither counted nor
+	// limited by it.
+	if cfg.Kind == domain.KindWorker && project.Config.MaxLiveWorkers > 0 {
+		live, err := m.liveWorkerCount(ctx, cfg.ProjectID)
+		if err != nil {
+			return domain.SessionRecord{}, fmt.Errorf("spawn: %w", err)
+		}
+		if live >= project.Config.MaxLiveWorkers {
+			return domain.SessionRecord{}, fmt.Errorf("spawn: %w: project %s at %d of %d live worker(s)", ErrWorkerConcurrencyCap, cfg.ProjectID, live, project.Config.MaxLiveWorkers)
+		}
 	}
 	// Harness and model are resolved together, once, up front, so the same pair
 	// is launched with and recorded on the session row. Trimming happens on this
@@ -637,6 +660,27 @@ func (m *Manager) mixCensus(ctx context.Context, project domain.ProjectID, mix d
 		counts[key]++
 	}
 	return counts, nil
+}
+
+// liveWorkerCount counts the project's non-terminated worker sessions — the
+// input to the concurrency-cap check. It reuses the same list-and-filter scan
+// mixCensus and activeOrchestratorSessionID already run rather than a dedicated
+// aggregate query. Unlike mixCensus it tallies every live worker regardless of
+// bucket or mix attribution: the cap is a project-level ceiling on workers, so
+// a pinned worker counts exactly as a mix-selected one does. Orchestrators are
+// excluded because the cap governs workers only.
+func (m *Manager) liveWorkerCount(ctx context.Context, project domain.ProjectID) (int, error) {
+	recs, err := m.store.ListSessions(ctx, project)
+	if err != nil {
+		return 0, fmt.Errorf("live worker count for %s: %w", project, err)
+	}
+	n := 0
+	for _, rec := range recs {
+		if !rec.IsTerminated && rec.Kind == domain.KindWorker {
+			n++
+		}
+	}
+	return n, nil
 }
 
 // workerMixCandidate is the candidate-health identity of one mix bucket: the

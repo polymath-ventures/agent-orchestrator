@@ -55,17 +55,17 @@
 
 ## 8. Spawn concurrency cap
 
-- [ ] 8.1 Write failing tests for cap refusal, for orchestrator sessions not counting, and for capacity freeing on termination
-- [ ] 8.2 Add the cap to `domain.ProjectConfig` with validation, defaulting to unset/unbounded
-- [ ] 8.3 Enforce the cap in `Manager.Spawn` before any durable write, returning a distinguishable capacity error
-- [ ] 8.4 Verify a cap refusal marks no candidate down and emits no candidate-down event
+- [x] 8.1 Write failing tests for cap refusal, for orchestrator sessions not counting, and for capacity freeing on termination
+- [x] 8.2 Add the cap to `domain.ProjectConfig` with validation, defaulting to unset/unbounded
+- [x] 8.3 Enforce the cap in `Manager.Spawn` before any durable write, returning a distinguishable capacity error
+- [x] 8.4 Verify a cap refusal marks no candidate down and emits no candidate-down event
 
 ## 9. Tracker intake deferral
 
-- [ ] 9.1 Write a failing test asserting a capped intake leaves the issue unclaimed and does not enter project backoff
-- [ ] 9.2 Handle the capacity error in the intake observer: continue without marking the issue seen and without setting the failure flag
-- [ ] 9.3 Verify a genuine spawn failure still triggers the existing five-minute backoff unchanged
-- [ ] 9.4 Verify a deferred issue is picked up on a later poll once capacity frees
+- [x] 9.1 Write a failing test asserting a capped intake leaves the issue unclaimed and does not enter project backoff
+- [x] 9.2 Handle the capacity error in the intake observer: continue without marking the issue seen and without setting the failure flag
+- [x] 9.3 Verify a genuine spawn failure still triggers the existing five-minute backoff unchanged
+- [x] 9.4 Verify a deferred issue is picked up on a later poll once capacity frees
 
 ## 10. Settings UI
 

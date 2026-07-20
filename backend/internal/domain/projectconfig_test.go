@@ -54,6 +54,9 @@ func TestProjectConfigValidate(t *testing.T) {
 			{Harness: HarnessClaudeCode, Weight: 50},
 			{Harness: HarnessClaudeCode, Weight: 50},
 		}}, true},
+		{"zero max live workers is unset", ProjectConfig{MaxLiveWorkers: 0}, false},
+		{"positive max live workers", ProjectConfig{MaxLiveWorkers: 3}, false},
+		{"negative max live workers", ProjectConfig{MaxLiveWorkers: -1}, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -155,5 +158,8 @@ func TestProjectConfigIsZero(t *testing.T) {
 	}
 	if (ProjectConfig{Env: map[string]string{"A": "b"}}).IsZero() {
 		t.Fatal("config with env should not be zero")
+	}
+	if (ProjectConfig{MaxLiveWorkers: 2}).IsZero() {
+		t.Fatal("config with a worker cap should not be zero")
 	}
 }
