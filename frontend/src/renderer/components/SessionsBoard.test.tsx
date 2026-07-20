@@ -23,6 +23,7 @@ vi.mock("../hooks/useWorkspaceQuery", () => ({
 vi.mock("../lib/api-client", () => ({
 	apiClient: { POST: (...args: unknown[]) => postMock(...args) },
 	apiErrorMessage: (_error: unknown, fallback: string) => fallback,
+	hasTrustedApiBaseUrl: () => false,
 }));
 
 vi.mock("../lib/bridge", () => ({
