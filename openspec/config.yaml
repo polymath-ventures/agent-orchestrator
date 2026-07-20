@@ -1,0 +1,22 @@
+schema: spec-driven
+
+# Project context (optional)
+# This is shown to AI when creating artifacts.
+# Add your tech stack, conventions, style guides, domain knowledge, etc.
+# Example:
+context: |
+  Agent Orchestrator is a Go daemon with an Electron + React supervisor.
+  The fork should stay rebase-clean on upstream and keep product feature work
+  upstream-submittable when possible.
+  Use conventional commits and keep fork-only changes separate from
+  upstream-candidate changes.
+
+# Per-artifact rules (optional)
+# Add custom rules for specific artifacts.
+# Example:
+#   rules:
+#     proposal:
+#       - Keep proposals under 500 words
+#       - Always include a "Non-goals" section
+#     tasks:
+#       - Break tasks into chunks of max 2 hours

@@ -74,5 +74,20 @@ frontend/daemon/
 .agents/
 skills-lock.json
 
+# Agent worktrees and generated local agent assets
+.claude/worktrees/
+.claude/skills/
+.claude/commands/
+.agents/skills/
+.agents/commands/
+.codex/skills/
+.codex/commands/
+.playwright-cli/
+.beads-credential-key
+.beads/.env
+
 # Local pnpm artifacts
 pnpm-lock.yaml
+
+# Beads / Dolt files (added by bd init)
+.dolt/
