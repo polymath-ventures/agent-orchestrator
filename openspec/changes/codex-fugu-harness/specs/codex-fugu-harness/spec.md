@@ -23,6 +23,14 @@ deliberately narrower than the worker-harness vocabulary.
 - **THEN** the request passes enum validation and the session persists without
   violating the `sessions.harness` CHECK constraint
 
+#### Scenario: Existing databases admit the harness after upgrade
+
+- **WHEN** a database that was already migrated before `codex-fugu` existed runs
+  the current migration set
+- **THEN** the `sessions.harness` CHECK is widened to admit `codex-fugu` — the
+  widening is a new migration, because an edit to an already-applied migration
+  would not re-run and would silently leave existing installs rejecting it
+
 #### Scenario: Harness is offered to the operator
 
 - **WHEN** the operator lists harnesses via the CLI `--harness` help, the agent

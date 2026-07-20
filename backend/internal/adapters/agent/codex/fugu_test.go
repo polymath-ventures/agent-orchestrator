@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
@@ -33,6 +34,28 @@ func writeFakeBinary(t *testing.T, dir, name, script string) string {
 		t.Fatal(err)
 	}
 	return path
+}
+
+// The command-building tests preset resolvedBinary, so they don't exercise that
+// NewFugu actually resolves the codex-fugu binary. This one puts both codex and
+// codex-fugu on PATH and requires ResolveBinary to select fugu's — it would fail
+// if the binary-name parameterization regressed to plain codex.
+func TestFuguResolveBinarySelectsCodexFuguOverCodex(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("scripted binary fakes are Unix-specific")
+	}
+	dir := t.TempDir()
+	codexPath := writeFakeBinary(t, dir, "codex", `exit 0`)
+	fuguPath := writeFakeBinary(t, dir, "codex-fugu", `exit 0`)
+	t.Setenv("PATH", dir)
+
+	got, err := NewFugu().ResolveBinary(context.Background())
+	if err != nil {
+		t.Fatalf("ResolveBinary: %v", err)
+	}
+	if got != fuguPath {
+		t.Fatalf("ResolveBinary = %q, want %q (must not resolve plain codex at %q)", got, fuguPath, codexPath)
+	}
 }
 
 func TestFuguManifestReportsItsOwnIdentity(t *testing.T) {
@@ -200,7 +223,11 @@ func TestFuguAuthStatusFallsBackToSharedCodexLogin(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			dir := t.TempDir()
-			fugu := writeFakeBinary(t, dir, "codex-fugu", tt.fuguScript)
+			argsFile := filepath.Join(dir, "fugu-args")
+			// Record the argv the fugu binary was invoked with, then run the
+			// scripted behavior. The probe must pass --no-update first, or the
+			// wrapper can block on its update prompt before printing a state.
+			fugu := writeFakeBinary(t, dir, "codex-fugu", `echo "$@" > `+argsFile+`; `+tt.fuguScript)
 			writeFakeBinary(t, dir, "codex", tt.codexShell)
 			t.Setenv("PATH", dir)
 
@@ -214,12 +241,20 @@ func TestFuguAuthStatusFallsBackToSharedCodexLogin(t *testing.T) {
 			if got != tt.want {
 				t.Fatalf("AuthStatus = %q, want %q", got, tt.want)
 			}
+			gotArgs, err := os.ReadFile(argsFile)
+			if err != nil {
+				t.Fatalf("fugu binary was not invoked: %v", err)
+			}
+			if strings.TrimSpace(string(gotArgs)) != "--no-update login status" {
+				t.Fatalf("fugu login probe argv = %q, want %q", strings.TrimSpace(string(gotArgs)), "--no-update login status")
+			}
 		})
 	}
 }
 
 // The fallback is gated on the profile error specifically. An unrelated fugu
-// failure must surface as itself, not silently become a question about Codex.
+// failure must not consult Codex, and must report unknown — not unauthorized,
+// which would tell an operator to log in when the binary is actually broken.
 func TestFuguAuthStatusDoesNotConsultCodexOnUnrelatedFailure(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("scripted binary fakes are Unix-specific")
@@ -242,8 +277,8 @@ func TestFuguAuthStatusDoesNotConsultCodexOnUnrelatedFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AuthStatus err = %v, want nil", err)
 	}
-	if got == ports.AgentAuthStatusAuthorized {
-		t.Fatal("AuthStatus = authorized, want not authorized")
+	if got != ports.AgentAuthStatusUnknown {
+		t.Fatalf("AuthStatus = %q, want unknown for an unrelated fugu failure", got)
 	}
 	if _, err := os.Stat(sentinel); err == nil {
 		t.Fatal("shared codex login was consulted for a non-profile failure")

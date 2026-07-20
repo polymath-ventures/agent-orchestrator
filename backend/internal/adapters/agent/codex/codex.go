@@ -225,16 +225,31 @@ func (p *Plugin) AuthStatus(ctx context.Context) (ports.AgentAuthStatus, error) 
 		return ports.AgentAuthStatusUnknown, err
 	}
 
-	status, text, failed, err := loginStatusForBinary(ctx, binary)
+	// The probe runs the wrapper binary directly, so it needs the same leading
+	// --no-update as launch/restore — otherwise the fugu wrapper can block on its
+	// update prompt before ever printing a login state.
+	var pre []string
+	p.appendWrapperFlags(&pre)
+
+	status, text, failed, err := loginStatusForBinary(ctx, binary, pre...)
 	if err != nil {
 		return ports.AgentAuthStatusUnknown, err
 	}
 	if status != ports.AgentAuthStatusUnknown {
 		return status, nil
 	}
-	if p.adapterID() == fuguAdapterID && failed && strings.Contains(text, fuguProfileRejection) {
-		return sharedCodexAuthStatus(ctx)
+	if p.adapterID() == fuguAdapterID {
+		if failed && strings.Contains(text, fuguProfileRejection) {
+			return sharedCodexAuthStatus(ctx)
+		}
+		// The profile rejection is fugu's only expected failure. Any other
+		// unrecognized outcome is genuinely unknown — reporting it as
+		// unauthorized would tell an operator to log in when the binary is
+		// actually broken. `ao doctor` is the tool for that diagnosis.
+		return ports.AgentAuthStatusUnknown, nil
 	}
+	// Plain Codex keeps its historical heuristic: a non-zero `login status`
+	// (with no recognizable text) means logged out.
 	if failed {
 		return ports.AgentAuthStatusUnauthorized, nil
 	}
@@ -255,6 +270,7 @@ func sharedCodexAuthStatus(ctx context.Context) (ports.AgentAuthStatus, error) {
 		// this probe's error to raise.
 		return ports.AgentAuthStatusUnknown, nil //nolint:nilerr // absence of the shared binary is an unknown answer, not a probe failure
 	}
+	// The shared credential lives in plain codex, which takes no wrapper flags.
 	status, _, failed, err := loginStatusForBinary(ctx, codexBinary)
 	if err != nil {
 		return ports.AgentAuthStatusUnknown, err
@@ -277,11 +293,15 @@ func sharedCodexAuthStatus(ctx context.Context) (ports.AgentAuthStatus, error) {
 // signal about login state, not a failure to propagate: callers answer with an
 // auth status either way. status is Unknown when the output carries no
 // recognizable login state — that ambiguity is the caller's to resolve.
-func loginStatusForBinary(ctx context.Context, binary string) (status ports.AgentAuthStatus, text string, failed bool, err error) {
+//
+// preArgs are placed before the `login status` subcommand, for wrapper binaries
+// (codex-fugu) that need a leading flag like --no-update parsed at top level.
+func loginStatusForBinary(ctx context.Context, binary string, preArgs ...string) (status ports.AgentAuthStatus, text string, failed bool, err error) {
 	probeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 
-	out, cmdErr := exec.CommandContext(probeCtx, binary, "login", "status").CombinedOutput()
+	args := append(append([]string{}, preArgs...), "login", "status")
+	out, cmdErr := exec.CommandContext(probeCtx, binary, args...).CombinedOutput()
 	if probeCtx.Err() != nil {
 		return ports.AgentAuthStatusUnknown, "", false, probeCtx.Err()
 	}

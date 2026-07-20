@@ -126,7 +126,7 @@ func TestDoctorChecksHarnessVersions(t *testing.T) {
 		switch name {
 		case "/bin/git":
 			return []byte("git version 2.43.0\n"), nil
-		case "/bin/claude", "/bin/codex", "/bin/codex-fugu":
+		case "/bin/claude", "/bin/codex":
 			if len(args) == 1 && args[0] == "--version" {
 				return []byte(strings.TrimPrefix(name, "/bin/") + " 1.2.3\n"), nil
 			}
@@ -135,6 +135,14 @@ func TestDoctorChecksHarnessVersions(t *testing.T) {
 				return []byte("ok\n"), nil
 			}
 			t.Fatalf("unexpected harness command: %s %v", name, args)
+			return nil, nil
+		case "/bin/codex-fugu":
+			// The fugu wrapper must be probed with --no-update ahead of the
+			// version subcommand, or it can block on its update prompt.
+			if len(args) == 2 && args[0] == "--no-update" && args[1] == "--version" {
+				return []byte("codex-fugu 1.2.3\n"), nil
+			}
+			t.Fatalf("codex-fugu probe args = %v, want [--no-update --version]", args)
 			return nil, nil
 		default:
 			t.Fatalf("unexpected command: %s %v", name, args)

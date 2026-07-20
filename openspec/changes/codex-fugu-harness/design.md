@@ -101,22 +101,34 @@ and needs no subprocess, but it duplicates Codex's own notion of where credentia
 live and would break the moment Codex changes it. Asking the Codex binary keeps one
 source of truth.
 
-### Extend migration 0007 in place rather than adding a new migration
+### Widen the harness allowlist with a new migration, not an in-place edit of 0007
 
-This inverts the old fork's approach, and it contradicts the general rule that
-merged migrations are immutable — so it needs justification. This fork's `0007`
-rewrites the `sessions.harness` CHECK via `PRAGMA writable_schema` and a `replace()`
-against the *exact* prior constraint text. Chaining a new migration means the next
-one must match `0007`'s output byte-for-byte; if it does not, `UPDATE sqlite_master`
-no-ops **without erroring** and the constraint silently stays narrow. `0007`'s own
-header records this and instructs extension in place, and `migrate_test.go` asserts
-the live constraint against the harness list, which is the guard that makes editing
-safe.
+`0007`'s header note says to add new harnesses by extending its list in place. That
+is only safe **while 0007 is the newest migration**. It no longer is: `0007` was
+born with all 23 harnesses in one commit, no harness has ever been added post-hoc,
+and there are now two dozen later migrations. `migrate()` runs `goose.Up`, and goose
+tracks applied migrations by version *number*, not content — so any database already
+past `0007` (every existing install) never re-runs it. Editing `0007` in place would
+admit `codex-fugu` on fresh installs but silently leave every existing install
+rejecting it, because its `sessions.harness` CHECK was frozen at migration time.
 
-*Alternative rejected:* a new `0024_allow_codex_fugu_harness.sql` mirroring the old
-fork. Rejected because it reintroduces exactly the byte-matching fragility `0007`
-was consolidated to remove, and because it disagrees with an explicit written
-convention in the file being edited.
+So the widening is a new migration, `0025_allow_codex_fugu_harness.sql`, whose Up
+rewrites the current 23-harness CHECK to add `codex-fugu` (Down reverses). `0007` is
+left byte-identical to `main` except for a corrected header note pointing future
+additions at a new migration.
+
+This is why `migrate_test.go`'s existing fresh-migration guard was not enough: it
+opens a fresh DB and runs every migration, so an in-place `0007` edit looks fine
+there. A second test, `TestMigrateAdmitsCodexFuguOnUpgradeFromInitialPlatform`,
+migrates only through `0007`, asserts `codex-fugu` is absent, then runs the rest and
+requires it to be admitted — the upgrade path a fresh-migration test cannot see.
+
+*Alternative rejected:* editing `0007` in place, per its header note. Rejected once
+the goose-version-tracking behavior was confirmed: it is correct for fresh installs
+and silently broken for every existing one — the header note predates the later
+migrations and no longer holds. (This came out of independent review; the first
+draft did edit `0007` in place. The old fork reached the same new-migration
+conclusion, chaining its own.)
 
 ### Register the harness on functional surfaces, not marketing ones
 
@@ -161,10 +173,10 @@ machinery.
   Empty-string fallback means the Codex path is unchanged by construction, and the
   existing Codex adapter tests run unmodified as the regression guard. Any change
   that breaks Codex breaks them.
-- **Editing an applied migration is unusual and could confuse a future reader.** →
-  The convention is documented in the migration header, and `migrate_test.go`
-  asserts the resulting constraint covers every harness, so a mistake fails CI
-  rather than corrupting a database.
+- **The new migration `0025` uses the same `replace()`-against-exact-text mechanism
+  as `0007`, so a byte mismatch would no-op silently.** → Both the fresh-migration
+  guard and the new upgrade-path test assert the live constraint actually admits
+  `codex-fugu`, so a mismatch fails CI rather than corrupting a database.
 - **Auth fallback couples fugu's health to Codex's login.** A Codex logout silently
   makes fugu workers unauthorized. → This is accurate rather than incidental: fugu
   genuinely has no separate credential, so reporting the shared state is the truthful
