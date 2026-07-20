@@ -1,23 +1,23 @@
 ## 1. Port the model-provider dependency
 
-- [ ] 1.1 Port `backend/internal/domain/modelprovider.go` from the old fork, dropping the `ProviderFugu` case and any harness constants absent from this fork
-- [ ] 1.2 Port its test file and add the `ModelProvider()` method to `domain/harness.go`
-- [ ] 1.3 Verify `go build ./...` and `go test ./internal/domain/...` pass before touching workermix
+- [x] 1.1 Port `backend/internal/domain/modelprovider.go` from the old fork, dropping the `ProviderFugu` case and any harness constants absent from this fork
+- [x] 1.2 Port its test file and add the `ModelProvider()` method to `domain/harness.go`
+- [x] 1.3 Verify `go build ./...` and `go test ./internal/domain/...` pass before touching workermix
 
 ## 2. Port the worker mix domain package
 
-- [ ] 2.1 Port `workermix_test.go` from the old fork first, excluding any `RoutingHarnessForIssueLabels` cases — this is the failing-test step
-- [ ] 2.2 Port `backend/internal/domain/workermix.go`, excluding `issueRoutingLabelHarnesses` and `RoutingHarnessForIssueLabels`
-- [ ] 2.3 Add a convergence test asserting a 60/30/10 mix apportions exactly 6/3/1 over ten successive selections
-- [ ] 2.4 Add a determinism test asserting identical (mix, census) inputs return the same bucket, and a tie test asserting the earliest row wins
-- [ ] 2.5 Verify `go test ./internal/domain/...` and `go vet ./...` pass
+- [x] 2.1 Port `workermix_test.go` from the old fork first, excluding any `RoutingHarnessForIssueLabels` cases — this is the failing-test step
+- [x] 2.2 Port `backend/internal/domain/workermix.go`, excluding `issueRoutingLabelHarnesses` and `RoutingHarnessForIssueLabels`
+- [x] 2.3 Add a convergence test asserting a 60/30/10 mix apportions exactly 6/3/1 over ten successive selections
+- [x] 2.4 Add a determinism test asserting identical (mix, census) inputs return the same bucket, and a tie test asserting the earliest row wins
+- [x] 2.5 Verify `go test ./internal/domain/...` and `go vet ./...` pass
 
 ## 3. Port the candidate health package
 
-- [ ] 3.1 Port `candidatehealth_test.go` from the old fork verbatim — failing-test step
-- [ ] 3.2 Port `backend/internal/candidatehealth/candidatehealth.go` verbatim; confirm `internal/ports` is its only non-stdlib import
-- [ ] 3.3 Confirm the two attribution tests pass unmodified: canceled caller context is a no-op, and a wrapped deadline error with a live caller context marks down
-- [ ] 3.4 Verify `go test -race ./internal/candidatehealth/...` passes
+- [x] 3.1 Port `candidatehealth_test.go` from the old fork verbatim — failing-test step
+- [x] 3.2 Port `backend/internal/candidatehealth/candidatehealth.go` verbatim; confirm `internal/ports` is its only non-stdlib import
+- [x] 3.3 Confirm the two attribution tests pass unmodified: canceled caller context is a no-op, and a wrapped deadline error with a live caller context marks down
+- [x] 3.4 Verify `go test -race ./internal/candidatehealth/...` passes
 
 ## 4. Make model a first-class spawn input
 
@@ -78,9 +78,9 @@
 
 ## 11. Full verification
 
-- [ ] 11.1 Run `go build ./...`, `go test ./...`, `go test -race ./...`, and `go vet ./...` from `backend/`
-- [ ] 11.2 Run `npm run lint`, `npm run frontend:typecheck`, and confirm `npm run api` and `npm run sqlc` produce no diff
-- [ ] 11.3 Exercise the feature end to end against a running daemon: configure a 60/30/10 mix, spawn repeatedly unpinned, and confirm the realized ratio
-- [ ] 11.4 Exercise a bucket outage live: break one bucket's binary, confirm it is marked down and alerted, confirm redistribution, then confirm recovery on a later success
-- [ ] 11.5 Exercise the cap live: fill a project to its cap and confirm intake defers and later resumes
-- [ ] 11.6 Render the settings card via `ao preview` and confirm the save gate behaves
+- [x] 11.1 Run `go build ./...`, `go test ./...`, `go test -race ./...`, and `go vet ./...` from `backend/`
+- [x] 11.2 Run `npm run lint`, `npm run frontend:typecheck`, and confirm `npm run api` and `npm run sqlc` produce no diff
+- [ ] 11.3 Exercise the feature end to end against a running daemon: configure a 60/30/10 mix, spawn repeatedly unpinned, and confirm the realized ratio. **Partially done live:** against a real headless `ao daemon` (127.0.0.1:3001) a worker mix + `maxLiveWorkers` config was accepted, persisted, and round-tripped via the HTTP API, and an invalid mix (sum=90) was rejected live (`HTTP 400 INVALID_PROJECT_CONFIG`). The unpinned spawn reached mix selection but failed at worktree creation (`BRANCH_NOT_FETCHED`) on the throwaway test repo — a fixture limitation, not the feature. Realized-ratio convergence remains covered by the deterministic integration test `TestSpawn_UnpinnedWorkerConvergesOnConfiguredMix` (6/3/1 over 10 spawns through the real `Manager.Spawn`).
+- [ ] 11.4 Exercise a bucket outage live: break one bucket's binary, confirm it is marked down and alerted, confirm redistribution, then confirm recovery on a later success. **Covered by integration tests** (`candidatehealth_spawn_test.go`: binary-missing/runtime-refused/GetLaunchCommand mark-down, down-bucket redistribution, all-down `ErrWorkerMixExhausted`, recovery); a live break-a-binary demo needs successful agent launches, blocked by the same worktree-fixture limit as 11.3.
+- [ ] 11.5 Exercise the cap live: fill a project to its cap and confirm intake defers and later resumes. **Cap config verified live** (accepted + persisted via the daemon API); the fill-to-cap refusal and intake deferral are covered by integration tests (`concurrencycap_spawn_test.go`, `observer_test.go`) — a live fill needs live spawns (see 11.3).
+- [ ] 11.6 Render the settings card via `ao preview` and confirm the save gate behaves. **Card rendered and verified by eye** in a browser (valid/invalid/empty states, save gate at sum≠100) via a standalone vite mount; `ao preview` proper needs the Electron desktop browser panel, which cannot launch on this host (npm 12 `allow-scripts` blocks electron's postinstall, so the Electron binary is absent).
