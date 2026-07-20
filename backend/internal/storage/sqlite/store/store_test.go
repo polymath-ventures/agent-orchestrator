@@ -215,7 +215,7 @@ func TestSessionModelRoundTrips(t *testing.T) {
 // mix — not a caller's explicit pin — chose this session's (harness, model).
 // The census counts only these rows, so the flag has to survive create, read,
 // update and list; a session created without it reads back false, which is also
-// what every pre-0028 row reads as.
+// what every pre-0029 row reads as.
 func TestSessionMixSelectedRoundTrips(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()

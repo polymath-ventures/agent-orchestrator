@@ -23,7 +23,7 @@
 
 - [x] 4.1 Write failing tests for model round-tripping through spawn, persistence, and read-back
 - [x] 4.2 Add `Model` to `ports.SpawnConfig` and to the `SpawnSessionRequest` DTO
-- [x] 4.3 Add migration `0027` adding a `model TEXT NOT NULL DEFAULT ''` column to `sessions` (existing rows read back empty; no backfill), with the down-migration ALTER following the `0019` pattern. (Renumbered from `0025` after rebase onto main's quota migrations.)
+- [x] 4.3 Add migration `0028` adding a `model TEXT NOT NULL DEFAULT ''` column to `sessions` (existing rows read back empty; no backfill), with the down-migration ALTER following the `0019` pattern. (Renumbered past main's quota and codex-fugu migrations during rebase.)
 - [x] 4.4 Run `npm run sqlc` (no `sqlc.yaml` override needed: `model` is a plain `string`, unlike the columns that map to named `internal/domain` types)
 - [x] 4.5 Add `Model` to `domain.SessionRecord` and thread it through `seedRecord` and `effectiveAgentConfig`
 - [x] 4.6 Run `npm run api` and commit the regenerated `openapi.yaml` and `frontend/src/api/schema.ts` in the same commit

@@ -70,7 +70,7 @@ func TestMigrateAllowsEveryShippedHarness(t *testing.T) {
 
 // TestMigrateReadsPreModelSessionRowsAsEmpty guards the additive contract of
 // the sessions.model column: a row written without a model — which is every row
-// that existed before migration 0027 added the column — must read back as the
+// that existed before migration 0029 added the column — must read back as the
 // empty string, not NULL, so the read path needs no nullable handling and no
 // existing row is rewritten.
 func TestMigrateReadsPreModelSessionRowsAsEmpty(t *testing.T) {
@@ -90,7 +90,7 @@ func TestMigrateReadsPreModelSessionRowsAsEmpty(t *testing.T) {
 		t.Fatalf("seed project: %v", err)
 	}
 	// The column list deliberately omits model: this is exactly the shape of a
-	// row inserted by the pre-0027 InsertSession statement.
+	// row inserted by the pre-0029 InsertSession statement.
 	if _, err := db.Exec(
 		`INSERT INTO sessions (id, project_id, num, activity_last_at, created_at, updated_at)
 		 VALUES ('mer-1', 'mer', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
@@ -109,7 +109,7 @@ func TestMigrateReadsPreModelSessionRowsAsEmpty(t *testing.T) {
 
 // TestMigrateReadsPreMixSelectedSessionRowsAsFalse guards the additive contract
 // of the sessions.mix_selected column: a row written without it — which is
-// every row that existed before migration 0028 added the column — must read
+// every row that existed before migration 0029 added the column — must read
 // back false, so no existing session is retroactively counted against a worker
 // mix bucket's share and no backfill is needed.
 func TestMigrateReadsPreMixSelectedSessionRowsAsFalse(t *testing.T) {
@@ -129,7 +129,7 @@ func TestMigrateReadsPreMixSelectedSessionRowsAsFalse(t *testing.T) {
 		t.Fatalf("seed project: %v", err)
 	}
 	// The column list deliberately omits mix_selected: this is exactly the shape
-	// of a row inserted by the pre-0028 InsertSession statement.
+	// of a row inserted by the pre-0029 InsertSession statement.
 	if _, err := db.Exec(
 		`INSERT INTO sessions (id, project_id, num, activity_last_at, created_at, updated_at)
 		 VALUES ('mer-1', 'mer', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
