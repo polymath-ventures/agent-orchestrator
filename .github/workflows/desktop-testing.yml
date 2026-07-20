@@ -32,7 +32,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, windows-latest, ubuntu-latest]
+        os: [macos-latest, blacksmith-4vcpu-windows-2025, ubuntu-latest]
     runs-on: ${{ matrix.os }}
     permissions:
       contents: write
