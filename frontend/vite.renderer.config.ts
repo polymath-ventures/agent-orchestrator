@@ -4,6 +4,7 @@
 import { defineConfig } from "vitest/config";
 import type { Plugin } from "vite";
 import { fileURLToPath, URL } from "node:url";
+import { execSync } from "node:child_process";
 import { TanStackRouterVite } from "@tanstack/router-plugin/vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
@@ -19,21 +20,46 @@ const POSTHOG_ORIGIN = (() => {
 	}
 })();
 
+const SAME_ORIGIN_BROWSER_BUILD =
+	process.env.VITE_NO_ELECTRON === "1" && (process.env.VITE_AO_API_BASE_URL ?? "") === "";
+const CONNECT_SRC = [
+	"'self'",
+	...(SAME_ORIGIN_BROWSER_BUILD ? [] : ["http://127.0.0.1:*", "ws://127.0.0.1:*"]),
+	POSTHOG_ORIGIN,
+].filter(Boolean);
+
 // CSP for the built renderer. The daemon is loopback-only, so network access is
-// pinned to 127.0.0.1 (REST + SSE over http, terminal mux over ws). Injected at
-// build time rather than written into index.html because the dev server needs
-// inline scripts (react-refresh preamble) that a static meta tag would block.
+// pinned to 127.0.0.1 in Electron/package builds. Production browser builds use
+// same-origin proxying and should not grant a tailnet page access to a viewer
+// machine's loopback services. Injected at build time rather than written into
+// index.html because the dev server needs inline scripts.
 const CONTENT_SECURITY_POLICY = [
 	"default-src 'self'",
 	"script-src 'self'",
 	"style-src 'self' 'unsafe-inline'",
 	"img-src 'self' data:",
 	"font-src 'self' data:",
-	["connect-src", "'self'", "http://127.0.0.1:*", "ws://127.0.0.1:*", POSTHOG_ORIGIN].filter(Boolean).join(" "),
+	["connect-src", ...CONNECT_SRC].join(" "),
 	"object-src 'none'",
 	"base-uri 'self'",
 	"frame-src 'none'",
 ].join("; ");
+
+function gitRevision(): string {
+	try {
+		return execSync("git rev-parse HEAD", { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+	} catch {
+		return "";
+	}
+}
+
+function gitFrontendTree(): string {
+	try {
+		return execSync("git rev-parse HEAD:frontend", { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+	} catch {
+		return "";
+	}
+}
 
 const injectCspMeta: Plugin = {
 	name: "inject-csp-meta",
@@ -46,6 +72,27 @@ const injectCspMeta: Plugin = {
 				injectTo: "head-prepend",
 			},
 		];
+	},
+};
+
+const rendererBuildRevision = process.env.AO_RENDERER_BUILD_REVISION || gitRevision();
+const rendererFrontendTree = process.env.AO_RENDERER_FRONTEND_TREE || gitFrontendTree();
+
+const buildManifestPlugin: Plugin = {
+	name: "ao-web-build-manifest",
+	configureServer(server) {
+		server.middlewares.use("/ao-web-build.json", (_request, response) => {
+			response.setHeader("Cache-Control", "no-store");
+			response.setHeader("Content-Type", "application/json");
+			response.end(JSON.stringify({ revision: rendererBuildRevision, frontendTree: rendererFrontendTree }));
+		});
+	},
+	generateBundle() {
+		this.emitFile({
+			type: "asset",
+			fileName: "ao-web-build.json",
+			source: `${JSON.stringify({ revision: rendererBuildRevision, frontendTree: rendererFrontendTree }, null, 2)}\n`,
+		});
 	},
 };
 
@@ -62,6 +109,14 @@ export default defineConfig({
 	server: {
 		proxy: {
 			"/api": {
+				target: process.env.AO_DEV_API_TARGET ?? "http://127.0.0.1:3001",
+				changeOrigin: false,
+			},
+			"/healthz": {
+				target: process.env.AO_DEV_API_TARGET ?? "http://127.0.0.1:3001",
+				changeOrigin: false,
+			},
+			"/readyz": {
 				target: process.env.AO_DEV_API_TARGET ?? "http://127.0.0.1:3001",
 				changeOrigin: false,
 			},
@@ -82,7 +137,13 @@ export default defineConfig({
 		react(),
 		tailwindcss(),
 		injectCspMeta,
+		buildManifestPlugin,
 	],
+	build: {
+		// The full PostHog browser client is intentionally bundled so the CSP does
+		// not need to allow third-party script injection.
+		chunkSizeWarningLimit: 700,
+	},
 	test: {
 		environment: "jsdom",
 		testTimeout: 20_000,

@@ -1,0 +1,27 @@
+[Unit]
+Description=Agent Orchestrator browser mode
+Documentation=https://github.com/polymath-ventures/agent-orchestrator
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/.ao/deploy/current/source
+Environment=NODE_ENV=production
+Environment=AO_WEB_BIND=127.0.0.1
+Environment=AO_WEB_PORT=5173
+Environment=AO_WEB_API_TARGET=http://127.0.0.1:3001
+Environment=AO_WEB_DIST=%h/.ao/deploy/current/source/frontend/dist
+Environment=AO_WEB_REQUIRE_PUBLIC_URL=1
+# Set this in a systemd override to the exact Tailscale Serve origin, for example:
+# Environment=AO_WEB_PUBLIC_URL=https://ao.tailnet-name.ts.net
+# The daemon must also allow that origin, for example:
+# AO_ALLOWED_ORIGINS=app://renderer,https://ao.tailnet-name.ts.net
+ExecStart=/usr/bin/env node %h/.ao/deploy/current/source/ops/ao-web-server.mjs
+Restart=on-failure
+RestartSec=2
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=default.target

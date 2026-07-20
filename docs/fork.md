@@ -36,3 +36,95 @@ submit directly to upstream after review.
 Blacksmith CI runner migration is intentionally out of scope for this bootstrap;
 the operator applies that PR directly.
 
+## Browser Mode On The Tailnet
+
+The fork ships a small browser-mode web server for headless hosts. It serves the
+built renderer from `frontend/dist` and proxies the daemon's existing loopback
+routes (`/api`, `/healthz`, `/readyz`, and `/mux`) from the same browser origin.
+It does not replace the desktop release flow and it does not make npm the
+canonical install path.
+
+Build the renderer from a release or checked-out source tree:
+
+```bash
+cd ~/.ao/deploy/current/source
+npm --prefix frontend ci
+npm --prefix frontend run build:web
+```
+
+Start the daemon with the same tailnet origin in its CORS allowlist. Keep the
+packaged Electron origin when overriding the list:
+
+```bash
+AO_ALLOWED_ORIGINS=app://renderer,https://ao.tailnet-name.ts.net ao start
+```
+
+If the daemon allowlist is missing the tailnet origin, proxied daemon responses
+will say `Origin is not allowed to access this daemon`. If `AO_WEB_PUBLIC_URL`
+does not match the Tailscale Serve origin, the web server rejects earlier with
+`ao-web: request host or origin is not allowed by AO_WEB_PUBLIC_URL`.
+
+Run the web server locally:
+
+```bash
+AO_WEB_BIND=127.0.0.1 \
+AO_WEB_PORT=5173 \
+AO_WEB_API_TARGET=http://127.0.0.1:3001 \
+AO_WEB_DIST="$PWD/frontend/dist" \
+AO_WEB_PUBLIC_URL=https://ao.tailnet-name.ts.net \
+node ops/ao-web-server.mjs
+```
+
+Install the user service on a host that has a release-style symlink at
+`~/.ao/deploy/current/source`:
+
+```bash
+mkdir -p ~/.config/systemd/user
+cp ops/ao-web.service ~/.config/systemd/user/ao-web.service
+systemctl --user daemon-reload
+```
+
+Set the required public URL without editing the tracked unit:
+
+```bash
+systemctl --user edit ao-web.service
+```
+
+Example override:
+
+```ini
+[Service]
+Environment=AO_WEB_DIST=/home/orchestrator/.ao/deploy/current/source/frontend/dist
+Environment=AO_WEB_PUBLIC_URL=https://ao.tailnet-name.ts.net
+```
+
+Then start it:
+
+```bash
+systemctl --user enable --now ao-web.service
+systemctl --user status ao-web.service
+```
+
+Expose the loopback web server through Tailscale Serve:
+
+```bash
+tailscale serve --bg --https=443 http://127.0.0.1:5173
+tailscale serve status
+```
+
+The tracked service sets `AO_WEB_REQUIRE_PUBLIC_URL=1`, so it fails fast until
+`AO_WEB_PUBLIC_URL` is configured. The web server executable also refuses
+non-loopback `AO_WEB_BIND` values. Expose it through Tailscale Serve rather than
+binding it to the LAN. Proxied daemon routes require a loopback peer with a
+loopback `Host`, or a request `Host` that matches `AO_WEB_PUBLIC_URL`; browser
+`Origin` headers must be loopback or the same configured public origin. Static
+app routes fall back to `index.html`, so hash-history and refreshes both land in
+the renderer.
+
+Security posture: anyone who can reach the Tailscale Serve endpoint can operate
+the AO daemon through the browser surface, including sending session input and
+killing sessions. That is intentionally narrower than a LAN daemon listener:
+`ops/ao-web-server.mjs` stays loopback-bound and Tailscale is the access
+boundary. Do not expose the Node server directly on the LAN; if this ever needs
+a non-tailnet listener, use the bearer-auth model in
+`docs/adr/0001-lan-listener-for-mobile.md` instead.

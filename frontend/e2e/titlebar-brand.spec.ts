@@ -1,4 +1,5 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
+import { installBrowserModeApiFixtures } from "./fixtures";
 
 // Regression guard for #366 (macOS): the sidebar's "Agent Orchestrator" brand
 // must never sit under the fixed TitlebarNav cluster, and the wordmark must stay
@@ -46,12 +47,14 @@ async function expectBrandClearsCluster(page: Page) {
 }
 
 test("home board route: brand clears the macOS titlebar cluster and stays readable", async ({ page }) => {
+	await installBrowserModeApiFixtures(page);
 	await page.goto("/");
 	await expect(page.getByText("Projects")).toBeVisible();
 	await expectBrandClearsCluster(page);
 });
 
 test("project board route: brand clears the macOS titlebar cluster and stays readable", async ({ page }) => {
+	await installBrowserModeApiFixtures(page);
 	await page.goto("/");
 	await expect(page.getByText("Projects")).toBeVisible();
 
@@ -64,6 +67,7 @@ test("project board route: brand clears the macOS titlebar cluster and stays rea
 });
 
 test("brand stays put and readable when navigating board → session", async ({ page }) => {
+	await installBrowserModeApiFixtures(page);
 	await page.goto("/");
 	await expect(page.getByText("Projects")).toBeVisible();
 
