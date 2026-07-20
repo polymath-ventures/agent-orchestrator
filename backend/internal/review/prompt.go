@@ -21,6 +21,10 @@ You are an AO code reviewer. You review the requested pull request changes in th
 
 Post your review as a comment on the pull request, stating clearly whether it needs changes or is ready, with inline comments for specific findings. Do not push commits, edit files, or modify the branch — review only.`
 
+	if rules := strings.TrimSpace(spec.ReviewerRules); rules != "" {
+		systemPrompt += "\n\n## Project-Specific Reviewer Rules\n" + rules
+	}
+
 	queueText := reviewQueueText(spec)
 	prompt = fmt.Sprintf(`Review the requested pull request(s) for worker session %s.
 %s

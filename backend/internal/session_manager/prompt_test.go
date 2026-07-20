@@ -119,7 +119,7 @@ func TestLoadRoleRules_MergesInlineAndFileVerbatim(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "rules.md"), []byte("File rule.\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	got, err := loadRoleRules(roleRulesConfig{
+	got, err := LoadRoleRules(RoleRulesConfig{
 		Role:        "worker",
 		ProjectPath: dir,
 		InlineRules: "Inline rule.",
@@ -136,7 +136,7 @@ func TestLoadRoleRules_MergesInlineAndFileVerbatim(t *testing.T) {
 }
 
 func TestLoadRoleRules_NoOverrideIsInert(t *testing.T) {
-	got, err := loadRoleRules(roleRulesConfig{Role: "orchestrator", ProjectPath: t.TempDir()})
+	got, err := LoadRoleRules(RoleRulesConfig{Role: "orchestrator", ProjectPath: t.TempDir()})
 	if err != nil {
 		t.Fatalf("no override should not error: %v", err)
 	}
@@ -146,7 +146,7 @@ func TestLoadRoleRules_NoOverrideIsInert(t *testing.T) {
 }
 
 func TestLoadRoleRules_MissingFileFailsClosed(t *testing.T) {
-	_, err := loadRoleRules(roleRulesConfig{
+	_, err := LoadRoleRules(RoleRulesConfig{
 		Role:        "reviewer",
 		ProjectPath: t.TempDir(),
 		RulesFile:   "does-not-exist.md",
@@ -164,7 +164,7 @@ func TestLoadRoleRules_EmptyFileFailsClosed(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "empty.md"), []byte("   \n\t\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	_, err := loadRoleRules(roleRulesConfig{
+	_, err := LoadRoleRules(RoleRulesConfig{
 		Role:        "worker",
 		ProjectPath: dir,
 		RulesFile:   "empty.md",
@@ -183,7 +183,7 @@ func TestLoadRoleRules_OversizedFileFailsClosed(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "big.md"), big, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	_, err := loadRoleRules(roleRulesConfig{
+	_, err := LoadRoleRules(RoleRulesConfig{
 		Role:        "orchestrator",
 		ProjectPath: dir,
 		RulesFile:   "big.md",

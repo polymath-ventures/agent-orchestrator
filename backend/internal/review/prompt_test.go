@@ -7,6 +7,28 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
+func TestReviewTextsInjectsReviewerRules(t *testing.T) {
+	spec := launchSpec()
+	spec.ReviewerRules = "Pay special attention to tenant isolation."
+	_, systemPrompt := reviewTexts(spec)
+	for _, want := range []string{
+		"## Code reviewer role",
+		"## Project-Specific Reviewer Rules",
+		"Pay special attention to tenant isolation.",
+	} {
+		if !strings.Contains(systemPrompt, want) {
+			t.Fatalf("reviewer system prompt missing %q:\n%s", want, systemPrompt)
+		}
+	}
+}
+
+func TestReviewTextsOmitsReviewerRulesHeadingWhenUnset(t *testing.T) {
+	_, systemPrompt := reviewTexts(launchSpec())
+	if strings.Contains(systemPrompt, "## Project-Specific Reviewer Rules") {
+		t.Fatalf("unexpected reviewer rules heading with no rules:\n%s", systemPrompt)
+	}
+}
+
 func TestReviewTextsIncludesMultiPRQueue(t *testing.T) {
 	spec := launchSpec()
 	spec.RunID = "run-2"

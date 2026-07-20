@@ -141,10 +141,13 @@ func (f fakePRs) ListPRsBySession(_ context.Context, _ domain.SessionID) ([]doma
 	return f.prs, nil
 }
 
-type fakeProjects struct{ cfg domain.ProjectConfig }
+type fakeProjects struct {
+	cfg  domain.ProjectConfig
+	path string
+}
 
 func (f fakeProjects) GetProject(_ context.Context, id string) (domain.ProjectRecord, bool, error) {
-	return domain.ProjectRecord{ID: id, Config: f.cfg}, true, nil
+	return domain.ProjectRecord{ID: id, Path: f.path, Config: f.cfg}, true, nil
 }
 
 type fakeLauncher struct {
@@ -217,6 +220,34 @@ func prAt(sha string) fakePRs {
 }
 
 // --- tests ---
+
+func TestTriggerInjectsReviewerRulesIntoLaunchSpec(t *testing.T) {
+	store := &fakeStore{}
+	launcher := &fakeLauncher{handle: "review-mer-1"}
+	projects := fakeProjects{cfg: domain.ProjectConfig{ReviewerRules: "Focus on tenant isolation."}}
+	eng := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), projects, launcher)
+
+	if _, err := eng.Trigger(context.Background(), "mer-1"); err != nil {
+		t.Fatalf("Trigger: %v", err)
+	}
+	if launcher.gotSpec.ReviewerRules != "Focus on tenant isolation." {
+		t.Fatalf("launch spec reviewer rules = %q, want the configured rules", launcher.gotSpec.ReviewerRules)
+	}
+}
+
+func TestTriggerFailsClosedOnMissingReviewerRulesFile(t *testing.T) {
+	store := &fakeStore{}
+	launcher := &fakeLauncher{handle: "review-mer-1"}
+	projects := fakeProjects{cfg: domain.ProjectConfig{ReviewerRulesFile: "docs/missing.md"}, path: t.TempDir()}
+	eng := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), projects, launcher)
+
+	if _, err := eng.Trigger(context.Background(), "mer-1"); err == nil {
+		t.Fatal("expected Trigger to fail closed on missing reviewer rules file")
+	}
+	if launcher.spawned {
+		t.Fatal("reviewer must not spawn when its rules file is misconfigured")
+	}
+}
 
 func TestTriggerSpawnsNewReviewerAndRecordsRunAfterLaunch(t *testing.T) {
 	store := &fakeStore{}

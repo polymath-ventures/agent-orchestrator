@@ -19,6 +19,7 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	sessionmanager "github.com/aoagents/agent-orchestrator/backend/internal/session_manager"
 )
 
 // ErrInvalid and ErrNotFound let the transport layer map failures to 422/404.
@@ -266,6 +267,10 @@ func (e *Engine) Trigger(ctx stdctx.Context, workerID domain.SessionID) (Trigger
 
 	handleID := ""
 	queue := reviewQueue(created)
+	reviewerRules, err := e.reviewerRules(ctx, worker)
+	if err != nil {
+		return TriggerResult{}, failRuns(0, fmt.Errorf("reviewer rules: %w", err))
+	}
 	if hasReview && reviewRow.ReviewerHandleID != "" {
 		alive, err := e.launcher.Alive(ctx, reviewRow.ReviewerHandleID)
 		if err != nil {
@@ -276,13 +281,13 @@ func (e *Engine) Trigger(ctx stdctx.Context, workerID domain.SessionID) (Trigger
 		}
 	}
 	if handleID == "" {
-		h, err := e.launcher.Spawn(ctx, reviewLaunchSpec(worker, harness, created[0], queue, 0))
+		h, err := e.launcher.Spawn(ctx, reviewLaunchSpec(worker, harness, created[0], queue, 0, reviewerRules))
 		if err != nil {
 			return TriggerResult{}, failRuns(0, fmt.Errorf("launch reviewer: %w", err))
 		}
 		handleID = h
 	} else {
-		if err := e.launcher.Notify(ctx, handleID, reviewLaunchSpec(worker, harness, created[0], queue, 0)); err != nil {
+		if err := e.launcher.Notify(ctx, handleID, reviewLaunchSpec(worker, harness, created[0], queue, 0, reviewerRules)); err != nil {
 			return TriggerResult{}, failRuns(0, fmt.Errorf("notify reviewer: %w", err))
 		}
 	}
@@ -296,7 +301,7 @@ func (e *Engine) Trigger(ctx stdctx.Context, workerID domain.SessionID) (Trigger
 	return TriggerResult{Run: created[0], ReviewerHandleID: handleID, Created: true, Reviews: reviews, CreatedRuns: created}, nil
 }
 
-func reviewLaunchSpec(worker domain.SessionRecord, harness domain.ReviewerHarness, run domain.ReviewRun, queue []ports.ReviewTask, index int) LaunchSpec {
+func reviewLaunchSpec(worker domain.SessionRecord, harness domain.ReviewerHarness, run domain.ReviewRun, queue []ports.ReviewTask, index int, reviewerRules string) LaunchSpec {
 	return LaunchSpec{
 		RunID:         run.ID,
 		WorkerID:      worker.ID,
@@ -306,7 +311,33 @@ func reviewLaunchSpec(worker domain.SessionRecord, harness domain.ReviewerHarnes
 		TargetSHA:     run.TargetSHA,
 		ReviewQueue:   queue,
 		ReviewIndex:   index,
+		ReviewerRules: reviewerRules,
 	}
+}
+
+// reviewerRules resolves the operator-controlled reviewer standing instructions
+// for a worker's project, merged (inline + repo-relative file) via the shared
+// role-rules loader. It is fail-closed: a configured-but-unloadable file
+// propagates the loader's error so the reviewer launch fails loudly rather than
+// silently dropping the operator's rules. A project with no reviewer rules
+// returns an empty string.
+func (e *Engine) reviewerRules(ctx stdctx.Context, worker domain.SessionRecord) (string, error) {
+	if e.projects == nil {
+		return "", nil
+	}
+	proj, ok, err := e.projects.GetProject(ctx, string(worker.ProjectID))
+	if err != nil {
+		return "", err
+	}
+	if !ok {
+		return "", nil
+	}
+	return sessionmanager.LoadRoleRules(sessionmanager.RoleRulesConfig{
+		Role:        "reviewer",
+		ProjectPath: proj.Path,
+		InlineRules: proj.Config.ReviewerRules,
+		RulesFile:   proj.Config.ReviewerRulesFile,
+	})
 }
 
 func reviewQueue(runs []domain.ReviewRun) []ports.ReviewTask {

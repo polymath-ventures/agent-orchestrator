@@ -38,6 +38,10 @@ type LaunchSpec struct {
 	TargetSHA     string
 	ReviewQueue   []ports.ReviewTask
 	ReviewIndex   int
+	// ReviewerRules is the operator-controlled standing instructions for the
+	// reviewer role, already merged (inline + file) and injected verbatim into
+	// the reviewer system prompt. Empty when the project configures none.
+	ReviewerRules string
 }
 
 // reviewerRuntime is the runtime surface the launcher needs: create a pane,

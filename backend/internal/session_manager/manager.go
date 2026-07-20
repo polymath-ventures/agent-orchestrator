@@ -2181,7 +2181,16 @@ func (m *Manager) buildSystemPrompt(ctx context.Context, kind domain.SessionKind
 
 	switch kind {
 	case domain.KindOrchestrator:
-		cfg.OrchestratorRules = project.Config.OrchestratorRules
+		rules, err := LoadRoleRules(RoleRulesConfig{
+			Role:        "orchestrator",
+			ProjectPath: project.Path,
+			InlineRules: project.Config.OrchestratorRules,
+			RulesFile:   project.Config.OrchestratorRulesFile,
+		})
+		if err != nil {
+			return "", err
+		}
+		cfg.OrchestratorRules = rules
 	case domain.KindWorker:
 		orchestratorID, ok, err := m.activeOrchestratorSessionID(ctx, projectID)
 		if err != nil {
@@ -2190,7 +2199,7 @@ func (m *Manager) buildSystemPrompt(ctx context.Context, kind domain.SessionKind
 		if ok {
 			cfg.OrchestratorSessionID = string(orchestratorID)
 		}
-		rules, err := loadRoleRules(roleRulesConfig{
+		rules, err := LoadRoleRules(RoleRulesConfig{
 			Role:        "worker",
 			ProjectPath: project.Path,
 			InlineRules: project.Config.AgentRules,
