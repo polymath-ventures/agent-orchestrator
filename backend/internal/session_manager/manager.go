@@ -4,6 +4,8 @@ package sessionmanager
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -73,6 +75,9 @@ const (
 	EnvSessionID = "AO_SESSION_ID"
 	EnvProjectID = "AO_PROJECT_ID"
 	EnvIssueID   = "AO_ISSUE_ID"
+	// EnvRuntimeToken scopes activity hooks to the runtime generation that
+	// launched them so stale hooks cannot mutate a replacement session.
+	EnvRuntimeToken = "AO_RUNTIME_TOKEN" // #nosec G101 -- env var name, not a credential value.
 	// EnvDataDir tells a spawned agent's AO hook commands where the store lives.
 	EnvDataDir = "AO_DATA_DIR"
 )
@@ -100,6 +105,10 @@ type runtimeController interface {
 	// IsAlive reports whether the handle's runtime session still exists. Used by
 	// Reconcile on boot to adopt crash-surviving sessions and reap leaked ones.
 	IsAlive(ctx context.Context, handle ports.RuntimeHandle) (bool, error)
+}
+
+type launchProcessProber interface {
+	IsRunningCommand(context.Context, ports.RuntimeHandle, string) (bool, error)
 }
 
 // RestoreMode reports whether a restore continued an agent-native transcript or
@@ -386,7 +395,12 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	}
 	agentConfig := effectiveAgentConfig(cfg.Kind, project.Config)
 	agentConfig.Model = cfg.Model
-	env := m.runtimeEnv(id, cfg.ProjectID, cfg.IssueID, project.Config.Env)
+	runtimeToken, err := newRuntimeToken()
+	if err != nil {
+		m.rollbackSpawnSeedRow(ctx, id)
+		return domain.SessionRecord{}, fmt.Errorf("spawn %s: runtime token: %w", id, err)
+	}
+	env := m.runtimeEnv(id, cfg.ProjectID, cfg.IssueID, runtimeToken, project.Config.Env)
 	m.augmentAgentRuntimeEnv(agent, env)
 	if err := m.prepareWorkspace(ctx, agent, id, ws.Path, systemPrompt, systemPromptFile, agentConfig, env); err != nil {
 		m.destroySpawnWorkspace(ctx, ws, workspaceProject)
@@ -456,7 +470,14 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: runtime: %w", id, err)
 	}
 
-	metadata := domain.SessionMetadata{Branch: ws.Branch, WorkspacePath: ws.Path, RuntimeHandleID: handle.ID, Prompt: prompt}
+	if err := m.verifyLaunchCommandRunning(ctx, handle, argv[0]); err != nil {
+		_ = m.runtime.Destroy(ctx, handle)
+		m.rollbackPreparedSpawnWorkspace(ctx, rec, ws, workspaceProject)
+		m.rollbackSpawnSeedRow(ctx, id)
+		m.markMixCandidateDown(ctx, mixSelected, cfg, err)
+		return domain.SessionRecord{}, fmt.Errorf("spawn %s: launch process: %w", id, err)
+	}
+	metadata := domain.SessionMetadata{Branch: ws.Branch, WorkspacePath: ws.Path, RuntimeHandleID: handle.ID, RuntimeToken: runtimeToken, Prompt: prompt}
 	if err := m.lcm.MarkSpawned(ctx, id, metadata); err != nil {
 		_ = m.runtime.Destroy(ctx, handle)
 		m.rollbackPreparedSpawnWorkspace(ctx, rec, ws, workspaceProject)
@@ -470,6 +491,13 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 			m.markSpawnFailedTerminatedWithoutWorkspace(ctx, id)
 			return domain.SessionRecord{}, fmt.Errorf("spawn %s: deliver prompt: %w", id, err)
 		}
+	}
+	if err := m.verifyLaunchCommandRunning(ctx, handle, argv[0]); err != nil {
+		_ = m.runtime.Destroy(ctx, handle)
+		m.rollbackPreparedSpawnWorkspace(ctx, rec, ws, workspaceProject)
+		m.markSpawnFailedTerminatedWithoutWorkspace(ctx, id)
+		m.markMixCandidateDown(ctx, mixSelected, cfg, err)
+		return domain.SessionRecord{}, fmt.Errorf("spawn %s: launch process: %w", id, err)
 	}
 	// The spawn launched end to end. A success on a candidate that is a
 	// configured mix bucket clears any stale down state for that exact bucket;
@@ -1127,7 +1155,11 @@ func (m *Manager) relaunchRestoredSession(ctx context.Context, rec domain.Sessio
 	if rec.MixSelected || rec.Model != "" {
 		agentConfig.Model = rec.Model
 	}
-	env := m.runtimeEnv(rec.ID, rec.ProjectID, rec.IssueID, project.Config.Env)
+	runtimeToken, err := newRuntimeToken()
+	if err != nil {
+		return RestoreResult{}, fmt.Errorf("restore %s: runtime token: %w", rec.ID, err)
+	}
+	env := m.runtimeEnv(rec.ID, rec.ProjectID, rec.IssueID, runtimeToken, project.Config.Env)
 	m.augmentAgentRuntimeEnv(agent, env)
 	if err := m.prepareWorkspace(ctx, agent, rec.ID, ws.Path, systemPrompt, systemPromptFile, agentConfig, env); err != nil {
 		return RestoreResult{}, fmt.Errorf("restore %s: %w", rec.ID, err)
@@ -1147,7 +1179,12 @@ func (m *Manager) relaunchRestoredSession(ctx context.Context, rec domain.Sessio
 		m.cleanupSystemPromptDir(rec.ID)
 		return RestoreResult{}, fmt.Errorf("restore %s: runtime: %w", rec.ID, err)
 	}
-	metadata := domain.SessionMetadata{Branch: ws.Branch, WorkspacePath: ws.Path, RuntimeHandleID: handle.ID, AgentSessionID: rec.Metadata.AgentSessionID, Prompt: rec.Metadata.Prompt}
+	if err := m.verifyLaunchCommandRunning(ctx, handle, argv[0]); err != nil {
+		_ = m.runtime.Destroy(ctx, handle)
+		m.cleanupSystemPromptDir(rec.ID)
+		return RestoreResult{}, fmt.Errorf("restore %s: launch process: %w", rec.ID, err)
+	}
+	metadata := domain.SessionMetadata{Branch: ws.Branch, WorkspacePath: ws.Path, RuntimeHandleID: handle.ID, RuntimeToken: runtimeToken, AgentSessionID: rec.Metadata.AgentSessionID, Prompt: rec.Metadata.Prompt}
 	if err := m.lcm.MarkSpawned(ctx, rec.ID, metadata); err != nil {
 		_ = m.runtime.Destroy(ctx, handle)
 		m.cleanupSystemPromptDir(rec.ID)
@@ -1171,6 +1208,11 @@ func (m *Manager) relaunchRestoredSession(ctx context.Context, rec domain.Sessio
 			m.cleanupSystemPromptDir(rec.ID)
 			return RestoreResult{}, fmt.Errorf("restore %s: deliver prompt: %w", rec.ID, err)
 		}
+	}
+	if err := m.verifyLaunchCommandRunning(ctx, handle, argv[0]); err != nil {
+		_ = m.runtime.Destroy(ctx, handle)
+		m.cleanupSystemPromptDir(rec.ID)
+		return RestoreResult{}, fmt.Errorf("restore %s: launch process: %w", rec.ID, err)
 	}
 	updated, err := m.getRecord(ctx, rec.ID)
 	if err != nil {
@@ -2357,14 +2399,15 @@ func workspaceRepoList(repos []domain.WorkspaceRepoRecord) string {
 // spawnEnv builds the runtime environment: the per-project env vars first, then
 // the AO-internal vars last so they always win (a project cannot override
 // AO_SESSION_ID and friends).
-func spawnEnv(id domain.SessionID, project domain.ProjectID, issue domain.IssueID, dataDir string, projectEnv map[string]string) map[string]string {
-	env := make(map[string]string, len(projectEnv)+4)
+func spawnEnv(id domain.SessionID, project domain.ProjectID, issue domain.IssueID, dataDir, runtimeToken string, projectEnv map[string]string) map[string]string {
+	env := make(map[string]string, len(projectEnv)+5)
 	for k, v := range projectEnv {
 		env[k] = v
 	}
 	env[EnvSessionID] = string(id)
 	env[EnvProjectID] = string(project)
 	env[EnvIssueID] = string(issue)
+	env[EnvRuntimeToken] = runtimeToken
 	env[EnvDataDir] = dataDir
 	return env
 }
@@ -2376,8 +2419,8 @@ func spawnEnv(id domain.SessionID, project domain.ProjectID, issue domain.IssueI
 // command, which fails every callback and silently kills activity tracking).
 // When the pin cannot be applied the inherited PATH is kept and a warning is
 // logged so the degradation isn't silent.
-func (m *Manager) runtimeEnv(id domain.SessionID, project domain.ProjectID, issue domain.IssueID, projectEnv map[string]string) map[string]string {
-	env := spawnEnv(id, project, issue, m.dataDir, projectEnv)
+func (m *Manager) runtimeEnv(id domain.SessionID, project domain.ProjectID, issue domain.IssueID, runtimeToken string, projectEnv map[string]string) map[string]string {
+	env := spawnEnv(id, project, issue, m.dataDir, runtimeToken, projectEnv)
 	path, err := HookPATH(m.executable, os.Getenv, projectEnv)
 	if err != nil {
 		m.logger.Warn("session PATH not pinned to the daemon binary; `ao hooks` callbacks may resolve to a different ao and activity tracking will stall",
@@ -2386,6 +2429,38 @@ func (m *Manager) runtimeEnv(id domain.SessionID, project domain.ProjectID, issu
 	}
 	env["PATH"] = path
 	return env
+}
+
+func newRuntimeToken() (string, error) {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b[:]), nil
+}
+
+func (m *Manager) verifyLaunchCommandRunning(ctx context.Context, handle ports.RuntimeHandle, command string) error {
+	prober, ok := m.runtime.(launchProcessProber)
+	if !ok {
+		return nil
+	}
+	running, err := prober.IsRunningCommand(ctx, handle, command)
+	if err != nil {
+		alive, aliveErr := m.runtime.IsAlive(ctx, handle)
+		if alive && aliveErr == nil {
+			m.logger.Warn("spawn: launch-process probe failed but runtime session is alive; keeping session",
+				"handle", handle.ID, "command", command, "error", err)
+			return nil
+		}
+		if aliveErr != nil {
+			return errors.Join(err, fmt.Errorf("session liveness probe: %w", aliveErr))
+		}
+		return err
+	}
+	if running {
+		return nil
+	}
+	return fmt.Errorf("%q exited before spawn completed", command)
 }
 
 // HookPATH builds the PATH value pinned into a spawned session: the daemon
@@ -2582,9 +2657,9 @@ func (m *Manager) cleanupAgentWorkspace(ctx context.Context, rec domain.SessionR
 	if !ok {
 		return
 	}
-	env := spawnEnv(rec.ID, rec.ProjectID, rec.IssueID, m.dataDir, nil)
+	env := spawnEnv(rec.ID, rec.ProjectID, rec.IssueID, m.dataDir, rec.Metadata.RuntimeToken, nil)
 	if project, err := m.loadProject(ctx, rec.ProjectID); err == nil {
-		env = m.runtimeEnv(rec.ID, rec.ProjectID, rec.IssueID, project.Config.Env)
+		env = m.runtimeEnv(rec.ID, rec.ProjectID, rec.IssueID, rec.Metadata.RuntimeToken, project.Config.Env)
 	} else {
 		m.logger.Warn("workspace cleanup: project env unavailable; agent cleanup using AO env only",
 			"sessionID", rec.ID, "projectID", rec.ProjectID, "error", err)

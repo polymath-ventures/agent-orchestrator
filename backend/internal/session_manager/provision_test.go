@@ -11,10 +11,11 @@ import (
 )
 
 func TestSpawnEnvProjectVarsCannotOverrideInternal(t *testing.T) {
-	env := spawnEnv("mer-1", "mer", "issue-9", "/data", map[string]string{
-		"FOO":        "bar",
-		EnvSessionID: "hacked", // a project must not override AO-internal vars
-		EnvProjectID: "hacked",
+	env := spawnEnv("mer-1", "mer", "issue-9", "/data", "token-1", map[string]string{
+		"FOO":           "bar",
+		EnvSessionID:    "hacked", // a project must not override AO-internal vars
+		EnvProjectID:    "hacked",
+		EnvRuntimeToken: "hacked",
 	})
 	if env["FOO"] != "bar" {
 		t.Fatalf("FOO = %q, want bar", env["FOO"])
@@ -24,6 +25,9 @@ func TestSpawnEnvProjectVarsCannotOverrideInternal(t *testing.T) {
 	}
 	if env[EnvProjectID] != "mer" {
 		t.Fatalf("AO_PROJECT_ID = %q, want mer (internal wins)", env[EnvProjectID])
+	}
+	if env[EnvRuntimeToken] != "token-1" {
+		t.Fatalf("AO_RUNTIME_TOKEN = %q, want token-1 (internal wins)", env[EnvRuntimeToken])
 	}
 }
 

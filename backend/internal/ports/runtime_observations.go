@@ -13,9 +13,10 @@ type ProbeResult string
 // Probe readings. Alive/Dead are conclusions; Failed is ignored by lifecycle
 // because it is not a reliable death decision.
 const (
-	ProbeAlive  ProbeResult = "alive"
-	ProbeDead   ProbeResult = "dead"
-	ProbeFailed ProbeResult = "failed"
+	ProbeAlive       ProbeResult = "alive"
+	ProbeDead        ProbeResult = "dead"
+	ProbeAgentExited ProbeResult = "agent_exited"
+	ProbeFailed      ProbeResult = "failed"
 )
 
 // RuntimeFacts is what the reaper reports each probe of a session runtime.
@@ -41,6 +42,7 @@ type ActivitySignal struct {
 	State          domain.ActivityState
 	Timestamp      time.Time
 	Harness        domain.AgentHarness
+	RuntimeToken   string
 	Event          string
 	ToolName       string
 	ToolUseID      string

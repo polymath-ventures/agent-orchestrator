@@ -3147,6 +3147,10 @@ components:
           description: Agent harness reporting the activity, used for usage telemetry
             attribution when the session row has no harness.
           type: string
+        runtimeToken:
+          description: Runtime generation token exported to this session's hooks;
+            stale tokens are ignored.
+          type: string
         state:
           description: Agent activity state reported by an agent hook. Optional for
             metadata-only hooks.

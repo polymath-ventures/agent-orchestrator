@@ -459,6 +459,7 @@ type ClaimPRResponse struct {
 type SetActivityRequest struct {
 	State          string               `json:"state,omitempty" enum:"active,idle,waiting_input,blocked,exited" description:"Agent activity state reported by an agent hook. Optional for metadata-only hooks."`
 	Harness        string               `json:"harness,omitempty" description:"Agent harness reporting the activity, used for usage telemetry attribution when the session row has no harness."`
+	RuntimeToken   string               `json:"runtimeToken,omitempty" description:"Runtime generation token exported to this session's hooks; stale tokens are ignored."`
 	Event          string               `json:"event,omitempty" description:"AO hook sub-command that produced this state (e.g. post-tool-use)."`
 	ToolName       string               `json:"toolName,omitempty" description:"Native tool name, for tool-use hook events."`
 	ToolUseID      string               `json:"toolUseId,omitempty" description:"Native tool-use id, for tool-use hook events."`

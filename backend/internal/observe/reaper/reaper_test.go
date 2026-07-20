@@ -32,12 +32,18 @@ func (s fakeSessions) ListAllSessions(context.Context) ([]domain.SessionRecord, 
 }
 
 type fakeRuntime struct {
-	alive bool
-	err   error
+	alive   bool
+	err     error
+	running bool
+	runErr  error
 }
 
 func (r fakeRuntime) IsAlive(context.Context, ports.RuntimeHandle) (bool, error) {
 	return r.alive, r.err
+}
+
+func (r fakeRuntime) IsRunningCommand(context.Context, ports.RuntimeHandle, string) (bool, error) {
+	return r.running, r.runErr
 }
 
 func probableSession(id domain.SessionID) domain.SessionRecord {
@@ -57,11 +63,24 @@ func newReaper(lcm *fakeLCM, sessions fakeSessions, rt fakeRuntime) *Reaper {
 func TestTick_ReportsAliveProbe(t *testing.T) {
 	lcm := &fakeLCM{}
 	sessions := fakeSessions{rows: []domain.SessionRecord{probableSession("mer-1")}}
-	if err := newReaper(lcm, sessions, fakeRuntime{alive: true}).Tick(ctx); err != nil {
+	if err := newReaper(lcm, sessions, fakeRuntime{alive: true, running: true}).Tick(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if lcm.observed["mer-1"].Probe != ports.ProbeAlive {
 		t.Fatalf("want alive probe, got %q", lcm.observed["mer-1"].Probe)
+	}
+}
+
+func TestTick_ReportsAgentExitedForCodexWhenPaneStaysAlive(t *testing.T) {
+	lcm := &fakeLCM{}
+	sess := probableSession("mer-1")
+	sess.Harness = domain.HarnessCodex
+	sessions := fakeSessions{rows: []domain.SessionRecord{sess}}
+	if err := newReaper(lcm, sessions, fakeRuntime{alive: true, running: false}).Tick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if lcm.observed["mer-1"].Probe != ports.ProbeAgentExited {
+		t.Fatalf("want agent_exited probe, got %q", lcm.observed["mer-1"].Probe)
 	}
 }
 
