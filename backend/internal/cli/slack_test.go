@@ -3,11 +3,14 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestRenderNotificationPerType(t *testing.T) {
@@ -215,5 +218,50 @@ func TestOpenNotificationStreamSurfacesAPIError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "not implemented") {
 		t.Fatalf("expected the API envelope message, got %q", err.Error())
+	}
+}
+
+// Regression: the webhook URL is the credential. Go's *url.Error embeds the
+// full request URL, and delivery errors are printed to stderr, so wrapping the
+// transport error directly leaked the secret.
+func TestSlackPosterNeverLeaksWebhookURLInErrors(t *testing.T) {
+	// The credential in a Slack incoming webhook is the PATH token, not the
+	// host. Point at a closed port so the transport fails with a *url.Error,
+	// which carries the full URL — token included — unless it is scrubbed.
+	const token = "SUPERSECRETTOKEN"
+	secret := "http://127.0.0.1:1/services/T00/B00/" + token
+	poster := slackPoster{client: &http.Client{Timeout: time.Second}, webhookURL: secret}
+
+	err := poster.post(context.Background(), "hello")
+	if err == nil {
+		t.Fatal("expected a transport error")
+	}
+	if strings.Contains(err.Error(), token) {
+		t.Fatalf("transport error leaked the webhook token: %q", err.Error())
+	}
+
+	// And the scrubber redacts the configured URL wherever it appears.
+	wrapped := &url.Error{Op: "Post", URL: secret, Err: errors.New("dial tcp: connection refused to " + secret)}
+	got := scrubWebhookURL(wrapped, secret)
+	if strings.Contains(got, "SUPERSECRETTOKEN") {
+		t.Fatalf("scrubbed message still contains the secret: %q", got)
+	}
+	if !strings.Contains(got, "connection refused") {
+		t.Fatalf("scrubbing must keep the useful part of the error, got %q", got)
+	}
+}
+
+// Regression: Slack link syntax is <url|label>, so a URL carrying those
+// delimiters could close the link early and inject markup.
+func TestRenderNotificationDoesNotTrustAnInjectingPRURL(t *testing.T) {
+	got := renderNotification(slackNotification{
+		ID: "ntf_inj", Type: "pr_merged", Title: "PR merged",
+		PRURL: "https://evil.example/x|*pwned*>extra",
+	})
+	if strings.Contains(got, "|*pwned*>") {
+		t.Fatalf("URL delimiters were trusted in link position: %q", got)
+	}
+	if !strings.Contains(got, "&gt;") && !strings.Contains(got, "&lt;") {
+		t.Fatalf("expected the suspicious URL to be escaped as text, got %q", got)
 	}
 }

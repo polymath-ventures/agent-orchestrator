@@ -66,23 +66,36 @@ field and `notify.Publisher` has exactly one implementation — there is no plur
 path means inventing a delivery-target registry, a settings surface, secret storage, and retry, all
 in files upstream owns.
 
-### Open the stream before reconciling
+### Open the stream before reconciling — and consume it *while* reconciling
 
 Ordering matters and is the reason this needs no persistence. The command **subscribes first, then
 lists unread**. Any notification published during the gap is caught by the listing; any notification
 present in both is collapsed by ID dedupe. Reconciling first and subscribing second would leave a
-genuine hole between the two calls. This makes at-most-once delivery a property of the ordering
-rather than something a later check has to repair.
+genuine hole between the two calls.
 
-### Dedupe by notification ID with a bounded set
+Subscribing first is only half of it, though. If the listing's deliveries had to finish before the
+first stream read, a slow webhook could stall consumption long enough for the daemon's 64-slot
+subscriber buffer to overflow — and `Hub.Publish` drops rather than blocks, losing notifications
+published after the listing snapshot. So reconciliation runs **concurrently** with consumption, and
+a single mutex-guarded deliverer serializes the two producers. (This was found in review; the
+original version reconciled before consuming and the gap argument was overstated.)
 
-Delivered notification IDs are held in memory. The set is bounded rather than unbounded because the
-process is long-lived: reconciliation only ever lists **unread** notifications, capped by the
-service's list limit, so retaining a multiple of that cap is provably sufficient — an ID evicted
-from the set can no longer appear in any future listing. *Alternative rejected: persisting delivered
-IDs to disk.* It buys only cross-restart dedupe, whose failure mode is a duplicate Slack line after
-a restart, and it introduces state that violates the "removing the config leaves zero residue"
-requirement.
+### Dedupe by notification ID, recorded only on success, in an unbounded ledger
+
+Delivered notification IDs are held in memory, and an ID is recorded **only after Slack accepts the
+message**. Recording before the post — the original version — meant a failed delivery permanently
+suppressed that notification, because reconciliation would then skip it forever.
+
+The ledger is unbounded. An earlier version evicted the oldest entries, arguing that a notification
+too old to appear in a capped unread listing could never be re-offered. That argument is false: this
+command never marks anything read, so a delivered notification stays *unread* and can re-enter the
+listing once newer ones are read in the UI. Eviction therefore reintroduces exactly the duplicates
+dedupe exists to prevent. Entries are one notification id apiece, so the ledger stays small in any
+realistic run. (Both defects were found in review.)
+
+*Alternative rejected: persisting delivered IDs to disk.* It buys only cross-restart dedupe, whose
+failure mode is a duplicate Slack line after a restart, and it introduces state that violates the
+"removing the config leaves zero residue" requirement.
 
 ### Add one streaming helper to `client.go`
 
@@ -124,9 +137,15 @@ under test.
 ## Risks / Trade-offs
 
 - **Hub drops under load** → `notify.Hub.Publish` is non-blocking and drops on a full 64-slot
-  buffer. Reconciliation on reconnect does not help if the connection never drops. Accepted: the
-  notification volume this fork produces is far below that threshold, and the alternative is daemon
-  changes. Noted here so a future operator recognizes the symptom.
+  buffer. Consuming concurrently with reconciliation keeps that buffer draining, but a burst of more
+  than 64 notifications faster than Slack accepts them can still drop. Reconciliation on reconnect
+  does not help if the connection never drops. Accepted: the notification volume this fork produces
+  is far below that threshold, and the alternative is daemon changes. Noted here so a future
+  operator recognizes the symptom.
+- **Backlog deeper than one unread page** → reconciliation asks for the daemon's maximum unread page
+  (100). A disconnection that accumulates more than that many unread notifications cannot recover
+  the oldest ones from the listing, and they were never on the stream. Accepted: recovering deeper
+  history needs pagination or daemon changes, and the bell has the same horizon.
 - **Duplicate line after a restart** → in-memory dedupe means a restart can re-deliver notifications
   still unread. Accepted deliberately over on-disk state; a repeated Slack line is cheap.
 - **Secret in a flag** → mitigated by making the env var the documented path and the flag the

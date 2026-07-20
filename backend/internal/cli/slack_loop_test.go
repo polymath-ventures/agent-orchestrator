@@ -128,15 +128,32 @@ func (d *fakeDaemon) requestPaths() []string {
 
 // runLoop starts runSlackNotify in the background and returns a cancel func and
 // a channel carrying its return value.
+// fastReconnect shrinks the loop's pacing so tests exercise real cancellable
+// waits without spending seconds in them.
+func fastReconnect(t *testing.T) {
+	t.Helper()
+	origDelay, origMax := slackReconnectDelay, slackMaxReconnectDelay
+	slackReconnectDelay = 5 * time.Millisecond
+	slackMaxReconnectDelay = 20 * time.Millisecond
+	t.Cleanup(func() {
+		slackReconnectDelay, slackMaxReconnectDelay = origDelay, origMax
+	})
+}
+
+// settle gives any in-flight duplicate delivery a chance to land, so an
+// exactly-once assertion fails loudly instead of passing by racing ahead of the
+// delivery it should have caught.
+func settle() { time.Sleep(150 * time.Millisecond) }
+
 func runLoop(t *testing.T, daemon *fakeDaemon, sink *slackSink) (context.CancelFunc, <-chan error) {
 	t.Helper()
+	fastReconnect(t)
 	cfg := setConfigEnv(t)
 	writeRunFileFor(t, cfg, daemon.srv)
 
 	ctx := &commandContext{deps: Deps{
 		HTTPClient:   &http.Client{},
 		ProcessAlive: func(int) bool { return true },
-		Sleep:        func(time.Duration) {},
 		Now:          time.Now,
 	}.withDefaults()}
 
@@ -209,7 +226,9 @@ func TestSlackNotifyDeliversStreamAndReconciledNotificationsOnce(t *testing.T) {
 	})
 
 	cancel, errCh := runLoop(t, daemon, sink)
-	got := sink.waitFor(t, 2)
+	sink.waitFor(t, 2)
+	settle() // let a duplicate land if the dedupe is broken
+	got := sink.delivered()
 
 	if len(got) != 2 {
 		t.Fatalf("expected exactly 2 deliveries, got %d: %v", len(got), got)
@@ -246,7 +265,9 @@ func TestSlackNotifyReconnectsAndReconcilesTheGap(t *testing.T) {
 	})
 
 	cancel, errCh := runLoop(t, daemon, sink)
-	got := sink.waitFor(t, 2)
+	sink.waitFor(t, 2)
+	settle()
+	got := sink.delivered()
 
 	joined := strings.Join(got, "|")
 	if strings.Count(joined, "Before drop") != 1 {
@@ -279,6 +300,7 @@ func TestSlackNotifySendsNothingWhenNothingWasMissed(t *testing.T) {
 	// Wait for a reconnect so the second reconciliation has definitely run.
 	<-reconnected
 	<-reconnected
+	settle() // both reconciliations have now run
 
 	if got := sink.delivered(); len(got) != 1 {
 		t.Fatalf("expected no re-delivery when nothing was missed, got %v", got)
@@ -320,10 +342,10 @@ func TestSlackNotifyContinuesWhenSlackRejectsAMessage(t *testing.T) {
 
 	cfg := setConfigEnv(t)
 	writeRunFileFor(t, cfg, daemon.srv)
+	fastReconnect(t)
 	ctx := &commandContext{deps: Deps{
 		HTTPClient:   &http.Client{},
 		ProcessAlive: func(int) bool { return true },
-		Sleep:        func(time.Duration) {},
 	}.withDefaults()}
 
 	runCtx, cancel := context.WithCancel(context.Background())
@@ -348,7 +370,6 @@ func TestSlackNotifyFailsFastWhenDaemonUnreachableAtStartup(t *testing.T) {
 	ctx := &commandContext{deps: Deps{
 		HTTPClient:   &http.Client{},
 		ProcessAlive: func(int) bool { return true },
-		Sleep:        func(time.Duration) {},
 	}.withDefaults()}
 
 	err := ctx.runSlackNotify(context.Background(), slackNotifyOptions{webhookURL: sink.srv.URL})
@@ -389,4 +410,192 @@ func TestNotifySlackReadsWebhookFromEnv(t *testing.T) {
 	if !strings.Contains(err.Error(), "not running") {
 		t.Fatalf("expected a daemon not-running error, got %v", err)
 	}
+}
+
+// Regression for a review finding: an id was recorded as delivered BEFORE Slack
+// acknowledged it, so a failed post silently suppressed that notification for
+// the rest of the process's life. It must stay undelivered and be retried.
+func TestSlackNotifyRetriesAfterAFailedPost(t *testing.T) {
+	var mu sync.Mutex
+	var attempts int
+	accepted := make(chan string, 8)
+	slackSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		attempts++
+		first := attempts == 1
+		mu.Unlock()
+		if first {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		var payload struct {
+			Text string `json:"text"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&payload)
+		accepted <- payload.Text
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer slackSrv.Close()
+
+	// The same single notification is offered on every reconciliation.
+	daemon := newFakeDaemon(t, &fakeDaemon{
+		unread: func(int) []slackNotification {
+			return []slackNotification{{ID: "ntf_retry", Type: "needs_input", Title: "Must be retried"}}
+		},
+		stream: func(_ *testing.T, connection int, _ http.ResponseWriter, _ func(), ctx context.Context) {
+			if connection <= 2 {
+				return // drop, forcing another reconciliation
+			}
+			<-ctx.Done()
+		},
+	})
+
+	fastReconnect(t)
+	cfg := setConfigEnv(t)
+	writeRunFileFor(t, cfg, daemon.srv)
+	ctx := &commandContext{deps: Deps{
+		HTTPClient:   &http.Client{},
+		ProcessAlive: func(int) bool { return true },
+	}.withDefaults()}
+
+	runCtx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() { errCh <- ctx.runSlackNotify(runCtx, slackNotifyOptions{webhookURL: slackSrv.URL}) }()
+
+	select {
+	case text := <-accepted:
+		if !strings.Contains(text, "Must be retried") {
+			t.Fatalf("unexpected delivery %q", text)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("a notification whose first post failed was never retried")
+	}
+	expectCleanShutdown(t, cancel, errCh)
+}
+
+// Regression: reconciliation must ask for the daemon's maximum unread page, not
+// silently accept the smaller default, or a backlog is truncated.
+func TestSlackNotifyRequestsTheMaximumUnreadPage(t *testing.T) {
+	sink := newSlackSink(t)
+	queries := make(chan string, 4)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/notifications/stream":
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+			w.(http.Flusher).Flush()
+			<-r.Context().Done()
+		case "/api/v1/notifications":
+			select {
+			case queries <- r.URL.RawQuery:
+			default:
+			}
+			_ = json.NewEncoder(w).Encode(listNotificationsAPIResponse{})
+		}
+	}))
+	defer srv.Close()
+
+	fastReconnect(t)
+	cfg := setConfigEnv(t)
+	writeRunFileFor(t, cfg, srv)
+	ctx := &commandContext{deps: Deps{
+		HTTPClient:   &http.Client{},
+		ProcessAlive: func(int) bool { return true },
+	}.withDefaults()}
+
+	runCtx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() { errCh <- ctx.runSlackNotify(runCtx, slackNotifyOptions{webhookURL: sink.srv.URL}) }()
+
+	select {
+	case q := <-queries:
+		if !strings.Contains(q, "limit=100") {
+			t.Fatalf("expected the maximum unread page to be requested, got %q", q)
+		}
+		if !strings.Contains(q, "status=unread") {
+			t.Fatalf("expected an unread filter, got %q", q)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("reconciliation never queried the notifications list")
+	}
+	expectCleanShutdown(t, cancel, errCh)
+}
+
+// Regression: a long backoff must not delay shutdown. With the daemon gone the
+// loop is in a reconnect wait; cancelling must return promptly.
+func TestSlackNotifyShutsDownPromptlyDuringBackoff(t *testing.T) {
+	sink := newSlackSink(t)
+	daemon := newFakeDaemon(t, &fakeDaemon{
+		unread: func(int) []slackNotification { return nil },
+		// Always drop the connection, so the loop keeps backing off.
+		stream: func(_ *testing.T, _ int, _ http.ResponseWriter, _ func(), _ context.Context) {},
+	})
+
+	// A long backoff that only a cancellable wait can escape quickly.
+	origDelay, origMax := slackReconnectDelay, slackMaxReconnectDelay
+	slackReconnectDelay = 30 * time.Second
+	slackMaxReconnectDelay = 30 * time.Second
+	t.Cleanup(func() { slackReconnectDelay, slackMaxReconnectDelay = origDelay, origMax })
+
+	cfg := setConfigEnv(t)
+	writeRunFileFor(t, cfg, daemon.srv)
+	ctx := &commandContext{deps: Deps{
+		HTTPClient:   &http.Client{},
+		ProcessAlive: func(int) bool { return true },
+	}.withDefaults()}
+
+	runCtx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() { errCh <- ctx.runSlackNotify(runCtx, slackNotifyOptions{webhookURL: sink.srv.URL}) }()
+
+	time.Sleep(100 * time.Millisecond) // let it enter the wait
+	start := time.Now()
+	cancel()
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("expected clean shutdown, got %v", err)
+		}
+		if elapsed := time.Since(start); elapsed > 5*time.Second {
+			t.Fatalf("shutdown took %s — the backoff wait ignored cancellation", elapsed)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("shutdown blocked on the backoff wait")
+	}
+}
+
+// The parser must handle what the daemon's writeNotificationSSE emits, plus the
+// SSE constructs a well-behaved server may add: comments/keep-alives, CRLF line
+// endings, and multi-line data fields (joined with a newline, per the spec).
+func TestSlackNotifyParsesSSEVariants(t *testing.T) {
+	sink := newSlackSink(t)
+	daemon := newFakeDaemon(t, &fakeDaemon{
+		unread: func(int) []slackNotification { return nil },
+		stream: func(_ *testing.T, _ int, w http.ResponseWriter, flush func(), ctx context.Context) {
+			// Keep-alive comment, then a CRLF-framed event.
+			_, _ = w.Write([]byte(": keep-alive\r\n\r\n"))
+			_, _ = w.Write([]byte("event: notification_created\r\ndata: " +
+				`{"id":"ntf_crlf","type":"pr_merged","title":"CRLF ok"}` + "\r\n\r\n"))
+			flush()
+			// A multi-line data field: the two lines join with "\n" to form
+			// valid JSON. Concatenating them without the newline still parses
+			// here, so the payload is split mid-token to prove the join.
+			_, _ = w.Write([]byte("data: {\"id\":\"ntf_multi\",\"type\":\"needs_input\",\n"))
+			_, _ = w.Write([]byte("data: \"title\":\"Multi ok\"}\n\n"))
+			flush()
+			<-ctx.Done()
+		},
+	})
+
+	cancel, errCh := runLoop(t, daemon, sink)
+	got := sink.waitFor(t, 2)
+
+	joined := strings.Join(got, "|")
+	if !strings.Contains(joined, "CRLF ok") {
+		t.Fatalf("CRLF-framed event was not delivered: %v", got)
+	}
+	if !strings.Contains(joined, "Multi ok") {
+		t.Fatalf("multi-line data field was not delivered: %v", got)
+	}
+	expectCleanShutdown(t, cancel, errCh)
 }
