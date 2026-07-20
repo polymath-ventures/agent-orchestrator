@@ -116,36 +116,6 @@ func (c *commandContext) daemonURL(path string) (string, error) {
 	return fmt.Sprintf("http://%s:%d%s", config.LoopbackHost, info.Port, path), nil
 }
 
-// openStream issues GET /api/v1/<path> and hands back the live response for the
-// caller to consume, undecoded. Unlike doJSONPath it clears the client timeout:
-// a long-lived stream must be bounded by the caller's context, not by a
-// deadline that would sever it mid-consumption. The caller owns closing Body.
-func (c *commandContext) openStream(ctx context.Context, path string) (*http.Response, error) {
-	url, err := c.daemonURL("/api/v1/" + path)
-	if err != nil {
-		return nil, err
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody) // #nosec G704 -- daemon host is fixed loopback; path is an internal API route.
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Accept", "text/event-stream")
-
-	client := *c.deps.HTTPClient
-	client.Timeout = 0
-	resp, err := client.Do(req) // #nosec G704 -- request target is the fixed loopback daemon URL above.
-	if err != nil {
-		return nil, fmt.Errorf("call daemon: %w", err)
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		var e apiError
-		_ = json.NewDecoder(resp.Body).Decode(&e)
-		_ = resp.Body.Close()
-		return nil, apiResponseError{StatusCode: resp.StatusCode, ErrorBody: e}
-	}
-	return resp, nil
-}
-
 func (c *commandContext) doJSONPath(ctx context.Context, method, path string, body, out any) error {
 	url, err := c.daemonURL(path)
 	if err != nil {
