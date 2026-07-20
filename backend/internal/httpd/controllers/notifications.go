@@ -12,6 +12,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apispec"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/envelope"
+	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/streamctx"
 	notificationsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/notification"
 )
 
@@ -138,18 +139,7 @@ func (c *NotificationsController) stream(w http.ResponseWriter, r *http.Request)
 }
 
 func (c *NotificationsController) requestStreamContext(reqCtx context.Context) (context.Context, context.CancelFunc) {
-	ctx, cancel := context.WithCancel(reqCtx)
-	if c.StreamContext == nil {
-		return ctx, cancel
-	}
-	go func() {
-		select {
-		case <-c.StreamContext.Done():
-			cancel()
-		case <-ctx.Done():
-		}
-	}()
-	return ctx, cancel
+	return streamctx.WithShutdown(reqCtx, c.StreamContext)
 }
 
 func writeNotificationSSE(w http.ResponseWriter, flusher http.Flusher, rec domain.NotificationRecord) error {

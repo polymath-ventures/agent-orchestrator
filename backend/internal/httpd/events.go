@@ -13,6 +13,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/cdc"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apispec"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/envelope"
+	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/streamctx"
 )
 
 const (
@@ -57,17 +58,8 @@ func (c *EventsController) stream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx, cancel := context.WithCancel(r.Context())
+	ctx, cancel := streamctx.WithShutdown(r.Context(), c.StreamContext)
 	defer cancel()
-	if c.StreamContext != nil {
-		go func() {
-			select {
-			case <-c.StreamContext.Done():
-				cancel()
-			case <-ctx.Done():
-			}
-		}()
-	}
 
 	live := make(chan cdc.Event, eventsLiveBuffer)
 	unsubscribe := c.Live.Subscribe(func(e cdc.Event) {

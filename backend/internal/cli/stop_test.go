@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -288,6 +289,86 @@ func TestStopRefusesDirectShutdownWhenCgroupShowsSystemdOwnership(t *testing.T) 
 	}
 }
 
+func TestStopDoesNotUseCgroupHintWithoutMatchingSystemdMainPID(t *testing.T) {
+	origReadProcCgroup := readProcCgroup
+	readProcCgroup = func(string) ([]byte, error) {
+		return []byte("0::/user.slice/user-1000.slice/user@1000.service/app.slice/ao.service\n"), nil
+	}
+	t.Cleanup(func() { readProcCgroup = origReadProcCgroup })
+
+	cfg := setConfigEnv(t)
+	shutdownCalled := make(chan struct{}, 1)
+	var shutdownSeen atomic.Bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/healthz":
+			_, _ = fmt.Fprintf(w, `{"status":"ok","service":%q,"pid":%d}`, daemonmeta.ServiceName, os.Getpid())
+		case "/readyz":
+			_, _ = fmt.Fprintf(w, `{"status":"ready","service":%q,"pid":%d}`, daemonmeta.ServiceName, os.Getpid())
+		case "/shutdown":
+			if got := r.Header.Get(runfile.ShutdownTokenHeader); got != "token" {
+				t.Fatalf("shutdown token header = %q, want token", got)
+			}
+			shutdownSeen.Store(true)
+			_ = runfile.Remove(cfg.runFile)
+			shutdownCalled <- struct{}{}
+			_, _ = fmt.Fprintf(w, `{"status":"shutting_down","service":%q,"pid":%d}`, daemonmeta.ServiceName, os.Getpid())
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	if err := runfile.Write(cfg.runFile, runfile.Info{PID: os.Getpid(), Port: serverPort(t, srv.URL), StartedAt: time.Unix(100, 0).UTC(), ShutdownToken: "token"}); err != nil {
+		t.Fatal(err)
+	}
+
+	var systemctlCalls []string
+	c := &commandContext{deps: Deps{
+		ProcessAlive: func(pid int) bool {
+			return pid == os.Getpid() && !shutdownSeen.Load()
+		},
+		LookPath: func(file string) (string, error) {
+			if file == "systemctl" {
+				return "/bin/systemctl", nil
+			}
+			return "", fmt.Errorf("unexpected lookup %q", file)
+		},
+		CommandOutput: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			call := name + " " + strings.Join(args, " ")
+			systemctlCalls = append(systemctlCalls, call)
+			switch strings.Join(args, " ") {
+			case "--user is-active --quiet ao.service":
+				return nil, nil
+			case "--user show ao.service -P MainPID":
+				return []byte("999999\n"), nil
+			default:
+				return nil, fmt.Errorf("unexpected systemctl call %q", call)
+			}
+		},
+		Now:   func() time.Time { return time.Unix(200, 0).UTC() },
+		Sleep: func(time.Duration) {},
+	}.withDefaults()}
+
+	st, err := c.stopDaemon(context.Background(), stopOptions{timeout: time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.State != stateStopped {
+		t.Fatalf("state = %q, want stopped", st.State)
+	}
+	select {
+	case <-shutdownCalled:
+	default:
+		t.Fatal("stop did not fall back to token shutdown when cgroup was only inherited")
+	}
+	for _, call := range systemctlCalls {
+		if strings.Contains(call, " stop ao.service") {
+			t.Fatalf("stop used systemd despite mismatched MainPID; calls:\n%s", strings.Join(systemctlCalls, "\n"))
+		}
+	}
+}
+
 func TestParseSystemdMainPIDUsesLastNumericLine(t *testing.T) {
 	got, err := parseSystemdMainPID([]byte("warning: noisy stderr before\n\n1234\nwarning: noisy stderr after\n"))
 	if err != nil {
@@ -305,5 +386,8 @@ func TestCgroupContainsSystemdUnit(t *testing.T) {
 	}
 	if cgroupContainsSystemdUnit(data, "other.service") {
 		t.Fatal("unexpected match for other.service")
+	}
+	if cgroupContainsSystemdUnit([]byte("0::/app.slice/run-ao.service-x.scope\n"), "ao.service") {
+		t.Fatal("unexpected partial segment match for run-ao.service-x.scope")
 	}
 }

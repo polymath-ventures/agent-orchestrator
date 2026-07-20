@@ -59,6 +59,10 @@ func Write(path string, info Info) error {
 	}
 	tmpName := tmp.Name()
 	defer func() { _ = os.Remove(tmpName) }() // no-op once the rename succeeds
+	if err := tmp.Chmod(0o600); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("secure temp run-file: %w", err)
+	}
 
 	if _, err := tmp.Write(data); err != nil {
 		_ = tmp.Close()

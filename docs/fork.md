@@ -144,6 +144,7 @@ unit expects:
 Then install and enable the user units:
 
 ```bash
+# Prerequisite: tmux must be installed and available on PATH.
 mkdir -p ~/.config/systemd/user
 cp ops/ao.service \
   ops/ao-tmux.service \

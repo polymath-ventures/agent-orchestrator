@@ -104,6 +104,8 @@ func (s *Server) Handler() http.Handler { return s.http.Handler }
 // running.json before serving and removes it on the way out. Run blocks until
 // shutdown is complete.
 func (s *Server) Run(ctx context.Context) error {
+	defer s.cancelStreams()
+
 	info := runfile.Info{
 		PID:           os.Getpid(),
 		Port:          s.boundPort(),

@@ -9,6 +9,7 @@ import (
 	"github.com/coder/websocket/wsjson"
 	"github.com/go-chi/chi/v5"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/streamctx"
 	"github.com/aoagents/agent-orchestrator/backend/internal/terminal"
 )
 
@@ -42,17 +43,8 @@ func terminalMuxHandler(streamCtx context.Context, mgr *terminal.Manager, log *s
 			return
 		}
 		c.SetReadLimit(terminalMuxReadLimit)
-		serveCtx, cancel := context.WithCancel(r.Context())
+		serveCtx, cancel := streamctx.WithShutdown(r.Context(), streamCtx)
 		defer cancel()
-		if streamCtx != nil {
-			go func() {
-				select {
-				case <-streamCtx.Done():
-					cancel()
-				case <-serveCtx.Done():
-				}
-			}()
-		}
 		mgr.Serve(serveCtx, &terminalMuxConn{c: c})
 	}
 }

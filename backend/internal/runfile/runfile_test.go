@@ -87,6 +87,13 @@ func TestWriteReadRoundTripShutdownToken(t *testing.T) {
 	if got.ShutdownToken != want.ShutdownToken {
 		t.Errorf("ShutdownToken round trip: got %q, want %q", got.ShutdownToken, want.ShutdownToken)
 	}
+	stat, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat run-file: %v", err)
+	}
+	if got := stat.Mode().Perm(); got != 0o600 {
+		t.Fatalf("run-file mode = %v, want 0600", got)
+	}
 }
 
 func TestWriteOverwritesExisting(t *testing.T) {

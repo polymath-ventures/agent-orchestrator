@@ -99,22 +99,24 @@ func (c *commandContext) stopSystemdDaemon(ctx context.Context, pid int, timeout
 
 	checkCtx, cancelCheck := context.WithTimeout(ctx, probeTimeout)
 	defer cancelCheck()
-	if inUnit {
-		if err := c.stopAOService(ctx, systemctl, timeout); err != nil {
-			return true, err
-		}
-		return true, nil
-	}
-
 	if _, err := c.deps.CommandOutput(checkCtx, systemctl, "--user", "is-active", "--quiet", "ao.service"); err != nil {
 		return false, nil
 	}
 	out, err := c.deps.CommandOutput(checkCtx, systemctl, "--user", "show", "ao.service", "-P", "MainPID")
 	if err != nil {
+		if inUnit {
+			return true, fmt.Errorf("inspect ao.service MainPID: %w", err)
+		}
 		return false, nil
 	}
 	mainPID, err := parseSystemdMainPID(out)
-	if err != nil || mainPID != pid {
+	if err != nil {
+		if inUnit {
+			return true, fmt.Errorf("inspect ao.service MainPID: %w", err)
+		}
+		return false, nil
+	}
+	if mainPID != pid {
 		return false, nil
 	}
 
@@ -145,12 +147,8 @@ func processInSystemdUnit(pid int, unit string) (bool, error) {
 }
 
 func cgroupContainsSystemdUnit(data []byte, unit string) bool {
-	for _, line := range strings.Split(string(data), "\n") {
-		if strings.Contains(line, unit) {
-			return true
-		}
-	}
-	return false
+	text := string(data)
+	return strings.Contains(text, "/"+unit) || strings.Contains(text, "\\"+unit)
 }
 
 func parseSystemdMainPID(out []byte) (int, error) {

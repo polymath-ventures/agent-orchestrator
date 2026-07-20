@@ -46,8 +46,12 @@ type terminalMuxFrame struct {
 }
 
 func dialMux(t *testing.T, mgr *terminal.Manager) (*websocket.Conn, func()) {
+	return dialMuxWithStreamContext(context.Background(), t, mgr)
+}
+
+func dialMuxWithStreamContext(streamCtx context.Context, t *testing.T, mgr *terminal.Manager) (*websocket.Conn, func()) {
 	t.Helper()
-	router := newTestRouter(config.Config{}, discardLogger(), mgr)
+	router := NewRouterWithControl(config.Config{}, discardLogger(), mgr, APIDeps{}, ControlDeps{StreamContext: streamCtx})
 	ts := httptest.NewServer(router)
 	url := "ws" + strings.TrimPrefix(ts.URL, "http") + "/mux"
 
@@ -122,4 +126,24 @@ func TestMuxSystemPingPong(t *testing.T) {
 		t.Fatalf("write ping: %v", err)
 	}
 	readFrame(t, c, "system", "pong", 3*time.Second)
+}
+
+func TestMuxClosesWhenStreamContextCanceled(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("PTY spawning not supported on Windows")
+	}
+	streamCtx, cancelStream := context.WithCancel(context.Background())
+	mgr := terminal.NewManager(&stubSource{argv: []string{"/bin/sh"}}, nil, discardLogger())
+	defer mgr.Close()
+
+	c, done := dialMuxWithStreamContext(streamCtx, t, mgr)
+	defer done()
+
+	cancelStream()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	var frame terminalMuxFrame
+	if err := wsjson.Read(ctx, c, &frame); err == nil {
+		t.Fatalf("mux read succeeded after stream context cancel: %+v", frame)
+	}
 }
