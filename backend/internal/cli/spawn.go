@@ -26,6 +26,7 @@ const maxDisplayNameLen = 20
 type spawnOptions struct {
 	project        string
 	harness        string
+	model          string
 	branch         string
 	prompt         string
 	issue          string
@@ -41,6 +42,7 @@ type spawnRequest struct {
 	ProjectID   string `json:"projectId"`
 	IssueID     string `json:"issueId,omitempty"`
 	Harness     string `json:"harness,omitempty"`
+	Model       string `json:"model,omitempty"`
 	Branch      string `json:"branch,omitempty"`
 	Prompt      string `json:"prompt,omitempty"`
 	DisplayName string `json:"displayName"`
@@ -86,13 +88,18 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 			}
 			opts.project = project.ID
 
-			harness, err := resolveSpawnHarness(opts.harness, project)
-			if err != nil {
-				return err
-			}
-			opts.harness = harness
+			// Harness resolution is authoritative at the daemon: an empty
+			// harness means "let the daemon resolve" (from the worker mix, or
+			// from project/role config). The CLI only normalizes an explicit
+			// pin and never rejects an unpinned request client-side.
+			opts.harness = strings.TrimSpace(opts.harness)
+			opts.model = strings.TrimSpace(opts.model)
 
-			if !opts.skipAgentCheck {
+			// Preflight only a harness the CLI actually knows. When the spawn is
+			// unpinned the daemon picks the harness, so the client cannot check
+			// readiness against a harness it would have to guess; it relies on
+			// the daemon's own readiness handling instead.
+			if opts.harness != "" && !opts.skipAgentCheck {
 				if err := ctx.preflightSpawnAgentAuth(cmd.Context(), cmd, opts.harness); err != nil {
 					return err
 				}
@@ -108,6 +115,7 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 				ProjectID:   opts.project,
 				IssueID:     opts.issue,
 				Harness:     opts.harness,
+				Model:       opts.model,
 				Branch:      opts.branch,
 				Prompt:      opts.prompt,
 				DisplayName: name,
@@ -160,7 +168,8 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 		return pflag.NormalizedName(name)
 	})
 	f.StringVar(&opts.project, "project", "", "Project id to spawn the session in (default: AO_PROJECT_ID or current registered repo)")
-	f.StringVar(&opts.harness, "harness", "", "Agent harness / --agent: claude-code, codex, codex-fugu, aider, opencode, grok, droid, amp, agy, crush, cursor, qwen, copilot, goose, auggie, continue, devin, cline, kimi, kiro, kilocode, vibe, pi, autohand (default: project worker.agent; required if the project has none)")
+	f.StringVar(&opts.harness, "harness", "", "Agent harness / --agent: claude-code, codex, codex-fugu, aider, opencode, grok, droid, amp, agy, crush, cursor, qwen, copilot, goose, auggie, continue, devin, cline, kimi, kiro, kilocode, vibe, pi, autohand (default: resolved by the daemon from the project's worker mix or worker.agent config)")
+	f.StringVar(&opts.model, "model", "", "Model for the session (default: resolved by the daemon from the worker mix or role/project config)")
 	f.StringVar(&opts.branch, "branch", "", "Branch for the session worktree (default: ao/<session-id>/root)")
 	f.StringVar(&opts.prompt, "prompt", "", "Initial prompt for the agent")
 	f.StringVar(&opts.issue, "issue", "", "Issue id to associate with the session")
@@ -295,18 +304,6 @@ func pathContains(root, child string) bool {
 		return false
 	}
 	return rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
-}
-
-func resolveSpawnHarness(explicit string, project projectDetails) (string, error) {
-	if harness := strings.TrimSpace(explicit); harness != "" {
-		return harness, nil
-	}
-	if project.Config != nil {
-		if harness := strings.TrimSpace(project.Config.Worker.Agent); harness != "" {
-			return harness, nil
-		}
-	}
-	return "", usageError{fmt.Errorf("agent could not be resolved; pass --agent or configure `ao project set-config %s --worker-agent <agent>`", project.ID)}
 }
 
 func (c *commandContext) preflightSpawnAgentAuth(ctx context.Context, cmd *cobra.Command, agentID string) error {
