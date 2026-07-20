@@ -73,16 +73,22 @@ func sseFrame(n slackNotification) string {
 // streamFn is invoked per stream connection so a test can control framing and
 // disconnection; unread is returned by the list route.
 type fakeDaemon struct {
-	srv     *httptest.Server
-	mu      sync.Mutex
-	paths   []string
-	streams int
-	unread  func(connection int) []slackNotification
-	stream  func(t *testing.T, connection int, w http.ResponseWriter, flush func(), ctx context.Context)
+	srv      *httptest.Server
+	mu       sync.Mutex
+	paths    []string
+	streams  int
+	unread   func(connection int) []slackNotification
+	stream   func(t *testing.T, connection int, w http.ResponseWriter, flush func(), ctx context.Context)
+	onListed func() // invoked after each unread listing is served
 }
 
 func newFakeDaemon(t *testing.T, d *fakeDaemon) *fakeDaemon {
+	return newFakeDaemonWithListHook(t, d, nil)
+}
+
+func newFakeDaemonWithListHook(t *testing.T, d *fakeDaemon, onListed func()) *fakeDaemon {
 	t.Helper()
+	d.onListed = onListed
 	d.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		d.mu.Lock()
 		d.paths = append(d.paths, r.URL.Path)
@@ -113,6 +119,9 @@ func newFakeDaemon(t *testing.T, d *fakeDaemon) *fakeDaemon {
 			}
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(listNotificationsAPIResponse{Notifications: list})
+			if d.onListed != nil {
+				d.onListed()
+			}
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -739,28 +748,37 @@ func (l *lockedWriter) Write(p []byte) (int, error) {
 }
 
 // On reconnect, a notification published during the outage must be reconciled
-// PROMPTLY — driven by the on-connect poke, not by having to wait out a full
-// periodic interval. Set the periodic interval huge so only the on-connect
-// reconcile can satisfy the test.
+// PROMPTLY — driven by the on-connect poke, not by waiting out a full periodic
+// interval. The periodic interval is set to an hour so the tick cannot fire.
+//
+// To attribute the delivery to the poke and not to a slow startup reconcile, the
+// test is ordered deterministically: connection 1 is not allowed to drop until
+// the startup reconcile has listed once (observing connection <= 1, which
+// returns nothing). Connection 2 — where ntf_gap first appears — therefore
+// cannot exist until after the startup reconcile has finished, so the ONLY
+// reconcile that can list at connection 2 is the one the connect poke triggers.
 func TestSlackNotifyReconcilesOnConnectNotOnlyOnTick(t *testing.T) {
 	sink := newSlackSink(t)
-	daemon := newFakeDaemon(t, &fakeDaemon{
+	listed := make(chan struct{}, 8)
+	releaseConn1 := make(chan struct{})
+
+	d := &fakeDaemon{
 		unread: func(connection int) []slackNotification {
 			if connection <= 1 {
-				return nil // nothing before the drop
+				return nil // nothing before the reconnect
 			}
 			return []slackNotification{{ID: "ntf_gap", Type: "pr_merged", Title: "During outage"}}
 		},
 		stream: func(_ *testing.T, connection int, _ http.ResponseWriter, _ func(), ctx context.Context) {
 			if connection == 1 {
-				return // drop immediately, forcing a reconnect
+				<-releaseConn1 // hold connection 1 open until the startup reconcile ran
+				return         // then drop, forcing a reconnect
 			}
 			<-ctx.Done()
 		},
-	})
+	}
+	daemon := newFakeDaemonWithListHook(t, d, func() { nonBlockingSignal(listed) })
 
-	// Fast reconnect, but a periodic interval far longer than the test: if the
-	// gap notification arrives, it can only be via the on-connect reconcile.
 	origDelay, origMax, origRecon := slackReconnectDelay, slackMaxReconnectDelay, slackReconcileInterval
 	slackReconnectDelay = 5 * time.Millisecond
 	slackMaxReconnectDelay = 20 * time.Millisecond
@@ -779,9 +797,19 @@ func TestSlackNotifyReconcilesOnConnectNotOnlyOnTick(t *testing.T) {
 	errCh := make(chan error, 1)
 	go func() { errCh <- ctx.runSlackNotify(runCtx, slackNotifyOptions{webhookURL: sink.srv.URL}) }()
 
+	<-listed            // the startup reconcile has listed (at connection <= 1 → nothing)
+	close(releaseConn1) // now let connection 1 drop; ntf_gap can only follow the reconnect poke
+
 	got := sink.waitFor(t, 1)
 	if !strings.Contains(strings.Join(got, "|"), "During outage") {
 		t.Fatalf("expected the gap notification reconciled on reconnect, got %v", got)
 	}
 	expectCleanShutdown(t, cancel, errCh)
+}
+
+func nonBlockingSignal(ch chan struct{}) {
+	select {
+	case ch <- struct{}{}:
+	default:
+	}
 }
