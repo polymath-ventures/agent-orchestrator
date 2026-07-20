@@ -46,7 +46,7 @@ export function TitlebarNav() {
 
 	return (
 		<div
-			className="fixed top-0 left-titlebar-cluster-left z-titlebar flex h-toolbar items-center gap-1"
+			className="titlebar-nav fixed top-0 left-titlebar-cluster-left z-titlebar flex h-toolbar items-center gap-1"
 			style={noDragStyle}
 		>
 			<TitlebarButton

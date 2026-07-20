@@ -4,7 +4,6 @@ import { aoBridge } from "../lib/bridge";
 import type { MigrationState } from "../../main/app-state";
 
 export const migrationOfferQueryKey = ["migration-offer"] as const;
-const usePreviewData = import.meta.env.VITE_NO_ELECTRON === "1";
 
 export interface MigrationOffer {
 	show: boolean;
@@ -31,7 +30,6 @@ export function useMigrationOffer() {
 	return useQuery({
 		queryKey: migrationOfferQueryKey,
 		queryFn: fetchMigrationOffer,
-		enabled: !usePreviewData,
 		retry: 1,
 		throwOnError: false,
 	});

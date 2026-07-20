@@ -321,6 +321,36 @@ describe("Sidebar", () => {
 		);
 	});
 
+	it("accepts a host path in browser mode instead of opening the native directory picker", async () => {
+		const user = userEvent.setup();
+		const onCreateProject = vi.fn().mockResolvedValue(undefined) as CreateProjectHandler;
+		const bridge = window.ao;
+		delete window.ao;
+		try {
+			renderSidebar({ onCreateProject });
+
+			await user.click(screen.getByLabelText("New project"));
+			await user.click(screen.getByRole("button", { name: /^Project/i }));
+			await user.type(screen.getByRole("textbox", { name: "Path" }), "/srv/ao/projects/api");
+			await user.click(screen.getByRole("button", { name: "Continue" }));
+
+			expect(screen.getByRole("dialog", { name: "Project agents" })).toBeInTheDocument();
+			await user.click(screen.getByRole("button", { name: "Create and start" }));
+
+			await waitFor(() =>
+				expect(onCreateProject).toHaveBeenCalledWith(
+					expect.objectContaining({
+						path: "/srv/ao/projects/api",
+						workerAgent: "claude-code",
+						orchestratorAgent: "claude-code",
+					}),
+				),
+			);
+		} finally {
+			window.ao = bridge;
+		}
+	});
+
 	it("prioritizes authorized project agents by preferred agent order", async () => {
 		const user = userEvent.setup();
 		const onCreateProject = vi.fn().mockResolvedValue(undefined) as CreateProjectHandler;

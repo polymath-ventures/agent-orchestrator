@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { aoBridge } from "../lib/bridge";
 import type { FeatureBuild } from "../lib/bridge";
+import { hasElectronBridge } from "../lib/runtime-environment";
 import { useUpdateStatus } from "../hooks/useUpdateStatus";
 import type { UpdateSettings, UpdateState, UpdateStatus } from "../../main/update-settings";
 import { Badge } from "./ui/badge";
@@ -34,6 +35,23 @@ const STALE_THRESHOLD_MS = 5 * 24 * 60 * 60 * 1000; // 5 days
 // `channel` in UpdateSettings is always the home channel (latest or nightly); the
 // `feature` field is a separate overlay that pins a specific PR build.
 export function UpdatesSection() {
+	if (!hasElectronBridge()) {
+		return (
+			<Card>
+				<CardHeader>
+					<CardTitle className="text-control">Updates</CardTitle>
+				</CardHeader>
+				<CardContent>
+					<p className="text-xs leading-row text-muted-foreground">Desktop updates are managed outside browser mode.</p>
+				</CardContent>
+			</Card>
+		);
+	}
+
+	return <DesktopUpdatesSection />;
+}
+
+function DesktopUpdatesSection() {
 	const queryClient = useQueryClient();
 	const query = useQuery({
 		queryKey: updateSettingsQueryKey,

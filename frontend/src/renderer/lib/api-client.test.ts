@@ -128,6 +128,20 @@ describe("apiClient runtime base URL", () => {
 		expect(hasTrustedApiBaseUrl()).toBe(false);
 		expect(fetchSpy).not.toHaveBeenCalled();
 	});
+
+	it("initializes browser-mode builds with a trusted same-origin base", async () => {
+		vi.resetModules();
+		vi.stubEnv("VITE_NO_ELECTRON", "1");
+		const browserApi = await import("./api-client");
+
+		expect(browserApi.hasTrustedApiBaseUrl()).toBe(true);
+		expect(browserApi.getApiBaseUrl()).toBe(window.location.origin);
+
+		browserApi.setApiBaseUrl(null);
+		expect(browserApi.hasTrustedApiBaseUrl()).toBe(true);
+		expect(browserApi.getApiBaseUrl()).toBe(window.location.origin);
+		vi.unstubAllEnvs();
+	});
 });
 
 describe("subscribeApiBaseUrl", () => {

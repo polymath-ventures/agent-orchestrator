@@ -1,0 +1,25 @@
+[Unit]
+Description=Agent Orchestrator browser mode
+Documentation=https://github.com/polymath-ventures/agent-orchestrator
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/.ao/deploy/current/source
+Environment=NODE_ENV=production
+Environment=AO_WEB_BIND=127.0.0.1
+Environment=AO_WEB_PORT=5173
+Environment=AO_WEB_API_TARGET=http://127.0.0.1:3001
+Environment=AO_WEB_DIST=%h/.ao/deploy/current/source/frontend/dist
+# Set this to the exact Tailscale Serve origin, for example:
+# AO_WEB_PUBLIC_URL=https://ao.tailnet-name.ts.net
+Environment=AO_WEB_PUBLIC_URL=
+ExecStart=/usr/bin/env node %h/.ao/deploy/current/source/ops/ao-web-server.mjs
+Restart=on-failure
+RestartSec=2
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=default.target

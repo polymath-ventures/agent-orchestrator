@@ -3,6 +3,7 @@ import { CheckCircle2, ChevronRight, Folder, FolderPlus, X, XCircle } from "luci
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { ImportFolderScan } from "../../preload";
 import { aoBridge } from "../lib/bridge";
+import { hasElectronBridge } from "../lib/runtime-environment";
 import { cn } from "../lib/utils";
 import type { ProjectKind } from "../types/workspace";
 import { CreateProjectAgentSheet, type CreateProjectAgentSelection } from "./CreateProjectAgentSheet";
@@ -36,6 +37,8 @@ export function CreateProjectFlow({
 	const [error, setError] = useState<string | null>(null);
 	const [modePickerOpen, setModePickerOpen] = useState(false);
 	const [folderPickerOpen, setFolderPickerOpen] = useState(false);
+	const [pathEntryOpen, setPathEntryOpen] = useState(false);
+	const [pathEntryValue, setPathEntryValue] = useState("");
 	const [selectedKind, setSelectedKind] = useState<ProjectKind>(mode === "workspace" ? "workspace" : "single_repo");
 	const [selectedPath, setSelectedPath] = useState<string | null>(null);
 	const [validationScan, setValidationScan] = useState<ImportFolderScan | null>(null);
@@ -45,9 +48,21 @@ export function CreateProjectFlow({
 	const [repositorySetup, setRepositorySetup] = useState<"NOT_A_GIT_REPO" | "PROJECT_UNBORN" | null>(null);
 
 	const hasModePicker = mode === "choose";
+	const nativeFolderPickerAvailable = hasElectronBridge();
 	const isBusy = isChoosingPath || isCreating || isInitializing;
 
 	const openFolderStep = (kind: ProjectKind) => {
+		if (!nativeFolderPickerAvailable) {
+			setError(null);
+			setValidationScan(null);
+			setRepositorySetup(null);
+			setSelectedKind(kind);
+			setModePickerOpen(false);
+			setFolderPickerOpen(false);
+			setPathEntryValue("");
+			setPathEntryOpen(true);
+			return;
+		}
 		// Keep the selector mounted behind the native picker. Closing it first
 		// exposes a blank compositor frame on Windows before Explorer takes focus.
 		void chooseDirectory(kind);
@@ -77,6 +92,19 @@ export function CreateProjectFlow({
 		} finally {
 			setIsChoosingPath(false);
 		}
+	};
+
+	const chooseTypedPath = async (path: string) => {
+		const trimmed = path.trim();
+		if (!trimmed) {
+			setError("Enter a path.");
+			return;
+		}
+		setError(null);
+		setValidationScan(null);
+		setRepositorySetup(null);
+		setSelectedPath(trimmed);
+		setPathEntryOpen(false);
 	};
 
 	const startFlow = () => {
@@ -190,6 +218,26 @@ export function CreateProjectFlow({
 					/>
 				</>
 			)}
+			<CreateProjectPathDialog
+				disabled={isBusy}
+				error={error}
+				kind={selectedKind}
+				onBack={() => {
+					setError(null);
+					setPathEntryOpen(false);
+					if (hasModePicker) window.requestAnimationFrame(() => setModePickerOpen(true));
+				}}
+				onOpenChange={(open) => {
+					if (!isBusy) {
+						setPathEntryOpen(open);
+						if (!open) setError(null);
+					}
+				}}
+				onSubmit={chooseTypedPath}
+				open={pathEntryOpen}
+				value={pathEntryValue}
+				onValueChange={setPathEntryValue}
+			/>
 			<CreateProjectAgentSheet
 				error={error}
 				isCreating={isCreating}
@@ -214,6 +262,101 @@ export function CreateProjectFlow({
 				</span>
 			)}
 		</>
+	);
+}
+
+function CreateProjectPathDialog({
+	disabled,
+	error,
+	kind,
+	onBack,
+	onOpenChange,
+	onSubmit,
+	onValueChange,
+	open,
+	value,
+}: {
+	disabled: boolean;
+	error: string | null;
+	kind: ProjectKind;
+	onBack: () => void;
+	onOpenChange: (open: boolean) => void;
+	onSubmit: (path: string) => void;
+	onValueChange: (value: string) => void;
+	open: boolean;
+	value: string;
+}) {
+	const isWorkspace = kind === "workspace";
+	return (
+		<Dialog.Root open={open} onOpenChange={onOpenChange}>
+			<Dialog.Portal>
+				<Dialog.Overlay className="fixed inset-0 z-50 bg-black/55 data-[state=open]:animate-overlay-in" />
+				<Dialog.Content className="fixed left-1/2 top-1/2 z-50 flex max-h-[min(520px,calc(100svh-24px))] w-[min(560px,calc(100vw-24px))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-lg border border-border bg-popover p-0 text-popover-foreground shadow-xl data-[state=open]:animate-modal-in">
+					<form
+						onSubmit={(event) => {
+							event.preventDefault();
+							onSubmit(value);
+						}}
+					>
+						<div className="flex shrink-0 items-start gap-3 border-b border-border px-4 py-4 sm:gap-4 sm:px-6 sm:py-5">
+							<button
+								type="button"
+								className="grid size-8 shrink-0 place-items-center rounded-lg border border-border text-muted-foreground transition hover:bg-surface hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
+								aria-label="Back to import type"
+								disabled={disabled}
+								onClick={onBack}
+							>
+								<ChevronRight className="size-4 rotate-180" aria-hidden="true" />
+							</button>
+							<div className="min-w-0 flex-1">
+								<Dialog.Title className="text-[18px] font-semibold text-foreground">
+									{isWorkspace ? "Import workspace" : "Import project"}
+								</Dialog.Title>
+								<Dialog.Description className="mt-1 max-w-[460px] text-[13px] font-medium leading-5 text-muted-foreground">
+									Enter a path on the machine running AO.
+								</Dialog.Description>
+							</div>
+							<Dialog.Close asChild>
+								<button
+									type="button"
+									className="grid size-7 shrink-0 place-items-center rounded-md text-muted-foreground transition hover:bg-surface hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
+									aria-label="Close import dialog"
+									disabled={disabled}
+								>
+									<X className="size-4" aria-hidden="true" />
+								</button>
+							</Dialog.Close>
+						</div>
+						<div className="px-4 py-4 sm:px-6 sm:py-6">
+							<label className="flex flex-col gap-2 text-[12px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+								Path
+								<input
+									autoFocus
+									className="h-11 rounded-md border border-border bg-background px-3 font-mono text-[13px] font-semibold normal-case tracking-normal text-foreground outline-none transition focus:border-ring focus:ring-2 focus:ring-ring/35"
+									disabled={disabled}
+									onChange={(event) => onValueChange(event.target.value)}
+									placeholder={isWorkspace ? "/home/me/workspace" : "/home/me/workspace/project"}
+									value={value}
+								/>
+							</label>
+							{error ? (
+								<div className="mt-4 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-[12px] leading-5 text-destructive">
+									{error}
+								</div>
+							) : null}
+						</div>
+						<div className="flex shrink-0 justify-end gap-2 border-t border-border px-4 py-4 sm:px-6">
+							<Button type="button" variant="outline" disabled={disabled} onClick={() => onOpenChange(false)}>
+								Cancel
+							</Button>
+							<Button type="submit" variant="primary" disabled={disabled}>
+								Continue
+							</Button>
+						</div>
+					</form>
+				</Dialog.Content>
+			</Dialog.Portal>
+		</Dialog.Root>
 	);
 }
 
