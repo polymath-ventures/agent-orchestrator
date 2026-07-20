@@ -2577,10 +2577,16 @@ components:
           $ref: '#/components/schemas/RoleOverride'
         orchestratorRules:
           type: string
+        orchestratorRulesFile:
+          type: string
         postCreate:
           items:
             type: string
           type: array
+        reviewerRules:
+          type: string
+        reviewerRulesFile:
+          type: string
         reviewers:
           items:
             $ref: '#/components/schemas/DomainReviewerConfig'

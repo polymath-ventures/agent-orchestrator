@@ -992,7 +992,10 @@ export interface components {
             maxLiveWorkers?: number;
             orchestrator?: components["schemas"]["RoleOverride"];
             orchestratorRules?: string;
+            orchestratorRulesFile?: string;
             postCreate?: string[];
+            reviewerRules?: string;
+            reviewerRulesFile?: string;
             reviewers?: components["schemas"]["DomainReviewerConfig"][];
             sessionPrefix?: string;
             symlinks?: string[];

@@ -241,6 +241,9 @@ func TestProjectSetConfig_RulesFlags(t *testing.T) {
 		"--agent-rules", "Run tests.",
 		"--agent-rules-file", "docs/rules.md",
 		"--orchestrator-rules", "Delegate.",
+		"--orchestrator-rules-file", "docs/orch.md",
+		"--reviewer-rules", "Check isolation.",
+		"--reviewer-rules-file", "docs/review.md",
 	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v\nstderr=%s", err, errOut)
@@ -254,6 +257,9 @@ func TestProjectSetConfig_RulesFlags(t *testing.T) {
 	}
 	if got.Config.AgentRules != "Run tests." || got.Config.AgentRulesFile != "docs/rules.md" || got.Config.OrchestratorRules != "Delegate." {
 		t.Fatalf("rules config = %#v", got.Config)
+	}
+	if got.Config.OrchestratorRulesFile != "docs/orch.md" || got.Config.ReviewerRules != "Check isolation." || got.Config.ReviewerRulesFile != "docs/review.md" {
+		t.Fatalf("new rules config = %#v", got.Config)
 	}
 	if !strings.Contains(out, "updated config for project demo") {
 		t.Fatalf("output missing update message:\n%s", out)
