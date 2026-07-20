@@ -84,12 +84,6 @@ function proxyHttp({ apiTarget, request, response }) {
 			headers: proxyHeaders(request.headers, apiTarget),
 		},
 		(proxyResponse) => {
-			response.on("close", () => {
-				if (!response.writableEnded) proxyResponse.destroy();
-			});
-			proxyResponse.on("end", () => {
-				if (!proxyRequest.destroyed) proxyRequest.destroy();
-			});
 			response.writeHead(proxyResponse.statusCode ?? 502, proxyResponse.statusMessage, proxyResponse.headers);
 			proxyResponse.pipe(response);
 		},
@@ -119,19 +113,19 @@ function handleUpgrade({ apiTarget, head, request, socket, trust }) {
 	}
 
 	const upstream = net.connect(Number(apiTarget.port || "80"), apiTarget.hostname);
-	let upgraded = false;
+	let responseStarted = false;
 	upstream.on("connect", () => {
 		upstream.write(formatUpgradeRequest(request, apiTarget));
 		if (head.length > 0) upstream.write(head);
 		socket.pipe(upstream);
 	});
 	upstream.once("data", (chunk) => {
-		upgraded = chunk.includes(Buffer.from(" 101 ")) || chunk.includes(Buffer.from(" 101\r\n"));
+		responseStarted = true;
 		socket.write(chunk);
 		upstream.pipe(socket);
 	});
 	upstream.on("error", () => {
-		if (upgraded) socket.destroy();
+		if (responseStarted) socket.destroy();
 		else socket.end("HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n");
 	});
 	socket.on("error", () => {
@@ -267,6 +261,8 @@ function buildTrustConfig(publicUrl) {
 function trustedBrowserRequest(request, trust) {
 	if (!trustedHost(request.headers.host ?? "", trust, request.socket.remoteAddress ?? "")) return false;
 	const origin = request.headers.origin;
+	// Browser CORS-sensitive writes include Origin; allow origin-less same-host
+	// probes such as curl and systemd health checks after Host/peer validation.
 	return typeof origin === "string" ? trustedOrigin(origin, trust) : true;
 }
 
@@ -314,11 +310,15 @@ if (isMainModule(import.meta.url)) {
 	const bind = process.env.AO_WEB_BIND || "127.0.0.1";
 	const port = Number(process.env.AO_WEB_PORT || "5173");
 	const publicUrl = process.env.AO_WEB_PUBLIC_URL || "";
+	const requirePublicUrl = process.env.AO_WEB_REQUIRE_PUBLIC_URL === "1";
 	if (!Number.isInteger(port) || port < 1 || port > 65535) {
 		throw new Error(`AO_WEB_PORT must be a TCP port, got ${process.env.AO_WEB_PORT}`);
 	}
 	if (!isLoopbackHost(bind)) {
 		throw new Error("AO_WEB_BIND must be loopback-only; expose browser mode with Tailscale Serve instead.");
+	}
+	if (requirePublicUrl && !publicUrl) {
+		throw new Error("AO_WEB_PUBLIC_URL is required when AO_WEB_REQUIRE_PUBLIC_URL=1.");
 	}
 
 	const server = createAoWebServer();

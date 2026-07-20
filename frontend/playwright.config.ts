@@ -11,6 +11,6 @@ export default defineConfig({
 		command:
 			"npm run build:web && AO_WEB_DIST=dist AO_WEB_PUBLIC_URL=http://127.0.0.1:5173 AO_WEB_API_TARGET=http://127.0.0.1:9 node ../ops/ao-web-server.mjs",
 		port: 5173,
-		reuseExistingServer: !process.env.CI,
+		reuseExistingServer: false,
 	},
 });

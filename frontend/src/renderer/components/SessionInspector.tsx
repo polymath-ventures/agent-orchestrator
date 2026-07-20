@@ -270,7 +270,7 @@ function SummaryView({ session }: { session: WorkspaceSession }) {
 
 function PRSummaryCard({ pr }: { pr: SessionPRSummary }) {
 	return (
-		<div className="rounded-md border border-border bg-surface px-3 py-2.5">
+		<div className="rounded-md border border-border bg-surface px-3 py-2.5" data-testid="inspector-pr-card">
 			<div className="flex items-center gap-2">
 				<GitPullRequest className="size-icon-md shrink-0 text-passive" aria-hidden="true" />
 				<span className="text-md-sm font-medium text-foreground">PR #{pr.number}</span>

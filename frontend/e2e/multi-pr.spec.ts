@@ -18,7 +18,7 @@ test("the inspector rail stacks every PR a session owns, actionable-first", asyn
 
 	// One card per PR, ordered open → draft → merged (the merged base sinks).
 	const prSection = inspector.getByTestId("inspector-section").filter({ hasText: "Pull requests (3)" });
-	await expect(prSection.locator("div.rounded-md.border.border-border.bg-surface")).toHaveText([
+	await expect(prSection.getByTestId("inspector-pr-card")).toHaveText([
 		/PR #41/,
 		/PR #42/,
 		/PR #40/,

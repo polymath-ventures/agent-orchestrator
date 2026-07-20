@@ -65,7 +65,7 @@ describe("ao web production server", () => {
 		cleanup.push(() => rm(secretPath, { force: true }));
 		const server = await listen(createAoWebServer({ distDir, apiTarget: "http://127.0.0.1:9" }));
 
-		const response = await fetchText(`${server.url}/assets/%2e%2e/%2e%2e/${secretName}`);
+		const response = await fetchText(`${server.url}/assets/..%2f..%2f${secretName}`);
 
 		assert.equal(response.status, 404);
 	});
@@ -269,6 +269,23 @@ describe("ao web production server", () => {
 
 		assert.notEqual(code, 0);
 		assert.match(stderr, /AO_WEB_BIND must be loopback-only/);
+	});
+
+	it("fails fast when a service-style launch requires a missing public URL", async () => {
+		const distDir = await makeDist();
+		const child = spawn(process.execPath, [path.join(REPO_ROOT, "ops/ao-web-server.mjs")], {
+			env: { ...process.env, AO_WEB_DIST: distDir, AO_WEB_PORT: "5174", AO_WEB_REQUIRE_PUBLIC_URL: "1" },
+			stdio: ["ignore", "ignore", "pipe"],
+		});
+		let stderr = "";
+		child.stderr.on("data", (chunk) => {
+			stderr += chunk.toString("utf8");
+		});
+
+		const code = await new Promise((resolve) => child.once("exit", resolve));
+
+		assert.notEqual(code, 0);
+		assert.match(stderr, /AO_WEB_PUBLIC_URL is required/);
 	});
 });
 

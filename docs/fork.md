@@ -59,23 +59,20 @@ AO_WEB_BIND=127.0.0.1 \
 AO_WEB_PORT=5173 \
 AO_WEB_API_TARGET=http://127.0.0.1:3001 \
 AO_WEB_DIST="$PWD/frontend/dist" \
-AO_WEB_PUBLIC_URL=https://mirrorborn.tailc1fd9.ts.net \
+AO_WEB_PUBLIC_URL=https://ao.tailnet-name.ts.net \
 node ops/ao-web-server.mjs
 ```
 
 Install the user service on a host that has a release-style symlink at
-`~/.ao/deploy/current/source`. The tracked unit is configured for this fork's
-`mirrorborn.tailc1fd9.ts.net` tailnet origin:
+`~/.ao/deploy/current/source`:
 
 ```bash
 mkdir -p ~/.config/systemd/user
 cp ops/ao-web.service ~/.config/systemd/user/ao-web.service
 systemctl --user daemon-reload
-systemctl --user enable --now ao-web.service
-systemctl --user status ao-web.service
 ```
 
-Override paths or a different public URL without editing the tracked unit:
+Set the required public URL without editing the tracked unit:
 
 ```bash
 systemctl --user edit ao-web.service
@@ -89,6 +86,13 @@ Environment=AO_WEB_DIST=/home/orchestrator/.ao/deploy/current/source/frontend/di
 Environment=AO_WEB_PUBLIC_URL=https://ao.tailnet-name.ts.net
 ```
 
+Then start it:
+
+```bash
+systemctl --user enable --now ao-web.service
+systemctl --user status ao-web.service
+```
+
 Expose the loopback web server through Tailscale Serve:
 
 ```bash
@@ -96,9 +100,11 @@ tailscale serve --bg --https=443 http://127.0.0.1:5173
 tailscale serve status
 ```
 
-The web server executable refuses non-loopback `AO_WEB_BIND` values. Expose it
-through Tailscale Serve rather than binding it to the LAN. Proxied daemon routes
-also require a loopback peer with a loopback `Host`, or a request `Host` that
-matches `AO_WEB_PUBLIC_URL`; browser `Origin` headers must be loopback or the
-same configured public origin. Static app routes fall back to `index.html`, so
-hash-history and refreshes both land in the renderer.
+The tracked service sets `AO_WEB_REQUIRE_PUBLIC_URL=1`, so it fails fast until
+`AO_WEB_PUBLIC_URL` is configured. The web server executable also refuses
+non-loopback `AO_WEB_BIND` values. Expose it through Tailscale Serve rather than
+binding it to the LAN. Proxied daemon routes require a loopback peer with a
+loopback `Host`, or a request `Host` that matches `AO_WEB_PUBLIC_URL`; browser
+`Origin` headers must be loopback or the same configured public origin. Static
+app routes fall back to `index.html`, so hash-history and refreshes both land in
+the renderer.
