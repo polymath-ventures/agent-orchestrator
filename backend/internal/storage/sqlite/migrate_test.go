@@ -37,6 +37,7 @@ func TestMigrateAllowsEveryShippedHarness(t *testing.T) {
 	harnesses := []domain.AgentHarness{
 		domain.HarnessClaudeCode,
 		domain.HarnessCodex,
+		domain.HarnessCodexFugu,
 		domain.HarnessAider,
 		domain.HarnessOpenCode,
 		domain.HarnessGrok,

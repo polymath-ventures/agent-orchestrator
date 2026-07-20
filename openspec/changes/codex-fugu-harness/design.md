@@ -67,10 +67,17 @@ that only one constructor populates.
 ### `--no-update` is emitted positionally, at the front
 
 The fugu wrapper parses `--no-update` only as a top-level flag; behind a subcommand
-it is rejected. So the flag is inserted immediately after the binary in all three
-command builders (launch, restore, probe) rather than appended with the other flags.
-This is load-bearing and non-obvious, which is why the spec pins argument *position*
-and the tests assert exact argv rather than set membership.
+it is rejected. So the flag is inserted immediately after the binary in both command
+builders (launch and restore) rather than appended with the other flags. This is
+load-bearing and non-obvious, which is why the spec pins argument *position* and the
+tests assert exact argv rather than set membership.
+
+Note this fork has no `exec`-style model/capability probe — the old fork's
+`ValidateModel` path does not exist here, and `DoctorLaunchProbes()` is a
+package-level function used only for the deep Codex smoke test. It stays
+Codex-only; fugu's doctor coverage is the ordinary `--version` check. Do not confuse
+this flag with the pre-existing `appendNoUpdateCheckFlag`, which emits the unrelated
+Codex config override `-c check_for_update_on_startup=false` and applies to both.
 
 *Alternative rejected:* setting an env var or a config key to disable the update
 check. The wrapper offers no such knob; the flag is the only documented mechanism.
@@ -110,6 +117,20 @@ safe.
 fork. Rejected because it reintroduces exactly the byte-matching fragility `0007`
 was consolidated to remove, and because it disagrees with an explicit written
 convention in the file being edited.
+
+### Register the harness on functional surfaces, not marketing ones
+
+`codex-fugu` is added to the CLI `--harness` help, the `spawn.md` skill asset, the
+spawn API enum, the frontend `AGENT_OPTIONS` fallback list, and the `AgentProvider`
+union — all surfaces an operator or the app actually reads to select and route a
+harness.
+
+It is deliberately **not** added to `README.md`'s agent badge row or
+`LandingAgentsBar.tsx`. Those are public marketing surfaces for the upstream
+product, and `codex-fugu` is a Polymath-internal binary nobody outside the fleet can
+install; listing it there would advertise something unobtainable. They are also
+high-churn files upstream, so staying off them keeps the permanent fork divergence
+smaller. This is a departure from the old fork, which did edit the docs pages.
 
 ### Do not build an enforcement mechanism for the `fugu-ultra` manual-only ruling
 

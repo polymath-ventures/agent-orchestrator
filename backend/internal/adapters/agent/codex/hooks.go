@@ -74,11 +74,20 @@ var codexManagedHooks = []codexHookSpec{
 }
 
 // appendSessionHookFlags adds AO's activity hooks to the argv as `-c`
-// session-flag config, one flag per managed event.
+// session-flag config, one flag per managed event, under the codex token.
 func appendSessionHookFlags(cmd *[]string) {
+	appendSessionHookFlagsFor(cmd, "codex")
+}
+
+// appendSessionHookFlagsFor is appendSessionHookFlags for a specific agent
+// token. Codex-family harnesses that are not codex itself (codex-fugu) must
+// call back as `ao hooks <their-harness>`, or their activity lands on the wrong
+// harness — or nowhere, if activitydispatch has no deriver for the token.
+func appendSessionHookFlagsFor(cmd *[]string, agentToken string) {
 	for _, spec := range codexManagedHooks {
+		command := strings.Replace(spec.Command, codexHookCommandPrefix, "ao hooks "+agentToken+" ", 1)
 		flag := fmt.Sprintf(`hooks.%s=[{hooks=[{type="command",command=%s,timeout=%d}]}]`,
-			spec.Event, codexTOMLBasicString(spec.Command), codexHookTimeout)
+			spec.Event, codexTOMLBasicString(command), codexHookTimeout)
 		*cmd = append(*cmd, "-c", flag)
 	}
 }

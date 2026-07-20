@@ -66,11 +66,11 @@ construction rather than by a parallel code path.
 ### Requirement: The fugu wrapper update prompt is suppressed
 
 The system SHALL pass `--no-update` as the **first** argument, ahead of any
-subcommand, on every invocation of the `codex-fugu` binary: interactive launch,
-session restore, and model/capability probes. This is required because the binary is
-an auto-updating wrapper that otherwise blocks on an interactive update prompt, and
-because the wrapper parses the flag only at top level. The plain Codex adapter SHALL
-NOT emit this flag.
+subcommand, on every command it builds to run the `codex-fugu` binary: interactive
+launch and session restore. This is required because the binary is an auto-updating
+wrapper that otherwise blocks on an interactive update prompt, and because the
+wrapper parses the flag only at top level. The plain Codex adapter SHALL NOT emit
+this flag.
 
 #### Scenario: Launch suppresses the prompt
 
@@ -81,11 +81,6 @@ NOT emit this flag.
 
 - **WHEN** the fugu adapter builds a restore command
 - **THEN** `--no-update` precedes the `resume` subcommand
-
-#### Scenario: Probe suppresses the prompt before the subcommand
-
-- **WHEN** the fugu adapter builds probe arguments
-- **THEN** `--no-update` precedes the `exec` subcommand
 
 #### Scenario: Plain Codex is unaffected
 

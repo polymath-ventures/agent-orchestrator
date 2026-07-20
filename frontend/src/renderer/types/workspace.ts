@@ -61,6 +61,7 @@ export function toSessionActivity(
 
 export type AgentProvider =
 	| "codex"
+	| "codex-fugu"
 	| "claude-code"
 	| "opencode"
 	| "aider"
@@ -363,6 +364,7 @@ export function orchestratorHealth(workspace: WorkspaceSummary, restarting = fal
 
 export function toAgentProvider(provider?: string): AgentProvider {
 	switch (provider) {
+		case "codex-fugu":
 		case "claude-code":
 		case "opencode":
 		case "aider":

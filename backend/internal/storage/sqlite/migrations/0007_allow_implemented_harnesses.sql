@@ -16,7 +16,7 @@ UPDATE sqlite_master
 SET sql = replace(
     sql,
     'CHECK (harness IN ('''', ''claude-code'', ''codex'', ''aider'', ''opencode''))',
-    'CHECK (harness IN ('''', ''claude-code'', ''codex'', ''aider'', ''opencode'', ''grok'', ''droid'', ''amp'', ''agy'', ''crush'', ''cursor'', ''qwen'', ''copilot'', ''goose'', ''auggie'', ''continue'', ''devin'', ''cline'', ''kimi'', ''kiro'', ''kilocode'', ''vibe'', ''pi'', ''autohand''))'
+    'CHECK (harness IN ('''', ''claude-code'', ''codex'', ''codex-fugu'', ''aider'', ''opencode'', ''grok'', ''droid'', ''amp'', ''agy'', ''crush'', ''cursor'', ''qwen'', ''copilot'', ''goose'', ''auggie'', ''continue'', ''devin'', ''cline'', ''kimi'', ''kiro'', ''kilocode'', ''vibe'', ''pi'', ''autohand''))'
 )
 WHERE type = 'table' AND name = 'sessions';
 -- +goose StatementEnd
@@ -32,7 +32,7 @@ PRAGMA writable_schema = ON;
 UPDATE sqlite_master
 SET sql = replace(
     sql,
-    'CHECK (harness IN ('''', ''claude-code'', ''codex'', ''aider'', ''opencode'', ''grok'', ''droid'', ''amp'', ''agy'', ''crush'', ''cursor'', ''qwen'', ''copilot'', ''goose'', ''auggie'', ''continue'', ''devin'', ''cline'', ''kimi'', ''kiro'', ''kilocode'', ''vibe'', ''pi'', ''autohand''))',
+    'CHECK (harness IN ('''', ''claude-code'', ''codex'', ''codex-fugu'', ''aider'', ''opencode'', ''grok'', ''droid'', ''amp'', ''agy'', ''crush'', ''cursor'', ''qwen'', ''copilot'', ''goose'', ''auggie'', ''continue'', ''devin'', ''cline'', ''kimi'', ''kiro'', ''kilocode'', ''vibe'', ''pi'', ''autohand''))',
     'CHECK (harness IN ('''', ''claude-code'', ''codex'', ''aider'', ''opencode''))'
 )
 WHERE type = 'table' AND name = 'sessions';
