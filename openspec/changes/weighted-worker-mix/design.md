@@ -1,6 +1,6 @@
 ## Context
 
-This change ports fleet allocation from an earlier fork of this codebase (`~/agent-orchestrator-fscked`), where `domain/workermix.go` and `internal/candidatehealth/` ran in production. The reference implementations are available and carry their own test files, so the design question is not "what algorithm" but "how does it attach to *this* fork's spawn path", which has diverged.
+This change ports fleet allocation from an earlier fork of this codebase (`~/agent-orchestrator-fscked`), where `domain/workermix.go` and `internal/candidatehealth/` ran in production. The reference implementations are available and carry their own test files, so the design question is not "what algorithm" but "how does it attach to _this_ fork's spawn path", which has diverged.
 
 Current state, as mapped against the fork's `main`:
 
@@ -36,7 +36,7 @@ Two constraints shape everything below. The fork must stay rebase-clean on upstr
 
 Selection is inserted in `Manager.Spawn` where `cfg.Harness == ""` is already detected, because that is the single point where every spawn path — API, CLI, tracker intake — has converged and where the project config is already loaded.
 
-Candidate-health *telemetry*, however, is emitted at the service layer. The manager has no telemetry dependency in its `Deps`, while `Service.Spawn` already funnels every manager error through one emitter. Adding a sink to the manager purely for this would widen its dependency surface for no gain. **Alternative rejected:** injecting `ports.EventSink` into `Manager.Deps` — simpler to write, but it duplicates an emission point the service already owns and makes the manager harder to test.
+Candidate-health _telemetry_, however, is emitted at the service layer. The manager has no telemetry dependency in its `Deps`, while `Service.Spawn` already funnels every manager error through one emitter. Adding a sink to the manager purely for this would widen its dependency surface for no gain. **Alternative rejected:** injecting `ports.EventSink` into `Manager.Deps` — simpler to write, but it duplicates an emission point the service already owns and makes the manager harder to test.
 
 ### Only launch-attributable failures mark a bucket down
 
@@ -46,7 +46,7 @@ Candidate-health *telemetry*, however, is emitted at the service layer. The mana
 
 ### Attribution keys on caller-context state, not error identity
 
-The reference implementation distinguishes "the caller gave up" from "the candidate timed out" by checking whether the *caller's* context is still live, not by inspecting the error. An error wrapping `context.DeadlineExceeded` from a candidate's own startup probe, raised while the caller's context is active, is a real candidate fault.
+The reference implementation distinguishes "the caller gave up" from "the candidate timed out" by checking whether the _caller's_ context is still live, not by inspecting the error. An error wrapping `context.DeadlineExceeded` from a candidate's own startup probe, raised while the caller's context is active, is a real candidate fault.
 
 This is worth calling out because the originating issue describes the rule as "context-cancel/deadline = no-op", which is too broad — implementing that literally would silently stop marking down a whole class of genuine failures. Both branches are pinned by ported tests.
 
@@ -76,7 +76,7 @@ The cap check runs before any durable state is created, so a refusal leaves noth
 
 ### `modelprovider.go` ports alongside `workermix.go`
 
-`WorkerMix.Validate()` calls `AgentHarness.ModelProvider()`, `ClassifyModelProvider()`, and `ModelProvider.CompatibleWith()` — none of which exist in this fork. The claim in the originating issue that `workermix.go` is grep-clean holds for its *imports* but not for its same-package symbol references; it does not compile as a drop-in.
+`WorkerMix.Validate()` calls `AgentHarness.ModelProvider()`, `ClassifyModelProvider()`, and `ModelProvider.CompatibleWith()` — none of which exist in this fork. The claim in the originating issue that `workermix.go` is grep-clean holds for its _imports_ but not for its same-package symbol references; it does not compile as a drop-in.
 
 `domain/modelprovider.go` therefore ports too, dropping the `Fugu` provider and `HarnessCodexFugu` cases (neither harness exists here), and `ModelProvider()` is added to `domain/harness.go`. **Alternative rejected:** dropping the cross-provider check from `Validate()`. It is a smaller port, but it lets a mix pin an Anthropic model to a codex bucket and validate clean, and it would require deleting assertions from the ported test file — weakening a tested guarantee to save one small file.
 
