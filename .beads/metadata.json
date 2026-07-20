@@ -1,0 +1,9 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "server",
+  "dolt_server_host": "100.105.84.82",
+	"dolt_server_user": "root",
+  "dolt_database": "agentorchestrator",
+  "project_id": "913f9861-03f8-4d07-a684-4846628b9050"
+}
