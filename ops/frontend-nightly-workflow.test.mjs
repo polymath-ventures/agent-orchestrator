@@ -62,6 +62,7 @@ async function makeGitRepo() {
 	await execFile("git", ["init"], { cwd: repo });
 	await execFile("git", ["config", "user.email", "test@example.com"], { cwd: repo });
 	await execFile("git", ["config", "user.name", "Test"], { cwd: repo });
+	await execFile("git", ["config", "commit.gpgsign", "false"], { cwd: repo });
 	await writeFile(path.join(repo, "README.md"), "nightly workflow fixture\n");
 	await execFile("git", ["add", "README.md"], { cwd: repo });
 	await execFile("git", ["commit", "-m", "fixture"], { cwd: repo });
