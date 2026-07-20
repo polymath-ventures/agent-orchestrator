@@ -615,12 +615,12 @@ function ReviewPanel({
 				<span className="font-sans text-sm-md font-medium text-passive">reviewer</span>
 			</div>
 			<div className="flex flex-col gap-3 overflow-hidden rounded-lg border border-border bg-surface p-3 @max-[300px]/inspector:overflow-hidden">
-					<div className="flex min-w-0 items-center justify-between gap-2.5 @max-[300px]/inspector:flex-col @max-[300px]/inspector:items-start">
-						<span className="min-w-0 truncate text-xs font-semibold text-muted-foreground">Pull requests</span>
-						<span
-							data-testid="review-aggregate-verdict"
-							className={cn(
-								"inline-flex h-control-xs max-w-inspector-status-chip shrink-0 items-center gap-1 overflow-hidden truncate rounded-md px-2 text-2xs font-semibold leading-none @max-[300px]/inspector:max-w-full",
+				<div className="flex min-w-0 items-center justify-between gap-2.5 @max-[300px]/inspector:flex-col @max-[300px]/inspector:items-start">
+					<span className="min-w-0 truncate text-xs font-semibold text-muted-foreground">Pull requests</span>
+					<span
+						data-testid="review-aggregate-verdict"
+						className={cn(
+							"inline-flex h-control-xs max-w-inspector-status-chip shrink-0 items-center gap-1 overflow-hidden truncate rounded-md px-2 text-2xs font-semibold leading-none @max-[300px]/inspector:max-w-full",
 							reviewerStatusTone[aggregateVerdict.tone],
 						)}
 					>

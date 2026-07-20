@@ -53,7 +53,7 @@ async function handleRequest({ apiTarget, distDir, request, response, trust }) {
 
 	if (shouldProxy(url.pathname)) {
 		if (!trustedBrowserRequest(request, trust)) {
-			writePlain(response, 403, "Origin is not allowed\n");
+			writePlain(response, 403, "ao-web: request host or origin is not allowed by AO_WEB_PUBLIC_URL\n");
 			return;
 		}
 		proxyHttp({ apiTarget, request, response });

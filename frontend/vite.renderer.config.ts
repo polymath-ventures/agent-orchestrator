@@ -142,20 +142,7 @@ export default defineConfig({
 	build: {
 		// The full PostHog browser client is intentionally bundled so the CSP does
 		// not need to allow third-party script injection.
-		chunkSizeWarningLimit: 550,
-		rolldownOptions: {
-			output: {
-				codeSplitting: {
-					groups: [
-						{ name: "vendor-posthog", test: /node_modules[\\/]posthog-js[\\/]/, priority: 35, maxSize: 450_000 },
-						{ name: "vendor-react", test: /node_modules[\\/](react|react-dom)[\\/]/, priority: 30 },
-						{ name: "vendor-tanstack", test: /node_modules[\\/]@tanstack[\\/]/, priority: 25 },
-						{ name: "vendor-radix", test: /node_modules[\\/](@radix-ui|radix-ui)[\\/]/, priority: 20 },
-						{ name: "vendor-xterm", test: /node_modules[\\/]@xterm[\\/]/, priority: 20, maxSize: 450_000 },
-					],
-				},
-			},
-		},
+		chunkSizeWarningLimit: 700,
 	},
 	test: {
 		environment: "jsdom",

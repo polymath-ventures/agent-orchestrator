@@ -19,7 +19,12 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
-	await Promise.all(cleanup.splice(0).reverse().map((item) => item()));
+	await Promise.all(
+		cleanup
+			.splice(0)
+			.reverse()
+			.map((item) => item()),
+	);
 });
 
 describe("ao web production server", () => {
@@ -151,6 +156,7 @@ describe("ao web production server", () => {
 		const response = await fetch(`${server.url}/api/v1/events`, {
 			headers: { Origin: "https://ao.tailnet.example" },
 		});
+		assert.equal(response.status, 200);
 
 		const result = await withTimeout(
 			response.text().then(
@@ -379,13 +385,7 @@ async function rawHttp({ port, host, origin, pathname }) {
 		let data = "";
 		socket.on("connect", () => {
 			socket.write(
-				[
-					`GET ${pathname} HTTP/1.1`,
-					`Host: ${host}`,
-					`Origin: ${origin}`,
-					"Connection: close",
-					"\r\n",
-				].join("\r\n"),
+				[`GET ${pathname} HTTP/1.1`, `Host: ${host}`, `Origin: ${origin}`, "Connection: close", "\r\n"].join("\r\n"),
 			);
 		});
 		socket.on("data", (chunk) => {

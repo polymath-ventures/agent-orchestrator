@@ -59,6 +59,11 @@ packaged Electron origin when overriding the list:
 AO_ALLOWED_ORIGINS=app://renderer,https://ao.tailnet-name.ts.net ao start
 ```
 
+If the daemon allowlist is missing the tailnet origin, proxied daemon responses
+will say `Origin is not allowed to access this daemon`. If `AO_WEB_PUBLIC_URL`
+does not match the Tailscale Serve origin, the web server rejects earlier with
+`ao-web: request host or origin is not allowed by AO_WEB_PUBLIC_URL`.
+
 Run the web server locally:
 
 ```bash

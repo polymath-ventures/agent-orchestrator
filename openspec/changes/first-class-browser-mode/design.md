@@ -60,8 +60,9 @@ contracts, not introduce a second data path.
 ## Risks / Trade-offs
 
 - Host/Origin bypass or DNS rebinding risk -> validate proxied requests against
-  loopback hosts or `AO_WEB_PUBLIC_URL`, strip `Origin` before forwarding, and
-  reject untrusted WebSocket upgrades before they reach the daemon.
+  loopback hosts or `AO_WEB_PUBLIC_URL`, forward `Origin` unchanged so the
+  daemon CORS allowlist remains the second boundary, and reject untrusted
+  WebSocket upgrades before they reach the daemon.
 - Browser feature parity gaps -> explicitly degrade native-only affordances and
   keep real daemon data/terminal behavior as the acceptance baseline.
 - Existing browser e2e drift -> replace global mock data with daemon-shaped
