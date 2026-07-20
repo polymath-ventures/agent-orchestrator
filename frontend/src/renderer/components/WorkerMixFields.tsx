@@ -36,8 +36,9 @@ export function toWorkerMixForm(mix: WorkerMixEntry[] | undefined): WorkerMixBuc
 }
 
 // buildWorkerMix produces the payload field, scrubbing an empty editor to
-// `undefined` (omit) so an unconfigured mix serializes as absent — the feature
-// stays off — rather than an empty array the daemon would persist.
+// `undefined` so an unconfigured mix is omitted from the PUT rather than sent as
+// an empty array — keeping the stored config free of an empty `workerMix` key and
+// the feature unambiguously off.
 export function buildWorkerMix(buckets: WorkerMixBucket[]): WorkerMixEntry[] | undefined {
 	if (buckets.length === 0) return undefined;
 	return buckets.map((bucket) => {

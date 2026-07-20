@@ -35,6 +35,10 @@ func TestClassifyModelProvider(t *testing.T) {
 		{"octopus-v1", ProviderUnknown},
 		{"octopus", ProviderUnknown},
 		{"opusculum", ProviderUnknown},
+		// A multibyte letter adjacent to the fragment is a letter boundary too, not
+		// a delimiter, so it must not classify.
+		{"éopus", ProviderUnknown},
+		{"opusé", ProviderUnknown},
 		{"gpt4", ProviderOpenAI}, // digit boundary still matches the family
 		{"claude-opus-4-1", ProviderAnthropic},
 	}
