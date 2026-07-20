@@ -14,6 +14,14 @@ import { Button } from "./ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Label } from "./ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
+import {
+	buildWorkerMix,
+	parseMaxLiveWorkers,
+	toWorkerMixForm,
+	WorkerMixFields,
+	workerMixInvalid,
+	workerMixTotal,
+} from "./WorkerMixFields";
 
 type Project = components["schemas"]["Project"];
 type ProjectConfig = components["schemas"]["ProjectConfig"];
@@ -87,6 +95,8 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 		intakeEnabled: intake.enabled ?? false,
 		intakeRepo: intake.repo ?? "",
 		intakeAssignee: intake.assignee ?? "",
+		workerMix: toWorkerMixForm(config.workerMix),
+		maxLiveWorkers: config.maxLiveWorkers ? String(config.maxLiveWorkers) : "",
 	});
 	const [savedAt, setSavedAt] = useState<number | null>(null);
 	const [replacementError, setReplacementError] = useState<string | null>(null);
@@ -137,6 +147,8 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 				}),
 				reviewers: form.reviewerHarness ? [{ harness: form.reviewerHarness }] : undefined,
 				trackerIntake: buildIntake(intakeForm),
+				workerMix: buildWorkerMix(form.workerMix),
+				maxLiveWorkers: parseMaxLiveWorkers(form.maxLiveWorkers),
 			};
 			const { error } = await apiClient.PUT("/api/v1/projects/{id}/config", {
 				params: { path: { id: projectId } },
@@ -183,6 +195,10 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 				}
 				if (intakeIncomplete) {
 					setValidationError("Enabling intake requires an assignee.");
+					return;
+				}
+				if (workerMixInvalid(form.workerMix)) {
+					setValidationError(`Worker mix weights must sum to 100 (currently ${workerMixTotal(form.workerMix)}).`);
 					return;
 				}
 				setValidationError(null);
@@ -332,6 +348,30 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 							id="reviewerHarness"
 							value={form.reviewerHarness}
 							onChange={(v) => setForm((f) => ({ ...f, reviewerHarness: v }))}
+						/>
+					</Field>
+				</CardContent>
+			</Card>
+
+			<Card>
+				<CardHeader>
+					<CardTitle className="text-control">Worker mix</CardTitle>
+				</CardHeader>
+				<CardContent className="flex flex-col gap-4">
+					<WorkerMixFields
+						buckets={form.workerMix}
+						onChange={(next) => setForm((f) => ({ ...f, workerMix: next }))}
+						agentCatalog={agentCatalog}
+					/>
+					<Field label="Max live workers (0 = unlimited)" htmlFor="maxLiveWorkers">
+						<input
+							id="maxLiveWorkers"
+							type="number"
+							min={0}
+							className="h-control-form w-full rounded-md border border-input bg-transparent px-2.5 text-control text-foreground placeholder:text-passive focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-weak"
+							value={form.maxLiveWorkers}
+							onChange={(e) => setForm((f) => ({ ...f, maxLiveWorkers: e.target.value }))}
+							placeholder="0"
 						/>
 					</Field>
 				</CardContent>

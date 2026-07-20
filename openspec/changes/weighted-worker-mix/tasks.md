@@ -69,12 +69,12 @@
 
 ## 10. Settings UI
 
-- [ ] 10.1 Add a `WorkerMixFields` subcomponent following the extracted-subcomponent pattern used by the tracker-intake section
-- [ ] 10.2 Add the worker-mix card to `ProjectSettingsForm.tsx` with bucket rows and a live weight total
-- [ ] 10.3 Gate save on the weight sum equalling 100, using the file's existing manual inline-validation convention
-- [ ] 10.4 Add the cap control to the same card
-- [ ] 10.5 Extend `ProjectSettingsForm.test.tsx` to cover the save gate and the live total
-- [ ] 10.6 Verify `npm run frontend:typecheck` and `npm run lint` pass
+- [x] 10.1 Add a `WorkerMixFields` subcomponent following the extracted-subcomponent pattern used by the tracker-intake section
+- [x] 10.2 Add the worker-mix card to `ProjectSettingsForm.tsx` with bucket rows and a live weight total
+- [x] 10.3 Gate save on the weight sum equalling 100, using the file's existing manual inline-validation convention
+- [x] 10.4 Add the cap control to the same card
+- [x] 10.5 Extend `ProjectSettingsForm.test.tsx` to cover the save gate and the live total
+- [x] 10.6 Verify `npm run frontend:typecheck` and `npm run lint` pass
 
 ## 11. Full verification
 
