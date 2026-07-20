@@ -20,7 +20,7 @@ test("the Reviews tab renders the reviewer panel for a session that owns PRs", a
 	await expect(inspector.getByText("No pull request opened yet.")).toHaveCount(0);
 	const reviewsSection = inspector.getByTestId("inspector-section").filter({ hasText: "Reviews" });
 	await expect(reviewsSection.getByText("codex")).toBeVisible();
-	await expect(reviewsSection.locator(".max-w-inspector-status-chip")).toHaveText("Approved");
+	await expect(reviewsSection.getByTestId("review-aggregate-verdict")).toHaveText("Approved");
 	await expect(reviewsSection.getByRole("button", { name: "Re-run review" })).toBeVisible();
 	await expect(reviewsSection.getByRole("button", { name: "Open terminal" })).toBeVisible();
 });

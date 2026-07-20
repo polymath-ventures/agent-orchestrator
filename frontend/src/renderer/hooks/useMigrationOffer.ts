@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { apiClient } from "../lib/api-client";
 import { aoBridge } from "../lib/bridge";
+import { hasElectronBridge } from "../lib/runtime-environment";
 import type { MigrationState } from "../../main/app-state";
 
 export const migrationOfferQueryKey = ["migration-offer"] as const;
@@ -30,6 +31,7 @@ export function useMigrationOffer() {
 	return useQuery({
 		queryKey: migrationOfferQueryKey,
 		queryFn: fetchMigrationOffer,
+		enabled: hasElectronBridge(),
 		retry: 1,
 		throwOnError: false,
 	});

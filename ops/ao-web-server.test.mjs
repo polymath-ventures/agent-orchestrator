@@ -96,7 +96,7 @@ describe("ao web production server", () => {
 
 		assert.equal(response.status, 200);
 		assert.deepEqual(await response.json(), { projects: [{ id: "ao" }] });
-		assert.equal(seenOrigin, undefined);
+		assert.equal(seenOrigin, "https://ao.tailnet.example");
 	});
 
 	it("tears down upstream proxy requests when the browser aborts", async () => {
@@ -130,6 +130,38 @@ describe("ao web production server", () => {
 		await pending;
 
 		await waitFor(() => openStreams === 0);
+	});
+
+	it("closes the browser response when the daemon aborts mid-stream", async () => {
+		const daemon = await listen(
+			http.createServer((_request, response) => {
+				response.writeHead(200, { "Content-Type": "text/event-stream" });
+				response.write("event: ping\ndata: {}\n\n");
+				setTimeout(() => response.destroy(new Error("daemon restarted")), 25);
+			}),
+		);
+		const distDir = await makeDist();
+		const server = await listen(
+			createAoWebServer({
+				distDir,
+				apiTarget: daemon.url,
+				publicUrl: "https://ao.tailnet.example/",
+			}),
+		);
+		const response = await fetch(`${server.url}/api/v1/events`, {
+			headers: { Origin: "https://ao.tailnet.example" },
+		});
+
+		const result = await withTimeout(
+			response.text().then(
+				(body) => ({ body }),
+				(error) => ({ error }),
+			),
+			1000,
+		);
+		assert(
+			("body" in result && /event: ping/.test(result.body)) || ("error" in result && result.error instanceof Error),
+		);
 	});
 
 	it("rejects proxied browser requests from untrusted origins before they reach the daemon", async () => {
@@ -213,7 +245,7 @@ describe("ao web production server", () => {
 
 		assert.match(response, /^HTTP\/1\.1 101 Switching Protocols/);
 		assert.match(response, /mux-opened/);
-		assert.equal(seenOrigin, undefined);
+		assert.equal(seenOrigin, "https://ao.tailnet.example");
 	});
 
 	it("rejects websocket upgrades from untrusted origins before they reach the daemon", async () => {
@@ -438,6 +470,13 @@ async function waitFor(predicate, timeoutMs = 1000) {
 		await new Promise((resolve) => setTimeout(resolve, 20));
 	}
 	assert.equal(predicate(), true);
+}
+
+function withTimeout(promise, timeoutMs) {
+	return Promise.race([
+		promise,
+		new Promise((_, reject) => setTimeout(() => reject(new Error(`timed out after ${timeoutMs}ms`)), timeoutMs)),
+	]);
 }
 
 function stopChild(child) {

@@ -84,6 +84,12 @@ function proxyHttp({ apiTarget, request, response }) {
 			headers: proxyHeaders(request.headers, apiTarget),
 		},
 		(proxyResponse) => {
+			proxyResponse.on("aborted", () => {
+				response.destroy();
+			});
+			proxyResponse.on("error", () => {
+				response.destroy();
+			});
 			response.writeHead(proxyResponse.statusCode ?? 502, proxyResponse.statusMessage, proxyResponse.headers);
 			proxyResponse.pipe(response);
 		},
@@ -227,7 +233,6 @@ function proxyHeaders(headers, apiTarget) {
 		...headers,
 		host: apiTarget.host,
 	};
-	delete next.origin;
 	return next;
 }
 

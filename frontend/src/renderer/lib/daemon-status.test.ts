@@ -66,4 +66,16 @@ describe("renderer daemon status", () => {
 			code: "identity_mismatch",
 		});
 	});
+
+	it("keeps the browser API base same-origin across ready and error status transitions", async () => {
+		const { getApiBaseUrl, setApiBaseUrl } = await import("./api-client");
+		const { applyDaemonStatus } = await import("./daemon-status");
+		setApiBaseUrl(window.location.origin);
+
+		applyDaemonStatus({ state: "ready", pid: 42 });
+		expect(getApiBaseUrl()).toBe("");
+
+		applyDaemonStatus({ state: "error", code: "daemon_unreachable", message: "offline" });
+		expect(getApiBaseUrl()).toBe("");
+	});
 });

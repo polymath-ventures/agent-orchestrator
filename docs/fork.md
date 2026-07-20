@@ -52,6 +52,13 @@ npm --prefix frontend install --allow-git=all --allow-remote=all
 npm --prefix frontend run build:web
 ```
 
+Start the daemon with the same tailnet origin in its CORS allowlist. Keep the
+packaged Electron origin when overriding the list:
+
+```bash
+AO_ALLOWED_ORIGINS=app://renderer,https://ao.tailnet-name.ts.net ao start
+```
+
 Run the web server locally:
 
 ```bash
@@ -108,3 +115,11 @@ loopback `Host`, or a request `Host` that matches `AO_WEB_PUBLIC_URL`; browser
 `Origin` headers must be loopback or the same configured public origin. Static
 app routes fall back to `index.html`, so hash-history and refreshes both land in
 the renderer.
+
+Security posture: anyone who can reach the Tailscale Serve endpoint can operate
+the AO daemon through the browser surface, including sending session input and
+killing sessions. That is intentionally narrower than a LAN daemon listener:
+`ops/ao-web-server.mjs` stays loopback-bound and Tailscale is the access
+boundary. Do not expose the Node server directly on the LAN; if this ever needs
+a non-tailnet listener, use the bearer-auth model in
+`docs/adr/0001-lan-listener-for-mobile.md` instead.

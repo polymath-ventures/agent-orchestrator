@@ -7,10 +7,12 @@ import type { DaemonStatus } from "../../shared/daemon-status";
 export type { DaemonStatus };
 
 export function applyDaemonStatus(nextStatus: DaemonStatus): void {
+	if (!hasElectronBridge()) {
+		setApiBaseUrl("");
+		return;
+	}
 	if (nextStatus.state === "ready" && nextStatus.port) {
 		setApiBaseUrl(`http://127.0.0.1:${nextStatus.port}`);
-	} else if (nextStatus.state === "ready" && !hasElectronBridge()) {
-		setApiBaseUrl("");
 	} else {
 		setApiBaseUrl(null);
 	}
