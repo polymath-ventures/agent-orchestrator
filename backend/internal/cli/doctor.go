@@ -56,12 +56,17 @@ const (
 type harnessProbe struct {
 	Name       string
 	BinaryName string
+	// PreArgs precede VersionArg, for wrapper binaries that need a leading flag
+	// parsed at top level (codex-fugu's --no-update, without which the wrapper
+	// can block on its update prompt during the probe).
+	PreArgs    []string
 	VersionArg string
 }
 
 var doctorHarnesses = []harnessProbe{
 	{Name: "claude-code", BinaryName: "claude", VersionArg: "--version"},
 	{Name: "codex", BinaryName: "codex", VersionArg: "--version"},
+	{Name: "codex-fugu", BinaryName: "codex-fugu", PreArgs: []string{"--no-update"}, VersionArg: "--version"},
 }
 
 func newDoctorCommand(ctx *commandContext) *cobra.Command {
@@ -377,11 +382,12 @@ func (c *commandContext) checkHarness(ctx context.Context, harness harnessProbe)
 	}
 	reqCtx, cancel := context.WithTimeout(ctx, probeTimeout)
 	defer cancel()
-	out, err := c.deps.CommandOutput(reqCtx, path, harness.VersionArg)
+	probeArgs := append(append([]string{}, harness.PreArgs...), harness.VersionArg)
+	out, err := c.deps.CommandOutput(reqCtx, path, probeArgs...)
 	if err != nil {
 		return doctorCheck{
 			Level: doctorWarn, Section: doctorSectionAgents, Name: harness.Name,
-			Message: fmt.Sprintf("%s resolves to %s, but `%s %s` failed: %v", harness.BinaryName, path, harness.BinaryName, harness.VersionArg, err),
+			Message: fmt.Sprintf("%s resolves to %s, but `%s %s` failed: %v", harness.BinaryName, path, harness.BinaryName, strings.Join(probeArgs, " "), err),
 		}
 	}
 	version := firstOutputLine(out)

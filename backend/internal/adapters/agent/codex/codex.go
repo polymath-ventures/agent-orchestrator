@@ -25,15 +25,80 @@ import (
 
 // Plugin is the Codex agent adapter. It is safe for concurrent use; the binary
 // path is resolved once and cached under binaryMu.
+//
+// The manifest/binary/hook fields are the parameterization that lets one
+// adapter serve both `codex` and the fork-only `codex-fugu` harness: fugu is
+// the same agent behind a different executable name, so a second package would
+// duplicate the launch flags, hooks, restore logic, and activity derivation and
+// then drift. Every field is read through an accessor that falls back to the
+// Codex default, so a zero-valued Plugin is provably still plain Codex.
 type Plugin struct {
 	agentbase.Base
-	binaryMu       sync.Mutex
-	resolvedBinary string
+	manifestID          string
+	manifestName        string
+	manifestDescription string
+	binaryName          string
+	hookAgentToken      string
+	binaryMu            sync.Mutex
+	resolvedBinary      string
 }
 
 // New returns a ready-to-register Codex adapter.
 func New() *Plugin {
 	return &Plugin{}
+}
+
+// NewFugu returns a Codex-compatible adapter that launches the codex-fugu
+// binary while preserving Codex's flags, hooks, auth probe, and activity model.
+// Fork-only: codex-fugu is a Polymath-internal binary and never ships upstream.
+func NewFugu() *Plugin {
+	return &Plugin{
+		manifestID:          fuguAdapterID,
+		manifestName:        "Codex Fugu",
+		manifestDescription: "Run Codex Fugu worker sessions.",
+		binaryName:          fuguAdapterID,
+		hookAgentToken:      fuguAdapterID,
+	}
+}
+
+// fuguAdapterID is the harness id, adapter manifest id, binary name, and hook
+// token — the registry derives the harness from the manifest id, so these must
+// be the same string or resolution fails silently.
+const fuguAdapterID = "codex-fugu"
+
+func (p *Plugin) adapterID() string {
+	if p.manifestID != "" {
+		return p.manifestID
+	}
+	return "codex"
+}
+
+func (p *Plugin) adapterName() string {
+	if p.manifestName != "" {
+		return p.manifestName
+	}
+	return "Codex"
+}
+
+func (p *Plugin) adapterDescription() string {
+	if p.manifestDescription != "" {
+		return p.manifestDescription
+	}
+	return "Run Codex worker sessions."
+}
+
+func (p *Plugin) binaryCommand() string {
+	if p.binaryName != "" {
+		return p.binaryName
+	}
+	return "codex"
+}
+
+func (p *Plugin) hookToken() string {
+	if p.hookAgentToken != "" {
+		return p.hookAgentToken
+	}
+	return "codex"
 }
 
 // EmitsSubmitActivity signals Codex fires a user-prompt-submit hook under AO's
@@ -54,9 +119,9 @@ var _ ports.AgentAuthChecker = (*Plugin)(nil)
 // Manifest returns the adapter's static self-description.
 func (p *Plugin) Manifest() adapters.Manifest {
 	return adapters.Manifest{
-		ID:          "codex",
-		Name:        "Codex",
-		Description: "Run Codex worker sessions.",
+		ID:          p.adapterID(),
+		Name:        p.adapterName(),
+		Description: p.adapterDescription(),
 		Version:     "0.0.1",
 		Capabilities: []adapters.Capability{
 			adapters.CapabilityAgent,
@@ -70,17 +135,18 @@ func (p *Plugin) Manifest() adapters.Manifest {
 // instructions, and the initial prompt (passed after `--` so a leading "-" is
 // not read as a flag).
 func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (cmd []string, err error) {
-	binary, err := p.codexBinary(ctx)
+	binary, err := p.agentBinary(ctx)
 	if err != nil {
 		return nil, err
 	}
 
 	cmd = []string{binary}
+	p.appendWrapperFlags(&cmd)
 	appendNoUpdateCheckFlag(&cmd)
 	appendHideRateLimitNudgeFlag(&cmd)
 	appendHookTrustBypassFlag(&cmd)
 	appendApprovalFlags(&cmd, cfg.Permissions)
-	appendSessionHookFlags(&cmd)
+	appendSessionHookFlagsFor(&cmd, p.hookToken())
 	appendTerminalCompatibilityFlags(&cmd)
 	appendWorkspaceTrustFlag(&cmd, cfg.WorkspacePath)
 
@@ -110,18 +176,22 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 		return nil, false, nil
 	}
 
-	binary, err := p.codexBinary(ctx)
+	binary, err := p.agentBinary(ctx)
 	if err != nil {
 		return nil, false, err
 	}
 
-	cmd = make([]string, 0, 24)
-	cmd = append(cmd, binary, "resume")
+	cmd = make([]string, 0, 25)
+	cmd = append(cmd, binary)
+	// Wrapper flags precede the subcommand: the fugu wrapper parses
+	// --no-update only at top level and rejects it behind `resume`.
+	p.appendWrapperFlags(&cmd)
+	cmd = append(cmd, "resume")
 	appendNoUpdateCheckFlag(&cmd)
 	appendHideRateLimitNudgeFlag(&cmd)
 	appendHookTrustBypassFlag(&cmd)
 	appendApprovalFlags(&cmd, cfg.Permissions)
-	appendSessionHookFlags(&cmd)
+	appendSessionHookFlagsFor(&cmd, p.hookToken())
 	appendTerminalCompatibilityFlags(&cmd)
 	appendWorkspaceTrustFlag(&cmd, cfg.Session.WorkspacePath)
 	if cfg.SystemPrompt != "" {
@@ -143,91 +213,189 @@ func (p *Plugin) SessionInfo(ctx context.Context, session ports.SessionRef) (por
 	return info, ok, nil
 }
 
+// fuguProfileRejection is the error codex-fugu returns for `login status`.
+// The fugu wrapper has no login of its own — its credential is the shared Codex
+// login — so this specific rejection, and only this one, means "ask codex".
+const fuguProfileRejection = "--profile only applies"
+
 // AuthStatus checks Codex's local login state without making a model call.
 func (p *Plugin) AuthStatus(ctx context.Context) (ports.AgentAuthStatus, error) {
-	binary, err := p.codexBinary(ctx)
+	binary, err := p.agentBinary(ctx)
 	if err != nil {
 		return ports.AgentAuthStatusUnknown, err
 	}
-	probeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
-	defer cancel()
 
-	out, err := exec.CommandContext(probeCtx, binary, "login", "status").CombinedOutput()
-	if probeCtx.Err() != nil {
-		return ports.AgentAuthStatusUnknown, probeCtx.Err()
-	}
-	text := strings.ToLower(string(out))
-	if strings.Contains(text, "not logged in") || strings.Contains(text, "logged out") {
-		return ports.AgentAuthStatusUnauthorized, nil
-	}
-	if strings.Contains(text, "logged in") {
-		return ports.AgentAuthStatusAuthorized, nil
-	}
+	// The probe runs the wrapper binary directly, so it needs the same leading
+	// --no-update as launch/restore — otherwise the fugu wrapper can block on its
+	// update prompt before ever printing a login state.
+	var pre []string
+	p.appendWrapperFlags(&pre)
+
+	status, text, failed, err := loginStatusForBinary(ctx, binary, pre...)
 	if err != nil {
+		return ports.AgentAuthStatusUnknown, err
+	}
+	if status != ports.AgentAuthStatusUnknown {
+		return status, nil
+	}
+	if p.adapterID() == fuguAdapterID {
+		if failed && strings.Contains(text, fuguProfileRejection) {
+			return sharedCodexAuthStatus(ctx)
+		}
+		// The profile rejection is fugu's only expected failure. Any other
+		// unrecognized outcome is genuinely unknown — reporting it as
+		// unauthorized would tell an operator to log in when the binary is
+		// actually broken. `ao doctor` is the tool for that diagnosis.
+		return ports.AgentAuthStatusUnknown, nil
+	}
+	// Plain Codex keeps its historical heuristic: a non-zero `login status`
+	// (with no recognizable text) means logged out.
+	if failed {
 		return ports.AgentAuthStatusUnauthorized, nil
 	}
 	return ports.AgentAuthStatusUnknown, nil
 }
 
+// sharedCodexAuthStatus answers the fugu auth question by probing the plain
+// codex binary, which owns the shared credential.
+//
+// It deliberately does not treat a clean exit as authorization: a runtime help
+// dump exits zero and says nothing about login state, and reporting a broken
+// worker as healthy is worse than reporting it as unknown.
+func sharedCodexAuthStatus(ctx context.Context) (ports.AgentAuthStatus, error) {
+	codexBinary, err := ResolveCodexBinary(ctx)
+	if err != nil {
+		// No codex binary to ask. The fugu harness's auth state is genuinely
+		// unknown rather than unauthorized, and a missing shared binary is not
+		// this probe's error to raise.
+		return ports.AgentAuthStatusUnknown, nil //nolint:nilerr // absence of the shared binary is an unknown answer, not a probe failure
+	}
+	// The shared credential lives in plain codex, which takes no wrapper flags.
+	status, _, failed, err := loginStatusForBinary(ctx, codexBinary)
+	if err != nil {
+		return ports.AgentAuthStatusUnknown, err
+	}
+	if status != ports.AgentAuthStatusUnknown {
+		return status, nil
+	}
+	if failed {
+		return ports.AgentAuthStatusUnauthorized, nil
+	}
+	return ports.AgentAuthStatusUnknown, nil
+}
+
+// loginStatusForBinary runs `<binary> login status` under a short budget and
+// classifies the output. It returns the classification, the lowercased combined
+// output (so callers can match on a specific rejection), whether the command
+// itself exited non-zero, and a probe error.
+//
+// A non-zero exit is reported as a bool rather than an error because it is a
+// signal about login state, not a failure to propagate: callers answer with an
+// auth status either way. status is Unknown when the output carries no
+// recognizable login state — that ambiguity is the caller's to resolve.
+//
+// preArgs are placed before the `login status` subcommand, for wrapper binaries
+// (codex-fugu) that need a leading flag like --no-update parsed at top level.
+func loginStatusForBinary(ctx context.Context, binary string, preArgs ...string) (status ports.AgentAuthStatus, text string, failed bool, err error) {
+	probeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+
+	args := append(append([]string{}, preArgs...), "login", "status")
+	out, cmdErr := exec.CommandContext(probeCtx, binary, args...).CombinedOutput()
+	if probeCtx.Err() != nil {
+		return ports.AgentAuthStatusUnknown, "", false, probeCtx.Err()
+	}
+	text = strings.ToLower(string(out))
+	failed = cmdErr != nil
+	if strings.Contains(text, "not logged in") || strings.Contains(text, "logged out") {
+		return ports.AgentAuthStatusUnauthorized, text, failed, nil
+	}
+	if strings.Contains(text, "logged in") {
+		return ports.AgentAuthStatusAuthorized, text, failed, nil
+	}
+	return ports.AgentAuthStatusUnknown, text, failed, nil
+}
+
 // ResolveCodexBinary returns the path to the codex binary on this machine,
 // searching platform-specific well-known install locations and PATH.
 func ResolveCodexBinary(ctx context.Context) (string, error) {
+	return ResolveAgentBinary(ctx, "codex")
+}
+
+// ResolveAgentBinary resolves a Codex-family binary by name, searching
+// platform-specific well-known install locations and PATH. The Windows
+// npm-shim to native-exe indirection and the WindowsApps exclusion apply only
+// to `codex` itself; they describe how the upstream Codex npm package installs
+// and do not generalize to the fugu wrapper.
+func ResolveAgentBinary(ctx context.Context, binaryName string) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
+	if binaryName == "" {
+		binaryName = "codex"
+	}
+	isCodex := binaryName == "codex"
 
 	if runtime.GOOS == "windows" {
 		candidates := []string{}
 		if appData := os.Getenv("APPDATA"); appData != "" {
-			shim := filepath.Join(appData, "npm", "codex.cmd")
-			candidates = append(candidates, windowsNativeCodexCandidatesForShim(shim)...)
+			shim := filepath.Join(appData, "npm", binaryName+".cmd")
+			if isCodex {
+				candidates = append(candidates, windowsNativeCodexCandidatesForShim(shim)...)
+			}
 			candidates = append(candidates,
-				filepath.Join(appData, "npm", "codex.exe"),
+				filepath.Join(appData, "npm", binaryName+".exe"),
 				shim,
 			)
 		}
 		if home, err := os.UserHomeDir(); err == nil {
-			candidates = append(candidates, filepath.Join(home, ".cargo", "bin", "codex.exe"))
+			candidates = append(candidates, filepath.Join(home, ".cargo", "bin", binaryName+".exe"))
 		}
 		for _, candidate := range candidates {
 			if fileExists(candidate) {
-				return resolveNativeWindowsCodex(candidate), nil
+				if isCodex {
+					return resolveNativeWindowsCodex(candidate), nil
+				}
+				return candidate, nil
 			}
 			if err := ctx.Err(); err != nil {
 				return "", err
 			}
 		}
 
-		for _, name := range []string{"codex.cmd", "codex", "codex.exe"} {
+		for _, name := range []string{binaryName + ".cmd", binaryName, binaryName + ".exe"} {
 			path, err := exec.LookPath(name)
 			if err == nil && path != "" {
-				if isWindowsAppsCodexExecutable(path) {
-					continue
+				if isCodex {
+					if isWindowsAppsCodexExecutable(path) {
+						continue
+					}
+					return resolveNativeWindowsCodex(path), nil
 				}
-				return resolveNativeWindowsCodex(path), nil
+				return path, nil
 			}
 			if err := ctx.Err(); err != nil {
 				return "", err
 			}
 		}
 
-		return "", fmt.Errorf("codex: %w", ports.ErrAgentBinaryNotFound)
+		return "", fmt.Errorf("%s: %w", binaryName, ports.ErrAgentBinaryNotFound)
 	}
 
-	if path, err := exec.LookPath("codex"); err == nil && path != "" {
+	if path, err := exec.LookPath(binaryName); err == nil && path != "" {
 		return path, nil
 	}
 
 	candidates := []string{
-		"/usr/local/bin/codex",
-		"/opt/homebrew/bin/codex",
+		"/usr/local/bin/" + binaryName,
+		"/opt/homebrew/bin/" + binaryName,
 	}
 	if home, err := os.UserHomeDir(); err == nil {
 		candidates = append(candidates,
-			filepath.Join(home, ".cargo", "bin", "codex"),
-			filepath.Join(home, ".npm", "bin", "codex"),
+			filepath.Join(home, ".cargo", "bin", binaryName),
+			filepath.Join(home, ".npm", "bin", binaryName),
 		)
-		candidates = append(candidates, nvmNodeBinCandidates(home, "codex")...)
+		candidates = append(candidates, nvmNodeBinCandidates(home, binaryName)...)
 	}
 
 	for _, candidate := range candidates {
@@ -239,7 +407,7 @@ func ResolveCodexBinary(ctx context.Context) (string, error) {
 		}
 	}
 
-	return "", fmt.Errorf("codex: %w", ports.ErrAgentBinaryNotFound)
+	return "", fmt.Errorf("%s: %w", binaryName, ports.ErrAgentBinaryNotFound)
 }
 
 func nvmNodeBinCandidates(home, binary string) []string {
@@ -280,7 +448,7 @@ func isWindowsAppsCodexExecutable(path string) bool {
 		strings.Contains(clean, string(filepath.Separator)+"windowsapps"+string(filepath.Separator)+"openai.codex_")
 }
 
-func (p *Plugin) codexBinary(ctx context.Context) (string, error) {
+func (p *Plugin) agentBinary(ctx context.Context) (string, error) {
 	p.binaryMu.Lock()
 	defer p.binaryMu.Unlock()
 
@@ -288,7 +456,7 @@ func (p *Plugin) codexBinary(ctx context.Context) (string, error) {
 		return p.resolvedBinary, nil
 	}
 
-	binary, err := ResolveCodexBinary(ctx)
+	binary, err := ResolveAgentBinary(ctx, p.binaryCommand())
 	if err != nil {
 		return "", err
 	}
@@ -315,6 +483,17 @@ func DoctorLaunchProbes() [][]string {
 	appendSessionHookFlags(&overrideProbe)
 	appendWorkspaceTrustFlag(&overrideProbe, os.TempDir())
 	return [][]string{flagProbe, overrideProbe}
+}
+
+// appendWrapperFlags emits flags the wrapper binary itself consumes, ahead of
+// any subcommand. codex-fugu is an auto-updating wrapper that blocks on an
+// interactive update prompt, which hangs a headless AO pane invisibly; it
+// accepts --no-update only at top level. This is distinct from
+// appendNoUpdateCheckFlag, which sets an unrelated Codex config override.
+func (p *Plugin) appendWrapperFlags(cmd *[]string) {
+	if p.adapterID() == fuguAdapterID {
+		*cmd = append(*cmd, "--no-update")
+	}
 }
 
 func appendNoUpdateCheckFlag(cmd *[]string) {

@@ -291,6 +291,10 @@ describe("toAgentProvider", () => {
 		expect(toAgentProvider("opencode")).toBe("opencode");
 	});
 
+	it("passes through codex-fugu rather than collapsing it to codex", () => {
+		expect(toAgentProvider("codex-fugu")).toBe("codex-fugu");
+	});
+
 	it("defaults unknown and undefined providers to codex", () => {
 		expect(toAgentProvider("totally-unknown")).toBe("codex");
 		expect(toAgentProvider(undefined)).toBe("codex");

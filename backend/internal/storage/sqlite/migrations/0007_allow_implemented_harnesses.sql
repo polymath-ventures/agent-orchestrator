@@ -3,8 +3,12 @@
 -- CREATE TABLE text in sqlite_master. writable_schema edits must run outside a
 -- transaction, and RESET forces an immediate schema reparse on the connection.
 --
--- New harnesses are added here by extending this list, not by chaining a fresh
--- per-harness migration onto the previous one's exact text.
+-- New harnesses were added here by extending this list WHILE 0007 was the newest
+-- migration. That no longer works: goose tracks applied migrations by version, so
+-- an existing database past 0007 never re-runs an edited 0007 and would reject the
+-- new harness on upgrade even though fresh installs accept it. Once later
+-- migrations exist, widen the allowlist with a NEW migration instead (see
+-- 0027_allow_codex_fugu_harness.sql).
 
 -- +goose NO TRANSACTION
 -- +goose Up

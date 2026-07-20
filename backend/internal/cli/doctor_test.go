@@ -117,9 +117,10 @@ func TestDoctorWarnsWhenTmuxMissing(t *testing.T) {
 func TestDoctorChecksHarnessVersions(t *testing.T) {
 	setConfigEnv(t)
 	cmdPath := map[string]string{
-		"git":    "/bin/git",
-		"claude": "/bin/claude",
-		"codex":  "/bin/codex",
+		"git":        "/bin/git",
+		"claude":     "/bin/claude",
+		"codex":      "/bin/codex",
+		"codex-fugu": "/bin/codex-fugu",
 	}
 	c := doctorContext(t, cmdPath, func(_ context.Context, name string, args ...string) ([]byte, error) {
 		switch name {
@@ -135,6 +136,14 @@ func TestDoctorChecksHarnessVersions(t *testing.T) {
 			}
 			t.Fatalf("unexpected harness command: %s %v", name, args)
 			return nil, nil
+		case "/bin/codex-fugu":
+			// The fugu wrapper must be probed with --no-update ahead of the
+			// version subcommand, or it can block on its update prompt.
+			if len(args) == 2 && args[0] == "--no-update" && args[1] == "--version" {
+				return []byte("codex-fugu 1.2.3\n"), nil
+			}
+			t.Fatalf("codex-fugu probe args = %v, want [--no-update --version]", args)
+			return nil, nil
 		default:
 			t.Fatalf("unexpected command: %s %v", name, args)
 			return nil, nil
@@ -142,7 +151,7 @@ func TestDoctorChecksHarnessVersions(t *testing.T) {
 	})
 
 	checks := c.runDoctor(context.Background())
-	for _, name := range []string{"claude-code", "codex"} {
+	for _, name := range []string{"claude-code", "codex", "codex-fugu"} {
 		check := findDoctorCheck(t, checks, name)
 		if check.Level != doctorPass || !strings.Contains(check.Message, "resolves to") {
 			t.Fatalf("%s check = %+v, want PASS with path/version", name, check)
@@ -156,9 +165,12 @@ func TestDoctorWarnsWhenHarnessMissing(t *testing.T) {
 		return []byte("git version 2.43.0\n"), nil
 	})
 
-	check := findDoctorCheck(t, c.runDoctor(context.Background()), "codex")
-	if check.Level != doctorWarn || !strings.Contains(check.Message, "not found in PATH") {
-		t.Fatalf("codex check = %+v, want WARN missing binary", check)
+	checks := c.runDoctor(context.Background())
+	for _, name := range []string{"codex", "codex-fugu"} {
+		check := findDoctorCheck(t, checks, name)
+		if check.Level != doctorWarn || !strings.Contains(check.Message, "not found in PATH") {
+			t.Fatalf("%s check = %+v, want WARN missing binary", name, check)
+		}
 	}
 }
 
