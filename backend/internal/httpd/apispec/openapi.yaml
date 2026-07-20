@@ -2601,6 +2601,8 @@ components:
           $ref: '#/components/schemas/ProjectConfig'
         defaultBranch:
           type: string
+        drainingWorkers:
+          type: integer
         id:
           type: string
         kind:
@@ -2609,6 +2611,10 @@ components:
           type: string
         path:
           type: string
+        pauseState:
+          type: string
+        paused:
+          type: boolean
         repo:
           type: string
         workspaceRepos:
@@ -2622,6 +2628,7 @@ components:
       - path
       - repo
       - defaultBranch
+      - paused
       type: object
     ProjectConfig:
       properties:
@@ -2697,6 +2704,8 @@ components:
       type: object
     ProjectSummary:
       properties:
+        drainingWorkers:
+          type: integer
         id:
           type: string
         kind:
@@ -2707,6 +2716,10 @@ components:
           type: string
         path:
           type: string
+        pauseState:
+          type: string
+        paused:
+          type: boolean
         resolveError:
           type: string
         sessionPrefix:
@@ -2717,6 +2730,7 @@ components:
       - path
       - kind
       - sessionPrefix
+      - paused
       type: object
     QuotaSnapshot:
       properties:

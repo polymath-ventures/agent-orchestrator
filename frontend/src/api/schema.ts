@@ -995,10 +995,13 @@ export interface components {
             agent?: string;
             config?: components["schemas"]["ProjectConfig"];
             defaultBranch: string;
+            drainingWorkers?: number;
             id: string;
             kind: string;
             name: string;
             path: string;
+            pauseState?: string;
+            paused: boolean;
             repo: string;
             workspaceRepos?: components["schemas"]["WorkspaceRepo"][];
         };
@@ -1034,11 +1037,14 @@ export interface components {
             project: components["schemas"]["Project"];
         };
         ProjectSummary: {
+            drainingWorkers?: number;
             id: string;
             kind: string;
             name: string;
             orchestratorAgent?: string;
             path: string;
+            pauseState?: string;
+            paused: boolean;
             resolveError?: string;
             sessionPrefix: string;
         };

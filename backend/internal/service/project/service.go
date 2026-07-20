@@ -43,10 +43,13 @@ type Manager interface {
 	Remove(ctx context.Context, id domain.ProjectID) (RemoveResult, error)
 }
 
-// SessionTeardowner is the narrow session-service surface project removal
-// needs: stop live project sessions and reclaim managed terminal workspaces.
+// SessionTeardowner is the narrow session-service surface project use-cases
+// need: stop live project sessions and reclaim managed terminal workspaces
+// (removal), and terminate a single session through the clean teardown path
+// (hard pause).
 type SessionTeardowner interface {
 	TeardownProject(ctx context.Context, project domain.ProjectID) error
+	Kill(ctx context.Context, id domain.SessionID) (bool, error)
 }
 
 // Service implements project registration and lookup use-cases for controllers.
@@ -106,8 +109,19 @@ func (m *Service) List(ctx context.Context) ([]Summary, error) {
 	if err != nil {
 		return nil, apierr.Internal("PROJECTS_LIST_FAILED", "Failed to load projects")
 	}
+	// Read the fleet flag and live-worker counts once for the whole list rather
+	// than per-row; degraded reads fail open to unpaused/zero.
+	fleetPaused, err := m.store.GetFleetPaused(ctx)
+	if err != nil {
+		fleetPaused = false
+	}
+	var live map[string]int
+	if sessions, err := m.store.ListAllSessions(ctx); err == nil {
+		live = liveWorkersByProject(sessions)
+	}
 	out := make([]Summary, 0, len(projects))
 	for _, row := range projects {
+		state, draining := computePauseState(row.Paused, fleetPaused, live[row.ID])
 		out = append(out, Summary{
 			ID:                domain.ProjectID(row.ID),
 			Name:              displayName(row),
@@ -115,6 +129,9 @@ func (m *Service) List(ctx context.Context) ([]Summary, error) {
 			Kind:              row.Kind.WithDefault(),
 			SessionPrefix:     resolveSessionPrefix(row),
 			OrchestratorAgent: row.Config.Orchestrator.Harness,
+			Paused:            row.Paused,
+			PauseState:        state,
+			DrainingWorkers:   draining,
 		})
 	}
 	return out, nil
@@ -133,6 +150,7 @@ func (m *Service) Get(ctx context.Context, id domain.ProjectID) (GetResult, erro
 		return GetResult{}, apierr.NotFound("PROJECT_NOT_FOUND", "Unknown project")
 	}
 	p := m.projectFromRow(row)
+	p.PauseState, p.DrainingWorkers = m.pauseState(ctx, row.ID, row.Paused)
 	if row.Kind.WithDefault() == domain.ProjectKindWorkspace {
 		repos, err := m.store.ListWorkspaceRepos(ctx, row.ID)
 		if err != nil {
@@ -618,6 +636,7 @@ func (m *Service) projectFromRow(row domain.ProjectRecord) Project {
 		Repo:          row.RepoOriginURL,
 		DefaultBranch: row.Config.WithDefaults().DefaultBranch,
 		Agent:         string(m.defaultHarness),
+		Paused:        row.Paused,
 	}
 	p.Config = projectConfigPtr(row.Config)
 	return p
