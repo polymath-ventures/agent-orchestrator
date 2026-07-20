@@ -351,6 +351,28 @@ describe("Sidebar", () => {
 		}
 	});
 
+	it("returns browser users to host path entry when create fails", async () => {
+		const user = userEvent.setup();
+		const onCreateProject = vi.fn().mockRejectedValueOnce(new Error("Repository path is invalid")) as CreateProjectHandler;
+		const bridge = window.ao;
+		delete window.ao;
+		try {
+			renderSidebar({ onCreateProject });
+
+			await user.click(screen.getByLabelText("New project"));
+			await user.click(screen.getByRole("button", { name: /^Project/i }));
+			await user.type(screen.getByRole("textbox", { name: "Path" }), "/srv/ao/projects/missing");
+			await user.click(screen.getByRole("button", { name: "Continue" }));
+			await user.click(screen.getByRole("button", { name: "Create and start" }));
+
+			const pathInput = await screen.findByRole("textbox", { name: "Path" });
+			expect(pathInput).toHaveValue("/srv/ao/projects/missing");
+			expect(screen.getByText("Repository path is invalid")).toBeInTheDocument();
+		} finally {
+			window.ao = bridge;
+		}
+	});
+
 	it("prioritizes authorized project agents by preferred agent order", async () => {
 		const user = userEvent.setup();
 		const onCreateProject = vi.fn().mockResolvedValue(undefined) as CreateProjectHandler;

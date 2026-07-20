@@ -80,17 +80,7 @@ const rendererFrontendTree = process.env.AO_RENDERER_FRONTEND_TREE || gitFronten
 
 const buildManifestPlugin: Plugin = {
 	name: "ao-web-build-manifest",
-	buildStart() {
-		if (rendererFrontendTree === "") {
-			this.warn("AO renderer frontend tree identity is unavailable; stale-build detection will fail open.");
-		}
-	},
 	configureServer(server) {
-		if (rendererFrontendTree === "") {
-			server.config.logger.warn(
-				"AO renderer frontend tree identity is unavailable; stale-build detection will fail open.",
-			);
-		}
 		server.middlewares.use("/ao-web-build.json", (_request, response) => {
 			response.setHeader("Cache-Control", "no-store");
 			response.setHeader("Content-Type", "application/json");

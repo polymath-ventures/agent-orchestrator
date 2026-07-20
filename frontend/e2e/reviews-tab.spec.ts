@@ -18,10 +18,11 @@ test("the Reviews tab renders the reviewer panel for a session that owns PRs", a
 	// The reviewer card surfaces the harness, its approved verdict, and both
 	// actions — never the empty state, since this session owns a PR.
 	await expect(inspector.getByText("No pull request opened yet.")).toHaveCount(0);
-	await expect(inspector.getByText("codex")).toBeVisible();
-	await expect(inspector.getByText("Approved").first()).toBeVisible();
-	await expect(inspector.getByRole("button", { name: "Re-run review" })).toBeVisible();
-	await expect(inspector.getByRole("button", { name: "Open terminal" })).toBeVisible();
+	const reviewsSection = inspector.getByTestId("inspector-section").filter({ hasText: "Reviews" });
+	await expect(reviewsSection.getByText("codex")).toBeVisible();
+	await expect(reviewsSection.locator(".max-w-inspector-status-chip")).toHaveText("Approved");
+	await expect(reviewsSection.getByRole("button", { name: "Re-run review" })).toBeVisible();
+	await expect(reviewsSection.getByRole("button", { name: "Open terminal" })).toBeVisible();
 });
 
 test("the Reviews tab shows the empty state for a session with no PRs", async ({ page }) => {

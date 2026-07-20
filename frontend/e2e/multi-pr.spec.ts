@@ -17,10 +17,12 @@ test("the inspector rail stacks every PR a session owns, actionable-first", asyn
 	await expect(inspector.getByText("Pull requests (3)")).toBeVisible();
 
 	// One card per PR, ordered open → draft → merged (the merged base sinks).
-	const inspectorText = await inspector.textContent();
-	expect(inspectorText?.indexOf("PR #41")).toBeGreaterThanOrEqual(0);
-	expect(inspectorText!.indexOf("PR #41")).toBeLessThan(inspectorText!.indexOf("PR #42"));
-	expect(inspectorText!.indexOf("PR #42")).toBeLessThan(inspectorText!.indexOf("PR #40"));
+	const prSection = inspector.getByTestId("inspector-section").filter({ hasText: "Pull requests (3)" });
+	await expect(prSection.locator("div.rounded-md.border.border-border.bg-surface")).toHaveText([
+		/PR #41/,
+		/PR #42/,
+		/PR #40/,
+	]);
 });
 
 test("the PR board lists one row per attributed PR, actionable PRs first", async ({ page }) => {

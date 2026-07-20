@@ -33,7 +33,11 @@ describe("ao web production server", () => {
 
 		const asset = await fetchText(`${server.url}/assets/app.js`);
 		assert.equal(asset.body, "console.log('ao');\n");
-		assert.equal(asset.headers.get("cache-control"), "public, max-age=31536000, immutable");
+		assert.equal(asset.headers.get("cache-control"), "public, max-age=60");
+
+		const hashedAsset = await fetchText(`${server.url}/assets/app-12345678.js`);
+		assert.equal(hashedAsset.body, "console.log('hashed ao');\n");
+		assert.equal(hashedAsset.headers.get("cache-control"), "public, max-age=31536000, immutable");
 
 		const manifest = await fetchText(`${server.url}/ao-web-build.json`);
 		assert.match(manifest.body, /frontendTree/);
@@ -55,9 +59,13 @@ describe("ao web production server", () => {
 
 	it("rejects path traversal instead of reading outside the bundle", async () => {
 		const distDir = await makeDist();
+		const secretName = `secret-${path.basename(distDir)}.txt`;
+		const secretPath = path.join(path.dirname(distDir), secretName);
+		await writeFile(secretPath, "do not serve\n");
+		cleanup.push(() => rm(secretPath, { force: true }));
 		const server = await listen(createAoWebServer({ distDir, apiTarget: "http://127.0.0.1:9" }));
 
-		const response = await fetchText(`${server.url}/assets/%2e%2e/secret.txt`);
+		const response = await fetchText(`${server.url}/assets/%2e%2e/%2e%2e/${secretName}`);
 
 		assert.equal(response.status, 404);
 	});
@@ -89,6 +97,39 @@ describe("ao web production server", () => {
 		assert.equal(response.status, 200);
 		assert.deepEqual(await response.json(), { projects: [{ id: "ao" }] });
 		assert.equal(seenOrigin, undefined);
+	});
+
+	it("tears down upstream proxy requests when the browser aborts", async () => {
+		let openStreams = 0;
+		const daemon = await listen(
+			http.createServer((_request, response) => {
+				openStreams += 1;
+				response.writeHead(200, { "Content-Type": "text/event-stream" });
+				response.write("event: ping\ndata: {}\n\n");
+				response.on("close", () => {
+					openStreams -= 1;
+				});
+			}),
+		);
+		const distDir = await makeDist();
+		const server = await listen(
+			createAoWebServer({
+				distDir,
+				apiTarget: daemon.url,
+				publicUrl: "https://ao.tailnet.example/",
+			}),
+		);
+		const controller = new AbortController();
+
+		const pending = fetch(`${server.url}/api/v1/events`, {
+			headers: { Origin: "https://ao.tailnet.example" },
+			signal: controller.signal,
+		}).catch((error) => error);
+		await waitFor(() => openStreams === 1);
+		controller.abort();
+		await pending;
+
+		await waitFor(() => openStreams === 0);
 	});
 
 	it("rejects proxied browser requests from untrusted origins before they reach the daemon", async () => {
@@ -212,6 +253,23 @@ describe("ao web production server", () => {
 		assert.equal(response.status, 200);
 		assert.match(response.body, /<div id="root"><\/div>/);
 	});
+
+	it("fails fast when the executable server is bound beyond loopback", async () => {
+		const distDir = await makeDist();
+		const child = spawn(process.execPath, [path.join(REPO_ROOT, "ops/ao-web-server.mjs")], {
+			env: { ...process.env, AO_WEB_BIND: "0.0.0.0", AO_WEB_DIST: distDir, AO_WEB_PORT: "5174" },
+			stdio: ["ignore", "ignore", "pipe"],
+		});
+		let stderr = "";
+		child.stderr.on("data", (chunk) => {
+			stderr += chunk.toString("utf8");
+		});
+
+		const code = await new Promise((resolve) => child.once("exit", resolve));
+
+		assert.notEqual(code, 0);
+		assert.match(stderr, /AO_WEB_BIND must be loopback-only/);
+	});
 });
 
 async function makeDist() {
@@ -220,6 +278,7 @@ async function makeDist() {
 	await writeFile(path.join(dir, "ao-web-build.json"), '{"frontendTree":"fixture"}\n');
 	await mkdir(path.join(dir, "assets"));
 	await writeFile(path.join(dir, "assets", "app.js"), "console.log('ao');\n");
+	await writeFile(path.join(dir, "assets", "app-12345678.js"), "console.log('hashed ao');\n");
 	cleanup.push(() => rm(dir, { recursive: true, force: true }));
 	return dir;
 }
@@ -353,6 +412,15 @@ async function waitForHttp(url, options = {}) {
 		}
 	}
 	throw lastError;
+}
+
+async function waitFor(predicate, timeoutMs = 1000) {
+	const deadline = Date.now() + timeoutMs;
+	while (Date.now() < deadline) {
+		if (predicate()) return;
+		await new Promise((resolve) => setTimeout(resolve, 20));
+	}
+	assert.equal(predicate(), true);
 }
 
 function stopChild(child) {

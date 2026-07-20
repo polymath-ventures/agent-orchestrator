@@ -84,10 +84,19 @@ function proxyHttp({ apiTarget, request, response }) {
 			headers: proxyHeaders(request.headers, apiTarget),
 		},
 		(proxyResponse) => {
+			response.on("close", () => {
+				if (!response.writableEnded) proxyResponse.destroy();
+			});
+			proxyResponse.on("end", () => {
+				if (!proxyRequest.destroyed) proxyRequest.destroy();
+			});
 			response.writeHead(proxyResponse.statusCode ?? 502, proxyResponse.statusMessage, proxyResponse.headers);
 			proxyResponse.pipe(response);
 		},
 	);
+	response.on("close", () => {
+		if (!response.writableEnded) proxyRequest.destroy();
+	});
 	proxyRequest.on("error", (error) => {
 		if (!response.headersSent) {
 			writePlain(response, 502, `AO daemon proxy failed: ${error.message}\n`);
@@ -110,14 +119,20 @@ function handleUpgrade({ apiTarget, head, request, socket, trust }) {
 	}
 
 	const upstream = net.connect(Number(apiTarget.port || "80"), apiTarget.hostname);
+	let upgraded = false;
 	upstream.on("connect", () => {
 		upstream.write(formatUpgradeRequest(request, apiTarget));
 		if (head.length > 0) upstream.write(head);
 		socket.pipe(upstream);
+	});
+	upstream.once("data", (chunk) => {
+		upgraded = chunk.includes(Buffer.from(" 101 ")) || chunk.includes(Buffer.from(" 101\r\n"));
+		socket.write(chunk);
 		upstream.pipe(socket);
 	});
 	upstream.on("error", () => {
-		socket.end("HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n");
+		if (upgraded) socket.destroy();
+		else socket.end("HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n");
 	});
 	socket.on("error", () => {
 		upstream.destroy();
@@ -136,8 +151,10 @@ async function serveStatic({ distDir, pathname, request, response }) {
 	response.setHeader("X-Content-Type-Options", "nosniff");
 	if (path.basename(filePath) === "index.html" || path.basename(filePath) === "ao-web-build.json") {
 		response.setHeader("Cache-Control", "no-store");
-	} else {
+	} else if (isImmutableAsset(filePath, pathname)) {
 		response.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+	} else {
+		response.setHeader("Cache-Control", "public, max-age=60");
 	}
 	if (request.method === "HEAD") {
 		response.writeHead(200);
@@ -167,6 +184,11 @@ async function resolveStaticPath(distDir, pathname) {
 
 function isAssetRequest(pathname) {
 	return pathname.startsWith("/assets/") || path.extname(pathname) !== "";
+}
+
+function isImmutableAsset(filePath, pathname) {
+	if (!pathname.startsWith("/assets/")) return false;
+	return /-[A-Za-z0-9_-]{8,}\.[^.]+$/.test(path.basename(filePath));
 }
 
 async function existingFile(filePath) {
@@ -243,16 +265,16 @@ function buildTrustConfig(publicUrl) {
 }
 
 function trustedBrowserRequest(request, trust) {
-	if (!trustedHost(request.headers.host ?? "", trust)) return false;
+	if (!trustedHost(request.headers.host ?? "", trust, request.socket.remoteAddress ?? "")) return false;
 	const origin = request.headers.origin;
 	return typeof origin === "string" ? trustedOrigin(origin, trust) : true;
 }
 
-function trustedHost(hostHeader, trust) {
+function trustedHost(hostHeader, trust, remoteAddress) {
 	const host = hostHeader.split(",")[0]?.trim() ?? "";
 	if (host === "") return false;
 	if (trust.publicHost && host === trust.publicHost) return true;
-	return isLoopbackHost(host);
+	return isLoopbackAddress(remoteAddress) && isLoopbackHost(host);
 }
 
 function trustedOrigin(origin, trust) {
@@ -273,7 +295,11 @@ function parseOrigin(value) {
 
 function isLoopbackHost(host) {
 	const withoutPort = host.startsWith("[") ? host.slice(1, host.indexOf("]")) : host.split(":")[0];
-	return withoutPort === "localhost" || withoutPort === "127.0.0.1" || withoutPort === "::1";
+	return withoutPort === "localhost" || isLoopbackAddress(withoutPort);
+}
+
+function isLoopbackAddress(address) {
+	return address === "127.0.0.1" || address === "::1" || address === "::ffff:127.0.0.1";
 }
 
 function isMainModule(moduleUrl) {
@@ -290,6 +316,9 @@ if (isMainModule(import.meta.url)) {
 	const publicUrl = process.env.AO_WEB_PUBLIC_URL || "";
 	if (!Number.isInteger(port) || port < 1 || port > 65535) {
 		throw new Error(`AO_WEB_PORT must be a TCP port, got ${process.env.AO_WEB_PORT}`);
+	}
+	if (!isLoopbackHost(bind)) {
+		throw new Error("AO_WEB_BIND must be loopback-only; expose browser mode with Tailscale Serve instead.");
 	}
 
 	const server = createAoWebServer();

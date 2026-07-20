@@ -94,7 +94,7 @@ export function CreateProjectFlow({
 		}
 	};
 
-	const chooseTypedPath = async (path: string) => {
+	const chooseTypedPath = (path: string) => {
 		const trimmed = path.trim();
 		if (!trimmed) {
 			setError("Enter a path.");
@@ -113,7 +113,7 @@ export function CreateProjectFlow({
 			setModePickerOpen(true);
 			return;
 		}
-		void chooseDirectory(mode);
+		openFolderStep(mode);
 	};
 
 	// Seed with the current value so we never open on mount; open when it changes.
@@ -145,21 +145,29 @@ export function CreateProjectFlow({
 			if (selectedKind === "single_repo" && isRepositorySetupRecoveryCode(code)) setRepositorySetup(code);
 			setError(message);
 			if (hasModePicker) {
-				if (shouldScanCreateFailure(message)) {
-					try {
-						const scan = await aoBridge.app.scanImportFolder({
-							path: selectedPath,
-							mode: selectedKind === "workspace" ? "workspace" : "project",
-						});
-						setValidationScan(scan);
-					} catch {
-						setValidationScan({ path: selectedPath, repos: [] });
-					}
-				} else {
+				if (!nativeFolderPickerAvailable) {
 					setValidationScan(null);
+					setSelectedPath(null);
+					setPathEntryValue(selectedPath);
+					setFolderPickerOpen(false);
+					setPathEntryOpen(true);
+				} else {
+					if (shouldScanCreateFailure(message)) {
+						try {
+							const scan = await aoBridge.app.scanImportFolder({
+								path: selectedPath,
+								mode: selectedKind === "workspace" ? "workspace" : "project",
+							});
+							setValidationScan(scan);
+						} catch {
+							setValidationScan({ path: selectedPath, repos: [] });
+						}
+					} else {
+						setValidationScan(null);
+					}
+					setSelectedPath(null);
+					setFolderPickerOpen(true);
 				}
-				setSelectedPath(null);
-				setFolderPickerOpen(true);
 			}
 		} finally {
 			setIsCreating(false);

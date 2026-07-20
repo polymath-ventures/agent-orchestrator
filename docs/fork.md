@@ -59,12 +59,13 @@ AO_WEB_BIND=127.0.0.1 \
 AO_WEB_PORT=5173 \
 AO_WEB_API_TARGET=http://127.0.0.1:3001 \
 AO_WEB_DIST="$PWD/frontend/dist" \
-AO_WEB_PUBLIC_URL=https://ao.tailnet-name.ts.net \
+AO_WEB_PUBLIC_URL=https://mirrorborn.tailc1fd9.ts.net \
 node ops/ao-web-server.mjs
 ```
 
 Install the user service on a host that has a release-style symlink at
-`~/.ao/deploy/current/source`:
+`~/.ao/deploy/current/source`. The tracked unit is configured for this fork's
+`mirrorborn.tailc1fd9.ts.net` tailnet origin:
 
 ```bash
 mkdir -p ~/.config/systemd/user
@@ -74,7 +75,7 @@ systemctl --user enable --now ao-web.service
 systemctl --user status ao-web.service
 ```
 
-Override paths or the public URL without editing the tracked unit:
+Override paths or a different public URL without editing the tracked unit:
 
 ```bash
 systemctl --user edit ao-web.service
@@ -95,7 +96,9 @@ tailscale serve --bg --https=443 http://127.0.0.1:5173
 tailscale serve status
 ```
 
-The web server only proxies daemon routes when the request `Host` is loopback or
+The web server executable refuses non-loopback `AO_WEB_BIND` values. Expose it
+through Tailscale Serve rather than binding it to the LAN. Proxied daemon routes
+also require a loopback peer with a loopback `Host`, or a request `Host` that
 matches `AO_WEB_PUBLIC_URL`; browser `Origin` headers must be loopback or the
 same configured public origin. Static app routes fall back to `index.html`, so
 hash-history and refreshes both land in the renderer.

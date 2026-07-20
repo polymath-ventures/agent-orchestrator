@@ -6,9 +6,10 @@ export default defineConfig({
 		baseURL: "http://127.0.0.1:5173",
 	},
 	webServer: {
-		// dev:web serves the renderer alone (VITE_NO_ELECTRON=1) — no Electron child to
-		// launch, which is all the browser-based e2e suite needs.
-		command: "npm run dev:web -- --port 5173 --host 127.0.0.1",
+		// Exercise the production browser bundle and same-origin server. Individual
+		// specs provide daemon-shaped HTTP/WS fixtures so no local daemon is needed.
+		command:
+			"npm run build:web && AO_WEB_DIST=dist AO_WEB_PUBLIC_URL=http://127.0.0.1:5173 AO_WEB_API_TARGET=http://127.0.0.1:9 node ../ops/ao-web-server.mjs",
 		port: 5173,
 		reuseExistingServer: !process.env.CI,
 	},
