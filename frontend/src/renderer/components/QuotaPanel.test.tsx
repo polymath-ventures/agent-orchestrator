@@ -66,6 +66,7 @@ describe("QuotaPanel", () => {
 							signalQuality: "none",
 							source: "local inspection",
 							basis: "No stable public quota surface.",
+							windowEnd: "0001-01-01T00:00:00Z",
 							observedAt: "2026-07-20T19:00:00Z",
 						},
 					],
@@ -80,6 +81,7 @@ describe("QuotaPanel", () => {
 		expect(await screen.findByText("claude-code/unknown")).toBeInTheDocument();
 		expect(screen.getByText("no signal")).toBeInTheDocument();
 		expect(screen.getByText("none")).toBeInTheDocument();
+		expect(screen.queryByText(/until/i)).not.toBeInTheDocument();
 	});
 
 	it("stays hidden when metrics are disabled", async () => {

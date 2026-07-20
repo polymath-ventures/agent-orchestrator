@@ -60,8 +60,12 @@ func TestStoreCostAggregatorSums(t *testing.T) {
 
 func TestStoreCostAggregatorNilReader(t *testing.T) {
 	var agg *StoreCostAggregator
-	if c, err := agg.Aggregate(context.Background(), time.Now()); err != nil || c.Events != 0 {
+	c, err := agg.Aggregate(context.Background(), time.Now())
+	if err != nil || c.Events != 0 {
 		t.Fatalf("nil aggregator must be a clean no-op, got c=%+v err=%v", c, err)
+	}
+	if c.ByProject == nil || c.ByHarness == nil {
+		t.Fatalf("nil aggregator grouped cost slices must be non-nil for stable JSON arrays: %+v", c)
 	}
 }
 

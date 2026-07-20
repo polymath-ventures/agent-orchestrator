@@ -49,7 +49,7 @@ function QuotaChip({ quota }: { quota: QuotaSnapshot }) {
 			<span className="min-w-0 truncate text-foreground">{quotaLabel(quota)}</span>
 			<span className="shrink-0">{quotaValue(quota, pct)}</span>
 			<span className="shrink-0 text-passive">{qualityLabel(quality)}</span>
-			{quota.windowEnd ? <span className="shrink-0 text-passive">{windowLabel(quota.windowEnd)}</span> : null}
+			{hasWindowEnd(quota.windowEnd) ? <span className="shrink-0 text-passive">{windowLabel(quota.windowEnd)}</span> : null}
 		</div>
 	);
 }
@@ -87,6 +87,12 @@ function windowLabel(value: string): string {
 	const end = new Date(value);
 	if (Number.isNaN(end.getTime())) return "";
 	return `until ${end.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+}
+
+function hasWindowEnd(value: string | undefined): value is string {
+	if (!value) return false;
+	const end = new Date(value);
+	return !Number.isNaN(end.getTime()) && end.getUTCFullYear() > 1;
 }
 
 function formatNumber(value: number): string {

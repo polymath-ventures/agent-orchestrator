@@ -45,7 +45,7 @@ func NewStoreCostAggregator(reader telemetryReader) *StoreCostAggregator {
 // occurred_at >= since.
 func (a *StoreCostAggregator) Aggregate(ctx context.Context, since time.Time) (Cost, error) {
 	if a == nil || a.reader == nil {
-		return Cost{}, nil
+		return Cost{ByProject: []ProjectCost{}, ByHarness: []HarnessCost{}}, nil
 	}
 	// Fetch one more than the aggregation cap so we can tell "exactly limit rows,
 	// nothing dropped" from "more than limit, oldest dropped" without a

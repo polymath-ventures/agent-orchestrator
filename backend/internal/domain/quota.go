@@ -1,6 +1,9 @@
 package domain
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 // QuotaSignalQuality states how trustworthy a quota snapshot is.
 type QuotaSignalQuality string
@@ -39,4 +42,46 @@ type QuotaSnapshot struct {
 	Source        string             `json:"source"`
 	Basis         string             `json:"basis,omitempty"`
 	ObservedAt    time.Time          `json:"observedAt"`
+}
+
+// MarshalJSON omits absent quota windows. time.Time is a struct, so
+// `omitempty` alone would serialize the zero time as year 0001 and make
+// no-signal snapshots look like they have a real window.
+func (q QuotaSnapshot) MarshalJSON() ([]byte, error) {
+	type quotaSnapshotJSON struct {
+		Harness       AgentHarness       `json:"harness"`
+		AccountID     string             `json:"accountId"`
+		Model         string             `json:"model,omitempty"`
+		WindowStart   *time.Time         `json:"windowStart,omitempty"`
+		WindowEnd     *time.Time         `json:"windowEnd,omitempty"`
+		Used          *float64           `json:"used,omitempty"`
+		Remaining     *float64           `json:"remaining,omitempty"`
+		Limit         *float64           `json:"limit,omitempty"`
+		SignalQuality QuotaSignalQuality `json:"signalQuality"`
+		Source        string             `json:"source"`
+		Basis         string             `json:"basis,omitempty"`
+		ObservedAt    time.Time          `json:"observedAt"`
+	}
+	return json.Marshal(quotaSnapshotJSON{
+		Harness:       q.Harness,
+		AccountID:     q.AccountID,
+		Model:         q.Model,
+		WindowStart:   quotaWindowTime(q.WindowStart),
+		WindowEnd:     quotaWindowTime(q.WindowEnd),
+		Used:          q.Used,
+		Remaining:     q.Remaining,
+		Limit:         q.Limit,
+		SignalQuality: q.SignalQuality,
+		Source:        q.Source,
+		Basis:         q.Basis,
+		ObservedAt:    q.ObservedAt,
+	})
+}
+
+func quotaWindowTime(t time.Time) *time.Time {
+	if t.IsZero() {
+		return nil
+	}
+	utc := t.UTC()
+	return &utc
 }
