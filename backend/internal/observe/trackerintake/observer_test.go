@@ -3,6 +3,7 @@ package trackerintake
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"strings"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	sessionmanager "github.com/aoagents/agent-orchestrator/backend/internal/session_manager"
 )
 
 func TestPollSpawnsWorkerForEligibleIssue(t *testing.T) {
@@ -283,6 +285,93 @@ func TestTrackerRepoUsesConfiguredRepo(t *testing.T) {
 	}
 }
 
+// capIntakeFixtures returns a one-project store and a tracker holding one
+// eligible open issue (github:acme/demo#12), the shared setup for the cap
+// deferral tests.
+func capIntakeFixtures() (*fakeStore, *fakeTracker) {
+	store := &fakeStore{projects: []domain.ProjectRecord{{
+		ID:            "demo",
+		RepoOriginURL: "https://github.com/acme/demo.git",
+		Config:        domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, Assignee: "alice"}},
+	}}}
+	tracker := &fakeTracker{issues: []domain.Issue{{
+		ID:        domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#12"},
+		Title:     "capped",
+		State:     domain.IssueOpen,
+		Assignees: []string{"alice"},
+	}}}
+	return store, tracker
+}
+
+// A spawn refused because the project is at its worker cap is a deferral, not a
+// failure: the issue is attempted but left unclaimed, and the project does not
+// enter failure backoff.
+func TestPollDefersCappedIssueWithoutBackoff(t *testing.T) {
+	store, tracker := capIntakeFixtures()
+	spawner := &fakeSpawner{capIssue: "github:acme/demo#12", capActive: true}
+	observer := New(singleResolver(tracker), store, spawner, Config{Logger: discardLogger()})
+
+	if err := observer.Poll(context.Background()); err != nil {
+		t.Fatalf("Poll() error = %v", err)
+	}
+	if len(spawner.calls) != 1 {
+		t.Fatalf("spawn attempts = %d, want 1 — the capped issue is still attempted", len(spawner.calls))
+	}
+	if len(observer.backoffUntil) != 0 {
+		t.Fatalf("backoffUntil = %v, want empty — a cap deferral must not trigger failure backoff", observer.backoffUntil)
+	}
+}
+
+// A genuine (non-cap) spawn failure still trips the existing failure backoff,
+// unchanged by the cap deferral path.
+func TestPollGenuineSpawnFailureStillBacksOff(t *testing.T) {
+	now := time.Date(2026, 6, 27, 10, 0, 0, 0, time.UTC)
+	store, tracker := capIntakeFixtures()
+	spawner := &fakeSpawner{failIssue: "github:acme/demo#12"}
+	observer := New(singleResolver(tracker), store, spawner, Config{
+		Clock:          func() time.Time { return now },
+		FailureBackoff: time.Minute,
+		Logger:         discardLogger(),
+	})
+
+	if err := observer.Poll(context.Background()); err != nil {
+		t.Fatalf("Poll() error = %v", err)
+	}
+	if len(spawner.calls) != 1 {
+		t.Fatalf("spawn attempts = %d, want 1", len(spawner.calls))
+	}
+	if _, ok := observer.backoffUntil["demo"]; !ok {
+		t.Fatal("a genuine spawn failure must put the project into failure backoff")
+	}
+}
+
+// An issue deferred at the cap is picked up on a later poll once capacity frees.
+func TestPollRetriesDeferredIssueOnceCapacityFrees(t *testing.T) {
+	store, tracker := capIntakeFixtures()
+	spawner := &fakeSpawner{capIssue: "github:acme/demo#12", capActive: true}
+	observer := New(singleResolver(tracker), store, spawner, Config{Logger: discardLogger()})
+
+	// First poll: at the cap, so the issue is deferred and left unclaimed.
+	if err := observer.Poll(context.Background()); err != nil {
+		t.Fatalf("first Poll() error = %v", err)
+	}
+	if len(spawner.calls) != 1 {
+		t.Fatalf("first poll spawn attempts = %d, want 1", len(spawner.calls))
+	}
+
+	// Capacity frees; the next poll spawns the previously-deferred issue.
+	spawner.capActive = false
+	if err := observer.Poll(context.Background()); err != nil {
+		t.Fatalf("second Poll() error = %v", err)
+	}
+	if len(spawner.calls) != 2 {
+		t.Fatalf("spawn attempts after capacity freed = %d, want 2 — the deferred issue must be retried", len(spawner.calls))
+	}
+	if spawner.calls[1].IssueID != "github:acme/demo#12" {
+		t.Fatalf("retried issue = %q, want github:acme/demo#12", spawner.calls[1].IssueID)
+	}
+}
+
 func singleResolver(tracker ports.Tracker) TrackerResolver {
 	return SingleTrackerResolver{Provider: domain.TrackerProviderGitHub, Adapter: tracker}
 }
@@ -330,12 +419,21 @@ func (f *fakeTracker) Preflight(context.Context) error { return nil }
 type fakeSpawner struct {
 	calls     []ports.SpawnConfig
 	failIssue domain.IssueID
+	// capIssue returns the concurrency-cap sentinel while capActive is true,
+	// modeling a project sitting at its worker cap. The sentinel is wrapped with
+	// %w exactly as Manager.Spawn (through the service's pass-through) does, so
+	// the test exercises the same errors.Is traversal the daemon relies on.
+	capIssue  domain.IssueID
+	capActive bool
 }
 
 func (f *fakeSpawner) Spawn(_ context.Context, cfg ports.SpawnConfig) (domain.Session, error) {
 	f.calls = append(f.calls, cfg)
 	if cfg.IssueID == f.failIssue {
 		return domain.Session{}, errors.New("spawn failed")
+	}
+	if f.capActive && cfg.IssueID == f.capIssue {
+		return domain.Session{}, fmt.Errorf("spawn: %w", sessionmanager.ErrWorkerConcurrencyCap)
 	}
 	return domain.Session{SessionRecord: domain.SessionRecord{ID: domain.SessionID(string(cfg.ProjectID) + "-1"), ProjectID: cfg.ProjectID, IssueID: cfg.IssueID, Kind: cfg.Kind}}, nil
 }

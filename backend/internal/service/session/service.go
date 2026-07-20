@@ -606,6 +606,14 @@ func toAPIError(err error) error {
 		return apierr.Invalid("UNKNOWN_HARNESS", err.Error(), nil)
 	case errors.Is(err, sessionmanager.ErrMissingHarness):
 		return apierr.Invalid("AGENT_REQUIRED", err.Error(), nil)
+	case errors.Is(err, sessionmanager.ErrWorkerConcurrencyCap):
+		// Capacity is a transient state, not a server fault: the project is at
+		// its live-worker ceiling. 409 lets a client retry once a worker frees.
+		return apierr.Conflict("WORKER_CONCURRENCY_CAP", err.Error(), nil)
+	case errors.Is(err, sessionmanager.ErrWorkerMixExhausted):
+		// Every configured bucket is down. Distinct from a launch failure and
+		// retryable once a bucket recovers, so a conflict rather than a 500.
+		return apierr.Conflict("WORKER_MIX_EXHAUSTED", err.Error(), nil)
 	case errors.Is(err, ports.ErrWorkspaceBranchCheckedOutElsewhere):
 		return apierr.Conflict("BRANCH_CHECKED_OUT_ELSEWHERE", err.Error(), nil)
 	case errors.Is(err, ports.ErrWorkspaceBranchNotFetched):

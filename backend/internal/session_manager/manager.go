@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/candidatehealth"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	aoprocess "github.com/aoagents/agent-orchestrator/backend/internal/process"
@@ -38,6 +39,17 @@ var (
 	// ErrMissingHarness means neither the spawn request nor the project's role
 	// config selected an agent. Worker/orchestrator spawns must be explicit.
 	ErrMissingHarness = errors.New("session: agent harness required")
+	// ErrWorkerMixExhausted means every bucket in the project's worker mix was
+	// unavailable, so no bucket could be selected. The mix never substitutes a
+	// harness it does not list, so an exhausted mix fails loudly instead.
+	ErrWorkerMixExhausted = errors.New("session: no worker mix bucket available")
+	// ErrWorkerConcurrencyCap means the project already has as many live workers
+	// as its configured cap allows, so a further worker spawn is refused. It is a
+	// capacity condition, not a launch failure: Spawn returns it before creating
+	// any durable state, so a refusal leaves nothing to roll back and marks no
+	// candidate down — being busy is not evidence a harness is broken. Tracker
+	// intake matches it with errors.Is to defer an issue rather than fail it.
+	ErrWorkerConcurrencyCap = errors.New("session: worker concurrency cap reached")
 	// ErrNotResumable means a terminated session cannot be relaunched: its adapter
 	// cannot natively resume it AND it has no prompt to fresh-launch from, and it is
 	// not an orchestrator (orchestrators are promptless by design and relaunch fresh
@@ -64,6 +76,11 @@ const (
 	// EnvDataDir tells a spawned agent's AO hook commands where the store lives.
 	EnvDataDir = "AO_DATA_DIR"
 )
+
+// candidateSurfaceWorkerMix names the worker-mix selection surface for candidate
+// health. It keeps this surface's candidates from colliding with any other
+// pooled-agent surface that shares the candidate-health vocabulary.
+const candidateSurfaceWorkerMix = "worker_mix"
 
 // hookBinaryName is the executable name the workspace hook commands invoke:
 // every agent adapter installs a bare `ao hooks <agent> <event>`. The session
@@ -165,6 +182,13 @@ type Manager struct {
 	// sendConfirm* defaults; tests in this package shrink the timings directly.
 	sendConfirm sendConfirmConfig
 	logger      *slog.Logger
+	// health is the worker-mix candidate-health circuit breaker. Selection calls
+	// it to skip down buckets; Spawn marks a mix-selected bucket down on a
+	// launch-attributable failure and recovers a bucket on a successful spawn of
+	// its exact identity. The Tracker owns telemetry emission (it holds the sink
+	// wired at daemon assembly), so the manager itself has no telemetry
+	// dependency — it only calls health-policy methods.
+	health *candidatehealth.Tracker
 }
 
 // sendConfirmConfig bounds the best-effort activity-confirmation loop run after
@@ -215,6 +239,12 @@ type Deps struct {
 	// Logger receives spawn-time diagnostics (e.g. when the session PATH
 	// cannot be pinned to the daemon binary). Nil defaults to slog.Default().
 	Logger *slog.Logger
+	// Health is the worker-mix candidate-health tracker. Daemon wiring
+	// constructs it once with the telemetry sink so its down state persists
+	// across spawns and its candidate_{down,recovered} events reach telemetry.
+	// Nil defaults to a sink-less Tracker: candidate health still narrows and
+	// recovers buckets, only the structured events are dropped.
+	Health *candidatehealth.Tracker
 }
 
 // New builds a Session Manager from its dependencies, defaulting the clock to
@@ -236,6 +266,13 @@ func New(d Deps) *Manager {
 			maxAttempts:     sendConfirmMaxAttempts,
 		},
 		logger: d.Logger,
+		health: d.Health,
+	}
+	if m.health == nil {
+		// A sink-less Tracker keeps selection narrowing and recovery working in
+		// tests and any caller that does not wire telemetry; only the structured
+		// candidate-health events are disabled.
+		m.health = candidatehealth.New(candidatehealth.Config{Source: "session_manager"})
 	}
 	if m.clock == nil {
 		// UTC so spawn-stamped CreatedAt/UpdatedAt match every other session
@@ -267,11 +304,30 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	if err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("spawn: %w", err)
 	}
-	// A per-project role override picks the harness when the spawn names none,
-	// so a project can default workers to one agent and orchestrators to another.
-	cfg.Harness = effectiveHarness(cfg.Harness, cfg.Kind, project.Config)
-	if cfg.Harness == "" {
-		return domain.SessionRecord{}, fmt.Errorf("spawn: %w: configure project %s.agent or pass --harness", ErrMissingHarness, roleConfigName(cfg.Kind))
+	// Enforce the per-project live-worker cap before anything else: no durable
+	// row, no workspace, no mix or candidate-health consultation. Placed ahead
+	// of resolveSpawnTarget so a refusal at capacity leaves nothing to roll back
+	// and never perturbs the mix census or a candidate's health. The cap is a
+	// project-level ceiling on workers, so it applies to every worker spawn —
+	// pinned or mix-selected alike — and an orchestrator is neither counted nor
+	// limited by it.
+	if cfg.Kind == domain.KindWorker && project.Config.MaxLiveWorkers > 0 {
+		live, err := m.liveWorkerCount(ctx, cfg.ProjectID)
+		if err != nil {
+			return domain.SessionRecord{}, fmt.Errorf("spawn: %w", err)
+		}
+		if live >= project.Config.MaxLiveWorkers {
+			return domain.SessionRecord{}, fmt.Errorf("spawn: %w: project %s at %d of %d live worker(s)", ErrWorkerConcurrencyCap, cfg.ProjectID, live, project.Config.MaxLiveWorkers)
+		}
+	}
+	// Harness and model are resolved together, once, up front, so the same pair
+	// is launched with and recorded on the session row. Trimming happens on this
+	// path, which is what lets the worker-mix census match a bucket's model
+	// against the model stored on its sessions.
+	var mixSelected bool
+	cfg.Harness, cfg.Model, mixSelected, err = m.resolveSpawnTarget(ctx, cfg, project)
+	if err != nil {
+		return domain.SessionRecord{}, fmt.Errorf("spawn: %w", err)
 	}
 
 	// Reject an unknown harness before any durable state is created. Doing this
@@ -290,7 +346,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		return domain.SessionRecord{}, fmt.Errorf("spawn: prompt: %w", err)
 	}
 
-	rec, err := m.store.CreateSession(ctx, seedRecord(cfg, m.clock()))
+	rec, err := m.store.CreateSession(ctx, seedRecord(cfg, mixSelected, m.clock()))
 	if err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("spawn: create: %w", err)
 	}
@@ -329,6 +385,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: no agent adapter for harness %q", id, cfg.Harness)
 	}
 	agentConfig := effectiveAgentConfig(cfg.Kind, project.Config)
+	agentConfig.Model = cfg.Model
 	env := m.runtimeEnv(id, cfg.ProjectID, cfg.IssueID, project.Config.Env)
 	m.augmentAgentRuntimeEnv(agent, env)
 	if err := m.prepareWorkspace(ctx, agent, id, ws.Path, systemPrompt, systemPromptFile, agentConfig, env); err != nil {
@@ -359,6 +416,16 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	}
 	argv, err := agent.GetLaunchCommand(ctx, launchCfg)
 	if err != nil {
+		// An adapter that cannot resolve its binary reports ErrAgentBinaryNotFound
+		// from GetLaunchCommand itself (e.g. copilot), which is the same
+		// candidate fault validateAgentBinary catches below — mark the bucket
+		// down here too, or a broken bucket stays healthy and is reselected
+		// forever. Other launch-command errors (prompt/config) are not candidate
+		// faults. Mark down before rollback so caller-cancellation is evaluated at
+		// failure time, not after cleanup may have let the context expire.
+		if errors.Is(err, ports.ErrAgentBinaryNotFound) {
+			m.markMixCandidateDown(ctx, mixSelected, cfg, err)
+		}
 		m.rollbackPreparedSpawnWorkspace(ctx, rec, ws, workspaceProject)
 		m.rollbackSpawnSeedRow(ctx, id)
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: launch command: %w", id, err)
@@ -368,6 +435,10 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	// tmux happily creates a session+pane around a missing command, so an
 	// unresolved binary would leak through as a "live" session that never ran.
 	if err := m.validateAgentBinary(argv); err != nil {
+		// Mark down before rollback: MarkDownForAttempt reads the caller context,
+		// and rollback (workspace destroy + seed delete) can run long enough for a
+		// live-at-failure context to expire, which would wrongly suppress the fault.
+		m.markMixCandidateDown(ctx, mixSelected, cfg, err)
 		m.rollbackPreparedSpawnWorkspace(ctx, rec, ws, workspaceProject)
 		m.rollbackSpawnSeedRow(ctx, id)
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: %w", id, err)
@@ -379,6 +450,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		Env:           env,
 	})
 	if err != nil {
+		m.markMixCandidateDown(ctx, mixSelected, cfg, err)
 		m.rollbackPreparedSpawnWorkspace(ctx, rec, ws, workspaceProject)
 		m.rollbackSpawnSeedRow(ctx, id)
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: runtime: %w", id, err)
@@ -398,6 +470,12 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 			m.markSpawnFailedTerminatedWithoutWorkspace(ctx, id)
 			return domain.SessionRecord{}, fmt.Errorf("spawn %s: deliver prompt: %w", id, err)
 		}
+	}
+	// The spawn launched end to end. A success on a candidate that is a
+	// configured mix bucket clears any stale down state for that exact bucket;
+	// MarkRecovered is a no-op when the bucket was healthy.
+	if mixHasBucket(project.Config.WorkerMix, cfg.Harness, cfg.Model) {
+		m.health.MarkRecovered(workerMixCandidate(cfg.Harness, cfg.Model))
 	}
 	return m.getRecord(ctx, id)
 }
@@ -497,6 +575,169 @@ func (m *Manager) rollbackPreparedSpawnWorkspace(ctx context.Context, rec domain
 // effectiveHarness resolves the harness for a spawn: an explicit harness wins;
 // otherwise the project's role override for the session kind applies. Empty is
 // invalid for new worker/orchestrator launches and is rejected by Spawn.
+// resolveSpawnTarget resolves the (harness, model) pair a spawn launches with,
+// and reports whether the worker mix is what chose it.
+//
+// A request that pins a harness, a model, or both is honored as given and the
+// worker mix is never consulted for it. Otherwise a configured mix owns the
+// choice for worker spawns, and the selected bucket supplies both halves of the
+// pair — including an empty model, which launches the adapter's own default.
+// Letting the bucket rather than the project agent config decide the model is
+// what keeps the persisted model equal to the bucket key, and so what lets the
+// next census see this selection. With no mix configured the resolution is the
+// pre-existing role/project fallback, unchanged.
+//
+// The mixSelected result is returned rather than re-derived downstream because
+// this is the only point where it is knowable: a pin naming exactly a configured
+// bucket yields the same pair as a selection, so nothing on the resulting row
+// distinguishes the two after the fact.
+func (m *Manager) resolveSpawnTarget(ctx context.Context, cfg ports.SpawnConfig, project domain.ProjectRecord) (harness domain.AgentHarness, model string, mixSelected bool, err error) {
+	pinned := cfg.Harness != "" || strings.TrimSpace(cfg.Model) != ""
+	if !pinned && cfg.Kind == domain.KindWorker && len(project.Config.WorkerMix) > 0 {
+		entry, err := m.selectMixBucket(ctx, cfg.ProjectID, project.Config.WorkerMix)
+		if err != nil {
+			return "", "", false, err
+		}
+		bucket := entry.BucketKey()
+		return bucket.Harness, bucket.Model, true, nil
+	}
+	// A per-project role override picks the harness when the spawn names none,
+	// so a project can default workers to one agent and orchestrators to another.
+	harness = effectiveHarness(cfg.Harness, cfg.Kind, project.Config)
+	if harness == "" {
+		return "", "", false, fmt.Errorf("%w: configure project %s.agent or pass --harness", ErrMissingHarness, roleConfigName(cfg.Kind))
+	}
+	return harness, effectiveModel(cfg.Model, cfg.Kind, project.Config), false, nil
+}
+
+// selectMixBucket picks the bucket the next unpinned worker spawn launches on.
+//
+// The candidate set is the configured mix. Candidate health narrows it here —
+// a bucket marked down is dropped from the candidates so its share redistributes
+// across the rest by weight, which is why exhausting the candidates is an error
+// rather than a fallback to some harness the mix does not list.
+func (m *Manager) selectMixBucket(ctx context.Context, project domain.ProjectID, mix domain.WorkerMix) (domain.WorkerMixEntry, error) {
+	// Drop every bucket whose candidate is currently down. RecordSkipIfDown is
+	// the API the "Skipping a down candidate" contract calls for: it reports the
+	// down state so the caller can refuse the bucket, debits the skip count, and
+	// logs — without emitting an event, so a persistent outage does not flood the
+	// sink. A healthy bucket is left untouched. Narrowing before the census means
+	// a down bucket's share redistributes across the survivors by weight, and an
+	// all-down mix yields no candidate — the loud ErrWorkerMixExhausted below
+	// rather than a silent substitution onto a harness the mix never listed.
+	candidates := make(domain.WorkerMix, 0, len(mix))
+	for _, e := range mix {
+		bk := e.BucketKey()
+		if m.health.RecordSkipIfDown(workerMixCandidate(bk.Harness, bk.Model)) {
+			continue
+		}
+		candidates = append(candidates, e)
+	}
+	census, err := m.mixCensus(ctx, project, candidates)
+	if err != nil {
+		return domain.WorkerMixEntry{}, err
+	}
+	entry, ok := candidates.Select(census)
+	if !ok {
+		return domain.WorkerMixEntry{}, fmt.Errorf("%w: project %s configures %d bucket(s), none selectable", ErrWorkerMixExhausted, project, len(mix))
+	}
+	return entry, nil
+}
+
+// mixCensus counts the project's live workers per mix bucket, the input the
+// apportionment step consumes. It reuses the existing list-and-filter scan (as
+// activeOrchestratorSessionID does) rather than a dedicated aggregate query.
+//
+// Only mix-selected live workers in a configured bucket are counted. Selection
+// reads no other key, so restricting the tally here is what makes a pinned
+// spawn leave the unpinned sequence alone — including a pin that names exactly a
+// configured bucket, which is indistinguishable from a selection on
+// (harness, model) but carries MixSelected false.
+func (m *Manager) mixCensus(ctx context.Context, project domain.ProjectID, mix domain.WorkerMix) (map[domain.BucketKey]int, error) {
+	recs, err := m.store.ListSessions(ctx, project)
+	if err != nil {
+		return nil, fmt.Errorf("worker mix census for %s: %w", project, err)
+	}
+	counts := make(map[domain.BucketKey]int, len(mix))
+	for _, e := range mix {
+		counts[e.BucketKey()] = 0
+	}
+	for _, rec := range recs {
+		if rec.IsTerminated || rec.Kind != domain.KindWorker || !rec.MixSelected {
+			continue
+		}
+		key := domain.BucketKey{Harness: rec.Harness, Model: rec.Model}
+		if _, inMix := counts[key]; !inMix {
+			continue
+		}
+		counts[key]++
+	}
+	return counts, nil
+}
+
+// liveWorkerCount counts the project's non-terminated worker sessions — the
+// input to the concurrency-cap check. It reuses the same list-and-filter scan
+// mixCensus and activeOrchestratorSessionID already run rather than a dedicated
+// aggregate query. Unlike mixCensus it tallies every live worker regardless of
+// bucket or mix attribution: the cap is a project-level ceiling on workers, so
+// a pinned worker counts exactly as a mix-selected one does. Orchestrators are
+// excluded because the cap governs workers only.
+func (m *Manager) liveWorkerCount(ctx context.Context, project domain.ProjectID) (int, error) {
+	recs, err := m.store.ListSessions(ctx, project)
+	if err != nil {
+		return 0, fmt.Errorf("live worker count for %s: %w", project, err)
+	}
+	n := 0
+	for _, rec := range recs {
+		if !rec.IsTerminated && rec.Kind == domain.KindWorker {
+			n++
+		}
+	}
+	return n, nil
+}
+
+// workerMixCandidate is the candidate-health identity of one mix bucket: the
+// worker-mix surface plus the bucket's (harness, model) pair. The Tracker
+// normalizes each axis, so the model need not be pre-trimmed here.
+func workerMixCandidate(harness domain.AgentHarness, model string) candidatehealth.Candidate {
+	return candidatehealth.Candidate{
+		Surface: candidateSurfaceWorkerMix,
+		Harness: string(harness),
+		Model:   model,
+	}
+}
+
+// markMixCandidateDown marks the mix-selected bucket down after a
+// launch-attributable spawn failure — the agent binary missing from PATH or the
+// runtime refusing to create. Only a mix-selected spawn participates: a pinned
+// spawn failing is not evidence the candidate AO would have chosen is broken.
+// The attempt context is passed through so a caller-cancelled attempt is treated
+// as a non-fault (the Tracker no-ops when ctx is already done), while a
+// candidate-side error wrapping a deadline under a live caller still marks down.
+func (m *Manager) markMixCandidateDown(ctx context.Context, mixSelected bool, cfg ports.SpawnConfig, err error) {
+	if !mixSelected {
+		return
+	}
+	m.health.MarkDownForAttempt(ctx, workerMixCandidate(cfg.Harness, cfg.Model), err)
+}
+
+// mixHasBucket reports whether (harness, model) is a configured bucket in the
+// mix. A successful spawn on such a bucket — mix-selected or pinned onto the
+// bucket's exact identity — is the "successful attempt on that exact candidate"
+// that clears a stale down state. Mark-down is narrower (mix-selected only): a
+// pin's failure is not evidence the candidate is broken, but a pin's success is
+// proof it works, and because a down bucket is excluded from selection this is
+// the reachable recovery path.
+func mixHasBucket(mix domain.WorkerMix, harness domain.AgentHarness, model string) bool {
+	target := domain.BucketKey{Harness: harness, Model: strings.TrimSpace(model)}
+	for _, e := range mix {
+		if e.BucketKey() == target {
+			return true
+		}
+	}
+	return false
+}
+
 func effectiveHarness(explicit domain.AgentHarness, kind domain.SessionKind, cfg domain.ProjectConfig) domain.AgentHarness {
 	if explicit != "" {
 		return explicit
@@ -505,6 +746,17 @@ func effectiveHarness(explicit domain.AgentHarness, kind domain.SessionKind, cfg
 		return role
 	}
 	return ""
+}
+
+// effectiveModel resolves the model a spawn launches with: an explicit request
+// model wins over the role/project agent config, and either way the result is
+// trimmed so the value recorded on the session row is the bucket identity the
+// worker mix keys on.
+func effectiveModel(explicit string, kind domain.SessionKind, cfg domain.ProjectConfig) string {
+	if m := strings.TrimSpace(explicit); m != "" {
+		return m
+	}
+	return strings.TrimSpace(effectiveAgentConfig(kind, cfg).Model)
 }
 
 func roleConfigName(kind domain.SessionKind) string {
@@ -861,8 +1113,20 @@ func (m *Manager) relaunchRestoredSession(ctx context.Context, rec domain.Sessio
 	}
 
 	// Restore re-applies the project's resolved agent config so a configured
-	// model/permissions carry across a restore, matching fresh spawn.
+	// model/permissions carry across a restore, matching fresh spawn. The model
+	// comes from the row rather than config: the session is already counted in
+	// its (harness, model) bucket, so relaunching it on a different model would
+	// put the census and the running agent out of step.
 	agentConfig := effectiveAgentConfig(rec.Kind, project.Config)
+	// A mix-selected session carries its bucket's model authoritatively, including
+	// the empty string (the bucket's "harness default" identity). Applying it
+	// unconditionally for mix-selected rows keeps the relaunched model in step
+	// with the (harness, model) bucket the census counts it in, even when project
+	// config changed after the session launched. Legacy non-mix rows keep the
+	// old "only override when non-empty" fallback.
+	if rec.MixSelected || rec.Model != "" {
+		agentConfig.Model = rec.Model
+	}
 	env := m.runtimeEnv(rec.ID, rec.ProjectID, rec.IssueID, project.Config.Env)
 	m.augmentAgentRuntimeEnv(agent, env)
 	if err := m.prepareWorkspace(ctx, agent, rec.ID, ws.Path, systemPrompt, systemPromptFile, agentConfig, env); err != nil {
@@ -1814,7 +2078,11 @@ func (m *Manager) cleanupRecords(ctx context.Context, project domain.ProjectID) 
 
 // ---- helpers ----
 
-func seedRecord(cfg ports.SpawnConfig, now time.Time) domain.SessionRecord {
+// seedRecord builds the initial session row. mixSelected comes from
+// resolveSpawnTarget — the one place that knows whether the worker mix, rather
+// than an explicit pin, chose this (harness, model) — and is recorded so the
+// census counts only the mix's own selections.
+func seedRecord(cfg ports.SpawnConfig, mixSelected bool, now time.Time) domain.SessionRecord {
 	return domain.SessionRecord{
 		ProjectID:   cfg.ProjectID,
 		IssueID:     cfg.IssueID,
@@ -1822,6 +2090,8 @@ func seedRecord(cfg ports.SpawnConfig, now time.Time) domain.SessionRecord {
 		CreatedAt:   now,
 		UpdatedAt:   now,
 		Harness:     cfg.Harness,
+		Model:       cfg.Model,
+		MixSelected: mixSelected,
 		DisplayName: cfg.DisplayName,
 		Activity:    domain.Activity{State: domain.ActivityIdle, LastActivityAt: now},
 	}

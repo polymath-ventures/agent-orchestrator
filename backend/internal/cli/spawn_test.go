@@ -175,6 +175,156 @@ func TestSpawnCommand_RejectsOverlongName(t *testing.T) {
 	}
 }
 
+// TestSpawnMixOnlyProjectTransmitsEmptyHarness asserts that a spawn with no
+// --agent on a project without a configured worker.agent transmits an empty
+// harness and lets the daemon resolve it (via a worker mix or config), rather
+// than rejecting the request client-side. The client also does not preflight a
+// harness it cannot know, so no agents/refresh call is made.
+func TestSpawnMixOnlyProjectTransmitsEmptyHarness(t *testing.T) {
+	cfg := setConfigEnv(t)
+	var requests []string
+	var req spawnRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		appendPrimaryRequest(&requests, r)
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/projects/demo":
+			_, _ = io.WriteString(w, `{"status":"ok","project":{"id":"demo","name":"Demo","path":"/repo/demo"}}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/sessions":
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatal(err)
+			}
+			_, _ = io.WriteString(w, `{"session":{"id":"demo-16","status":"idle"}}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	writeRunFileFor(t, cfg, srv)
+
+	out, errOut, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "spawn", "--project", "demo", "--name", "worker")
+	if err != nil {
+		t.Fatalf("spawn failed: %v stderr=%s", err, errOut)
+	}
+	if !strings.Contains(out, "spawned session demo-16") {
+		t.Fatalf("output missing spawn: %s", out)
+	}
+	if req.ProjectID != "demo" || req.Harness != "" {
+		t.Fatalf("spawn request = %#v, want empty harness", req)
+	}
+	want := []string{"GET /api/v1/projects/demo", "POST /api/v1/sessions"}
+	if !reflect.DeepEqual(requests, want) {
+		t.Fatalf("requests=%#v want %#v", requests, want)
+	}
+}
+
+// TestSpawnTransmitsModel asserts the --model flag is plumbed into the request
+// body as the model field.
+func TestSpawnTransmitsModel(t *testing.T) {
+	cfg := setConfigEnv(t)
+	var req spawnRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/projects/demo":
+			_, _ = io.WriteString(w, `{"status":"ok","project":{"id":"demo","name":"Demo","path":"/repo/demo"}}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/agents/refresh":
+			_, _ = io.WriteString(w, authorizedAgentsJSON("codex"))
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/sessions":
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatal(err)
+			}
+			_, _ = io.WriteString(w, `{"session":{"id":"demo-17","status":"idle"}}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	writeRunFileFor(t, cfg, srv)
+
+	_, errOut, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "spawn", "--project", "demo", "--agent", "codex", "--model", "gpt-5-codex", "--name", "worker")
+	if err != nil {
+		t.Fatalf("spawn failed: %v stderr=%s", err, errOut)
+	}
+	if req.Harness != "codex" || req.Model != "gpt-5-codex" {
+		t.Fatalf("spawn request = %#v, want harness codex and model gpt-5-codex", req)
+	}
+}
+
+// TestSpawnModelOnlyTransmitsEmptyHarness asserts that an explicit --model with
+// no --agent is a valid pinned-model spawn: the model is transmitted, the
+// harness is left empty for the daemon to resolve, and no local preflight runs.
+func TestSpawnModelOnlyTransmitsEmptyHarness(t *testing.T) {
+	cfg := setConfigEnv(t)
+	var requests []string
+	var req spawnRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		appendPrimaryRequest(&requests, r)
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/projects/demo":
+			_, _ = io.WriteString(w, `{"status":"ok","project":{"id":"demo","name":"Demo","path":"/repo/demo"}}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/sessions":
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatal(err)
+			}
+			_, _ = io.WriteString(w, `{"session":{"id":"demo-18","status":"idle"}}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	writeRunFileFor(t, cfg, srv)
+
+	_, errOut, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "spawn", "--project", "demo", "--model", "gpt-5-codex", "--name", "worker")
+	if err != nil {
+		t.Fatalf("spawn failed: %v stderr=%s", err, errOut)
+	}
+	if req.Harness != "" || req.Model != "gpt-5-codex" {
+		t.Fatalf("spawn request = %#v, want empty harness and model gpt-5-codex", req)
+	}
+	want := []string{"GET /api/v1/projects/demo", "POST /api/v1/sessions"}
+	if !reflect.DeepEqual(requests, want) {
+		t.Fatalf("requests=%#v want %#v", requests, want)
+	}
+}
+
+// TestSpawnUnresolvableSurfacesDaemonError asserts that a project with neither a
+// worker mix nor a worker agent is no longer rejected client-side: the request
+// reaches the daemon, and the daemon's AGENT_REQUIRED error surfaces legibly.
+func TestSpawnUnresolvableSurfacesDaemonError(t *testing.T) {
+	cfg := setConfigEnv(t)
+	var requests []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		appendPrimaryRequest(&requests, r)
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/projects/demo":
+			_, _ = io.WriteString(w, `{"status":"ok","project":{"id":"demo","name":"Demo","path":"/repo/demo"}}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/sessions":
+			w.WriteHeader(http.StatusUnprocessableEntity)
+			_, _ = io.WriteString(w, `{"error":"invalid","code":"AGENT_REQUIRED","message":"session: agent harness required: configure project worker.agent or pass --harness"}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	writeRunFileFor(t, cfg, srv)
+
+	_, _, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "spawn", "--project", "demo", "--name", "worker")
+	if err == nil {
+		t.Fatal("expected an error for an unresolvable spawn")
+	}
+	if !strings.Contains(err.Error(), "agent harness required") || !strings.Contains(err.Error(), "AGENT_REQUIRED") {
+		t.Fatalf("error = %v, want the daemon's AGENT_REQUIRED message", err)
+	}
+	// The request must reach the daemon rather than being rejected client-side.
+	want := []string{"GET /api/v1/projects/demo", "POST /api/v1/sessions"}
+	if !reflect.DeepEqual(requests, want) {
+		t.Fatalf("requests=%#v want %#v", requests, want)
+	}
+}
+
 func TestSpawnResolvesProjectFromEnvAndDefaultAgent(t *testing.T) {
 	cfg := setConfigEnv(t)
 	var requests []string
@@ -185,8 +335,6 @@ func TestSpawnResolvesProjectFromEnvAndDefaultAgent(t *testing.T) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/projects/demo":
 			_, _ = io.WriteString(w, `{"status":"ok","project":{"id":"demo","name":"Demo","path":"/repo/demo","config":{"worker":{"agent":"codex"}}}}`)
-		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/agents/refresh":
-			_, _ = io.WriteString(w, authorizedAgentsJSON("codex"))
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/sessions":
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 				t.Fatal(err)
@@ -207,10 +355,12 @@ func TestSpawnResolvesProjectFromEnvAndDefaultAgent(t *testing.T) {
 	if !strings.Contains(out, "spawned session demo-11") {
 		t.Fatalf("output missing spawn: %s", out)
 	}
-	if req.ProjectID != "demo" || req.Harness != "codex" || req.DisplayName != "worker" {
+	// The CLI no longer resolves the harness from project config; it transmits
+	// an empty harness and the daemon resolves it. No local preflight runs.
+	if req.ProjectID != "demo" || req.Harness != "" || req.DisplayName != "worker" {
 		t.Fatalf("spawn request = %#v", req)
 	}
-	want := []string{"GET /api/v1/projects/demo", "POST /api/v1/agents/refresh", "POST /api/v1/sessions"}
+	want := []string{"GET /api/v1/projects/demo", "POST /api/v1/sessions"}
 	if !reflect.DeepEqual(requests, want) {
 		t.Fatalf("requests=%#v want %#v", requests, want)
 	}
@@ -228,8 +378,6 @@ func TestSpawnResolvesProjectFromAOSessionID(t *testing.T) {
 			_, _ = io.WriteString(w, `{"session":`+sessionJSON("demo-1", "demo", "worker", "idle", false)+`}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/projects/demo":
 			_, _ = io.WriteString(w, `{"status":"ok","project":{"id":"demo","name":"Demo","path":"/repo/demo","config":{"worker":{"agent":"codex"}}}}`)
-		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/agents/refresh":
-			_, _ = io.WriteString(w, authorizedAgentsJSON("codex"))
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/sessions":
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 				t.Fatal(err)
@@ -247,10 +395,11 @@ func TestSpawnResolvesProjectFromAOSessionID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("spawn failed: %v stderr=%s", err, errOut)
 	}
-	if req.ProjectID != "demo" || req.Harness != "codex" {
+	// The CLI transmits an empty harness; the daemon resolves it from config.
+	if req.ProjectID != "demo" || req.Harness != "" {
 		t.Fatalf("spawn request = %#v", req)
 	}
-	want := []string{"GET /api/v1/sessions/demo-1", "GET /api/v1/projects/demo", "POST /api/v1/agents/refresh", "POST /api/v1/sessions"}
+	want := []string{"GET /api/v1/sessions/demo-1", "GET /api/v1/projects/demo", "POST /api/v1/sessions"}
 	if !reflect.DeepEqual(requests, want) {
 		t.Fatalf("requests=%#v want %#v", requests, want)
 	}
@@ -308,8 +457,6 @@ func TestSpawnResolvesProjectFromCWD(t *testing.T) {
 			_, _ = io.WriteString(w, `{"projects":[{"id":"demo","name":"Demo"}]}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/projects/demo":
 			_, _ = io.WriteString(w, `{"status":"ok","project":{"id":"demo","name":"Demo","path":`+jsonQuote(repo)+`,"config":{"worker":{"agent":"codex"}}}}`)
-		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/agents/refresh":
-			_, _ = io.WriteString(w, authorizedAgentsJSON("codex"))
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/sessions":
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 				t.Fatal(err)
@@ -326,7 +473,8 @@ func TestSpawnResolvesProjectFromCWD(t *testing.T) {
 	if err != nil {
 		t.Fatalf("spawn failed: %v stderr=%s", err, errOut)
 	}
-	if req.ProjectID != "demo" || req.Harness != "codex" {
+	// The CLI transmits an empty harness; the daemon resolves it from config.
+	if req.ProjectID != "demo" || req.Harness != "" {
 		t.Fatalf("spawn request = %#v", req)
 	}
 }

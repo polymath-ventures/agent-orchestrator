@@ -5,6 +5,7 @@ package trackerintake
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/url"
@@ -14,6 +15,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/observe"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	sessionmanager "github.com/aoagents/agent-orchestrator/backend/internal/session_manager"
 )
 
 const (
@@ -209,6 +211,14 @@ func (o *Observer) pollProject(ctx context.Context, project domain.ProjectRecord
 			Kind:      domain.KindWorker,
 			Prompt:    BuildIssuePrompt(issue),
 		}); err != nil {
+			// A project at its worker cap is a healthy steady state, not a
+			// fault. Defer the issue: leave it unseen so the next poll retries
+			// it, and do not set spawnFailed so the project avoids the failure
+			// backoff a genuine spawn error triggers.
+			if errors.Is(err, sessionmanager.ErrWorkerConcurrencyCap) {
+				o.logger.Debug("tracker intake: deferring issue, project at worker cap", "project", project.ID, "issue", issueID)
+				continue
+			}
 			o.logger.Error("tracker intake: spawn issue session failed", "project", project.ID, "issue", issueID, "err", err)
 			spawnFailed = true
 			continue

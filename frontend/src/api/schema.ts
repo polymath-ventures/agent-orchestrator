@@ -760,6 +760,7 @@ export interface components {
             isTerminated: boolean;
             issueId?: string;
             kind: string;
+            model?: string;
             /** Format: int64 */
             previewRevision?: number;
             previewUrl?: string;
@@ -988,6 +989,7 @@ export interface components {
             env?: {
                 [key: string]: string;
             };
+            maxLiveWorkers?: number;
             orchestrator?: components["schemas"]["RoleOverride"];
             orchestratorRules?: string;
             postCreate?: string[];
@@ -996,6 +998,7 @@ export interface components {
             symlinks?: string[];
             trackerIntake?: components["schemas"]["TrackerIntakeConfig"];
             worker?: components["schemas"]["RoleOverride"];
+            workerMix?: components["schemas"]["WorkerMix"];
         };
         ProjectGetResponse: {
             project: components["schemas"]["ProjectOrDegraded"];
@@ -1241,6 +1244,7 @@ export interface components {
             issueId?: string;
             /** @enum {string} */
             kind?: "worker" | "orchestrator";
+            model?: string;
             projectId: string;
             prompt?: string;
         };
@@ -1276,6 +1280,12 @@ export interface components {
         TriggerReviewResponse: {
             reviewerHandleId: string;
             reviews: components["schemas"]["PRReviewState"][];
+        };
+        WorkerMix: components["schemas"]["WorkerMixEntry"][];
+        WorkerMixEntry: {
+            agent: string;
+            model?: string;
+            weight: number;
         };
         WorkspaceFileResponse: {
             additions: number;

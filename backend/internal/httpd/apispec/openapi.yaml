@@ -1974,6 +1974,8 @@ components:
           type: string
         kind:
           type: string
+        model:
+          type: string
         previewRevision:
           format: int64
           type: integer
@@ -2569,6 +2571,8 @@ components:
           additionalProperties:
             type: string
           type: object
+        maxLiveWorkers:
+          type: integer
         orchestrator:
           $ref: '#/components/schemas/RoleOverride'
         orchestratorRules:
@@ -2591,6 +2595,8 @@ components:
           $ref: '#/components/schemas/TrackerIntakeConfig'
         worker:
           $ref: '#/components/schemas/RoleOverride'
+        workerMix:
+          $ref: '#/components/schemas/WorkerMix'
       type: object
     ProjectGetResponse:
       properties:
@@ -3246,6 +3252,9 @@ components:
           - worker
           - orchestrator
           type: string
+        model:
+          maxLength: 128
+          type: string
         projectId:
           type: string
         prompt:
@@ -3316,6 +3325,22 @@ components:
       required:
       - reviewerHandleId
       - reviews
+      type: object
+    WorkerMix:
+      items:
+        $ref: '#/components/schemas/WorkerMixEntry'
+      type: array
+    WorkerMixEntry:
+      properties:
+        agent:
+          type: string
+        model:
+          type: string
+        weight:
+          type: integer
+      required:
+      - agent
+      - weight
       type: object
     WorkspaceFileResponse:
       properties:

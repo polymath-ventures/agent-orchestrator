@@ -19,8 +19,13 @@ type SpawnConfig struct {
 	IssueContext string
 	Kind         domain.SessionKind
 	Harness      domain.AgentHarness
-	Branch       string
-	Prompt       string
+	// Model pins the model the session launches with. Empty falls back to the
+	// role/project agent config. Spawn trims it and records the resolved value
+	// on the session row, so the worker-mix census can group live sessions on
+	// (harness, model).
+	Model  string
+	Branch string
+	Prompt string
 
 	// DisplayName is the user-facing sidebar label. Empty falls back to the
 	// session id in the read model (e.g. orchestrator sessions).

@@ -155,8 +155,11 @@ type SpawnSessionRequest struct {
 	IssueID   domain.IssueID      `json:"issueId,omitempty"`
 	Kind      domain.SessionKind  `json:"kind,omitempty" enum:"worker,orchestrator"`
 	Harness   domain.AgentHarness `json:"harness,omitempty" enum:"claude-code,codex,codex-fugu,aider,opencode,grok,droid,amp,agy,crush,cursor,qwen,copilot,goose,auggie,continue,devin,cline,kimi,kiro,kilocode,vibe,pi,autohand"`
-	Branch    string              `json:"branch,omitempty"`
-	Prompt    string              `json:"prompt,omitempty" maxLength:"4096"`
+	// Model pins the model for the launched session and wins over any model from
+	// role or project config. Omitted falls back to that config resolution.
+	Model  string `json:"model,omitempty" maxLength:"128"`
+	Branch string `json:"branch,omitempty"`
+	Prompt string `json:"prompt,omitempty" maxLength:"4096"`
 	// DisplayName is the sidebar label for the session, capped at 20 characters.
 	// `ao spawn --name` always sets it; other clients (e.g. the desktop new-task
 	// dialog) may omit it and fall back to the session id in the read model.

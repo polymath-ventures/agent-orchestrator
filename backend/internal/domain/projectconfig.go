@@ -55,6 +55,18 @@ type ProjectConfig struct {
 	// read-only toward the tracker in v1: matching issues spawn sessions, but the
 	// tracker is not commented on or transitioned.
 	TrackerIntake TrackerIntakeConfig `json:"trackerIntake,omitempty"`
+
+	// WorkerMix distributes unpinned worker spawns across weighted agent/model
+	// buckets. It is opt-in and has no default: an empty mix leaves harness
+	// resolution to the Worker role override exactly as before.
+	WorkerMix WorkerMix `json:"workerMix,omitempty"`
+
+	// MaxLiveWorkers optionally caps the number of concurrently-live worker
+	// sessions a project may run. Zero (the default) means unbounded: worker
+	// spawns are not limited by this field, which preserves the pre-cap
+	// behavior and keeps the zero value out of IsZero so an unset config still
+	// persists SQL NULL. A negative value is invalid.
+	MaxLiveWorkers int `json:"maxLiveWorkers,omitempty"`
 }
 
 // ReviewerConfig names one reviewer agent by harness. The harness is drawn from
@@ -108,6 +120,9 @@ func (c ProjectConfig) WithDefaults() ProjectConfig {
 		c.DefaultBranch = def.DefaultBranch
 	}
 	c.TrackerIntake = c.TrackerIntake.WithDefaults()
+	// WorkerMix deliberately gets no default: IsZero compares against the zero
+	// ProjectConfig, so any non-nil default here would make every unset config
+	// non-zero and stop storage persisting SQL NULL.
 	return c
 }
 
@@ -149,6 +164,16 @@ func (c ProjectConfig) Validate() error {
 	}
 	if err := c.TrackerIntake.Validate(); err != nil {
 		return err
+	}
+	// The mix owns its own rules (known harness, weight range, bucket
+	// uniqueness, sum of 100); rejecting here keeps a mix that could not be
+	// apportioned deterministically out of storage entirely.
+	if err := c.WorkerMix.Validate(); err != nil {
+		return err
+	}
+	// A negative cap is meaningless; zero means unbounded and is the default.
+	if c.MaxLiveWorkers < 0 {
+		return fmt.Errorf("maxLiveWorkers: must not be negative, got %d", c.MaxLiveWorkers)
 	}
 	return nil
 }

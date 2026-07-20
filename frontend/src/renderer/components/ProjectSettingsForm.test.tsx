@@ -438,4 +438,133 @@ describe("ProjectSettingsForm", () => {
 		expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["project", "proj-1"] });
 		expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: workspaceQueryKey });
 	});
+
+	it("saves a valid worker mix and the concurrency cap", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "",
+			defaultBranch: "main",
+			config: {
+				worker: { agent: "codex" },
+				orchestrator: { agent: "claude-code" },
+			},
+		});
+
+		renderSettings();
+
+		await userEvent.click(await screen.findByRole("button", { name: "Add bucket" }));
+		await chooseOption(screen.getAllByRole("combobox", { name: "Agent" })[0], "Codex");
+		await userEvent.type(screen.getAllByLabelText("Weight")[0], "60");
+
+		await userEvent.click(screen.getByRole("button", { name: "Add bucket" }));
+		await chooseOption(screen.getAllByRole("combobox", { name: "Agent" })[1], "OpenCode");
+		await userEvent.type(screen.getAllByLabelText("Weight")[1], "40");
+
+		await userEvent.type(screen.getByLabelText("Max live workers (0 = unlimited)"), "3");
+
+		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
+		const body = putMock.mock.calls[0]?.[1]?.body;
+		expect(body.config.workerMix).toEqual([
+			{ agent: "codex", weight: 60 },
+			{ agent: "opencode", weight: 40 },
+		]);
+		expect(body.config.maxLiveWorkers).toBe(3);
+	}, 20_000);
+
+	it("blocks save when the worker mix weights do not sum to 100", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "",
+			defaultBranch: "main",
+			config: {
+				worker: { agent: "codex" },
+				orchestrator: { agent: "claude-code" },
+			},
+		});
+
+		renderSettings();
+
+		await userEvent.click(await screen.findByRole("button", { name: "Add bucket" }));
+		await chooseOption(screen.getAllByRole("combobox", { name: "Agent" })[0], "Codex");
+		await userEvent.type(screen.getAllByLabelText("Weight")[0], "60");
+
+		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+		expect(await screen.findByText("Worker mix weights must sum to 100 (currently 60).")).toBeInTheDocument();
+		expect(putMock).not.toHaveBeenCalled();
+	}, 20_000);
+
+	it("shows a live weight total that reflects edits", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "",
+			defaultBranch: "main",
+			config: {
+				worker: { agent: "codex" },
+				orchestrator: { agent: "claude-code" },
+			},
+		});
+
+		renderSettings();
+
+		await userEvent.click(await screen.findByRole("button", { name: "Add bucket" }));
+		await userEvent.type(screen.getAllByLabelText("Weight")[0], "60");
+		await userEvent.click(screen.getByRole("button", { name: "Add bucket" }));
+		await userEvent.type(screen.getAllByLabelText("Weight")[1], "30");
+
+		expect(screen.getByText("Total: 90 / 100")).toBeInTheDocument();
+
+		await userEvent.clear(screen.getAllByLabelText("Weight")[1]);
+		await userEvent.type(screen.getAllByLabelText("Weight")[1], "40");
+
+		expect(screen.getByText("Total: 100 / 100")).toBeInTheDocument();
+	}, 20_000);
+
+	it("round-trips an existing worker mix and cap through a save", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "",
+			defaultBranch: "main",
+			config: {
+				worker: { agent: "codex" },
+				orchestrator: { agent: "claude-code" },
+				workerMix: [
+					{ agent: "codex", weight: 70 },
+					{ agent: "opencode", model: "gpt-5-codex", weight: 30 },
+				],
+				maxLiveWorkers: 4,
+			},
+		});
+
+		renderSettings();
+
+		expect(await screen.findByLabelText("Max live workers (0 = unlimited)")).toHaveValue(4);
+		const weights = screen.getAllByLabelText("Weight");
+		expect(weights[0]).toHaveValue(70);
+		expect(weights[1]).toHaveValue(30);
+
+		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
+		const body = putMock.mock.calls[0]?.[1]?.body;
+		expect(body.config.workerMix).toEqual([
+			{ agent: "codex", weight: 70 },
+			{ agent: "opencode", model: "gpt-5-codex", weight: 30 },
+		]);
+		expect(body.config.maxLiveWorkers).toBe(4);
+	}, 20_000);
 });

@@ -88,5 +88,8 @@
 	"optionalDependencies": {
 		"electron-installer-debian": "^3.2.0",
 		"electron-installer-redhat": "^3.4.0"
+	},
+	"overrides": {
+		"@electron/node-gyp": "10.2.0-electron.1"
 	}
 }

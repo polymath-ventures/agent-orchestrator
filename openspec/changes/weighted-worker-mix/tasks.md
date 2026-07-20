@@ -1,0 +1,86 @@
+## 1. Port the model-provider dependency
+
+- [x] 1.1 Port `backend/internal/domain/modelprovider.go` from the old fork, dropping the `ProviderFugu` case and any harness constants absent from this fork
+- [x] 1.2 Port its test file and add the `ModelProvider()` method to `domain/harness.go`
+- [x] 1.3 Verify `go build ./...` and `go test ./internal/domain/...` pass before touching workermix
+
+## 2. Port the worker mix domain package
+
+- [x] 2.1 Port `workermix_test.go` from the old fork first, excluding any `RoutingHarnessForIssueLabels` cases — this is the failing-test step
+- [x] 2.2 Port `backend/internal/domain/workermix.go`, excluding `issueRoutingLabelHarnesses` and `RoutingHarnessForIssueLabels`
+- [x] 2.3 Add a convergence test asserting a 60/30/10 mix apportions exactly 6/3/1 over ten successive selections
+- [x] 2.4 Add a determinism test asserting identical (mix, census) inputs return the same bucket, and a tie test asserting the earliest row wins
+- [x] 2.5 Verify `go test ./internal/domain/...` and `go vet ./...` pass
+
+## 3. Port the candidate health package
+
+- [x] 3.1 Port `candidatehealth_test.go` from the old fork verbatim — failing-test step
+- [x] 3.2 Port `backend/internal/candidatehealth/candidatehealth.go` verbatim; confirm `internal/ports` is its only non-stdlib import
+- [x] 3.3 Confirm the two attribution tests pass unmodified: canceled caller context is a no-op, and a wrapped deadline error with a live caller context marks down
+- [x] 3.4 Verify `go test -race ./internal/candidatehealth/...` passes
+
+## 4. Make model a first-class spawn input
+
+- [x] 4.1 Write failing tests for model round-tripping through spawn, persistence, and read-back
+- [x] 4.2 Add `Model` to `ports.SpawnConfig` and to the `SpawnSessionRequest` DTO
+- [x] 4.3 Add migration `0028` adding a `model TEXT NOT NULL DEFAULT ''` column to `sessions` (existing rows read back empty; no backfill), with the down-migration ALTER following the `0019` pattern. (Renumbered past main's quota and codex-fugu migrations during rebase.)
+- [x] 4.4 Run `npm run sqlc` (no `sqlc.yaml` override needed: `model` is a plain `string`, unlike the columns that map to named `internal/domain` types)
+- [x] 4.5 Add `Model` to `domain.SessionRecord` and thread it through `seedRecord` and `effectiveAgentConfig`
+- [x] 4.6 Run `npm run api` and commit the regenerated `openapi.yaml` and `frontend/src/api/schema.ts` in the same commit
+- [x] 4.7 Verify pre-existing sessions read back with an empty model, and that the `api-drift` CI job passes locally
+
+## 5. Move harness resolution server-side
+
+- [x] 5.1 Write a failing test asserting a mix-only project (no `worker.agent`) is spawnable
+- [x] 5.2 Remove `resolveSpawnHarness`'s client-side resolution from `cli/spawn.go` so an unpinned request transmits an empty harness
+- [x] 5.3 Add the `--model` flag to `ao spawn` and plumb it into the request body
+- [x] 5.4 Move the agent-auth preflight so it runs against the daemon-resolved harness
+- [x] 5.5 Verify the unresolvable case (no mix, no worker agent) still fails with a diagnosable error, now raised by the daemon
+
+## 6. Wire selection into the spawn path
+
+- [x] 6.1 Add `workerMix` to `domain.ProjectConfig` with its own `WithDefaults()`/`Validate()` wired into the parent, keeping the default zero-valued
+- [x] 6.2 Write a failing test asserting an unpinned spawn on a configured mix selects by weight and a pinned spawn bypasses it
+- [x] 6.3 Implement the live per-bucket census via `ListSessions` filtered on `!IsTerminated`, grouped by `(harness, model)`
+- [x] 6.4 Insert selection in `Manager.Spawn` at the existing `cfg.Harness == ""` branch
+- [x] 6.5 Verify pinned spawns neither consume mix share nor consult the mix
+
+## 7. Attach candidate health to the spawn path
+
+- [x] 7.1 Write failing tests asserting mark-down on the two launch-attributable failures only, and no mark-down on config or environmental errors
+- [x] 7.2 Mark the selected bucket down on the agent-binary-missing and runtime-create-refused paths, passing the attempt context so caller cancellation is excluded
+- [x] 7.3 Recover the bucket on a successful spawn of that exact candidate
+- [x] 7.4 Emit candidate-health telemetry from the service layer alongside the existing spawn emitters, not from the manager
+- [x] 7.5 Verify a down bucket's share redistributes and that an all-buckets-down mix fails loudly instead of substituting
+
+## 8. Spawn concurrency cap
+
+- [x] 8.1 Write failing tests for cap refusal, for orchestrator sessions not counting, and for capacity freeing on termination
+- [x] 8.2 Add the cap to `domain.ProjectConfig` with validation, defaulting to unset/unbounded
+- [x] 8.3 Enforce the cap in `Manager.Spawn` before any durable write, returning a distinguishable capacity error
+- [x] 8.4 Verify a cap refusal marks no candidate down and emits no candidate-down event
+
+## 9. Tracker intake deferral
+
+- [x] 9.1 Write a failing test asserting a capped intake leaves the issue unclaimed and does not enter project backoff
+- [x] 9.2 Handle the capacity error in the intake observer: continue without marking the issue seen and without setting the failure flag
+- [x] 9.3 Verify a genuine spawn failure still triggers the existing five-minute backoff unchanged
+- [x] 9.4 Verify a deferred issue is picked up on a later poll once capacity frees
+
+## 10. Settings UI
+
+- [x] 10.1 Add a `WorkerMixFields` subcomponent following the extracted-subcomponent pattern used by the tracker-intake section
+- [x] 10.2 Add the worker-mix card to `ProjectSettingsForm.tsx` with bucket rows and a live weight total
+- [x] 10.3 Gate save on the weight sum equalling 100, using the file's existing manual inline-validation convention
+- [x] 10.4 Add the cap control to the same card
+- [x] 10.5 Extend `ProjectSettingsForm.test.tsx` to cover the save gate and the live total
+- [x] 10.6 Verify `npm run frontend:typecheck` and `npm run lint` pass
+
+## 11. Full verification
+
+- [x] 11.1 Run `go build ./...`, `go test ./...`, `go test -race ./...`, and `go vet ./...` from `backend/`
+- [x] 11.2 Run `npm run lint`, `npm run frontend:typecheck`, and confirm `npm run api` and `npm run sqlc` produce no diff
+- [x] 11.3 Exercise the feature end to end against a running daemon: configure a 60/30/10 mix, spawn repeatedly unpinned, and confirm the realized ratio. **Done live** against a real headless `ao daemon` (127.0.0.1:3001) over a proper repo clone: a 60/40 mix + 5 unpinned spawns realized exactly `claude-code, codex, claude-code, claude-code, codex` = **3:2** (the D'Hondt sequence). Config accept/persist/round-trip and invalid-mix rejection (`HTTP 400 INVALID_PROJECT_CONFIG "weights sum to 90, want 100"`) also confirmed live. (Used 60/40, two buckets, rather than the illustrative 60/30/10 — same mechanism.)
+- [x] 11.4 Exercise a bucket outage live: break one bucket's binary, confirm it is marked down and alerted, confirm redistribution, then confirm recovery on a later success. **Done live** (except recovery): a `claude-code:50 + aider:50` mix with `aider` absent from PATH → the aider-selected spawn returned `HTTP 400 AGENT_BINARY_NOT_FOUND`, the daemon emitted the alert `candidate health: candidate down surface=worker_mix candidate=worker_mix:aider`, and subsequent unpinned spawns **redistributed to claude-code**. Recovery-on-success is covered by the integration test `TestSpawn_SuccessfulSpawnRecoversDownBucket`; a live recovery demo resisted this harness (it reaps the long-running stub agent + daemon), and the recovery path is the documented pin-succeeds-→-MarkRecovered branch.
+- [x] 11.5 Exercise the cap live: fill a project to its cap and confirm intake defers and later resumes. **Cap refusal done live**: `maxLiveWorkers:1`, first unpinned spawn `HTTP 201` (went live), second → **`HTTP 409 WORKER_CONCURRENCY_CAP`**. The tracker-**intake** defer-and-resume wrapper over that refusal is covered by integration tests (`observer_test.go`) — a live intake demo needs a configured GitHub tracker with open issues.
+- [ ] 11.6 Render the settings card via `ao preview` and confirm the save gate behaves. **Card rendered and verified by eye** in a browser (valid/invalid/empty states, save gate at sum≠100) via a standalone vite mount; `ao preview` proper needs the Electron desktop browser panel, which cannot launch on this host (npm 12 `allow-scripts` blocks electron's postinstall, so the Electron binary is absent).
