@@ -38,6 +38,10 @@ var (
 	// ErrMissingHarness means neither the spawn request nor the project's role
 	// config selected an agent. Worker/orchestrator spawns must be explicit.
 	ErrMissingHarness = errors.New("session: agent harness required")
+	// ErrWorkerMixExhausted means every bucket in the project's worker mix was
+	// unavailable, so no bucket could be selected. The mix never substitutes a
+	// harness it does not list, so an exhausted mix fails loudly instead.
+	ErrWorkerMixExhausted = errors.New("session: no worker mix bucket available")
 	// ErrNotResumable means a terminated session cannot be relaunched: its adapter
 	// cannot natively resume it AND it has no prompt to fresh-launch from, and it is
 	// not an orchestrator (orchestrators are promptless by design and relaunch fresh
@@ -267,16 +271,14 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	if err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("spawn: %w", err)
 	}
-	// A per-project role override picks the harness when the spawn names none,
-	// so a project can default workers to one agent and orchestrators to another.
-	cfg.Harness = effectiveHarness(cfg.Harness, cfg.Kind, project.Config)
-	if cfg.Harness == "" {
-		return domain.SessionRecord{}, fmt.Errorf("spawn: %w: configure project %s.agent or pass --harness", ErrMissingHarness, roleConfigName(cfg.Kind))
+	// Harness and model are resolved together, once, up front, so the same pair
+	// is launched with and recorded on the session row. Trimming happens on this
+	// path, which is what lets the worker-mix census match a bucket's model
+	// against the model stored on its sessions.
+	cfg.Harness, cfg.Model, err = m.resolveSpawnTarget(ctx, cfg, project)
+	if err != nil {
+		return domain.SessionRecord{}, fmt.Errorf("spawn: %w", err)
 	}
-	// The model is resolved once, up front, so the same value is launched with
-	// and recorded on the session row. Trimming here is what lets the worker-mix
-	// census match a bucket's model against the model stored on its sessions.
-	cfg.Model = effectiveModel(cfg.Model, cfg.Kind, project.Config)
 
 	// Reject an unknown harness before any durable state is created. Doing this
 	// after CreateSession would leave a terminated orphan row and waste a
@@ -502,6 +504,83 @@ func (m *Manager) rollbackPreparedSpawnWorkspace(ctx context.Context, rec domain
 // effectiveHarness resolves the harness for a spawn: an explicit harness wins;
 // otherwise the project's role override for the session kind applies. Empty is
 // invalid for new worker/orchestrator launches and is rejected by Spawn.
+// resolveSpawnTarget resolves the (harness, model) pair a spawn launches with.
+//
+// A request that pins a harness, a model, or both is honored as given and the
+// worker mix is never consulted for it. Otherwise a configured mix owns the
+// choice for worker spawns, and the selected bucket supplies both halves of the
+// pair — including an empty model, which launches the adapter's own default.
+// Letting the bucket rather than the project agent config decide the model is
+// what keeps the persisted model equal to the bucket key, and so what lets the
+// next census see this selection. With no mix configured the resolution is the
+// pre-existing role/project fallback, unchanged.
+func (m *Manager) resolveSpawnTarget(ctx context.Context, cfg ports.SpawnConfig, project domain.ProjectRecord) (domain.AgentHarness, string, error) {
+	pinned := cfg.Harness != "" || strings.TrimSpace(cfg.Model) != ""
+	if !pinned && cfg.Kind == domain.KindWorker && len(project.Config.WorkerMix) > 0 {
+		entry, err := m.selectMixBucket(ctx, cfg.ProjectID, project.Config.WorkerMix)
+		if err != nil {
+			return "", "", err
+		}
+		bucket := entry.BucketKey()
+		return bucket.Harness, bucket.Model, nil
+	}
+	// A per-project role override picks the harness when the spawn names none,
+	// so a project can default workers to one agent and orchestrators to another.
+	harness := effectiveHarness(cfg.Harness, cfg.Kind, project.Config)
+	if harness == "" {
+		return "", "", fmt.Errorf("%w: configure project %s.agent or pass --harness", ErrMissingHarness, roleConfigName(cfg.Kind))
+	}
+	return harness, effectiveModel(cfg.Model, cfg.Kind, project.Config), nil
+}
+
+// selectMixBucket picks the bucket the next unpinned worker spawn launches on.
+//
+// The candidate set is the configured mix. Candidate health narrows it here —
+// a bucket marked down is dropped from the candidates so its share redistributes
+// across the rest by weight, which is why exhausting the candidates is an error
+// rather than a fallback to some harness the mix does not list.
+func (m *Manager) selectMixBucket(ctx context.Context, project domain.ProjectID, mix domain.WorkerMix) (domain.WorkerMixEntry, error) {
+	candidates := mix
+	census, err := m.mixCensus(ctx, project, candidates)
+	if err != nil {
+		return domain.WorkerMixEntry{}, err
+	}
+	entry, ok := candidates.Select(census)
+	if !ok {
+		return domain.WorkerMixEntry{}, fmt.Errorf("%w: project %s configures %d bucket(s), none selectable", ErrWorkerMixExhausted, project, len(mix))
+	}
+	return entry, nil
+}
+
+// mixCensus counts the project's live workers per mix bucket, the input the
+// apportionment step consumes. It reuses the existing list-and-filter scan (as
+// activeOrchestratorSessionID does) rather than a dedicated aggregate query.
+//
+// Only buckets the mix configures are counted. Selection reads no other key, so
+// restricting the tally here is also what makes a pinned spawn — which names a
+// harness/model pair the mix need not list — leave the unpinned sequence alone.
+func (m *Manager) mixCensus(ctx context.Context, project domain.ProjectID, mix domain.WorkerMix) (map[domain.BucketKey]int, error) {
+	recs, err := m.store.ListSessions(ctx, project)
+	if err != nil {
+		return nil, fmt.Errorf("worker mix census for %s: %w", project, err)
+	}
+	counts := make(map[domain.BucketKey]int, len(mix))
+	for _, e := range mix {
+		counts[e.BucketKey()] = 0
+	}
+	for _, rec := range recs {
+		if rec.IsTerminated || rec.Kind != domain.KindWorker {
+			continue
+		}
+		key := domain.BucketKey{Harness: rec.Harness, Model: rec.Model}
+		if _, inMix := counts[key]; !inMix {
+			continue
+		}
+		counts[key]++
+	}
+	return counts, nil
+}
+
 func effectiveHarness(explicit domain.AgentHarness, kind domain.SessionKind, cfg domain.ProjectConfig) domain.AgentHarness {
 	if explicit != "" {
 		return explicit

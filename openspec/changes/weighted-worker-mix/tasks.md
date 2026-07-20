@@ -39,11 +39,11 @@
 
 ## 6. Wire selection into the spawn path
 
-- [ ] 6.1 Add `workerMix` to `domain.ProjectConfig` with its own `WithDefaults()`/`Validate()` wired into the parent, keeping the default zero-valued
-- [ ] 6.2 Write a failing test asserting an unpinned spawn on a configured mix selects by weight and a pinned spawn bypasses it
-- [ ] 6.3 Implement the live per-bucket census via `ListSessions` filtered on `!IsTerminated`, grouped by `(harness, model)`
-- [ ] 6.4 Insert selection in `Manager.Spawn` at the existing `cfg.Harness == ""` branch
-- [ ] 6.5 Verify pinned spawns neither consume mix share nor consult the mix
+- [x] 6.1 Add `workerMix` to `domain.ProjectConfig` with its own `WithDefaults()`/`Validate()` wired into the parent, keeping the default zero-valued
+- [x] 6.2 Write a failing test asserting an unpinned spawn on a configured mix selects by weight and a pinned spawn bypasses it
+- [x] 6.3 Implement the live per-bucket census via `ListSessions` filtered on `!IsTerminated`, grouped by `(harness, model)`
+- [x] 6.4 Insert selection in `Manager.Spawn` at the existing `cfg.Harness == ""` branch
+- [x] 6.5 Verify pinned spawns neither consume mix share nor consult the mix
 
 ## 7. Attach candidate health to the spawn path
 

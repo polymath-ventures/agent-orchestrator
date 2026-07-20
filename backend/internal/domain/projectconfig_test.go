@@ -40,6 +40,20 @@ func TestProjectConfigValidate(t *testing.T) {
 		{"tracker intake unknown provider", ProjectConfig{TrackerIntake: TrackerIntakeConfig{Enabled: true, Provider: "linear", Assignee: "alice"}}, true},
 		{"tracker intake repo with whitespace", ProjectConfig{TrackerIntake: TrackerIntakeConfig{Enabled: true, Repo: " acme/demo", Assignee: "alice"}}, true},
 		{"tracker intake assignee with whitespace", ProjectConfig{TrackerIntake: TrackerIntakeConfig{Enabled: true, Assignee: " alice"}}, true},
+		{"empty worker mix", ProjectConfig{WorkerMix: WorkerMix{}}, false},
+		{"good worker mix", ProjectConfig{WorkerMix: WorkerMix{
+			{Harness: HarnessClaudeCode, Weight: 60},
+			{Harness: HarnessCodex, Weight: 40},
+		}}, false},
+		{"worker mix weights do not sum to 100", ProjectConfig{WorkerMix: WorkerMix{
+			{Harness: HarnessClaudeCode, Weight: 60},
+			{Harness: HarnessCodex, Weight: 30},
+		}}, true},
+		{"worker mix unknown harness", ProjectConfig{WorkerMix: WorkerMix{{Harness: "nope", Weight: 100}}}, true},
+		{"worker mix duplicate bucket", ProjectConfig{WorkerMix: WorkerMix{
+			{Harness: HarnessClaudeCode, Weight: 50},
+			{Harness: HarnessClaudeCode, Weight: 50},
+		}}, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -93,6 +107,13 @@ func TestProjectConfigWithDefaults(t *testing.T) {
 	got = (ProjectConfig{}).WithDefaults()
 	if got.TrackerIntake.Provider != "" {
 		t.Fatalf("disabled TrackerIntake.Provider = %q, want empty", got.TrackerIntake.Provider)
+	}
+
+	// The worker mix has no default: a non-nil one here would make every unset
+	// config non-zero, and IsZero (reflect.DeepEqual) is what lets storage
+	// persist SQL NULL for a project that configures nothing.
+	if got.WorkerMix != nil {
+		t.Fatalf("WithDefaults populated WorkerMix = %#v, want nil", got.WorkerMix)
 	}
 }
 
