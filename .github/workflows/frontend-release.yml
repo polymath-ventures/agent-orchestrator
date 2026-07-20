@@ -48,6 +48,8 @@ jobs:
     environment: release
     permissions:
       contents: write
+    env:
+      HAS_MACOS_SIGNING_SECRETS: ${{ secrets.CSC_LINK != '' && secrets.CSC_KEY_PASSWORD != '' && secrets.APPLE_API_KEY_BASE64 != '' && secrets.APPLE_API_KEY_ID != '' && secrets.APPLE_API_ISSUER != '' && secrets.APPLE_SIGNING_IDENTITY != '' }}
     defaults:
       run:
         working-directory: frontend
@@ -66,7 +68,7 @@ jobs:
           cache-dependency-path: backend/go.sum
       - run: npm ci
       - name: macOS signing setup
-        if: startsWith(matrix.os, 'macos')
+        if: startsWith(matrix.os, 'macos') && env.HAS_MACOS_SIGNING_SECRETS == 'true'
         uses: ./.github/actions/macos-signing-setup
         with:
           csc-link: ${{ secrets.CSC_LINK }}
@@ -176,6 +178,8 @@ jobs:
     environment: release # same approval gate as the matrix release job
     permissions:
       contents: write
+    env:
+      HAS_MACOS_SIGNING_SECRETS: ${{ secrets.CSC_LINK != '' && secrets.CSC_KEY_PASSWORD != '' && secrets.APPLE_API_KEY_BASE64 != '' && secrets.APPLE_API_KEY_ID != '' && secrets.APPLE_API_ISSUER != '' && secrets.APPLE_SIGNING_IDENTITY != '' }}
     defaults:
       run:
         working-directory: frontend
@@ -192,6 +196,7 @@ jobs:
           cache-dependency-path: backend/go.sum
       - run: npm ci
       - name: macOS signing setup
+        if: env.HAS_MACOS_SIGNING_SECRETS == 'true'
         uses: ./.github/actions/macos-signing-setup
         with:
           csc-link: ${{ secrets.CSC_LINK }}

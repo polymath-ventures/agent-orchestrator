@@ -58,6 +58,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     permissions:
       contents: write
+    env:
+      HAS_MACOS_SIGNING_SECRETS: ${{ secrets.CSC_LINK != '' && secrets.CSC_KEY_PASSWORD != '' && secrets.APPLE_API_KEY_BASE64 != '' && secrets.APPLE_API_KEY_ID != '' && secrets.APPLE_API_ISSUER != '' && secrets.APPLE_SIGNING_IDENTITY != '' }}
     defaults:
       run:
         working-directory: frontend
@@ -80,7 +82,7 @@ jobs:
         run: |
           node -e "const v=process.env.NIGHTLY_VERSION.split('+')[0]; const fs=require('fs'); const p=require('./package.json'); p.version=v; fs.writeFileSync('./package.json', JSON.stringify(p,null,'\t')+'\n');"
       - name: macOS signing setup
-        if: startsWith(matrix.os, 'macos')
+        if: startsWith(matrix.os, 'macos') && env.HAS_MACOS_SIGNING_SECRETS == 'true'
         uses: ./.github/actions/macos-signing-setup
         with:
           csc-link: ${{ secrets.CSC_LINK }}
@@ -119,6 +121,8 @@ jobs:
     runs-on: macos-15-intel
     permissions:
       contents: write
+    env:
+      HAS_MACOS_SIGNING_SECRETS: ${{ secrets.CSC_LINK != '' && secrets.CSC_KEY_PASSWORD != '' && secrets.APPLE_API_KEY_BASE64 != '' && secrets.APPLE_API_KEY_ID != '' && secrets.APPLE_API_ISSUER != '' && secrets.APPLE_SIGNING_IDENTITY != '' }}
     defaults:
       run:
         working-directory: frontend
@@ -141,6 +145,7 @@ jobs:
         run: |
           node -e "const v=process.env.NIGHTLY_VERSION.split('+')[0]; const fs=require('fs'); const p=require('./package.json'); p.version=v; fs.writeFileSync('./package.json', JSON.stringify(p,null,'\t')+'\n');"
       - name: macOS signing setup
+        if: env.HAS_MACOS_SIGNING_SECRETS == 'true'
         uses: ./.github/actions/macos-signing-setup
         with:
           csc-link: ${{ secrets.CSC_LINK }}
