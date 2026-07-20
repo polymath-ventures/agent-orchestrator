@@ -27,7 +27,7 @@ surface (`npm run sqlc`, `npm run api`).
 ### Backend (Go daemon)
 
 - Loopback-only HTTP daemon (chi router, CORS, per-request timeout,
-  `/healthz` / `/readyz` / `/shutdown`).
+  `/healthz` / `/readyz` / token-protected `/shutdown`).
 - SQLite store with goose migrations and sqlc-generated queries; DB
   trigger-based change-data-capture into `change_log`.
 - CDC poller + broadcaster feeding in-process subscribers and the SSE stream

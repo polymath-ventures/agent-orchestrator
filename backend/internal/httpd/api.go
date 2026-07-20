@@ -1,6 +1,7 @@
 package httpd
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -33,6 +34,7 @@ type APIDeps struct {
 	Events             cdcSubscriber
 	Telemetry          ports.EventSink
 	Mobile             *controllers.MobileController
+	StreamContext      context.Context
 }
 
 // API owns one controller per resource and is the single Register call the
@@ -68,10 +70,10 @@ func NewAPI(cfg config.Config, deps APIDeps) *API {
 		},
 		prs:           &controllers.PRsController{Svc: deps.PRs},
 		reviews:       &controllers.ReviewsController{Svc: deps.Reviews},
-		notifications: &controllers.NotificationsController{Svc: deps.Notifications, Stream: deps.NotificationStream},
+		notifications: &controllers.NotificationsController{Svc: deps.Notifications, Stream: deps.NotificationStream, StreamContext: deps.StreamContext},
 		metrics:       &controllers.MetricsController{Provider: deps.Metrics},
 		imports:       &controllers.ImportController{Svc: deps.Import},
-		events:        &EventsController{Source: deps.CDC, Live: deps.Events},
+		events:        &EventsController{Source: deps.CDC, Live: deps.Events, StreamContext: deps.StreamContext},
 	}
 }
 

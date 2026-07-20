@@ -27,7 +27,7 @@ Every product command resolves to a daemon HTTP route. Run `ao <command>
 | Command                       | Purpose                                                                                                                           |
 | ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
 | `ao start`                    | Start the daemon in the background and wait for `/readyz`.                                                                        |
-| `ao stop`                     | Gracefully stop the daemon via loopback `POST /shutdown` after verifying daemon identity.                                         |
+| `ao stop`                     | Gracefully stop the daemon after verifying daemon identity; uses `systemctl --user stop ao.service` when that unit owns the PID, otherwise token-bearing loopback `POST /shutdown`. |
 | `ao status` / `--json`        | Report daemon state from `running.json`, process liveness, `/healthz`, and `/readyz`.                                             |
 | `ao doctor` / `--json`        | Check config, data directory, DB-file presence, daemon state, `git`, and (on Darwin/Linux) `tmux`; on Windows conpty is built in. |
 | `ao completion <shell>`       | Generate completions for `bash`, `zsh`, `fish`, or `powershell`.                                                                  |
@@ -93,7 +93,7 @@ The CLI and daemon share the same environment-driven config:
 | Var                   | Default              | Purpose                |
 | --------------------- | -------------------- | ---------------------- |
 | `AO_PORT`             | `3001`               | Loopback daemon port.  |
-| `AO_RUN_FILE`         | `~/.ao/running.json` | PID/port handshake.    |
+| `AO_RUN_FILE`         | `~/.ao/running.json` | PID/port/shutdown-token handshake. |
 | `AO_DATA_DIR`         | `~/.ao/data`         | SQLite data directory. |
 | `AO_REQUEST_TIMEOUT`  | `60s`                | REST request timeout.  |
 | `AO_SHUTDOWN_TIMEOUT` | `10s`                | Graceful shutdown cap. |

@@ -27,8 +27,9 @@ type cdcSubscriber interface {
 // EventsController owns the client-facing CDC stream. Durable replay comes from
 // change_log through Source; Broadcaster remains a live-only pub/sub seam.
 type EventsController struct {
-	Source cdc.Source
-	Live   cdcSubscriber
+	Source        cdc.Source
+	Live          cdcSubscriber
+	StreamContext context.Context
 }
 
 // Register mounts the CDC SSE stream route.
@@ -58,6 +59,15 @@ func (c *EventsController) stream(w http.ResponseWriter, r *http.Request) {
 
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
+	if c.StreamContext != nil {
+		go func() {
+			select {
+			case <-c.StreamContext.Done():
+				cancel()
+			case <-ctx.Done():
+			}
+		}()
+	}
 
 	live := make(chan cdc.Event, eventsLiveBuffer)
 	unsubscribe := c.Live.Subscribe(func(e cdc.Event) {

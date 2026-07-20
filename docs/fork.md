@@ -178,10 +178,11 @@ frees the socket: the next server should be born under `ao-tmux.service`, not
 lazily under the AO daemon.
 
 `ao stop` preserves operator semantics under `Restart=always`: when the verified
-daemon PID is the `MainPID` of `ao.service`, the CLI calls
-`systemctl --user stop ao.service` instead of POSTing `/shutdown` and letting
-systemd immediately restart it. If the daemon is not owned by the unit, `ao stop`
-uses the normal loopback shutdown path.
+daemon PID is the `MainPID` of `ao.service`, or `/proc/<pid>/cgroup` shows the
+PID belongs to `ao.service`, the CLI calls `systemctl --user stop ao.service`
+instead of POSTing `/shutdown` and letting systemd immediately restart it. If
+the daemon is not owned by the unit, `ao stop` uses the normal token-bearing
+loopback shutdown path.
 
 Manual restart verification:
 

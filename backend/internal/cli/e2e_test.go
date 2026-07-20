@@ -27,6 +27,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/runfile"
 )
 
 // aoBin is the path to the binary built once for the whole suite.
@@ -277,17 +279,37 @@ func TestE2E_ShutdownGuard(t *testing.T) {
 	e := newEnv(t)
 	e.startDaemon(t)
 
+	info, err := runfile.Read(e.runFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info == nil || info.ShutdownToken == "" {
+		t.Fatal("daemon did not publish a shutdown token")
+	}
+
 	// A cross-site Origin header must be rejected without stopping the daemon.
-	if code := postShutdown(t, e.port, func(r *http.Request) { r.Header.Set("Origin", "https://evil.example") }); code != http.StatusForbidden {
+	if code := postShutdown(t, e.port, func(r *http.Request) {
+		r.Header.Set(runfile.ShutdownTokenHeader, info.ShutdownToken)
+		r.Header.Set("Origin", "https://evil.example")
+	}); code != http.StatusForbidden {
 		t.Fatalf("cross-origin /shutdown = %d, want 403", code)
 	}
 	// A non-loopback Host (DNS-rebinding) must be rejected too.
-	if code := postShutdown(t, e.port, func(r *http.Request) { r.Host = "evil.example" }); code != http.StatusForbidden {
+	if code := postShutdown(t, e.port, func(r *http.Request) {
+		r.Header.Set(runfile.ShutdownTokenHeader, info.ShutdownToken)
+		r.Host = "evil.example"
+	}); code != http.StatusForbidden {
 		t.Fatalf("rebinding-host /shutdown = %d, want 403", code)
 	}
 	// The daemon survived both.
 	out, _ := e.run(t, "status", "--json")
 	mustContain(t, out, `"state": "ready"`)
+
+	if code := postShutdown(t, e.port, func(r *http.Request) {
+		r.Header.Set(runfile.ShutdownTokenHeader, info.ShutdownToken)
+	}); code != http.StatusAccepted {
+		t.Fatalf("token-bearing loopback /shutdown = %d, want 202", code)
+	}
 }
 
 func TestE2E_StaleRunFile(t *testing.T) {

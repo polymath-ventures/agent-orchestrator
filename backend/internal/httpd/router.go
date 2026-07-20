@@ -3,6 +3,7 @@
 package httpd
 
 import (
+	"context"
 	"crypto/subtle"
 	"encoding/json"
 	"log/slog"
@@ -30,6 +31,7 @@ import (
 type ControlDeps struct {
 	RequestShutdown func()
 	ShutdownToken   string
+	StreamContext   context.Context
 }
 
 // NewRouterWithControl builds the root router with the standard middleware
@@ -66,7 +68,7 @@ func NewRouterWithControl(cfg config.Config, log *slog.Logger, termMgr *terminal
 	r.MethodNotAllowed(methodNotAllowedJSON)
 
 	mountHealth(r)
-	mountTerminalMux(r, termMgr, log)
+	mountTerminalMux(control.StreamContext, r, termMgr, log)
 	mountControl(r, control)
 	mountTelemetry(r, deps.Telemetry)
 	mountMobile(r, deps.Mobile)

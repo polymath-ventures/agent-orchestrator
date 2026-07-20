@@ -27,7 +27,7 @@ type Server struct {
 	http   *http.Server
 	listen net.Listener
 
-	cancelRequests    context.CancelFunc
+	cancelStreams     context.CancelFunc
 	shutdownRequested chan struct{}
 	shutdownOnce      sync.Once
 	shutdownToken     string
@@ -67,12 +67,13 @@ func NewWithDeps(cfg config.Config, log *slog.Logger, termMgr *terminal.Manager,
 		_ = ln.Close()
 		return nil, err
 	}
-	requestCtx, cancelRequests := context.WithCancel(context.Background())
+	streamCtx, cancelStreams := context.WithCancel(context.Background())
+	deps.StreamContext = streamCtx
 	srv := &Server{
 		cfg:               cfg,
 		log:               log,
 		listen:            ln,
-		cancelRequests:    cancelRequests,
+		cancelStreams:     cancelStreams,
 		shutdownRequested: make(chan struct{}),
 		shutdownToken:     shutdownToken,
 	}
@@ -80,10 +81,8 @@ func NewWithDeps(cfg config.Config, log *slog.Logger, termMgr *terminal.Manager,
 		Handler: NewRouterWithControl(cfg, log, termMgr, deps, ControlDeps{
 			RequestShutdown: srv.requestShutdown,
 			ShutdownToken:   srv.shutdownToken,
+			StreamContext:   streamCtx,
 		}),
-		BaseContext: func(net.Listener) context.Context {
-			return requestCtx
-		},
 		// ReadHeaderTimeout guards against slow-loris even on loopback;
 		// per-request body/handler timeouts are applied per-surface.
 		ReadHeaderTimeout: 10 * time.Second,
@@ -148,10 +147,10 @@ func (s *Server) Run(ctx context.Context) error {
 	defer cancel()
 
 	// Long-lived handlers such as SSE and terminal WebSockets intentionally
-	// bypass REST request timeouts. Cancel their base context before Shutdown
-	// starts waiting, otherwise an active dashboard can hold the drain open until
-	// ShutdownTimeout and make routine daemon restarts look unclean.
-	s.cancelRequests()
+	// bypass REST request timeouts. Cancel only their shared stream context
+	// before Shutdown starts waiting; bounded REST requests keep the normal
+	// graceful-drain window.
+	s.cancelStreams()
 	if err := s.http.Shutdown(shutdownCtx); err != nil {
 		// The deadline elapsed with connections still open; force them closed.
 		s.log.Warn("graceful shutdown timed out, forcing close", "err", err)

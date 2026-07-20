@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -15,6 +16,8 @@ import (
 )
 
 const defaultStopTimeout = 10 * time.Second
+
+var readProcCgroup = os.ReadFile
 
 type stopOptions struct {
 	timeout time.Duration
@@ -85,13 +88,24 @@ func (c *commandContext) stopDaemon(ctx context.Context, opts stopOptions) (daem
 }
 
 func (c *commandContext) stopSystemdDaemon(ctx context.Context, pid int, timeout time.Duration) (bool, error) {
+	inUnit, _ := processInSystemdUnit(pid, "ao.service")
 	systemctl, err := c.deps.LookPath("systemctl")
 	if err != nil {
+		if inUnit {
+			return true, fmt.Errorf("daemon pid %d is owned by ao.service but systemctl is unavailable: %w", pid, err)
+		}
 		return false, nil
 	}
 
 	checkCtx, cancelCheck := context.WithTimeout(ctx, probeTimeout)
 	defer cancelCheck()
+	if inUnit {
+		if err := c.stopAOService(ctx, systemctl, timeout); err != nil {
+			return true, err
+		}
+		return true, nil
+	}
+
 	if _, err := c.deps.CommandOutput(checkCtx, systemctl, "--user", "is-active", "--quiet", "ao.service"); err != nil {
 		return false, nil
 	}
@@ -99,20 +113,59 @@ func (c *commandContext) stopSystemdDaemon(ctx context.Context, pid int, timeout
 	if err != nil {
 		return false, nil
 	}
-	mainPID, err := strconv.Atoi(strings.TrimSpace(string(out)))
+	mainPID, err := parseSystemdMainPID(out)
 	if err != nil || mainPID != pid {
 		return false, nil
 	}
 
+	if err := c.stopAOService(ctx, systemctl, timeout); err != nil {
+		return true, err
+	}
+	return true, nil
+}
+
+func (c *commandContext) stopAOService(ctx context.Context, systemctl string, timeout time.Duration) error {
 	if timeout <= 0 {
 		timeout = defaultStopTimeout
 	}
 	stopCtx, cancelStop := context.WithTimeout(ctx, timeout)
 	defer cancelStop()
 	if _, err := c.deps.CommandOutput(stopCtx, systemctl, "--user", "stop", "ao.service"); err != nil {
-		return true, fmt.Errorf("stop ao.service: %w", err)
+		return fmt.Errorf("stop ao.service: %w", err)
 	}
-	return true, nil
+	return nil
+}
+
+func processInSystemdUnit(pid int, unit string) (bool, error) {
+	data, err := readProcCgroup(fmt.Sprintf("/proc/%d/cgroup", pid))
+	if err != nil {
+		return false, err
+	}
+	return cgroupContainsSystemdUnit(data, unit), nil
+}
+
+func cgroupContainsSystemdUnit(data []byte, unit string) bool {
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.Contains(line, unit) {
+			return true
+		}
+	}
+	return false
+}
+
+func parseSystemdMainPID(out []byte) (int, error) {
+	lines := strings.Split(string(out), "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := strings.TrimSpace(lines[i])
+		if line == "" {
+			continue
+		}
+		pid, err := strconv.Atoi(line)
+		if err == nil {
+			return pid, nil
+		}
+	}
+	return 0, fmt.Errorf("missing numeric MainPID")
 }
 
 func (c *commandContext) requestShutdown(ctx context.Context, port int, shutdownToken string) error {

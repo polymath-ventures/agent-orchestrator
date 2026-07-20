@@ -13,7 +13,9 @@ test("ao.service is a persistent headless daemon that does not kill the tmux fle
   assert.match(text, /^Restart=always$/m);
   assert.match(text, /^KillMode=process$/m);
   assert.match(text, /^After=.*ao-tmux\.service/m);
-  assert.match(text, /^Wants=.*ao-tmux\.service/m);
+  assert.match(text, /^Requires=.*ao-tmux\.service/m);
+  assert.match(text, /^StartLimitIntervalSec=0$/m);
+  assert.doesNotMatch(text, /^Delegate=yes$/m);
   assert.match(text, /^ExecStartPre=.*tmux list-sessions/m);
   assert.match(text, /^Environment=AO_DATA_DIR=%h\/\.ao$/m);
 });

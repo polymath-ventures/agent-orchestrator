@@ -295,6 +295,12 @@ func TestStopUsesShutdownEndpoint(t *testing.T) {
 			}
 			return !shutdownSeen.Load()
 		},
+		LookPath: func(file string) (string, error) {
+			if file == "systemctl" {
+				return "", fmt.Errorf("systemctl unavailable")
+			}
+			return "", fmt.Errorf("unexpected lookup %q", file)
+		},
 	}, "stop", "--json")
 	if err != nil {
 		t.Fatal(err)
