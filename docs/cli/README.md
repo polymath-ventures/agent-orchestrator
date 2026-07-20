@@ -36,27 +36,28 @@ Every product command resolves to a daemon HTTP route. Run `ao <command>
 
 ### Product commands
 
-| Command                             | Daemon route                                   |
-| ----------------------------------- | ---------------------------------------------- |
-| `ao project add`                    | `POST /api/v1/projects`                        |
-| `ao project ls`                     | `GET /api/v1/projects`                         |
-| `ao project get <id>`               | `GET /api/v1/projects/{id}`                    |
-| `ao project set-config <id>`        | `PUT /api/v1/projects/{id}/config`             |
-| `ao project rm <id>`                | `DELETE /api/v1/projects/{id}`                 |
-| `ao agent ls`                       | `GET /api/v1/agents`                           |
-| `ao agent ls --refresh`             | `POST /api/v1/agents/refresh`                  |
-| `ao spawn`                          | `POST /api/v1/sessions`                        |
-| `ao session ls`                     | `GET /api/v1/sessions`                         |
-| `ao session get <id>`               | `GET /api/v1/sessions/{id}`                    |
-| `ao session kill <id>`              | `POST /api/v1/sessions/{id}/kill`              |
-| `ao session restore <id>`           | `POST /api/v1/sessions/{id}/restore`           |
-| `ao session rename <id> <name>`     | `PATCH /api/v1/sessions/{id}`                  |
-| `ao session cleanup`                | `POST /api/v1/sessions/cleanup`                |
-| `ao session claim-pr <id> <pr-ref>` | `POST /api/v1/sessions/{id}/pr/claim`          |
-| `ao orchestrator ls`                | `GET /api/v1/orchestrators`                    |
-| `ao send`                           | `POST /api/v1/sessions/{id}/send`              |
-| `ao preview [url]`                  | `POST /api/v1/sessions/{id}/preview`           |
-| `ao hooks <agent> <event>`          | `POST /api/v1/sessions/{id}/activity` (hidden) |
+| Command                             | Daemon route                                                       |
+| ----------------------------------- | ------------------------------------------------------------------ |
+| `ao project add`                    | `POST /api/v1/projects`                                            |
+| `ao project ls`                     | `GET /api/v1/projects`                                             |
+| `ao project get <id>`               | `GET /api/v1/projects/{id}`                                        |
+| `ao project set-config <id>`        | `PUT /api/v1/projects/{id}/config`                                 |
+| `ao project rm <id>`                | `DELETE /api/v1/projects/{id}`                                     |
+| `ao agent ls`                       | `GET /api/v1/agents`                                               |
+| `ao agent ls --refresh`             | `POST /api/v1/agents/refresh`                                      |
+| `ao spawn`                          | `POST /api/v1/sessions`                                            |
+| `ao session ls`                     | `GET /api/v1/sessions`                                             |
+| `ao session get <id>`               | `GET /api/v1/sessions/{id}`                                        |
+| `ao session kill <id>`              | `POST /api/v1/sessions/{id}/kill`                                  |
+| `ao session restore <id>`           | `POST /api/v1/sessions/{id}/restore`                               |
+| `ao session rename <id> <name>`     | `PATCH /api/v1/sessions/{id}`                                      |
+| `ao session cleanup`                | `POST /api/v1/sessions/cleanup`                                    |
+| `ao session claim-pr <id> <pr-ref>` | `POST /api/v1/sessions/{id}/pr/claim`                              |
+| `ao orchestrator ls`                | `GET /api/v1/orchestrators`                                        |
+| `ao send`                           | `POST /api/v1/sessions/{id}/send`                                  |
+| `ao preview [url]`                  | `POST /api/v1/sessions/{id}/preview`                               |
+| `ao notify slack`                   | `GET /api/v1/notifications/stream` (+ `GET /api/v1/notifications`) |
+| `ao hooks <agent> <event>`          | `POST /api/v1/sessions/{id}/activity` (hidden)                     |
 
 `ao agent ls` prints the daemon-supported agent catalog with local install/auth
 readiness. Use `--refresh` to rerun the bounded local probes and `--json` to
@@ -80,6 +81,27 @@ spawn remains the authoritative runtime validation point. Use
 autodetects an `index.html` in the session workspace; with a URL argument it
 opens that URL verbatim (`file://`, `http`, `https`).
 
+`ao notify slack` mirrors AO's existing notifications into a Slack channel,
+one-way. It is a read-only consumer of the daemon's notification API: it
+subscribes to `GET /api/v1/notifications/stream` and posts every notification —
+the same ones the desktop bell shows — to a Slack incoming webhook. It runs in
+the foreground until interrupted, and adds no daemon surface.
+
+```bash
+export AO_SLACK_WEBHOOK_URL="https://hooks.slack.com/services/T000/B000/XXXX"
+ao notify slack
+```
+
+Because the daemon's notification hub is in-process with no replay, the command
+re-lists unread notifications each time it (re)connects and delivers whatever it
+has not already sent, deduping by notification id. One consequence worth knowing
+on first run: any notifications already sitting unread in the bell are delivered
+on startup. Mark them read first if you don't want the backlog.
+
+Nothing is ever read _from_ Slack — there is no slash command, interactivity, or
+reply path. Stopping the process and unsetting the webhook removes the entire
+Slack surface.
+
 `go run .` in `backend/` remains a compatibility wrapper around the daemon.
 
 PR and review actions (merge, resolve-comments, review execute/send) are
@@ -97,6 +119,11 @@ The CLI and daemon share the same environment-driven config:
 | `AO_DATA_DIR`         | `~/.ao/data`         | SQLite data directory. |
 | `AO_REQUEST_TIMEOUT`  | `60s`                | REST request timeout.  |
 | `AO_SHUTDOWN_TIMEOUT` | `10s`                | Graceful shutdown cap. |
+
+`ao notify slack` additionally reads `AO_SLACK_WEBHOOK_URL` (the Slack incoming
+webhook to post to). A `--webhook-url` flag is accepted, but the environment
+variable is preferred: the command is long-lived, so a flag value would sit
+visible in the process table.
 
 The daemon always binds `127.0.0.1`.
 

@@ -94,20 +94,32 @@ func (c *commandContext) postLoopbackJSON(ctx context.Context, path string, body
 	return c.doJSONPath(ctx, http.MethodPost, path, body, nil)
 }
 
-func (c *commandContext) doJSONPath(ctx context.Context, method, path string, body, out any) error {
+// daemonURL resolves the loopback URL for a daemon route, failing with a clear
+// "not running" message rather than a connection-refused dump when the run-file
+// is missing or stale. Every caller that talks to the daemon goes through here,
+// so run-file discovery lives in exactly one place.
+func (c *commandContext) daemonURL(path string) (string, error) {
 	cfg, err := config.Load()
 	if err != nil {
-		return err
+		return "", err
 	}
 	info, err := runfile.Read(cfg.RunFilePath)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if info == nil {
-		return fmt.Errorf("AO daemon is not running — start it with `ao start`")
+		return "", fmt.Errorf("AO daemon is not running — start it with `ao start`")
 	}
 	if !c.deps.ProcessAlive(info.PID) {
-		return fmt.Errorf("AO daemon is not running (stale run-file at %s) — start it with `ao start`", cfg.RunFilePath)
+		return "", fmt.Errorf("AO daemon is not running (stale run-file at %s) — start it with `ao start`", cfg.RunFilePath)
+	}
+	return fmt.Sprintf("http://%s:%d%s", config.LoopbackHost, info.Port, path), nil
+}
+
+func (c *commandContext) doJSONPath(ctx context.Context, method, path string, body, out any) error {
+	url, err := c.daemonURL(path)
+	if err != nil {
+		return err
 	}
 
 	var reader io.Reader = http.NoBody
@@ -118,7 +130,6 @@ func (c *commandContext) doJSONPath(ctx context.Context, method, path string, bo
 		}
 		reader = bytes.NewReader(payload)
 	}
-	url := fmt.Sprintf("http://%s:%d%s", config.LoopbackHost, info.Port, path)
 	req, err := http.NewRequestWithContext(ctx, method, url, reader) // #nosec G704 -- daemon host is fixed loopback; path is an internal API route.
 	if err != nil {
 		return err
