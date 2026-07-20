@@ -2662,6 +2662,10 @@ components:
           - "null"
           - number
         signalQuality:
+          enum:
+          - exact
+          - estimated
+          - none
           type: string
         source:
           type: string

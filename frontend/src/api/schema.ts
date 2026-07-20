@@ -1024,7 +1024,8 @@ export interface components {
             /** Format: date-time */
             observedAt: string;
             remaining?: null | number;
-            signalQuality: string;
+            /** @enum {string} */
+            signalQuality: "exact" | "estimated" | "none";
             source: string;
             used?: null | number;
             /** Format: date-time */

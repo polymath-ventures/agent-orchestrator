@@ -38,7 +38,7 @@ type QuotaSnapshot struct {
 	Used          *float64           `json:"used,omitempty"`
 	Remaining     *float64           `json:"remaining,omitempty"`
 	Limit         *float64           `json:"limit,omitempty"`
-	SignalQuality QuotaSignalQuality `json:"signalQuality"`
+	SignalQuality QuotaSignalQuality `json:"signalQuality" enum:"exact,estimated,none"`
 	Source        string             `json:"source"`
 	Basis         string             `json:"basis,omitempty"`
 	ObservedAt    time.Time          `json:"observedAt"`
@@ -57,7 +57,7 @@ func (q QuotaSnapshot) MarshalJSON() ([]byte, error) {
 		Used          *float64           `json:"used,omitempty"`
 		Remaining     *float64           `json:"remaining,omitempty"`
 		Limit         *float64           `json:"limit,omitempty"`
-		SignalQuality QuotaSignalQuality `json:"signalQuality"`
+		SignalQuality QuotaSignalQuality `json:"signalQuality" enum:"exact,estimated,none"`
 		Source        string             `json:"source"`
 		Basis         string             `json:"basis,omitempty"`
 		ObservedAt    time.Time          `json:"observedAt"`
