@@ -127,32 +127,93 @@ func TestSpawn_PinnedModelAloneBypassesMix(t *testing.T) {
 // The spec's "pinned spawns do not consume mix share": interleaving pinned
 // spawns must leave the unpinned selection sequence byte-identical to the
 // sequence the same project produces with no pinned spawns at all.
+//
+// Both pin shapes matter, and only the second is load-bearing. A pin naming a
+// harness outside the mix is invisible to a census that filters on bucket keys
+// alone; a pin naming exactly a configured bucket is not, so it is the case
+// that forces the mix-selected flag to exist rather than the census inferring
+// attribution from (harness, model).
 func TestSpawn_PinnedSpawnsDoNotPerturbMixSequence(t *testing.T) {
-	baselineManager, _ := mixManager(domain.ProjectConfig{WorkerMix: testMix()})
-	var baseline []domain.AgentHarness
-	for i := 0; i < 6; i++ {
-		baseline = append(baseline, spawnUnpinnedWorker(t, baselineManager).Harness)
+	pins := map[string]ports.SpawnConfig{
+		"harness outside the mix": {ProjectID: "mer", Kind: domain.KindWorker, Harness: domain.HarnessGrok},
+		"exactly a configured bucket": {
+			ProjectID: "mer", Kind: domain.KindWorker, Harness: domain.HarnessClaudeCode,
+		},
+	}
+	for name, pin := range pins {
+		t.Run(name, func(t *testing.T) {
+			baselineManager, _ := mixManager(domain.ProjectConfig{WorkerMix: testMix()})
+			var baseline []domain.AgentHarness
+			for i := 0; i < 6; i++ {
+				baseline = append(baseline, spawnUnpinnedWorker(t, baselineManager).Harness)
+			}
+
+			m, _ := mixManager(domain.ProjectConfig{WorkerMix: testMix()})
+			var interleaved []domain.AgentHarness
+			for i := 0; i < 6; i++ {
+				// A pinned spawn before every unpinned one.
+				if _, err := m.Spawn(ctx, pin); err != nil {
+					t.Fatal(err)
+				}
+				interleaved = append(interleaved, spawnUnpinnedWorker(t, m).Harness)
+			}
+
+			for i := range baseline {
+				if baseline[i] != interleaved[i] {
+					t.Fatalf("selection %d = %q with pinned spawns, want %q (baseline %v, interleaved %v)",
+						i, interleaved[i], baseline[i], baseline, interleaved)
+				}
+			}
+		})
+	}
+}
+
+// The flag the census keys on is written at the one point the mix decides, so a
+// mix-selected row carries it and a pinned row — even one landing on exactly a
+// configured bucket — does not.
+func TestSpawn_MixSelectionIsRecordedOnSession(t *testing.T) {
+	m, st := mixManager(domain.ProjectConfig{WorkerMix: testMix()})
+
+	unpinned := spawnUnpinnedWorker(t, m)
+	if !unpinned.MixSelected {
+		t.Fatal("unpinned mix spawn mixSelected = false, want true")
+	}
+	if !st.sessions[unpinned.ID].MixSelected {
+		t.Fatal("persisted mixSelected = false, want true")
 	}
 
-	m, _ := mixManager(domain.ProjectConfig{WorkerMix: testMix()})
-	var interleaved []domain.AgentHarness
-	for i := 0; i < 6; i++ {
-		// A pinned spawn before every unpinned one. The pin names a harness the
-		// mix does not list, so it is not mix-attributable and must be invisible
-		// to apportionment.
-		if _, err := m.Spawn(ctx, ports.SpawnConfig{
-			ProjectID: "mer", Kind: domain.KindWorker, Harness: domain.HarnessGrok,
-		}); err != nil {
-			t.Fatal(err)
+	pinned, err := m.Spawn(ctx, ports.SpawnConfig{
+		ProjectID: "mer", Kind: domain.KindWorker, Harness: domain.HarnessClaudeCode,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pinned.MixSelected {
+		t.Fatal("pinned spawn mixSelected = true, want false")
+	}
+	if st.sessions[pinned.ID].MixSelected {
+		t.Fatal("persisted pinned mixSelected = true, want false")
+	}
+}
+
+// A live, non-terminated worker sitting in a configured bucket must still be
+// invisible to the census when a user pinned it: only the mix's own selections
+// consume mix share.
+func TestSpawn_MixCensusIgnoresPinnedSessionsInConfiguredBuckets(t *testing.T) {
+	m, st := mixManager(domain.ProjectConfig{WorkerMix: testMix()})
+
+	// Ten pinned claude-code workers. Counting them would compute
+	// 60/(10+1) = 5.45 against 30/(0+1) and starve the 60%% bucket.
+	for i := 0; i < 10; i++ {
+		id := domain.SessionID("mer-pinned-" + string(rune('a'+i)))
+		st.sessions[id] = domain.SessionRecord{
+			ID: id, ProjectID: "mer", Kind: domain.KindWorker,
+			Harness: domain.HarnessClaudeCode,
 		}
-		interleaved = append(interleaved, spawnUnpinnedWorker(t, m).Harness)
 	}
 
-	for i := range baseline {
-		if baseline[i] != interleaved[i] {
-			t.Fatalf("selection %d = %q with pinned spawns, want %q (baseline %v, interleaved %v)",
-				i, interleaved[i], baseline[i], baseline, interleaved)
-		}
+	if got := spawnUnpinnedWorker(t, m).Harness; got != domain.HarnessClaudeCode {
+		t.Fatalf("first selection = %q, want claude-code — pinned rows must not consume mix share", got)
 	}
 }
 

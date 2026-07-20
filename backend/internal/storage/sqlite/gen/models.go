@@ -199,6 +199,7 @@ type Session struct {
 	PreviewURL      string
 	PreviewRevision int64
 	Model           string
+	MixSelected     bool
 }
 
 type SessionWorktree struct {

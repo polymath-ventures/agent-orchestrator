@@ -275,7 +275,8 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	// is launched with and recorded on the session row. Trimming happens on this
 	// path, which is what lets the worker-mix census match a bucket's model
 	// against the model stored on its sessions.
-	cfg.Harness, cfg.Model, err = m.resolveSpawnTarget(ctx, cfg, project)
+	var mixSelected bool
+	cfg.Harness, cfg.Model, mixSelected, err = m.resolveSpawnTarget(ctx, cfg, project)
 	if err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("spawn: %w", err)
 	}
@@ -296,7 +297,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		return domain.SessionRecord{}, fmt.Errorf("spawn: prompt: %w", err)
 	}
 
-	rec, err := m.store.CreateSession(ctx, seedRecord(cfg, m.clock()))
+	rec, err := m.store.CreateSession(ctx, seedRecord(cfg, mixSelected, m.clock()))
 	if err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("spawn: create: %w", err)
 	}
@@ -504,7 +505,8 @@ func (m *Manager) rollbackPreparedSpawnWorkspace(ctx context.Context, rec domain
 // effectiveHarness resolves the harness for a spawn: an explicit harness wins;
 // otherwise the project's role override for the session kind applies. Empty is
 // invalid for new worker/orchestrator launches and is rejected by Spawn.
-// resolveSpawnTarget resolves the (harness, model) pair a spawn launches with.
+// resolveSpawnTarget resolves the (harness, model) pair a spawn launches with,
+// and reports whether the worker mix is what chose it.
 //
 // A request that pins a harness, a model, or both is honored as given and the
 // worker mix is never consulted for it. Otherwise a configured mix owns the
@@ -514,23 +516,28 @@ func (m *Manager) rollbackPreparedSpawnWorkspace(ctx context.Context, rec domain
 // what keeps the persisted model equal to the bucket key, and so what lets the
 // next census see this selection. With no mix configured the resolution is the
 // pre-existing role/project fallback, unchanged.
-func (m *Manager) resolveSpawnTarget(ctx context.Context, cfg ports.SpawnConfig, project domain.ProjectRecord) (domain.AgentHarness, string, error) {
+//
+// The mixSelected result is returned rather than re-derived downstream because
+// this is the only point where it is knowable: a pin naming exactly a configured
+// bucket yields the same pair as a selection, so nothing on the resulting row
+// distinguishes the two after the fact.
+func (m *Manager) resolveSpawnTarget(ctx context.Context, cfg ports.SpawnConfig, project domain.ProjectRecord) (harness domain.AgentHarness, model string, mixSelected bool, err error) {
 	pinned := cfg.Harness != "" || strings.TrimSpace(cfg.Model) != ""
 	if !pinned && cfg.Kind == domain.KindWorker && len(project.Config.WorkerMix) > 0 {
 		entry, err := m.selectMixBucket(ctx, cfg.ProjectID, project.Config.WorkerMix)
 		if err != nil {
-			return "", "", err
+			return "", "", false, err
 		}
 		bucket := entry.BucketKey()
-		return bucket.Harness, bucket.Model, nil
+		return bucket.Harness, bucket.Model, true, nil
 	}
 	// A per-project role override picks the harness when the spawn names none,
 	// so a project can default workers to one agent and orchestrators to another.
-	harness := effectiveHarness(cfg.Harness, cfg.Kind, project.Config)
+	harness = effectiveHarness(cfg.Harness, cfg.Kind, project.Config)
 	if harness == "" {
-		return "", "", fmt.Errorf("%w: configure project %s.agent or pass --harness", ErrMissingHarness, roleConfigName(cfg.Kind))
+		return "", "", false, fmt.Errorf("%w: configure project %s.agent or pass --harness", ErrMissingHarness, roleConfigName(cfg.Kind))
 	}
-	return harness, effectiveModel(cfg.Model, cfg.Kind, project.Config), nil
+	return harness, effectiveModel(cfg.Model, cfg.Kind, project.Config), false, nil
 }
 
 // selectMixBucket picks the bucket the next unpinned worker spawn launches on.
@@ -556,9 +563,11 @@ func (m *Manager) selectMixBucket(ctx context.Context, project domain.ProjectID,
 // apportionment step consumes. It reuses the existing list-and-filter scan (as
 // activeOrchestratorSessionID does) rather than a dedicated aggregate query.
 //
-// Only buckets the mix configures are counted. Selection reads no other key, so
-// restricting the tally here is also what makes a pinned spawn — which names a
-// harness/model pair the mix need not list — leave the unpinned sequence alone.
+// Only mix-selected live workers in a configured bucket are counted. Selection
+// reads no other key, so restricting the tally here is what makes a pinned
+// spawn leave the unpinned sequence alone — including a pin that names exactly a
+// configured bucket, which is indistinguishable from a selection on
+// (harness, model) but carries MixSelected false.
 func (m *Manager) mixCensus(ctx context.Context, project domain.ProjectID, mix domain.WorkerMix) (map[domain.BucketKey]int, error) {
 	recs, err := m.store.ListSessions(ctx, project)
 	if err != nil {
@@ -569,7 +578,7 @@ func (m *Manager) mixCensus(ctx context.Context, project domain.ProjectID, mix d
 		counts[e.BucketKey()] = 0
 	}
 	for _, rec := range recs {
-		if rec.IsTerminated || rec.Kind != domain.KindWorker {
+		if rec.IsTerminated || rec.Kind != domain.KindWorker || !rec.MixSelected {
 			continue
 		}
 		key := domain.BucketKey{Harness: rec.Harness, Model: rec.Model}
@@ -1915,7 +1924,11 @@ func (m *Manager) cleanupRecords(ctx context.Context, project domain.ProjectID) 
 
 // ---- helpers ----
 
-func seedRecord(cfg ports.SpawnConfig, now time.Time) domain.SessionRecord {
+// seedRecord builds the initial session row. mixSelected comes from
+// resolveSpawnTarget — the one place that knows whether the worker mix, rather
+// than an explicit pin, chose this (harness, model) — and is recorded so the
+// census counts only the mix's own selections.
+func seedRecord(cfg ports.SpawnConfig, mixSelected bool, now time.Time) domain.SessionRecord {
 	return domain.SessionRecord{
 		ProjectID:   cfg.ProjectID,
 		IssueID:     cfg.IssueID,
@@ -1924,6 +1937,7 @@ func seedRecord(cfg ports.SpawnConfig, now time.Time) domain.SessionRecord {
 		UpdatedAt:   now,
 		Harness:     cfg.Harness,
 		Model:       cfg.Model,
+		MixSelected: mixSelected,
 		DisplayName: cfg.DisplayName,
 		Activity:    domain.Activity{State: domain.ActivityIdle, LastActivityAt: now},
 	}

@@ -196,6 +196,7 @@ func rowToRecord(row gen.Session) domain.SessionRecord {
 		Kind:        row.Kind,
 		Harness:     row.Harness,
 		Model:       row.Model,
+		MixSelected: row.MixSelected,
 		DisplayName: row.DisplayName,
 		Activity: domain.Activity{
 			State:          row.ActivityState,
@@ -227,6 +228,7 @@ func recordToInsert(rec domain.SessionRecord, num int64) gen.InsertSessionParams
 		Kind:            rec.Kind,
 		Harness:         rec.Harness,
 		Model:           rec.Model,
+		MixSelected:     rec.MixSelected,
 		DisplayName:     rec.DisplayName,
 		ActivityState:   activity.State,
 		ActivityLastAt:  activity.LastActivityAt,
@@ -252,6 +254,7 @@ func recordToUpdate(rec domain.SessionRecord) gen.UpdateSessionParams {
 		Kind:            rec.Kind,
 		Harness:         rec.Harness,
 		Model:           rec.Model,
+		MixSelected:     rec.MixSelected,
 		DisplayName:     rec.DisplayName,
 		ActivityState:   activity.State,
 		ActivityLastAt:  activity.LastActivityAt,
