@@ -66,19 +66,39 @@ field and `notify.Publisher` has exactly one implementation — there is no plur
 path means inventing a delivery-target registry, a settings surface, secret storage, and retry, all
 in files upstream owns.
 
-### Open the stream before reconciling — and consume it *while* reconciling
+### One delivery worker; reconciliation on a periodic ticker
 
-Ordering matters and is the reason this needs no persistence. The command **subscribes first, then
-lists unread**. Any notification published during the gap is caught by the listing; any notification
-present in both is collapsed by ID dedupe. Reconciling first and subscribing second would leave a
-genuine hole between the two calls.
+The command runs three concurrent parts: a stream reader that enqueues live notifications, a
+reconcile loop, and a single delivery worker that drains the queue and posts to Slack. The worker is
+the only poster and the only reader of the delivered-ID ledger, so dedupe needs no lock — and, more
+importantly, **no lock is ever held across the network POST**. The stream reader keeps draining the
+daemon's 64-slot subscriber buffer while the worker catches up, so a slow webhook cannot cause the
+hub to drop. (Two earlier iterations got this wrong: the first reconciled *before* consuming; the
+second reconciled concurrently but held the deliverer's mutex across the POST, which serialized the
+producers anyway. Both were found in review.)
 
-Subscribing first is only half of it, though. If the listing's deliveries had to finish before the
-first stream read, a slow webhook could stall consumption long enough for the daemon's 64-slot
-subscriber buffer to overflow — and `Hub.Publish` drops rather than blocks, losing notifications
-published after the listing snapshot. So reconciliation runs **concurrently** with consumption, and
-a single mutex-guarded deliverer serializes the two producers. (This was found in review; the
-original version reconciled before consuming and the gap argument was overstated.)
+Reconciliation is **periodic, not just on connect**, and that is the load-bearing decision. Because
+the hub is best-effort with no replay, a dropped stream event or a transiently-failed Slack post
+would otherwise be lost until the next reconnect — which, on a healthy long-lived stream, may never
+come. The periodic pass re-lists unread notifications every `slackReconcileInterval` and re-enqueues
+anything the worker has not delivered, so every missed notification lands within one interval,
+independent of stream health. This subsumes the old "subscribe before reconcile" ordering argument:
+a notification published in the gap between the first listing and the subscription is simply
+delivered by the next periodic pass.
+
+### Dedupe by notification ID, recorded only on success, in an unbounded ledger
+
+Delivered notification IDs are held in memory, and an ID is recorded **only after Slack accepts the
+message**. Recording before the post — the original version — meant a failed delivery permanently
+suppressed that notification, because reconciliation would then skip it forever. Recording only on
+success means a failed post is simply re-offered by the next periodic reconcile.
+
+The ledger is unbounded. An earlier version evicted the oldest entries, arguing that a notification
+too old to appear in a capped unread listing could never be re-offered. That argument is false: this
+command never marks anything read, so a delivered notification stays *unread* and can re-enter the
+listing once newer ones are read in the UI. Eviction therefore reintroduces exactly the duplicates
+dedupe exists to prevent. Entries are one notification id apiece, so the ledger stays small in any
+realistic run. (Both defects were found in review.)
 
 ### Dedupe by notification ID, recorded only on success, in an unbounded ledger
 
@@ -137,11 +157,11 @@ under test.
 ## Risks / Trade-offs
 
 - **Hub drops under load** → `notify.Hub.Publish` is non-blocking and drops on a full 64-slot
-  buffer. Consuming concurrently with reconciliation keeps that buffer draining, but a burst of more
-  than 64 notifications faster than Slack accepts them can still drop. Reconciliation on reconnect
-  does not help if the connection never drops. Accepted: the notification volume this fork produces
-  is far below that threshold, and the alternative is daemon changes. Noted here so a future
-  operator recognizes the symptom.
+  buffer. The stream reader drains it independently of Slack latency, so this only bites on a burst
+  of more than 64 notifications faster than the reader can enqueue them — and even then the periodic
+  reconcile recovers the dropped ones from the unread listing within one interval. Accepted: the
+  notification volume this fork produces is far below that threshold. Noted here so a future operator
+  recognizes the symptom.
 - **Backlog deeper than one unread page** → reconciliation asks for the daemon's maximum unread page
   (100). A disconnection that accumulates more than that many unread notifications cannot recover
   the oldest ones from the listing, and they were never on the stream. Accepted: recovering deeper

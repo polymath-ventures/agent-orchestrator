@@ -38,6 +38,11 @@ const (
 	// enough that the default scanner buffer would do; this leaves headroom
 	// without letting a malformed stream consume unbounded memory.
 	slackStreamLineCap = 1 << 20
+
+	// slackQueueBuffer is the delivery worker's inbound queue depth. It absorbs a
+	// burst while Slack catches up; once full, producers apply backpressure and
+	// any daemon-side drop is recovered by the next periodic reconcile.
+	slackQueueBuffer = 256
 )
 
 // Reconnect pacing. Vars rather than consts so tests can shrink them; the loop
@@ -49,6 +54,10 @@ var (
 	// slackMaxReconnectDelay caps the backoff so a daemon restart is picked up
 	// promptly rather than after an ever-growing wait.
 	slackMaxReconnectDelay = 30 * time.Second
+	// slackReconcileInterval is how often the reconcile loop re-lists unread
+	// notifications. It bounds the delay before a stream-missed or
+	// transiently-failed notification is retried, independent of stream health.
+	slackReconcileInterval = 30 * time.Second
 )
 
 // waitOrDone sleeps for d, returning early if ctx is cancelled, so a long
@@ -76,7 +85,9 @@ func (p slackPoster) post(ctx context.Context, text string) error {
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.webhookURL, bytes.NewReader(payload)) // #nosec G704 -- webhook URL is operator-supplied configuration.
 	if err != nil {
-		return err
+		// A malformed webhook URL fails here, and the parse error embeds the
+		// full URL — the credential. Scrub it, same as the transport error below.
+		return fmt.Errorf("build Slack request: %s", scrubWebhookURL(err, p.webhookURL))
 	}
 	req.Header.Set("Content-Type", "application/json")
 
@@ -184,10 +195,28 @@ func renderNotification(n slackNotification) string {
 	return strings.Join(strings.Fields(strings.Join(parts, " ")), " ")
 }
 
-// slackDeliverer serializes delivery and remembers what has already been sent.
-// It is the single place dedupe and posting happen, so the two can never drift:
-// an ID is recorded ONLY after Slack accepts the message, which means a failed
-// post is retried by the next reconciliation rather than being silently lost.
+// syncLogger serializes stderr writes. Multiple goroutines (the delivery
+// worker, the stream reader, the reconcile loop) report diagnostics, and
+// io.Writer makes no concurrency promise — an injected buffer would otherwise
+// race. os.Stderr happens to be safe, but the dependency contract is broader.
+type syncLogger struct {
+	mu sync.Mutex
+	w  io.Writer
+}
+
+func (l *syncLogger) printf(format string, args ...any) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	_, _ = fmt.Fprintf(l.w, "ao notify slack: "+format+"\n", args...)
+}
+
+// slackDeliverer is a single-consumer delivery queue. Producers (the stream
+// reader and the reconcile loop) enqueue notifications; one worker posts them
+// serially and owns the delivered-ID ledger. Because the worker is the sole
+// reader of that ledger, dedupe needs no lock, and — crucially — no lock is
+// held across the network POST, so a slow webhook can never block a producer:
+// the stream reader keeps draining the daemon's subscriber buffer while the
+// worker catches up.
 //
 // The ledger is unbounded on purpose. An earlier version evicted the oldest
 // entries, reasoning that a notification too old to appear in an unread listing
@@ -196,36 +225,51 @@ func renderNotification(n slackNotification) string {
 // ones are read in the UI. Eviction therefore reintroduces duplicates. Entries
 // are a notification id apiece, so the ledger stays small in any realistic run.
 type slackDeliverer struct {
-	mu        sync.Mutex
-	delivered map[string]struct{}
-	poster    slackPoster
-	errOut    io.Writer
+	poster slackPoster
+	log    func(format string, args ...any)
+	queue  chan slackNotification
 }
 
-func newSlackDeliverer(poster slackPoster, errOut io.Writer) *slackDeliverer {
-	return &slackDeliverer{delivered: map[string]struct{}{}, poster: poster, errOut: errOut}
+func newSlackDeliverer(poster slackPoster, log func(string, ...any)) *slackDeliverer {
+	return &slackDeliverer{poster: poster, log: log, queue: make(chan slackNotification, slackQueueBuffer)}
 }
 
-// deliver posts a notification unless it has already been delivered. A Slack
-// failure is reported and left undelivered so reconciliation can retry it: a
-// notification channel that exits because Slack hiccuped is worse than one that
-// repeats a line.
-func (d *slackDeliverer) deliver(ctx context.Context, n slackNotification) {
+// enqueue offers a notification for delivery. It drops into the buffered queue,
+// or returns immediately if ctx is cancelled — it never blocks shutdown. If the
+// queue is full (Slack far behind), the producer waits, applying backpressure;
+// any resulting daemon-side drop is recovered by the next periodic reconcile.
+func (d *slackDeliverer) enqueue(ctx context.Context, n slackNotification) {
 	if strings.TrimSpace(n.ID) == "" {
 		return
 	}
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	if _, seen := d.delivered[n.ID]; seen {
-		return
+	select {
+	case d.queue <- n:
+	case <-ctx.Done():
 	}
-	if err := d.poster.post(ctx, renderNotification(n)); err != nil {
-		if ctx.Err() == nil {
-			_, _ = fmt.Fprintf(d.errOut, "ao notify slack: delivery failed for %s (will retry on reconnect): %v\n", n.ID, err)
+}
+
+// run is the single delivery worker. An ID is recorded as delivered ONLY after
+// Slack accepts it, so a failed post is left unrecorded and re-offered by the
+// next reconcile pass — a Slack hiccup repeats a line at worst, never drops one.
+func (d *slackDeliverer) run(ctx context.Context) {
+	delivered := map[string]struct{}{}
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case n := <-d.queue:
+			if _, seen := delivered[n.ID]; seen {
+				continue
+			}
+			if err := d.poster.post(ctx, renderNotification(n)); err != nil {
+				if ctx.Err() == nil {
+					d.log("delivery failed for %s (will retry): %v", n.ID, err)
+				}
+				continue
+			}
+			delivered[n.ID] = struct{}{}
 		}
-		return
 	}
-	d.delivered[n.ID] = struct{}{}
 }
 
 type slackNotifyOptions struct {
@@ -265,11 +309,18 @@ func newNotifySlackCommand(ctx *commandContext) *cobra.Command {
 	return cmd
 }
 
-// runSlackNotify is the delivery loop. Each iteration subscribes to the stream
-// FIRST and reconciles against the unread listing SECOND: any notification
-// published between the two calls is caught by the listing, and any seen by
-// both is collapsed by ID. That ordering is what makes at-most-once delivery a
-// property of the loop rather than something a later check has to repair.
+// runSlackNotify wires up three concurrent parts and runs until cancelled:
+//   - one delivery worker that posts to Slack and owns dedupe;
+//   - a stream reader that enqueues live notifications, reconnecting on drop;
+//   - a periodic reconcile loop that lists unread notifications and enqueues
+//     any the worker has not delivered.
+//
+// Reconciliation is periodic, not just on connect, and that is what makes the
+// design robust: the daemon's notification hub is in-process and best-effort
+// with no replay, so a dropped stream event or a transiently-failed Slack post
+// would otherwise be lost. The periodic pass re-offers anything still unread,
+// so every missed notification is delivered within one interval. Dedupe by ID
+// keeps that at-most-once.
 func (c *commandContext) runSlackNotify(ctx context.Context, opts slackNotifyOptions) error {
 	webhookURL := strings.TrimSpace(opts.webhookURL)
 	if webhookURL == "" {
@@ -281,23 +332,47 @@ func (c *commandContext) runSlackNotify(ctx context.Context, opts slackNotifyOpt
 
 	client := *c.deps.HTTPClient
 	client.Timeout = commandTimeout
-	deliverer := newSlackDeliverer(slackPoster{client: &client, webhookURL: webhookURL}, c.deps.Err)
+	logger := &syncLogger{w: c.deps.Err}
+	deliverer := newSlackDeliverer(slackPoster{client: &client, webhookURL: webhookURL}, logger.printf)
 
+	// A local context so a fatal stream error (never-reachable daemon) tears
+	// down the worker and reconcile loop too.
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		deliverer.run(runCtx)
+	}()
+	go func() {
+		defer wg.Done()
+		c.reconcileLoop(runCtx, deliverer, logger)
+	}()
+
+	// The stream loop runs in the foreground and returns an error only when the
+	// FIRST connection fails — a daemon that was never reachable is an operator
+	// error worth exiting on (exit 1). Once connected, drops are transient.
+	err := c.streamLoop(runCtx, deliverer, logger)
+	cancel()
+	wg.Wait()
+	return err
+}
+
+// streamLoop consumes the notification stream, reconnecting with backoff on
+// drop. It returns an error only if the very first connection fails; after that
+// it runs until ctx is cancelled.
+func (c *commandContext) streamLoop(ctx context.Context, deliverer *slackDeliverer, logger *syncLogger) error {
 	connected := false
 	backoff := slackReconnectDelay
-	// Cancellation is how this command is meant to end, so it is the loop
-	// condition rather than an error: every exit path below either returns a
-	// real failure or falls out of the loop once the context is done.
 	for ctx.Err() == nil {
 		resp, err := c.openNotificationStream(ctx)
 		if err != nil {
-			// A daemon that was never reachable is an operator error worth
-			// surfacing now; one that goes away mid-run is transient. A failure
-			// caused by our own shutdown is neither — the loop condition ends it.
 			if !connected && ctx.Err() == nil {
 				return err
 			}
-			_, _ = fmt.Fprintf(c.deps.Err, "ao notify slack: reconnecting after stream error: %v\n", err)
+			logger.printf("reconnecting after stream error: %v", err)
 			waitOrDone(ctx, backoff)
 			if backoff *= 2; backoff > slackMaxReconnectDelay {
 				backoff = slackMaxReconnectDelay
@@ -307,27 +382,25 @@ func (c *commandContext) runSlackNotify(ctx context.Context, opts slackNotifyOpt
 		connected = true
 		backoff = slackReconnectDelay
 
-		// Reconcile CONCURRENTLY with consuming, not before it. Subscribing
-		// first is only half the guarantee: if the listing's deliveries had to
-		// finish before the first stream read, a slow webhook could stall
-		// consumption long enough for the daemon's 64-slot subscriber buffer to
-		// overflow, and the hub drops rather than blocks — losing notifications
-		// published after the listing snapshot. Consuming immediately keeps the
-		// buffer draining. slackDeliverer serializes the two producers.
-		var wg sync.WaitGroup
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			c.reconcileSlack(ctx, deliverer)
-		}()
-
-		c.consumeSlackStream(ctx, resp, deliverer)
+		c.consumeSlackStream(ctx, resp, deliverer, logger)
 		_ = resp.Body.Close()
-		wg.Wait()
-
 		waitOrDone(ctx, slackReconnectDelay)
 	}
 	return nil
+}
+
+// reconcileLoop delivers the current unread backlog immediately, then re-checks
+// on a fixed interval. It is the safety net for anything the stream missed: a
+// hub-dropped event, or a notification whose live post failed.
+func (c *commandContext) reconcileLoop(ctx context.Context, deliverer *slackDeliverer, logger *syncLogger) {
+	for {
+		c.reconcileSlack(ctx, deliverer, logger)
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(slackReconcileInterval):
+		}
+	}
 }
 
 // openNotificationStream subscribes to the daemon's notification SSE endpoint
@@ -361,14 +434,15 @@ func (c *commandContext) openNotificationStream(ctx context.Context) (*http.Resp
 	return resp, nil
 }
 
-// reconcileSlack delivers unread notifications the stream did not carry —
-// those published while this process was disconnected. The hub is in-process
-// and best-effort with no replay, so the listing is the only way to see them.
-func (c *commandContext) reconcileSlack(ctx context.Context, deliverer *slackDeliverer) {
+// reconcileSlack enqueues every current unread notification; the worker's
+// dedupe skips those already delivered. The hub is in-process and best-effort
+// with no replay, so the unread listing is the only way to recover anything the
+// stream missed.
+func (c *commandContext) reconcileSlack(ctx context.Context, deliverer *slackDeliverer, logger *syncLogger) {
 	var listed listNotificationsAPIResponse
 	if err := c.getJSON(ctx, "notifications?status=unread&limit="+strconv.Itoa(slackUnreadLimit), &listed); err != nil {
 		if ctx.Err() == nil {
-			_, _ = fmt.Fprintf(c.deps.Err, "ao notify slack: could not reconcile unread notifications: %v\n", err)
+			logger.printf("could not reconcile unread notifications: %v", err)
 		}
 		return
 	}
@@ -376,15 +450,16 @@ func (c *commandContext) reconcileSlack(ctx context.Context, deliverer *slackDel
 		if ctx.Err() != nil {
 			return
 		}
-		deliverer.deliver(ctx, n)
+		deliverer.enqueue(ctx, n)
 	}
 }
 
-// consumeSlackStream reads SSE frames until the stream ends or ctx is done.
-// The daemon emits a single event type with one `data:` line per frame; the
-// multi-line join below follows the SSE spec so a future multi-line payload
-// would still parse rather than silently concatenating.
-func (c *commandContext) consumeSlackStream(ctx context.Context, resp *http.Response, deliverer *slackDeliverer) {
+// consumeSlackStream reads SSE frames until the stream ends or ctx is done,
+// enqueueing each parsed notification. The daemon emits a single event type
+// with one `data:` line per frame; the multi-line join below follows the SSE
+// spec so a future multi-line payload would still parse rather than silently
+// concatenating.
+func (c *commandContext) consumeSlackStream(ctx context.Context, resp *http.Response, deliverer *slackDeliverer, logger *syncLogger) {
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Buffer(make([]byte, 0, 64*1024), slackStreamLineCap)
 
@@ -408,10 +483,10 @@ func (c *commandContext) consumeSlackStream(ctx context.Context, resp *http.Resp
 			}
 			var n slackNotification
 			if err := json.Unmarshal([]byte(payload), &n); err != nil {
-				_, _ = fmt.Fprintf(c.deps.Err, "ao notify slack: skipping unparsable notification frame: %v\n", err)
+				logger.printf("skipping unparsable notification frame: %v", err)
 				continue
 			}
-			deliverer.deliver(ctx, n)
+			deliverer.enqueue(ctx, n)
 		}
 		// Other SSE fields (event:, id:, retry:) need no handling: the daemon
 		// emits exactly one event type on this stream.
@@ -419,6 +494,6 @@ func (c *commandContext) consumeSlackStream(ctx context.Context, resp *http.Resp
 	// Distinguish a real read failure from a clean end-of-stream, so an
 	// oversized line or transport error is not misreported as a plain reconnect.
 	if err := scanner.Err(); err != nil && ctx.Err() == nil {
-		_, _ = fmt.Fprintf(c.deps.Err, "ao notify slack: notification stream read error: %v\n", err)
+		logger.printf("notification stream read error: %v", err)
 	}
 }
