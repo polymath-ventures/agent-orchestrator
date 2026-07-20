@@ -129,7 +129,7 @@ func (c *commandContext) stopAOService(ctx context.Context, systemctl string, ti
 	}
 	stopCtx, cancelStop := context.WithTimeout(ctx, timeout)
 	defer cancelStop()
-	if _, err := c.deps.CommandOutput(stopCtx, systemctl, "--user", "stop", "ao.service"); err != nil {
+	if _, err := c.deps.CommandOutput(stopCtx, systemctl, "--user", "--no-block", "stop", "ao.service"); err != nil {
 		return fmt.Errorf("stop ao.service: %w", err)
 	}
 	return nil

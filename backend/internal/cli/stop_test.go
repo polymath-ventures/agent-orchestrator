@@ -203,7 +203,7 @@ func TestStopUsesSystemdStopWhenUnitOwnsDaemonPID(t *testing.T) {
 				return nil, nil
 			case "--user show ao.service -P MainPID":
 				return []byte(fmt.Sprintf("%d\n", os.Getpid())), nil
-			case "--user stop ao.service":
+			case "--user --no-block stop ao.service":
 				stopped = true
 				_ = runfile.Remove(cfg.runFile)
 				return nil, nil
@@ -230,7 +230,7 @@ func TestStopUsesSystemdStopWhenUnitOwnsDaemonPID(t *testing.T) {
 	want := []string{
 		"/bin/systemctl --user is-active --quiet ao.service",
 		"/bin/systemctl --user show ao.service -P MainPID",
-		"/bin/systemctl --user stop ao.service",
+		"/bin/systemctl --user --no-block stop ao.service",
 	}
 	if strings.Join(systemctlCalls, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("systemctl calls:\n%s\nwant:\n%s", strings.Join(systemctlCalls, "\n"), strings.Join(want, "\n"))
