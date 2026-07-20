@@ -92,6 +92,34 @@ func TestNotificationStore_MarkReadReopensUnreadDedupe(t *testing.T) {
 	}
 }
 
+func TestNotificationStore_LowQuotaDedupeUsesExplicitKey(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+	rec := domain.NotificationRecord{
+		ID:        "quota-1",
+		DedupeKey: "metrics:quota_low:codex/chatgpt/default",
+		Type:      domain.NotificationLowQuota,
+		Title:     "Subscription quota is low",
+		Status:    domain.NotificationUnread,
+		CreatedAt: now,
+	}
+	if _, inserted, err := s.CreateNotification(ctx, rec); err != nil || !inserted {
+		t.Fatalf("CreateNotification inserted=%v err=%v", inserted, err)
+	}
+	dup := rec
+	dup.ID = "quota-2"
+	if _, inserted, err := s.CreateNotification(ctx, dup); err != nil || inserted {
+		t.Fatalf("duplicate low quota inserted=%v err=%v, want false nil", inserted, err)
+	}
+	other := rec
+	other.ID = "quota-3"
+	other.DedupeKey = "metrics:quota_low:claude-code/unknown/default"
+	if _, inserted, err := s.CreateNotification(ctx, other); err != nil || !inserted {
+		t.Fatalf("different low quota inserted=%v err=%v", inserted, err)
+	}
+}
+
 func TestNotificationStore_MarkReadMissing(t *testing.T) {
 	s := newTestStore(t)
 	_, ok, err := s.MarkNotificationRead(context.Background(), "missing")

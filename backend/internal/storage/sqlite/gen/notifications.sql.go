@@ -14,16 +14,17 @@ import (
 
 const createNotification = `-- name: CreateNotification :one
 INSERT INTO notifications (
-    id, session_id, project_id, pr_url, type, title, body, status, created_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-RETURNING id, session_id, project_id, pr_url, type, title, body, status, created_at
+    id, session_id, project_id, pr_url, dedupe_key, type, title, body, status, created_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id, session_id, project_id, pr_url, dedupe_key, type, title, body, status, created_at
 `
 
 type CreateNotificationParams struct {
 	ID        string
-	SessionID domain.SessionID
-	ProjectID domain.ProjectID
+	SessionID *domain.SessionID
+	ProjectID *domain.ProjectID
 	PRURL     string
+	DedupeKey string
 	Type      domain.NotificationType
 	Title     string
 	Body      string
@@ -37,6 +38,7 @@ func (q *Queries) CreateNotification(ctx context.Context, arg CreateNotification
 		arg.SessionID,
 		arg.ProjectID,
 		arg.PRURL,
+		arg.DedupeKey,
 		arg.Type,
 		arg.Title,
 		arg.Body,
@@ -49,6 +51,7 @@ func (q *Queries) CreateNotification(ctx context.Context, arg CreateNotification
 		&i.SessionID,
 		&i.ProjectID,
 		&i.PRURL,
+		&i.DedupeKey,
 		&i.Type,
 		&i.Title,
 		&i.Body,
@@ -59,26 +62,26 @@ func (q *Queries) CreateNotification(ctx context.Context, arg CreateNotification
 }
 
 const getUnreadNotificationByDedupe = `-- name: GetUnreadNotificationByDedupe :one
-SELECT id, session_id, project_id, pr_url, type, title, body, status, created_at
+SELECT id, session_id, project_id, pr_url, dedupe_key, type, title, body, status, created_at
 FROM notifications
-WHERE session_id = ? AND type = ? AND pr_url = ? AND status = 'unread'
+WHERE type = ? AND dedupe_key = ? AND status = 'unread'
 LIMIT 1
 `
 
 type GetUnreadNotificationByDedupeParams struct {
-	SessionID domain.SessionID
 	Type      domain.NotificationType
-	PRURL     string
+	DedupeKey string
 }
 
 func (q *Queries) GetUnreadNotificationByDedupe(ctx context.Context, arg GetUnreadNotificationByDedupeParams) (Notification, error) {
-	row := q.db.QueryRowContext(ctx, getUnreadNotificationByDedupe, arg.SessionID, arg.Type, arg.PRURL)
+	row := q.db.QueryRowContext(ctx, getUnreadNotificationByDedupe, arg.Type, arg.DedupeKey)
 	var i Notification
 	err := row.Scan(
 		&i.ID,
 		&i.SessionID,
 		&i.ProjectID,
 		&i.PRURL,
+		&i.DedupeKey,
 		&i.Type,
 		&i.Title,
 		&i.Body,
@@ -89,7 +92,7 @@ func (q *Queries) GetUnreadNotificationByDedupe(ctx context.Context, arg GetUnre
 }
 
 const listUnreadNotifications = `-- name: ListUnreadNotifications :many
-SELECT id, session_id, project_id, pr_url, type, title, body, status, created_at
+SELECT id, session_id, project_id, pr_url, dedupe_key, type, title, body, status, created_at
 FROM notifications
 WHERE status = 'unread'
 ORDER BY created_at DESC
@@ -110,6 +113,7 @@ func (q *Queries) ListUnreadNotifications(ctx context.Context, limit int64) ([]N
 			&i.SessionID,
 			&i.ProjectID,
 			&i.PRURL,
+			&i.DedupeKey,
 			&i.Type,
 			&i.Title,
 			&i.Body,
@@ -133,7 +137,7 @@ const markAllNotificationsRead = `-- name: MarkAllNotificationsRead :many
 UPDATE notifications
 SET status = 'read'
 WHERE status = 'unread'
-RETURNING id, session_id, project_id, pr_url, type, title, body, status, created_at
+RETURNING id, session_id, project_id, pr_url, dedupe_key, type, title, body, status, created_at
 `
 
 func (q *Queries) MarkAllNotificationsRead(ctx context.Context) ([]Notification, error) {
@@ -150,6 +154,7 @@ func (q *Queries) MarkAllNotificationsRead(ctx context.Context) ([]Notification,
 			&i.SessionID,
 			&i.ProjectID,
 			&i.PRURL,
+			&i.DedupeKey,
 			&i.Type,
 			&i.Title,
 			&i.Body,
@@ -173,7 +178,7 @@ const markNotificationRead = `-- name: MarkNotificationRead :one
 UPDATE notifications
 SET status = 'read'
 WHERE id = ? AND status = 'unread'
-RETURNING id, session_id, project_id, pr_url, type, title, body, status, created_at
+RETURNING id, session_id, project_id, pr_url, dedupe_key, type, title, body, status, created_at
 `
 
 func (q *Queries) MarkNotificationRead(ctx context.Context, id string) (Notification, error) {
@@ -184,6 +189,7 @@ func (q *Queries) MarkNotificationRead(ctx context.Context, id string) (Notifica
 		&i.SessionID,
 		&i.ProjectID,
 		&i.PRURL,
+		&i.DedupeKey,
 		&i.Type,
 		&i.Title,
 		&i.Body,

@@ -1,0 +1,4 @@
+schema: spec-driven
+created: 2026-07-20
+goal: Surface honest usage and quota state for subscription harnesses without
+  usage-based scheduling.

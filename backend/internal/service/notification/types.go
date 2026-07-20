@@ -11,6 +11,8 @@ const (
 	TargetSession TargetKind = "session"
 	// TargetPR navigates to a pull request view.
 	TargetPR TargetKind = "pr"
+	// TargetQuota identifies a quota notification without a navigable session.
+	TargetQuota TargetKind = "quota"
 )
 
 // Target is the service-facing navigation metadata for a notification.

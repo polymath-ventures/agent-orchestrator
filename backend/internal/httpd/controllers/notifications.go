@@ -224,5 +224,8 @@ func notificationTargetFromRecord(rec domain.NotificationRecord) NotificationTar
 	if rec.PRURL != "" {
 		return NotificationTarget{Kind: "pr", SessionID: string(rec.SessionID), PRURL: rec.PRURL}
 	}
+	if rec.Type == domain.NotificationLowQuota {
+		return NotificationTarget{Kind: "quota"}
+	}
 	return NotificationTarget{Kind: "session", SessionID: string(rec.SessionID)}
 }

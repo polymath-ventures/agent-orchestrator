@@ -23,9 +23,10 @@ type ChangeLog struct {
 
 type Notification struct {
 	ID        string
-	SessionID domain.SessionID
-	ProjectID domain.ProjectID
+	SessionID *domain.SessionID
+	ProjectID *domain.ProjectID
 	PRURL     string
+	DedupeKey string
 	Type      domain.NotificationType
 	Title     string
 	Body      string
@@ -131,6 +132,22 @@ type Project struct {
 	ArchivedAt    sql.NullTime
 	Config        sql.NullString
 	Kind          string
+}
+
+type QuotaSnapshot struct {
+	ID            string
+	Harness       string
+	AccountID     string
+	Model         string
+	WindowStart   sql.NullTime
+	WindowEnd     sql.NullTime
+	Used          sql.NullFloat64
+	Remaining     sql.NullFloat64
+	LimitValue    sql.NullFloat64
+	SignalQuality string
+	Source        string
+	Basis         string
+	ObservedAt    time.Time
 }
 
 type Review struct {

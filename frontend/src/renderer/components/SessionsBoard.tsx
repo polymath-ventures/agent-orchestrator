@@ -25,6 +25,7 @@ import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery
 import { NotificationCenter } from "./NotificationCenter";
 import { BoardWelcome, ProjectBoardEmpty } from "./BoardEmptyState";
 import { OrchestratorIcon } from "./icons";
+import { QuotaPanel } from "./QuotaPanel";
 import { TopbarButton, TopbarKillError } from "./TopbarButton";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { restartProjectOrchestrator } from "../lib/restart-orchestrator";
@@ -257,6 +258,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 						) : null}
 					</div>
 				) : null}
+				<QuotaPanel />
 				{workspaceQuery.isError ? (
 					<p className="py-10 text-center text-xs text-passive">Could not load sessions.</p>
 				) : showWelcome ? (

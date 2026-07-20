@@ -40,8 +40,18 @@ type ActivitySignal struct {
 	Valid          bool
 	State          domain.ActivityState
 	Timestamp      time.Time
+	Harness        domain.AgentHarness
 	Event          string
 	ToolName       string
 	ToolUseID      string
 	AgentSessionID string
+	Usage          *UsageSignal
+}
+
+// UsageSignal carries allowlisted per-turn token/cost facts from agent hooks.
+type UsageSignal struct {
+	InputTokens  *float64
+	OutputTokens *float64
+	TotalTokens  *float64
+	CostUSD      *float64
 }

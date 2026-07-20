@@ -41,11 +41,20 @@ const (
 // native payload when present. All four are optional: an old daemon decodes
 // the body leniently and simply ignores them.
 type setActivityAPIRequest struct {
-	State          string `json:"state,omitempty"`
-	Event          string `json:"event,omitempty"`
-	ToolName       string `json:"toolName,omitempty"`
-	ToolUseID      string `json:"toolUseId,omitempty"`
-	AgentSessionID string `json:"agentSessionId,omitempty"`
+	State          string           `json:"state,omitempty"`
+	Harness        string           `json:"harness,omitempty"`
+	Event          string           `json:"event,omitempty"`
+	ToolName       string           `json:"toolName,omitempty"`
+	ToolUseID      string           `json:"toolUseId,omitempty"`
+	AgentSessionID string           `json:"agentSessionId,omitempty"`
+	Usage          *usageAPIRequest `json:"usage,omitempty"`
+}
+
+type usageAPIRequest struct {
+	InputTokens  *float64 `json:"input_tokens,omitempty"`
+	OutputTokens *float64 `json:"output_tokens,omitempty"`
+	TotalTokens  *float64 `json:"total_tokens,omitempty"`
+	CostUSD      *float64 `json:"cost_usd,omitempty"`
 }
 
 // maxActivityMetaLen caps the correlation fields lifted from a native hook
@@ -170,12 +179,40 @@ func (c *commandContext) runHook(ctx context.Context, agent, event string) error
 	if hasActivity {
 		req.State = string(state)
 	}
+	var commitUsage func()
+	if event == "stop" {
+		extractor := &usageExtractor{
+			dataDir:   strings.TrimSpace(os.Getenv("AO_DATA_DIR")),
+			codexHome: strings.TrimSpace(os.Getenv("CODEX_HOME")),
+			cwd:       currentWorkingDir(),
+			sessionID: sessionID,
+			logf: func(msg string) {
+				c.reportHookFailure(agent, event, sessionID, fmt.Errorf("%s", msg))
+			},
+		}
+		req.Usage, commitUsage = extractor.stopUsageDelta(agent, payload)
+		if req.Usage != nil {
+			req.Harness = agent
+		}
+	}
 	if err := c.postJSON(ctx, path, req, nil); err != nil {
 		// Surface the failure for diagnosis, but exit 0: a failed activity
 		// report must not disrupt the agent.
 		c.reportHookFailure(agent, event, sessionID, err)
+		return nil
+	}
+	if commitUsage != nil {
+		commitUsage()
 	}
 	return nil
+}
+
+func currentWorkingDir() string {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+	return cwd
 }
 
 func shouldEmitSessionStartContext(agent, event string) bool {

@@ -272,6 +272,52 @@ func TestActivity_WaitingInputEntryAndExitEmitTelemetry(t *testing.T) {
 	}
 }
 
+func TestActivity_TerminatedSessionUsageStillEmitsTelemetry(t *testing.T) {
+	st := newFakeStore()
+	sink := &telemetrySink{}
+	m := New(st, nil, WithTelemetry(sink))
+	now := time.Unix(200, 0).UTC()
+	m.clock = func() time.Time { return now }
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID:           "mer-1",
+		ProjectID:    "mer",
+		Harness:      domain.HarnessCodex,
+		IsTerminated: true,
+		Activity:     domain.Activity{State: domain.ActivityExited},
+	}
+	inputTokens := 10.0
+	totalTokens := 10.0
+
+	err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{
+		Valid: true,
+		State: domain.ActivityIdle,
+		Usage: &ports.UsageSignal{
+			InputTokens: &inputTokens,
+			TotalTokens: &totalTokens,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(sink.events) != 1 {
+		t.Fatalf("events = %#v, want one usage event", sink.events)
+	}
+	got := sink.events[0]
+	if got.Name != "ao.session.usage" {
+		t.Fatalf("event name = %q, want ao.session.usage", got.Name)
+	}
+	if got.ProjectID == nil || *got.ProjectID != "mer" {
+		t.Fatalf("ProjectID = %#v, want mer", got.ProjectID)
+	}
+	if got.SessionID == nil || *got.SessionID != "mer-1" {
+		t.Fatalf("SessionID = %#v, want mer-1", got.SessionID)
+	}
+	if got.Payload["harness"] != "codex" || got.Payload["input_tokens"] != 10.0 || got.Payload["total_tokens"] != 10.0 {
+		t.Fatalf("usage payload = %#v", got.Payload)
+	}
+}
+
 func TestPRObservation_CIFailingNudgesAgentWithLogs(t *testing.T) {
 	m, st, msg := newManager()
 	st.sessions["mer-1"] = working("mer-1")

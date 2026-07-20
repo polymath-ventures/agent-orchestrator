@@ -112,6 +112,7 @@ func Run() error {
 	notificationHub := notify.NewHub()
 	notifier := notificationsvc.New(notificationsvc.Deps{Store: store})
 	notificationWriter := notify.New(notify.Deps{Store: store, Publisher: notificationHub})
+	metricsObserver, metricsDone := startMetricsObserver(ctx, cfg, store, telemetrySink, notificationWriter, log)
 
 	// Bring up the Lifecycle Manager and the reaper first: it makes the session
 	// lifecycle write path live (reducer write -> store -> DB trigger ->
@@ -159,6 +160,7 @@ func Run() error {
 		Reviews:            reviewSvc,
 		Notifications:      notifier,
 		NotificationStream: notificationHub,
+		Metrics:            metricsProvider(metricsObserver),
 		Import:             importsvc.New(importsvc.Deps{Store: store}),
 		CDC:                store,
 		Events:             cdcPipe.Broadcaster,
@@ -228,6 +230,7 @@ func Run() error {
 	// runs before the cancel: a non-signal exit path would hang otherwise.
 	stop()
 	<-previewDone
+	<-metricsDone
 	lcStack.Stop()
 	lanStopCtx, lanCancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 	defer lanCancel()

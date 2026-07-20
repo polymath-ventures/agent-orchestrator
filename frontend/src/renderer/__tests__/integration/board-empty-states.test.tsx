@@ -43,6 +43,7 @@ function respondWith(projects: Project[], sessions: Session[]) {
 	getMock.mockImplementation(async (url: string) => {
 		if (url === "/api/v1/projects") return { data: { projects }, error: undefined };
 		if (url === "/api/v1/sessions") return { data: { sessions }, error: undefined };
+		if (url === "/api/v1/metrics") return { data: { history: [] }, error: undefined, response: { status: 200 } };
 		return { data: undefined, error: undefined };
 	});
 }

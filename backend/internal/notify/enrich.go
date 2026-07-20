@@ -12,6 +12,7 @@ func enrich(intent Intent) (domain.NotificationRecord, error) {
 		SessionID: intent.SessionID,
 		ProjectID: intent.ProjectID,
 		PRURL:     strings.TrimSpace(intent.PRURL),
+		DedupeKey: strings.TrimSpace(intent.DedupeKey),
 		Type:      intent.Type,
 		Status:    domain.NotificationUnread,
 		CreatedAt: intent.CreatedAt,
@@ -19,7 +20,10 @@ func enrich(intent Intent) (domain.NotificationRecord, error) {
 	if !intent.Type.Valid() {
 		return domain.NotificationRecord{}, domain.ErrInvalidNotificationType
 	}
-	if intent.Type != domain.NotificationNeedsInput && rec.PRURL == "" {
+	if rec.DedupeKey == "" {
+		rec.DedupeKey = dedupeKeyForIntent(intent, rec.PRURL)
+	}
+	if intent.Type != domain.NotificationNeedsInput && intent.Type != domain.NotificationLowQuota && rec.PRURL == "" {
 		return domain.NotificationRecord{}, domain.ErrInvalidNotificationRecord
 	}
 	rec.Title = titleForIntent(intent)
@@ -40,6 +44,8 @@ func titleForIntent(intent Intent) string {
 		return fmt.Sprintf("%s was merged", prLabel(intent))
 	case domain.NotificationPRClosedUnmerged:
 		return fmt.Sprintf("%s was closed without merging", prLabel(intent))
+	case domain.NotificationLowQuota:
+		return "Subscription quota is low"
 	default:
 		return "Notification"
 	}
@@ -64,9 +70,24 @@ func bodyForIntent(intent Intent) string {
 			return fmt.Sprintf("%s was closed without merging.", title)
 		}
 		return "The pull request was closed without merging."
+	case domain.NotificationLowQuota:
+		if message := strings.TrimSpace(intent.Message); message != "" {
+			return message
+		}
+		return "A subscription harness is near the configured quota threshold. Adjust the worker mix."
 	default:
 		return ""
 	}
+}
+
+func dedupeKeyForIntent(intent Intent, prURL string) string {
+	return domain.NotificationDedupeKey(domain.NotificationRecord{
+		SessionID: intent.SessionID,
+		ProjectID: intent.ProjectID,
+		PRURL:     prURL,
+		DedupeKey: strings.TrimSpace(intent.DedupeKey),
+		Type:      intent.Type,
+	})
 }
 
 func sessionLabel(intent Intent) string {

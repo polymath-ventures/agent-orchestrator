@@ -99,5 +99,8 @@ func targetForRecord(rec domain.NotificationRecord) Target {
 	if rec.PRURL != "" {
 		return Target{Kind: TargetPR, SessionID: rec.SessionID, PRURL: rec.PRURL}
 	}
+	if rec.Type == domain.NotificationLowQuota {
+		return Target{Kind: TargetQuota}
+	}
 	return Target{Kind: TargetSession, SessionID: rec.SessionID}
 }
