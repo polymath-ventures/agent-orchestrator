@@ -3,7 +3,6 @@ package metrics
 import (
 	"context"
 	"log/slog"
-	"sort"
 	"sync"
 	"time"
 
@@ -11,9 +10,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/observe"
 )
 
-// DefaultTickInterval is the coarse cadence used when Config.Tick is zero. The
-// design sketch calls for a ~30s tick: this is telemetry, not an interactive
-// liveness probe.
+// DefaultTickInterval is the coarse cadence used when Config.Tick is zero.
 const DefaultTickInterval = 30 * time.Second
 
 // DefaultHistory is how many recent snapshots the observer retains for the
@@ -23,30 +20,6 @@ const DefaultHistory = 20
 // DefaultCostWindow is the rolling window used for token/cost aggregation when
 // Config.CostWindow is zero.
 const DefaultCostWindow = time.Hour
-
-// SessionSource lists the current session rows so the observer can compute
-// per-project counts and match cgroup scopes to live sessions.
-type SessionSource interface {
-	ListAllSessions(ctx context.Context) ([]domain.SessionRecord, error)
-}
-
-// HostCollector reads machine-wide host facts (load, memory, disk-free on the
-// data-dir volume). Implementations are platform-specific; a stub returns a
-// zero Host on unsupported platforms.
-type HostCollector interface {
-	Host(ctx context.Context) (Host, error)
-}
-
-// ScopeCollector reads per-session cgroup-scope memory. It returns one reading
-// per live runtime scope keyed by the scope's runtime handle id (the tmux
-// session name), which the observer matches against session rows.
-type ScopeCollector interface {
-	// Scopes returns per-runtime-handle memory readings plus an availability bit.
-	// available=false means the collector ran but this host cannot currently
-	// distinguish runtime scopes from unknown/unavailable data; callers must not
-	// treat an empty map as authoritative zero zombies.
-	Scopes(ctx context.Context) (map[string]uint64, bool, error)
-}
 
 // CostAggregator sums token/cost telemetry over a rolling window ending now.
 type CostAggregator interface {
@@ -76,8 +49,7 @@ type Config struct {
 	Tick time.Duration
 	// History is the number of retained snapshots. <=0 uses DefaultHistory.
 	History int
-	// CostWindow is the rolling window for cost aggregation. <=0 uses
-	// DefaultCostWindow.
+	// CostWindow is the rolling window for cost aggregation when Config.CostWindow is zero.
 	CostWindow time.Duration
 	// Thresholds configures alerting; a zero field disables that alert.
 	Thresholds Thresholds
@@ -87,21 +59,17 @@ type Config struct {
 	Logger *slog.Logger
 }
 
-// Deps bundles the collectors the observer reads from. Any nil collector is
-// treated as "not available" and contributes zero/empty facts rather than an
-// error, so the observer degrades cleanly on platforms or hosts missing a
-// source.
+// Deps bundles the collectors the observer reads from. Nil collectors are
+// treated as unavailable, so the observer degrades cleanly while the daemon
+// continues to serve the endpoint.
 type Deps struct {
-	Sessions SessionSource
-	Host     HostCollector
-	Scopes   ScopeCollector
-	Cost     CostAggregator
-	Quota    QuotaCollector
-	Alerts   AlertSink
+	Cost   CostAggregator
+	Quota  QuotaCollector
+	Alerts AlertSink
 }
 
-// Observer polls the collectors, computes a Snapshot, folds thresholds, retains
-// a bounded history, and emits alert transitions.
+// Observer polls usage/quota collectors, retains a bounded history, and emits
+// low-quota alert transitions.
 type Observer struct {
 	deps       Deps
 	tick       time.Duration
@@ -153,17 +121,13 @@ func (o *Observer) Start(ctx context.Context) <-chan struct{} {
 	return observe.StartPollLoop(ctx, o.tick, o.pollErr, o.logger, "metrics observer")
 }
 
-// pollErr adapts Tick to the poll-loop signature. Tick never returns an error
-// (per-collector failures are logged and degrade to zero facts), so this always
-// returns nil; the signature exists only to satisfy StartPollLoop.
 func (o *Observer) pollErr(ctx context.Context) error {
 	o.Tick(ctx)
 	return nil
 }
 
 // Tick runs one observation cycle synchronously: collect, aggregate, evaluate
-// thresholds, retain, and emit transitions. Exported so the daemon and tests can
-// drive cycles deterministically. It returns the snapshot it produced.
+// thresholds, retain, and emit transitions. It returns the snapshot it produced.
 func (o *Observer) Tick(ctx context.Context) Snapshot {
 	now := o.clock().UTC()
 	snap := Snapshot{
@@ -176,62 +140,12 @@ func (o *Observer) Tick(ctx context.Context) Snapshot {
 		Quotas: []domain.QuotaSnapshot{},
 	}
 
-	if o.deps.Host != nil {
-		// The collector returns a partially-filled Host plus the first error; a
-		// single failing source (e.g. a transient statfs) must not discard the
-		// load/memory it did read. Zero fields already read as "unknown"
-		// everywhere downstream, so assign the Host regardless and just log.
-		host, err := o.deps.Host.Host(ctx)
-		if err != nil {
-			o.logger.Warn("metrics observer: host collect failed (best-effort)", "err", err)
-		}
-		snap.Host = host
-	}
-
-	var scopeMem map[string]uint64
-	// scopesKnown is false when scope facts are unavailable this tick. The
-	// zombie count is derived from scopes with no live session; if scope
-	// collection failed, no collector is wired, or the collector could not prove
-	// it can see ao-managed per-session scopes, an empty map must not be read as
-	// authoritative zero zombies and spuriously CLEAR a firing zombie alert.
-	scopesKnown := false
-	if o.deps.Scopes != nil {
-		if scopes, available, err := o.deps.Scopes.Scopes(ctx); err != nil {
-			o.logger.Warn("metrics observer: scope collect failed", "err", err)
-		} else {
-			scopeMem = scopes
-			scopesKnown = available
-		}
-	}
-
-	var sessions []domain.SessionRecord
-	// sessionsKnown is false when we have no reliable view of the live session
-	// set this tick (no source wired, or the query failed). Without it, an empty
-	// sessions slice would mark every live scope as unmatched and fabricate a
-	// zombie per scope, firing a fleet-wide leak alert on a mere DB hiccup.
-	sessionsKnown := false
-	if o.deps.Sessions != nil {
-		if rows, err := o.deps.Sessions.ListAllSessions(ctx); err != nil {
-			o.logger.Warn("metrics observer: list sessions failed", "err", err)
-		} else {
-			sessions = rows
-			sessionsKnown = true
-		}
-	}
-
-	// Zombies are trustworthy only when BOTH the live session set and the scope
-	// set are known this tick.
-	zombiesKnown := sessionsKnown && scopesKnown
-	snap.ZombiesKnown = zombiesKnown
-	snap.Projects, snap.Scopes, snap.Zombies = aggregateSessions(sessions, scopeMem, sessionsKnown, scopesKnown)
-
 	if o.deps.Cost != nil {
 		if cost, err := o.deps.Cost.Aggregate(ctx, now.Add(-o.costWindow)); err != nil {
 			o.logger.Warn("metrics observer: cost aggregate failed", "err", err)
 		} else {
 			cost.WindowSeconds = int64(o.costWindow / time.Second)
 			snap.Cost = cost
-			attachProjectCost(snap.Projects, cost.ByProject)
 		}
 	}
 
@@ -261,10 +175,10 @@ func (o *Observer) Tick(ctx context.Context) Snapshot {
 
 func (o *Observer) logAlert(t AlertTransition) {
 	if t.Firing {
-		o.logger.Warn("metrics observer: alert firing", "kind", t.Alert.Kind, "value", t.Alert.Value, "threshold", t.Alert.Threshold)
+		o.logger.Warn("metrics observer: alert firing", "kind", t.Alert.Kind, "subject", t.Alert.Subject, "value", t.Alert.Value, "threshold", t.Alert.Threshold)
 		return
 	}
-	o.logger.Info("metrics observer: alert cleared", "kind", t.Alert.Kind)
+	o.logger.Info("metrics observer: alert cleared", "kind", t.Alert.Kind, "subject", t.Alert.Subject)
 }
 
 func (o *Observer) retain(s Snapshot) {
@@ -295,10 +209,9 @@ func (o *Observer) History() []Snapshot {
 	return out
 }
 
-// Snapshots returns the retained history (oldest-first) and the latest snapshot
-// under a single read lock, so a tick landing between two separate calls cannot
-// yield a latest that is newer than the last history element. hasLatest is false
-// before the first tick.
+// Snapshots returns the retained history and latest snapshot under a single
+// read lock, so a tick landing between two separate calls cannot yield a latest
+// newer than the last history element.
 func (o *Observer) Snapshots() (history []Snapshot, latest Snapshot, hasLatest bool) {
 	o.mu.RLock()
 	defer o.mu.RUnlock()
@@ -308,102 +221,4 @@ func (o *Observer) Snapshots() (history []Snapshot, latest Snapshot, hasLatest b
 		return history, Snapshot{}, false
 	}
 	return history, o.history[len(o.history)-1], true
-}
-
-// aggregateSessions computes per-project counts, per-scope memory (matched to
-// live sessions), and the machine-wide zombie count. Only runtime handles that
-// have ever belonged to an ao session are eligible for zombie accounting; a
-// foreign tmux session visible on the same tmux server is not an ao leak.
-//
-// sessionsKnown reports whether the live session set is trustworthy this tick.
-// When it is false (no session source, or the query failed) the live-handle set
-// is unreliable, so scopes are reported as unmatched=unknown and NO zombies are
-// counted — a DB hiccup must not masquerade as a fleet-wide leak. scopesKnown
-// separately reports whether an empty scope set is authoritative for zombie
-// accounting.
-func aggregateSessions(sessions []domain.SessionRecord, scopeMem map[string]uint64, sessionsKnown, scopesKnown bool) ([]Project, []Scope, int) {
-	byProject := map[string]*Project{}
-	// handle id -> live ao session record, for matching cgroup scopes.
-	liveHandles := map[string]domain.SessionRecord{}
-	// handle id set for all known ao-owned runtime handles, including terminated
-	// rows, so a dead row with a live runtime scope is counted as an ao zombie
-	// while a user's unrelated tmux session is ignored.
-	ownedHandles := map[string]struct{}{}
-
-	for _, s := range sessions {
-		if h := s.Metadata.RuntimeHandleID; h != "" {
-			ownedHandles[h] = struct{}{}
-		}
-		if s.IsTerminated {
-			continue
-		}
-		pid := string(s.ProjectID)
-		p := byProject[pid]
-		if p == nil {
-			p = &Project{ProjectID: pid, ByActivity: map[string]int{}}
-			byProject[pid] = p
-		}
-		p.Sessions++
-		state := string(s.Activity.State)
-		if state == "" {
-			state = string(domain.ActivityIdle)
-		}
-		p.ByActivity[state]++
-		if h := s.Metadata.RuntimeHandleID; h != "" {
-			liveHandles[h] = s
-		}
-	}
-
-	scopes := make([]Scope, 0, len(scopeMem))
-	zombies := 0
-	for name, mem := range scopeMem {
-		rec, matched := liveHandles[name]
-		_, owned := ownedHandles[name]
-		// When the session set is known, ignore scopes that have never belonged to
-		// ao. A user's unrelated tmux session can share the tmux server and systemd
-		// scope shape, but it is not an ao session-scope metric or an ao zombie.
-		if sessionsKnown && !matched && !owned {
-			continue
-		}
-		// When the session set is unknown we cannot judge a scope as matched;
-		// report it unmatched but do not count it toward zombies.
-		reportMatched := sessionsKnown && matched
-		scope := Scope{
-			Name:     name,
-			MemBytes: mem,
-			Matched:  reportMatched,
-		}
-		if reportMatched {
-			scope.SessionID = string(rec.ID)
-		}
-		scopes = append(scopes, scope)
-		if sessionsKnown && scopesKnown && !matched && owned {
-			zombies++
-		}
-	}
-	sort.Slice(scopes, func(i, j int) bool { return scopes[i].Name < scopes[j].Name })
-
-	projects := make([]Project, 0, len(byProject))
-	for _, p := range byProject {
-		if p.ByActivity == nil {
-			p.ByActivity = map[string]int{}
-		}
-		projects = append(projects, *p)
-	}
-	sort.Slice(projects, func(i, j int) bool { return projects[i].ProjectID < projects[j].ProjectID })
-
-	return projects, scopes, zombies
-}
-
-func attachProjectCost(projects []Project, costs []ProjectCost) {
-	if len(projects) == 0 || len(costs) == 0 {
-		return
-	}
-	byID := make(map[string]CostTotals, len(costs))
-	for _, c := range costs {
-		byID[c.ProjectID] = c.CostTotals
-	}
-	for i := range projects {
-		projects[i].Cost = byID[projects[i].ProjectID]
-	}
 }

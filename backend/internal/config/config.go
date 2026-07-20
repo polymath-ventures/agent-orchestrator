@@ -38,18 +38,9 @@ const (
 	DefaultTelemetryPostHogHost = "https://us.i.posthog.com"
 	// DefaultMetricsInterval is how often the daemon samples metrics.
 	DefaultMetricsInterval = 30 * time.Second
-	// DefaultMetricsDiskFreePercent fires disk_low when data-volume free space
-	// falls below this percent. Zero disables the alert.
-	DefaultMetricsDiskFreePercent = 10
-	// DefaultMetricsMemAvailablePercent fires mem_low when available memory
-	// falls below this percent. Zero disables the alert.
-	DefaultMetricsMemAvailablePercent = 10
-	// DefaultMetricsLoadPerCore fires load_high when 1-minute load per CPU core
-	// exceeds this ratio. Zero disables the alert.
-	DefaultMetricsLoadPerCore = 1.0
-	// DefaultMetricsZombieSustainTicks is how many consecutive ticks with
-	// zombies are required before the alert fires. Zero disables the alert.
-	DefaultMetricsZombieSustainTicks = 2
+	// DefaultMetricsLowQuotaPercent fires low_quota when a known quota window
+	// reports remaining usage at or below this percent. Zero disables the alert.
+	DefaultMetricsLowQuotaPercent = 10
 )
 
 // TelemetryRemote selects the remote telemetry exporter.
@@ -74,12 +65,8 @@ type TelemetryConfig struct {
 // MetricsConfig controls the daemon metrics observer. Interval <=0 disables
 // the observer and /api/v1/metrics reports not implemented.
 type MetricsConfig struct {
-	Interval            time.Duration
-	DiskFreePercent     float64
-	MemAvailablePercent float64
-	LoadPerCore         float64
-	ZombieSustainTicks  int
-	LowQuotaPercent     float64
+	Interval        time.Duration
+	LowQuotaPercent float64
 }
 
 // DefaultAllowedOrigins are the browser origins the daemon's CORS boundary
@@ -119,7 +106,7 @@ type Config struct {
 	AllowedOrigins []string
 	// Telemetry controls local/remote telemetry sinks.
 	Telemetry TelemetryConfig
-	// Metrics controls the resource and usage metrics observer.
+	// Metrics controls the usage and quota metrics observer.
 	Metrics MetricsConfig
 }
 
@@ -147,12 +134,8 @@ func (c Config) Addr() string {
 //	AO_TELEMETRY_REMOTE  remote exporter off|posthog (default off)
 //	AO_TELEMETRY_POSTHOG_KEY   PostHog project key
 //	AO_TELEMETRY_POSTHOG_HOST  PostHog host (default DefaultTelemetryPostHogHost)
-//	AO_METRICS_INTERVAL        metrics sampling interval (Go duration, default 30s; 0 disables)
-//	AO_METRICS_DISK_FREE_PERCENT       disk alert threshold percent (0 disables)
-//	AO_METRICS_MEM_AVAILABLE_PERCENT  memory alert threshold percent (0 disables)
-//	AO_METRICS_LOAD_PER_CORE          load alert threshold ratio (0 disables)
-//	AO_METRICS_ZOMBIE_SUSTAIN_TICKS   zombie alert sustain ticks (0 disables)
-//	AO_METRICS_LOW_QUOTA_PERCENT      low-quota threshold percent (default 10; 0 disables)
+//	AO_METRICS_INTERVAL           metrics sampling interval (Go duration, default 30s; 0 disables)
+//	AO_METRICS_LOW_QUOTA_PERCENT  low-quota threshold percent (default 10; 0 disables)
 //
 // The bind host is not configurable: the daemon is loopback-only by design.
 func Load() (Config, error) {
@@ -168,12 +151,8 @@ func Load() (Config, error) {
 			PostHogHost: DefaultTelemetryPostHogHost,
 		},
 		Metrics: MetricsConfig{
-			Interval:            DefaultMetricsInterval,
-			DiskFreePercent:     DefaultMetricsDiskFreePercent,
-			MemAvailablePercent: DefaultMetricsMemAvailablePercent,
-			LoadPerCore:         DefaultMetricsLoadPerCore,
-			ZombieSustainTicks:  DefaultMetricsZombieSustainTicks,
-			LowQuotaPercent:     10,
+			Interval:        DefaultMetricsInterval,
+			LowQuotaPercent: DefaultMetricsLowQuotaPercent,
 		},
 	}
 
@@ -263,34 +242,6 @@ func Load() (Config, error) {
 			return Config{}, fmt.Errorf("invalid AO_METRICS_INTERVAL %q: must be >= 0", raw)
 		}
 		cfg.Metrics.Interval = d
-	}
-	if raw := os.Getenv("AO_METRICS_DISK_FREE_PERCENT"); raw != "" {
-		v, err := parseNonNegativeFloat("AO_METRICS_DISK_FREE_PERCENT", raw)
-		if err != nil {
-			return Config{}, err
-		}
-		cfg.Metrics.DiskFreePercent = v
-	}
-	if raw := os.Getenv("AO_METRICS_MEM_AVAILABLE_PERCENT"); raw != "" {
-		v, err := parseNonNegativeFloat("AO_METRICS_MEM_AVAILABLE_PERCENT", raw)
-		if err != nil {
-			return Config{}, err
-		}
-		cfg.Metrics.MemAvailablePercent = v
-	}
-	if raw := os.Getenv("AO_METRICS_LOAD_PER_CORE"); raw != "" {
-		v, err := parseNonNegativeFloat("AO_METRICS_LOAD_PER_CORE", raw)
-		if err != nil {
-			return Config{}, err
-		}
-		cfg.Metrics.LoadPerCore = v
-	}
-	if raw := os.Getenv("AO_METRICS_ZOMBIE_SUSTAIN_TICKS"); raw != "" {
-		v, err := strconv.Atoi(raw)
-		if err != nil || v < 0 {
-			return Config{}, fmt.Errorf("invalid AO_METRICS_ZOMBIE_SUSTAIN_TICKS %q: must be >= 0", raw)
-		}
-		cfg.Metrics.ZombieSustainTicks = v
 	}
 	if raw := os.Getenv("AO_METRICS_LOW_QUOTA_PERCENT"); raw != "" {
 		v, err := parseNonNegativeFloat("AO_METRICS_LOW_QUOTA_PERCENT", raw)

@@ -23,8 +23,8 @@ type ChangeLog struct {
 
 type Notification struct {
 	ID        string
-	SessionID domain.SessionID
-	ProjectID domain.ProjectID
+	SessionID *domain.SessionID
+	ProjectID *domain.ProjectID
 	PRURL     string
 	DedupeKey string
 	Type      domain.NotificationType

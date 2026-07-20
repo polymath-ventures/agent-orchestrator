@@ -240,33 +240,29 @@ func writeCodexRolloutDated(t *testing.T, codexHome string, date []string, name,
 }
 
 func TestUsageExtract_CodexCumulativeAndDelta(t *testing.T) {
-	for _, agent := range []string{"codex", "codex-fugu"} {
-		t.Run(agent, func(t *testing.T) {
-			codexHome := t.TempDir()
-			cwd := t.TempDir()
-			path := writeCodexRollout(t, codexHome, "rollout-a.jsonl", cwd, "", [][3]int{
-				{100, 20, 120},
-				{300, 50, 350}, // cumulative/monotonic; last one wins
-			})
+	codexHome := t.TempDir()
+	cwd := t.TempDir()
+	path := writeCodexRollout(t, codexHome, "rollout-a.jsonl", cwd, "", [][3]int{
+		{100, 20, 120},
+		{300, 50, 350}, // cumulative/monotonic; last one wins
+	})
 
-			e := &usageExtractor{dataDir: t.TempDir(), codexHome: codexHome, cwd: cwd, sessionID: "ao-1"}
-			first := emitAndCommit(e, agent, nil)
-			want3(t, first, 300, 50, 350)
+	e := &usageExtractor{dataDir: t.TempDir(), codexHome: codexHome, cwd: cwd, sessionID: "ao-1"}
+	first := emitAndCommit(e, "codex", nil)
+	want3(t, first, 300, 50, 350)
 
-			// Append a newer cumulative; second stop emits only the delta.
-			f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o600)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if _, err := f.WriteString(`{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":320,"output_tokens":70,"total_tokens":390}}}}` + "\n"); err != nil {
-				t.Fatal(err)
-			}
-			_ = f.Close()
-
-			second := emitAndCommit(e, agent, nil)
-			want3(t, second, 20, 20, 40) // 320-300, 70-50, 390-350
-		})
+	// Append a newer cumulative; second stop emits only the delta.
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatal(err)
 	}
+	if _, err := f.WriteString(`{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":320,"output_tokens":70,"total_tokens":390}}}}` + "\n"); err != nil {
+		t.Fatal(err)
+	}
+	_ = f.Close()
+
+	second := emitAndCommit(e, "codex", nil)
+	want3(t, second, 20, 20, 40) // 320-300, 70-50, 390-350
 }
 
 func TestUsageExtract_CodexPrefersMainOverSubagentRollout(t *testing.T) {

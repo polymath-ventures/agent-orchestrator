@@ -12,7 +12,7 @@ as best effort so hook failures do not break an agent session.
   usage and emits only the growth since the session cursor
 
 #### Scenario: Codex rollout usage becomes a delta
-- **WHEN** a Codex or Codex Fugu stop hook runs from a worktree with a matching
+- **WHEN** a Codex stop hook runs from a worktree with a matching
   rollout file containing `token_count` cumulative usage
 - **THEN** AO reads the latest cumulative token count and emits only the growth
   since the session cursor

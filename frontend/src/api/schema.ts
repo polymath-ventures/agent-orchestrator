@@ -882,18 +882,6 @@ export interface components {
             /** Format: int64 */
             windowSeconds: number;
         };
-        MetricsCostTotals: {
-            /** Format: double */
-            costUsd: number;
-            /** Format: int64 */
-            events: number;
-            /** Format: int64 */
-            inputTokens: number;
-            /** Format: int64 */
-            outputTokens: number;
-            /** Format: int64 */
-            totalTokens: number;
-        };
         MetricsHarnessCost: {
             /** Format: double */
             costUsd: number;
@@ -906,30 +894,6 @@ export interface components {
             outputTokens: number;
             /** Format: int64 */
             totalTokens: number;
-        };
-        MetricsHost: {
-            diskFreeBytes: number;
-            diskKnown: boolean;
-            diskTotalBytes: number;
-            /** Format: double */
-            loadAvg1: number;
-            /** Format: double */
-            loadAvg5: number;
-            /** Format: double */
-            loadAvg15: number;
-            loadKnown: boolean;
-            memAvailableBytes: number;
-            memKnown: boolean;
-            memTotalBytes: number;
-            numCpu: number;
-        };
-        MetricsProject: {
-            byActivity: {
-                [key: string]: number;
-            } | null;
-            cost: components["schemas"]["MetricsCostTotals"];
-            projectId: string;
-            sessions: number;
         };
         MetricsProjectCost: {
             /** Format: double */
@@ -948,23 +912,12 @@ export interface components {
             history: components["schemas"]["MetricsSnapshot"][];
             latest?: components["schemas"]["MetricsSnapshot"];
         };
-        MetricsScope: {
-            matched: boolean;
-            memBytes: number;
-            name: string;
-            sessionId?: string;
-        };
         MetricsSnapshot: {
             alerts: components["schemas"]["MetricsAlert"][];
             /** Format: date-time */
             collectedAt: string;
             cost: components["schemas"]["MetricsCost"];
-            host: components["schemas"]["MetricsHost"];
-            projects: components["schemas"]["MetricsProject"][];
             quotas: components["schemas"]["QuotaSnapshot"][];
-            scopes: components["schemas"]["MetricsScope"][];
-            zombies: number;
-            zombiesKnown: boolean;
         };
         MobileStatusResponse: {
             enabled: boolean;

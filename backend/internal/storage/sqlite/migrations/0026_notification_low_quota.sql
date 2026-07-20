@@ -2,8 +2,8 @@
 -- +goose StatementBegin
 CREATE TABLE notifications_new (
     id TEXT PRIMARY KEY,
-    session_id TEXT NOT NULL DEFAULT '',
-    project_id TEXT NOT NULL DEFAULT '',
+    session_id TEXT REFERENCES sessions(id) ON DELETE CASCADE,
+    project_id TEXT REFERENCES projects(id) ON DELETE CASCADE,
     pr_url TEXT NOT NULL DEFAULT '',
     dedupe_key TEXT NOT NULL DEFAULT '',
     type TEXT NOT NULL CHECK (

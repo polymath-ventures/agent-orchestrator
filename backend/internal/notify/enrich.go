@@ -81,26 +81,13 @@ func bodyForIntent(intent Intent) string {
 }
 
 func dedupeKeyForIntent(intent Intent, prURL string) string {
-	if intent.Type == domain.NotificationLowQuota {
-		if message := strings.TrimSpace(intent.Message); message != "" {
-			return "quota:" + message
-		}
-		return "quota"
-	}
-	var parts []string
-	if intent.ProjectID != "" {
-		parts = append(parts, "project", string(intent.ProjectID))
-	}
-	if intent.SessionID != "" {
-		parts = append(parts, "session", string(intent.SessionID))
-	}
-	if prURL != "" {
-		parts = append(parts, "pr", prURL)
-	}
-	if len(parts) > 0 {
-		return strings.Join(parts, ":")
-	}
-	return ""
+	return domain.NotificationDedupeKey(domain.NotificationRecord{
+		SessionID: intent.SessionID,
+		ProjectID: intent.ProjectID,
+		PRURL:     prURL,
+		DedupeKey: strings.TrimSpace(intent.DedupeKey),
+		Type:      intent.Type,
+	})
 }
 
 func sessionLabel(intent Intent) string {

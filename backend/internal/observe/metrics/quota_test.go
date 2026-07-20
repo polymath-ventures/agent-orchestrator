@@ -39,7 +39,6 @@ func TestStoreQuotaCollectorRecordsNoSignalForSubscriptionHarnesses(t *testing.T
 	want := map[domain.AgentHarness]bool{
 		domain.HarnessClaudeCode: false,
 		domain.HarnessCodex:      false,
-		harnessCodexFugu:         false,
 	}
 	if len(rows) != len(want) {
 		t.Fatalf("got %d quota rows, want %d: %+v", len(rows), len(want), rows)
@@ -65,6 +64,24 @@ func TestStoreQuotaCollectorRecordsNoSignalForSubscriptionHarnesses(t *testing.T
 	for harness, seen := range want {
 		if !seen {
 			t.Errorf("missing quota snapshot for %s", harness)
+		}
+	}
+}
+
+func TestStoreQuotaCollectorDoesNotRewriteStaticNoSignalRows(t *testing.T) {
+	store := &fakeQuotaStore{}
+	firstAt := time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC)
+	secondAt := firstAt.Add(time.Hour)
+
+	if _, err := NewStoreQuotaCollector(store).CollectQuota(context.Background(), firstAt); err != nil {
+		t.Fatalf("first CollectQuota: %v", err)
+	}
+	if _, err := NewStoreQuotaCollector(store).CollectQuota(context.Background(), secondAt); err != nil {
+		t.Fatalf("second CollectQuota: %v", err)
+	}
+	for _, row := range store.rows {
+		if !row.ObservedAt.Equal(firstAt) {
+			t.Fatalf("static no-signal row was rewritten on second collect: %+v", row)
 		}
 	}
 }

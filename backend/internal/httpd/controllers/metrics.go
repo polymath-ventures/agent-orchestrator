@@ -10,7 +10,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/observe/metrics"
 )
 
-// MetricsProvider is the controller-facing read surface for the resource
+// MetricsProvider is the controller-facing read surface for the usage/quota
 // metrics observer. It is a pure in-memory read of the observer's retained
 // snapshots, so it neither blocks nor samples on the request path.
 type MetricsProvider interface {

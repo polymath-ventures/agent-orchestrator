@@ -132,7 +132,7 @@ func (m *Manager) ApplyRuntimeObservation(ctx context.Context, id domain.Session
 // existing activity and first-signal facts untouched.
 func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, s ports.ActivitySignal) error {
 	s.AgentSessionID = strings.TrimSpace(s.AgentSessionID)
-	if !s.Valid && s.AgentSessionID == "" {
+	if !s.Valid && s.AgentSessionID == "" && s.Usage == nil {
 		return nil
 	}
 	var intent *ports.NotificationIntent
@@ -147,9 +147,13 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 		return fmt.Errorf("%w: %s", ports.ErrSessionNotFound, id)
 	}
 	now := m.clock()
+	usageEvent, hasUsageEvent := usageTelemetryEvent(rec, s, now)
 	if rec.IsTerminated {
 		delete(m.flights, id)
 		m.mu.Unlock()
+		if hasUsageEvent {
+			m.emitTelemetry(ctx, usageEvent)
+		}
 		return nil
 	}
 	// Event-tagged signals fold through the session's tool-flight state first:
@@ -163,6 +167,9 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 	}
 	if !s.Valid && !metadataChanged {
 		m.mu.Unlock()
+		if hasUsageEvent {
+			m.emitTelemetry(ctx, usageEvent)
+		}
 		return nil
 	}
 	if !s.Valid {
@@ -170,9 +177,11 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 		rec.UpdatedAt = now
 		err := m.store.UpdateSession(ctx, rec)
 		m.mu.Unlock()
+		if err == nil && hasUsageEvent {
+			m.emitTelemetry(ctx, usageEvent)
+		}
 		return err
 	}
-	usageEvent, hasUsageEvent := usageTelemetryEvent(rec, s, now)
 	if metadataChanged {
 		// Fold metadata into rec before copying it into next below, so the
 		// activity and resume handle land in one store update.

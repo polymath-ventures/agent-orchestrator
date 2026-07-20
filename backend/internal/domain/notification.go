@@ -2,6 +2,7 @@ package domain
 
 import (
 	"errors"
+	"strings"
 	"time"
 )
 
@@ -90,4 +91,24 @@ func (r NotificationRecord) Validate() error {
 		return ErrInvalidNotificationStatus
 	}
 	return nil
+}
+
+// NotificationDedupeKey derives the canonical unread-dedupe key for a
+// notification record. An explicit key wins so producers can scope alerts to
+// provider-specific subjects such as quota windows.
+func NotificationDedupeKey(r NotificationRecord) string {
+	if r.DedupeKey != "" {
+		return r.DedupeKey
+	}
+	var parts []string
+	if r.ProjectID != "" {
+		parts = append(parts, "project", string(r.ProjectID))
+	}
+	if r.SessionID != "" {
+		parts = append(parts, "session", string(r.SessionID))
+	}
+	if r.PRURL != "" {
+		parts = append(parts, "pr", r.PRURL)
+	}
+	return strings.Join(parts, ":")
 }

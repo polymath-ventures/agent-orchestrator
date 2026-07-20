@@ -31,8 +31,7 @@ func mountMetrics(p MetricsProvider) http.Handler {
 func TestMetricsControllerReturnsSnapshot(t *testing.T) {
 	snap := metrics.Snapshot{
 		CollectedAt: time.Date(2026, 7, 10, 0, 0, 0, 0, time.UTC),
-		Host:        metrics.Host{NumCPU: 4},
-		Zombies:     1,
+		Cost:        metrics.Cost{CostTotals: metrics.CostTotals{TotalTokens: 42}},
 	}
 	h := mountMetrics(fakeMetricsProvider{latest: snap, hasLatest: true, history: []metrics.Snapshot{snap}})
 
@@ -45,7 +44,7 @@ func TestMetricsControllerReturnsSnapshot(t *testing.T) {
 	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if resp.Latest == nil || resp.Latest.Host.NumCPU != 4 || resp.Latest.Zombies != 1 {
+	if resp.Latest == nil || resp.Latest.Cost.TotalTokens != 42 {
 		t.Errorf("latest wrong: %+v", resp.Latest)
 	}
 	if len(resp.History) != 1 {

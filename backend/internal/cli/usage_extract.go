@@ -130,7 +130,7 @@ func (e *usageExtractor) currentCumulative(agent string, payload []byte) (usageC
 	switch agent {
 	case "claude-code":
 		return e.claudeCumulative(payload)
-	case "codex", "codex-fugu":
+	case "codex":
 		return e.codexCumulative()
 	default:
 		return usageCumulative{}, false

@@ -67,11 +67,10 @@ dedupe per window.
 
 Introduce a small quota collector interface that can report exact, estimated,
 or no-signal snapshots. The first implementation records durable no-signal
-snapshots for Claude Code, Codex, and the Codex Fugu hook variant because
-current public/local surfaces expose user-facing quota warnings but no stable
-machine-readable quota contract for AO to consume. Future exact or estimated
-probes should stay close to the harness adapter that understands their local
-file, CLI, header, or API shape.
+snapshots for Claude Code and Codex because current public/local surfaces expose
+user-facing quota warnings but no stable machine-readable quota contract for AO
+to consume. Future exact or estimated probes should stay close to the harness
+adapter that understands their local file, CLI, header, or API shape.
 
 Alternative considered: one central collector that knows every harness format.
 That remains the wrong shape for exact/estimated probes, but the no-signal
@@ -133,14 +132,6 @@ dashboard, limit banners, and active-session `/status`. Local CLI help for
 machine-readable quota/status command. Codex rollout JSONL can produce token
 usage deltas, but not subscription quota windows. This implementation therefore
 records `signalQuality: none` for Codex with no numeric quota values.
-
-### Codex Fugu
-
-AO already treats `codex-fugu` as a Codex hook variant for usage extraction,
-even though it is not a canonical worker harness in `domain.AllHarnesses`.
-No separate machine-readable quota surface was found for the variant, so it
-inherits Codex's no-signal quota behavior and is recorded as a distinct
-subject for clarity when that hook token is used.
 
 ### Low-Quota Thresholds
 

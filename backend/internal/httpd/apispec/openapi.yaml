@@ -2301,30 +2301,6 @@ components:
       - byHarness
       - truncated
       type: object
-    MetricsCostTotals:
-      properties:
-        costUsd:
-          format: double
-          type: number
-        events:
-          format: int64
-          type: integer
-        inputTokens:
-          format: int64
-          type: integer
-        outputTokens:
-          format: int64
-          type: integer
-        totalTokens:
-          format: int64
-          type: integer
-      required:
-      - inputTokens
-      - outputTokens
-      - totalTokens
-      - costUsd
-      - events
-      type: object
     MetricsHarnessCost:
       properties:
         costUsd:
@@ -2351,70 +2327,6 @@ components:
       - totalTokens
       - costUsd
       - events
-      type: object
-    MetricsHost:
-      properties:
-        diskFreeBytes:
-          minimum: 0
-          type: integer
-        diskKnown:
-          type: boolean
-        diskTotalBytes:
-          minimum: 0
-          type: integer
-        loadAvg1:
-          format: double
-          type: number
-        loadAvg5:
-          format: double
-          type: number
-        loadAvg15:
-          format: double
-          type: number
-        loadKnown:
-          type: boolean
-        memAvailableBytes:
-          minimum: 0
-          type: integer
-        memKnown:
-          type: boolean
-        memTotalBytes:
-          minimum: 0
-          type: integer
-        numCpu:
-          type: integer
-      required:
-      - numCpu
-      - loadKnown
-      - loadAvg1
-      - loadAvg5
-      - loadAvg15
-      - memKnown
-      - memTotalBytes
-      - memAvailableBytes
-      - diskKnown
-      - diskTotalBytes
-      - diskFreeBytes
-      type: object
-    MetricsProject:
-      properties:
-        byActivity:
-          additionalProperties:
-            type: integer
-          type:
-          - object
-          - "null"
-        cost:
-          $ref: '#/components/schemas/MetricsCostTotals'
-        projectId:
-          type: string
-        sessions:
-          type: integer
-      required:
-      - projectId
-      - sessions
-      - byActivity
-      - cost
       type: object
     MetricsProjectCost:
       properties:
@@ -2454,22 +2366,6 @@ components:
       required:
       - history
       type: object
-    MetricsScope:
-      properties:
-        matched:
-          type: boolean
-        memBytes:
-          minimum: 0
-          type: integer
-        name:
-          type: string
-        sessionId:
-          type: string
-      required:
-      - name
-      - memBytes
-      - matched
-      type: object
     MetricsSnapshot:
       properties:
         alerts:
@@ -2481,31 +2377,12 @@ components:
           type: string
         cost:
           $ref: '#/components/schemas/MetricsCost'
-        host:
-          $ref: '#/components/schemas/MetricsHost'
-        projects:
-          items:
-            $ref: '#/components/schemas/MetricsProject'
-          type: array
         quotas:
           items:
             $ref: '#/components/schemas/QuotaSnapshot'
           type: array
-        scopes:
-          items:
-            $ref: '#/components/schemas/MetricsScope'
-          type: array
-        zombies:
-          type: integer
-        zombiesKnown:
-          type: boolean
       required:
       - collectedAt
-      - host
-      - projects
-      - scopes
-      - zombies
-      - zombiesKnown
       - cost
       - quotas
       - alerts

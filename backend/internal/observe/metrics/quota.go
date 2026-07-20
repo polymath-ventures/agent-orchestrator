@@ -7,8 +7,6 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
-const harnessCodexFugu domain.AgentHarness = "codex-fugu"
-
 type quotaStore interface {
 	UpsertQuotaSnapshot(ctx context.Context, snap domain.QuotaSnapshot) (domain.QuotaSnapshot, error)
 	ListLatestQuotaSnapshots(ctx context.Context) ([]domain.QuotaSnapshot, error)
@@ -28,7 +26,6 @@ func NewStoreQuotaCollector(store quotaStore) *StoreQuotaCollector {
 		harnesses: []domain.AgentHarness{
 			domain.HarnessClaudeCode,
 			domain.HarnessCodex,
-			harnessCodexFugu,
 		},
 	}
 }
@@ -41,7 +38,20 @@ func (c *StoreQuotaCollector) CollectQuota(ctx context.Context, observedAt time.
 	if c == nil || c.store == nil {
 		return nil, nil
 	}
+	latest, err := c.store.ListLatestQuotaSnapshots(ctx)
+	if err != nil {
+		return nil, err
+	}
+	seen := make(map[domain.AgentHarness]bool, len(latest))
+	for _, snap := range latest {
+		if snap.SignalQuality == domain.QuotaSignalNone && snap.AccountID == "unknown" && snap.Model == "" {
+			seen[snap.Harness] = true
+		}
+	}
 	for _, harness := range c.harnesses {
+		if seen[harness] {
+			continue
+		}
 		_, err := c.store.UpsertQuotaSnapshot(ctx, domain.QuotaSnapshot{
 			Harness:       harness,
 			AccountID:     "unknown",

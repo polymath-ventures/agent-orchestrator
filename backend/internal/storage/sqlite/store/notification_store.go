@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"strings"
 
 	moderncsqlite "modernc.org/sqlite"
 	sqlite3 "modernc.org/sqlite/lib"
@@ -21,7 +20,7 @@ var _ notificationsvc.Store = (*Store)(nil)
 // when the unread dedupe index already has a matching row.
 func (s *Store) CreateNotification(ctx context.Context, rec domain.NotificationRecord) (domain.NotificationRecord, bool, error) {
 	if rec.DedupeKey == "" {
-		rec.DedupeKey = notificationDedupeKey(rec)
+		rec.DedupeKey = domain.NotificationDedupeKey(rec)
 	}
 	if err := rec.Validate(); err != nil {
 		return domain.NotificationRecord{}, false, err
@@ -35,8 +34,8 @@ func (s *Store) CreateNotification(ctx context.Context, rec domain.NotificationR
 	}
 	row, err := s.qw.CreateNotification(ctx, gen.CreateNotificationParams{
 		ID:        rec.ID,
-		SessionID: rec.SessionID,
-		ProjectID: rec.ProjectID,
+		SessionID: notificationSessionIDPtr(rec.SessionID),
+		ProjectID: notificationProjectIDPtr(rec.ProjectID),
 		PRURL:     rec.PRURL,
 		DedupeKey: rec.DedupeKey,
 		Type:      rec.Type,
@@ -114,8 +113,8 @@ func isSQLiteUnique(err error) bool {
 func notificationFromGen(row gen.Notification) domain.NotificationRecord {
 	return domain.NotificationRecord{
 		ID:        row.ID,
-		SessionID: row.SessionID,
-		ProjectID: row.ProjectID,
+		SessionID: notificationSessionIDFromPtr(row.SessionID),
+		ProjectID: notificationProjectIDFromPtr(row.ProjectID),
 		PRURL:     row.PRURL,
 		DedupeKey: row.DedupeKey,
 		Type:      row.Type,
@@ -134,19 +133,30 @@ func notificationsFromGen(rows []gen.Notification) []domain.NotificationRecord {
 	return out
 }
 
-func notificationDedupeKey(rec domain.NotificationRecord) string {
-	var parts []string
-	if rec.ProjectID != "" {
-		parts = append(parts, "project", string(rec.ProjectID))
+func notificationSessionIDPtr(id domain.SessionID) *domain.SessionID {
+	if id == "" {
+		return nil
 	}
-	if rec.SessionID != "" {
-		parts = append(parts, "session", string(rec.SessionID))
+	return &id
+}
+
+func notificationProjectIDPtr(id domain.ProjectID) *domain.ProjectID {
+	if id == "" {
+		return nil
 	}
-	if rec.PRURL != "" {
-		parts = append(parts, "pr", rec.PRURL)
+	return &id
+}
+
+func notificationSessionIDFromPtr(id *domain.SessionID) domain.SessionID {
+	if id == nil {
+		return ""
 	}
-	if len(parts) > 0 {
-		return strings.Join(parts, ":")
+	return *id
+}
+
+func notificationProjectIDFromPtr(id *domain.ProjectID) domain.ProjectID {
+	if id == nil {
+		return ""
 	}
-	return rec.DedupeKey
+	return *id
 }

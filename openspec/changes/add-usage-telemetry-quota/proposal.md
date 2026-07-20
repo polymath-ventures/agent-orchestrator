@@ -42,5 +42,5 @@ the operator no warning when a subscription window is near exhaustion.
   API schema.
 - Frontend and mobile/API clients that consume metrics, status, notifications,
   or generated schema types.
-- Harness adapters for Claude Code, Codex, and Codex Fugu, with future harnesses
-  reporting no signal until a quota source is implemented.
+- Harness adapters for Claude Code and Codex, with future harnesses reporting
+  no signal until a quota source is implemented.

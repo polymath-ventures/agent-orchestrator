@@ -13,9 +13,9 @@
 
 ## 3. Quota Discovery and Storage
 
-- [x] 3.1 Document discovered Claude Code, Codex, and Codex Fugu quota surfaces, including exact, estimated, and no-signal outcomes.
+- [x] 3.1 Document discovered Claude Code and Codex quota surfaces, including exact, estimated, and no-signal outcomes.
 - [x] 3.2 Add an additive SQLite migration and store methods for per-harness/account quota-window snapshots.
-- [x] 3.3 Add a quota collector interface with Claude Code, Codex, and Codex Fugu no-signal implementations.
+- [x] 3.3 Add a quota collector interface with Claude Code and Codex no-signal implementations.
 - [x] 3.4 Add a daemon quota observer that refreshes snapshots without blocking readiness.
 
 ## 4. Low-Quota Alerts

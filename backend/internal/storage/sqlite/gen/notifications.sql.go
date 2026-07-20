@@ -21,8 +21,8 @@ RETURNING id, session_id, project_id, pr_url, dedupe_key, type, title, body, sta
 
 type CreateNotificationParams struct {
 	ID        string
-	SessionID domain.SessionID
-	ProjectID domain.ProjectID
+	SessionID *domain.SessionID
+	ProjectID *domain.ProjectID
 	PRURL     string
 	DedupeKey string
 	Type      domain.NotificationType

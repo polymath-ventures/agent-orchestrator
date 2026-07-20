@@ -17,15 +17,15 @@ type notificationIntentSink interface {
 	Notify(context.Context, ports.NotificationIntent) error
 }
 
-// startMetricsObserver wires the resource metrics observer behind config. A zero
+// startMetricsObserver wires the usage/quota metrics observer behind config. A zero
 // interval disables it entirely: the returned observer is nil (so the API mounts
 // the endpoint as not-implemented) and the done channel is already closed.
 //
 // Alert transitions are emitted through the telemetry EventSink as
-// `resource_alert` events (level warn on firing, info on clear). The evaluator
+// `metrics_alert` events (level warn on firing, info on clear). The evaluator
 // only surfaces transitions, so this is deduped on state change, never per tick.
 // Low-quota firing transitions also produce a durable notification intent.
-func startMetricsObserver(ctx context.Context, cfg config.Config, store *sqlite.Store, tmuxBinary string, telemetry ports.EventSink, notifier notificationIntentSink, logger *slog.Logger) (*metrics.Observer, <-chan struct{}) {
+func startMetricsObserver(ctx context.Context, cfg config.Config, store *sqlite.Store, telemetry ports.EventSink, notifier notificationIntentSink, logger *slog.Logger) (*metrics.Observer, <-chan struct{}) {
 	if cfg.Metrics.Interval <= 0 {
 		logger.Info("metrics observer disabled (AO_METRICS_INTERVAL=0)")
 		closed := make(chan struct{})
@@ -34,20 +34,13 @@ func startMetricsObserver(ctx context.Context, cfg config.Config, store *sqlite.
 	}
 
 	obs := metrics.New(metrics.Deps{
-		Sessions: store,
-		Host:     metrics.NewHostCollector(cfg.DataDir),
-		Scopes:   metrics.NewScopeCollector(tmuxBinary),
-		Cost:     metrics.NewStoreCostAggregator(store),
-		Quota:    metrics.NewStoreQuotaCollector(store),
-		Alerts:   metricsAlertSink{telemetry: telemetry, notifications: notifier},
+		Cost:   metrics.NewStoreCostAggregator(store),
+		Quota:  metrics.NewStoreQuotaCollector(store),
+		Alerts: metricsAlertSink{telemetry: telemetry, notifications: notifier},
 	}, metrics.Config{
 		Tick: cfg.Metrics.Interval,
 		Thresholds: metrics.Thresholds{
-			DiskFreePercent:     cfg.Metrics.DiskFreePercent,
-			MemAvailablePercent: cfg.Metrics.MemAvailablePercent,
-			LoadPerCore:         cfg.Metrics.LoadPerCore,
-			ZombieSustainTicks:  cfg.Metrics.ZombieSustainTicks,
-			LowQuotaPercent:     cfg.Metrics.LowQuotaPercent,
+			LowQuotaPercent: cfg.Metrics.LowQuotaPercent,
 		},
 		Logger: logger,
 	})
@@ -66,7 +59,7 @@ func metricsProvider(obs *metrics.Observer) controllers.MetricsProvider {
 }
 
 // metricsAlertSink forwards metrics alert transitions onto the daemon's
-// telemetry event bus as `resource_alert` events and turns low-quota firing
+// telemetry event bus as `metrics_alert` events and turns low-quota firing
 // transitions into durable notification intents.
 type metricsAlertSink struct {
 	telemetry     ports.EventSink
@@ -83,7 +76,7 @@ func (s metricsAlertSink) EmitAlert(ctx context.Context, t metrics.AlertTransiti
 	}
 	if s.telemetry != nil {
 		s.telemetry.Emit(ctx, ports.TelemetryEvent{
-			Name:       "resource_alert",
+			Name:       "metrics_alert",
 			Source:     "metrics",
 			OccurredAt: time.Now().UTC(),
 			Level:      level,
