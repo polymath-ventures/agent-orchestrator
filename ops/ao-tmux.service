@@ -1,0 +1,27 @@
+[Unit]
+Description=AO tmux server (owns every agent pane's cgroup)
+Before=ao.service
+RefuseManualStop=yes
+
+[Service]
+# Skip when a tmux server already owns the default socket; that covers migration
+# hosts with a legacy server. If the socket is free, start the server here so
+# later daemon-created sessions are children of this unit instead of ao.service.
+ExecCondition=/bin/sh -c 'if tmux list-sessions >/dev/null 2>&1; then exit 1; fi; if tmux list-sessions 2>&1 | grep -qiE "error connecting|no server running"; then exit 0; fi; echo "ao-tmux.service: tmux ownership probe failed" >&2; tmux list-sessions 2>&1 | sed "s/^/  /" >&2; exit 2'
+Type=forking
+ExecStart=/usr/bin/tmux start-server ";" set-option -g exit-empty off
+
+# There is deliberately no ExecStop. Stopping this unit must not run
+# tmux kill-server or signal the whole cgroup; both are fleet kills.
+KillMode=process
+KillSignal=SIGCONT
+SendSIGKILL=no
+TimeoutStopSec=5s
+OOMPolicy=continue
+Restart=always
+RestartSec=2s
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+Delegate=yes
+
+[Install]
+WantedBy=default.target

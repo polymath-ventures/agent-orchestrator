@@ -69,6 +69,26 @@ func TestWriteReadRoundTripOwner(t *testing.T) {
 	}
 }
 
+func TestWriteReadRoundTripShutdownToken(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "running.json")
+	want := Info{PID: 1, Port: 3001, ShutdownToken: "secret-token"}
+
+	if err := Write(path, want); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	got, err := Read(path)
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if got == nil {
+		t.Fatal("Read returned nil for an existing file")
+		return
+	}
+	if got.ShutdownToken != want.ShutdownToken {
+		t.Errorf("ShutdownToken round trip: got %q, want %q", got.ShutdownToken, want.ShutdownToken)
+	}
+}
+
 func TestWriteOverwritesExisting(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "running.json")
 

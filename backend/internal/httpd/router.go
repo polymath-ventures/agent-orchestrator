@@ -3,6 +3,7 @@
 package httpd
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"log/slog"
 	"net"
@@ -19,6 +20,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/controllers"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/envelope"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	"github.com/aoagents/agent-orchestrator/backend/internal/runfile"
 	"github.com/aoagents/agent-orchestrator/backend/internal/telemetrymeta"
 	"github.com/aoagents/agent-orchestrator/backend/internal/terminal"
 )
@@ -27,6 +29,7 @@ import (
 // callback that requests a graceful shutdown.
 type ControlDeps struct {
 	RequestShutdown func()
+	ShutdownToken   string
 }
 
 // NewRouterWithControl builds the root router with the standard middleware
@@ -90,16 +93,15 @@ func mountHealth(r chi.Router) {
 	r.Get("/readyz", handleReadyz)
 }
 
-// mountControl registers the loopback daemon-control endpoints. /shutdown is
-// unauthenticated and state-changing, so it is gated by localControlRequest to
-// keep a browser the user happens to have open (CSRF / DNS-rebinding) or a
-// remote client from being able to kill the daemon.
+// mountControl registers the loopback daemon-control endpoints. /shutdown is a
+// destructive operation, so it requires both a trusted loopback-shaped request
+// and the daemon-issued token from running.json.
 func mountControl(r chi.Router, deps ControlDeps) {
 	if deps.RequestShutdown == nil {
 		return
 	}
 	r.Post("/shutdown", func(w http.ResponseWriter, req *http.Request) {
-		if !localControlRequest(req) {
+		if !localControlRequest(req) || !validShutdownToken(req, deps.ShutdownToken) {
 			envelope.WriteJSON(w, http.StatusForbidden, map[string]any{
 				"status":  "forbidden",
 				"service": daemonmeta.ServiceName,
@@ -113,6 +115,14 @@ func mountControl(r chi.Router, deps ControlDeps) {
 		})
 		deps.RequestShutdown()
 	})
+}
+
+func validShutdownToken(req *http.Request, want string) bool {
+	got := req.Header.Get(runfile.ShutdownTokenHeader)
+	if got == "" || want == "" || len(got) != len(want) {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(got), []byte(want)) == 1
 }
 
 // mountMobile registers the Connect Mobile control routes: status, enable,
