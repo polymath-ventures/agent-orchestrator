@@ -12,6 +12,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/reviewer"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/runtimeselect"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/workspace/gitworktree"
+	"github.com/aoagents/agent-orchestrator/backend/internal/candidatehealth"
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/lifecycle"
@@ -101,6 +102,15 @@ func startSession(cfg config.Config, runtime runtimeselect.Runtime, store *sqlit
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("session workspace: %w", err)
 	}
+	// The candidate-health tracker outlives a single spawn (down state persists
+	// across spawns) and owns candidate_{down,recovered} emission, so it is built
+	// once here with the real telemetry sink and injected into the manager. The
+	// manager calls only health-policy methods; the sink stays out of its Deps.
+	health := candidatehealth.New(candidatehealth.Config{
+		Source:    "session_manager",
+		Telemetry: telemetry,
+		Logger:    log,
+	})
 	mgr := sessionmanager.New(sessionmanager.Deps{
 		Runtime:   runtime,
 		Agents:    agents,
@@ -110,6 +120,7 @@ func startSession(cfg config.Config, runtime runtimeselect.Runtime, store *sqlit
 		Lifecycle: lcm,
 		DataDir:   cfg.DataDir,
 		Logger:    log,
+		Health:    health,
 	})
 	scmProvider, err := newGitHubSCMProvider(log)
 	if err != nil {

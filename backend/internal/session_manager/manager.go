@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/candidatehealth"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	aoprocess "github.com/aoagents/agent-orchestrator/backend/internal/process"
@@ -68,6 +69,11 @@ const (
 	// EnvDataDir tells a spawned agent's AO hook commands where the store lives.
 	EnvDataDir = "AO_DATA_DIR"
 )
+
+// candidateSurfaceWorkerMix names the worker-mix selection surface for candidate
+// health. It keeps this surface's candidates from colliding with any other
+// pooled-agent surface that shares the candidate-health vocabulary.
+const candidateSurfaceWorkerMix = "worker_mix"
 
 // hookBinaryName is the executable name the workspace hook commands invoke:
 // every agent adapter installs a bare `ao hooks <agent> <event>`. The session
@@ -169,6 +175,13 @@ type Manager struct {
 	// sendConfirm* defaults; tests in this package shrink the timings directly.
 	sendConfirm sendConfirmConfig
 	logger      *slog.Logger
+	// health is the worker-mix candidate-health circuit breaker. Selection calls
+	// it to skip down buckets; Spawn marks a mix-selected bucket down on a
+	// launch-attributable failure and recovers a bucket on a successful spawn of
+	// its exact identity. The Tracker owns telemetry emission (it holds the sink
+	// wired at daemon assembly), so the manager itself has no telemetry
+	// dependency — it only calls health-policy methods.
+	health *candidatehealth.Tracker
 }
 
 // sendConfirmConfig bounds the best-effort activity-confirmation loop run after
@@ -219,6 +232,12 @@ type Deps struct {
 	// Logger receives spawn-time diagnostics (e.g. when the session PATH
 	// cannot be pinned to the daemon binary). Nil defaults to slog.Default().
 	Logger *slog.Logger
+	// Health is the worker-mix candidate-health tracker. Daemon wiring
+	// constructs it once with the telemetry sink so its down state persists
+	// across spawns and its candidate_{down,recovered} events reach telemetry.
+	// Nil defaults to a sink-less Tracker: candidate health still narrows and
+	// recovers buckets, only the structured events are dropped.
+	Health *candidatehealth.Tracker
 }
 
 // New builds a Session Manager from its dependencies, defaulting the clock to
@@ -240,6 +259,13 @@ func New(d Deps) *Manager {
 			maxAttempts:     sendConfirmMaxAttempts,
 		},
 		logger: d.Logger,
+		health: d.Health,
+	}
+	if m.health == nil {
+		// A sink-less Tracker keeps selection narrowing and recovery working in
+		// tests and any caller that does not wire telemetry; only the structured
+		// candidate-health events are disabled.
+		m.health = candidatehealth.New(candidatehealth.Config{Source: "session_manager"})
 	}
 	if m.clock == nil {
 		// UTC so spawn-stamped CreatedAt/UpdatedAt match every other session
@@ -378,6 +404,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	if err := m.validateAgentBinary(argv); err != nil {
 		m.rollbackPreparedSpawnWorkspace(ctx, rec, ws, workspaceProject)
 		m.rollbackSpawnSeedRow(ctx, id)
+		m.markMixCandidateDown(ctx, mixSelected, cfg, err)
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: %w", id, err)
 	}
 	handle, err := m.runtime.Create(ctx, ports.RuntimeConfig{
@@ -389,6 +416,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	if err != nil {
 		m.rollbackPreparedSpawnWorkspace(ctx, rec, ws, workspaceProject)
 		m.rollbackSpawnSeedRow(ctx, id)
+		m.markMixCandidateDown(ctx, mixSelected, cfg, err)
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: runtime: %w", id, err)
 	}
 
@@ -406,6 +434,12 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 			m.markSpawnFailedTerminatedWithoutWorkspace(ctx, id)
 			return domain.SessionRecord{}, fmt.Errorf("spawn %s: deliver prompt: %w", id, err)
 		}
+	}
+	// The spawn launched end to end. A success on a candidate that is a
+	// configured mix bucket clears any stale down state for that exact bucket;
+	// MarkRecovered is a no-op when the bucket was healthy.
+	if mixHasBucket(project.Config.WorkerMix, cfg.Harness, cfg.Model) {
+		m.health.MarkRecovered(workerMixCandidate(cfg.Harness, cfg.Model))
 	}
 	return m.getRecord(ctx, id)
 }
@@ -547,7 +581,22 @@ func (m *Manager) resolveSpawnTarget(ctx context.Context, cfg ports.SpawnConfig,
 // across the rest by weight, which is why exhausting the candidates is an error
 // rather than a fallback to some harness the mix does not list.
 func (m *Manager) selectMixBucket(ctx context.Context, project domain.ProjectID, mix domain.WorkerMix) (domain.WorkerMixEntry, error) {
-	candidates := mix
+	// Drop every bucket whose candidate is currently down. RecordSkipIfDown is
+	// the API the "Skipping a down candidate" contract calls for: it reports the
+	// down state so the caller can refuse the bucket, debits the skip count, and
+	// logs — without emitting an event, so a persistent outage does not flood the
+	// sink. A healthy bucket is left untouched. Narrowing before the census means
+	// a down bucket's share redistributes across the survivors by weight, and an
+	// all-down mix yields no candidate — the loud ErrWorkerMixExhausted below
+	// rather than a silent substitution onto a harness the mix never listed.
+	candidates := make(domain.WorkerMix, 0, len(mix))
+	for _, e := range mix {
+		bk := e.BucketKey()
+		if m.health.RecordSkipIfDown(workerMixCandidate(bk.Harness, bk.Model)) {
+			continue
+		}
+		candidates = append(candidates, e)
+	}
 	census, err := m.mixCensus(ctx, project, candidates)
 	if err != nil {
 		return domain.WorkerMixEntry{}, err
@@ -588,6 +637,48 @@ func (m *Manager) mixCensus(ctx context.Context, project domain.ProjectID, mix d
 		counts[key]++
 	}
 	return counts, nil
+}
+
+// workerMixCandidate is the candidate-health identity of one mix bucket: the
+// worker-mix surface plus the bucket's (harness, model) pair. The Tracker
+// normalizes each axis, so the model need not be pre-trimmed here.
+func workerMixCandidate(harness domain.AgentHarness, model string) candidatehealth.Candidate {
+	return candidatehealth.Candidate{
+		Surface: candidateSurfaceWorkerMix,
+		Harness: string(harness),
+		Model:   model,
+	}
+}
+
+// markMixCandidateDown marks the mix-selected bucket down after a
+// launch-attributable spawn failure — the agent binary missing from PATH or the
+// runtime refusing to create. Only a mix-selected spawn participates: a pinned
+// spawn failing is not evidence the candidate AO would have chosen is broken.
+// The attempt context is passed through so a caller-cancelled attempt is treated
+// as a non-fault (the Tracker no-ops when ctx is already done), while a
+// candidate-side error wrapping a deadline under a live caller still marks down.
+func (m *Manager) markMixCandidateDown(ctx context.Context, mixSelected bool, cfg ports.SpawnConfig, err error) {
+	if !mixSelected {
+		return
+	}
+	m.health.MarkDownForAttempt(ctx, workerMixCandidate(cfg.Harness, cfg.Model), err)
+}
+
+// mixHasBucket reports whether (harness, model) is a configured bucket in the
+// mix. A successful spawn on such a bucket — mix-selected or pinned onto the
+// bucket's exact identity — is the "successful attempt on that exact candidate"
+// that clears a stale down state. Mark-down is narrower (mix-selected only): a
+// pin's failure is not evidence the candidate is broken, but a pin's success is
+// proof it works, and because a down bucket is excluded from selection this is
+// the reachable recovery path.
+func mixHasBucket(mix domain.WorkerMix, harness domain.AgentHarness, model string) bool {
+	target := domain.BucketKey{Harness: harness, Model: strings.TrimSpace(model)}
+	for _, e := range mix {
+		if e.BucketKey() == target {
+			return true
+		}
+	}
+	return false
 }
 
 func effectiveHarness(explicit domain.AgentHarness, kind domain.SessionKind, cfg domain.ProjectConfig) domain.AgentHarness {

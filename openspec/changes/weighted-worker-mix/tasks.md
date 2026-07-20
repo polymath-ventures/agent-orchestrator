@@ -31,11 +31,11 @@
 
 ## 5. Move harness resolution server-side
 
-- [ ] 5.1 Write a failing test asserting a mix-only project (no `worker.agent`) is spawnable
-- [ ] 5.2 Remove `resolveSpawnHarness`'s client-side resolution from `cli/spawn.go` so an unpinned request transmits an empty harness
-- [ ] 5.3 Add the `--model` flag to `ao spawn` and plumb it into the request body
-- [ ] 5.4 Move the agent-auth preflight so it runs against the daemon-resolved harness
-- [ ] 5.5 Verify the unresolvable case (no mix, no worker agent) still fails with a diagnosable error, now raised by the daemon
+- [x] 5.1 Write a failing test asserting a mix-only project (no `worker.agent`) is spawnable
+- [x] 5.2 Remove `resolveSpawnHarness`'s client-side resolution from `cli/spawn.go` so an unpinned request transmits an empty harness
+- [x] 5.3 Add the `--model` flag to `ao spawn` and plumb it into the request body
+- [x] 5.4 Move the agent-auth preflight so it runs against the daemon-resolved harness
+- [x] 5.5 Verify the unresolvable case (no mix, no worker agent) still fails with a diagnosable error, now raised by the daemon
 
 ## 6. Wire selection into the spawn path
 
@@ -47,11 +47,11 @@
 
 ## 7. Attach candidate health to the spawn path
 
-- [ ] 7.1 Write failing tests asserting mark-down on the two launch-attributable failures only, and no mark-down on config or environmental errors
-- [ ] 7.2 Mark the selected bucket down on the agent-binary-missing and runtime-create-refused paths, passing the attempt context so caller cancellation is excluded
-- [ ] 7.3 Recover the bucket on a successful spawn of that exact candidate
-- [ ] 7.4 Emit candidate-health telemetry from the service layer alongside the existing spawn emitters, not from the manager
-- [ ] 7.5 Verify a down bucket's share redistributes and that an all-buckets-down mix fails loudly instead of substituting
+- [x] 7.1 Write failing tests asserting mark-down on the two launch-attributable failures only, and no mark-down on config or environmental errors
+- [x] 7.2 Mark the selected bucket down on the agent-binary-missing and runtime-create-refused paths, passing the attempt context so caller cancellation is excluded
+- [x] 7.3 Recover the bucket on a successful spawn of that exact candidate
+- [x] 7.4 Emit candidate-health telemetry from the service layer alongside the existing spawn emitters, not from the manager
+- [x] 7.5 Verify a down bucket's share redistributes and that an all-buckets-down mix fails loudly instead of substituting
 
 ## 8. Spawn concurrency cap
 
