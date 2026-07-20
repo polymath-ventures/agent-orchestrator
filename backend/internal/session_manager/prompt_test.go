@@ -114,15 +114,16 @@ func TestBuildSystemPrompt_WorkerHandlesTaskSourcesAndProviderPRRules(t *testing
 	}
 }
 
-func TestBuildProjectRules_ReadsInlineAndFileRules(t *testing.T) {
+func TestLoadRoleRules_MergesInlineAndFileVerbatim(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "rules.md"), []byte("File rule.\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	got, err := buildProjectRules(projectRulesConfig{
-		ProjectPath:    dir,
-		AgentRules:     "Inline rule.",
-		AgentRulesFile: "rules.md",
+	got, err := loadRoleRules(roleRulesConfig{
+		Role:        "worker",
+		ProjectPath: dir,
+		InlineRules: "Inline rule.",
+		RulesFile:   "rules.md",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -131,6 +132,67 @@ func TestBuildProjectRules_ReadsInlineAndFileRules(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Fatalf("rules missing %q:\n%s", want, got)
 		}
+	}
+}
+
+func TestLoadRoleRules_NoOverrideIsInert(t *testing.T) {
+	got, err := loadRoleRules(roleRulesConfig{Role: "orchestrator", ProjectPath: t.TempDir()})
+	if err != nil {
+		t.Fatalf("no override should not error: %v", err)
+	}
+	if got != "" {
+		t.Fatalf("expected empty rules, got %q", got)
+	}
+}
+
+func TestLoadRoleRules_MissingFileFailsClosed(t *testing.T) {
+	_, err := loadRoleRules(roleRulesConfig{
+		Role:        "reviewer",
+		ProjectPath: t.TempDir(),
+		RulesFile:   "does-not-exist.md",
+	})
+	if err == nil {
+		t.Fatal("expected missing rules file to fail closed")
+	}
+	if !strings.Contains(err.Error(), "reviewer") || !strings.Contains(err.Error(), "does-not-exist.md") {
+		t.Fatalf("error should name role and file: %v", err)
+	}
+}
+
+func TestLoadRoleRules_EmptyFileFailsClosed(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "empty.md"), []byte("   \n\t\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := loadRoleRules(roleRulesConfig{
+		Role:        "worker",
+		ProjectPath: dir,
+		RulesFile:   "empty.md",
+	})
+	if err == nil {
+		t.Fatal("expected empty rules file to fail closed")
+	}
+}
+
+func TestLoadRoleRules_OversizedFileFailsClosed(t *testing.T) {
+	dir := t.TempDir()
+	big := make([]byte, maxRoleRulesFileBytes+1)
+	for i := range big {
+		big[i] = 'a'
+	}
+	if err := os.WriteFile(filepath.Join(dir, "big.md"), big, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := loadRoleRules(roleRulesConfig{
+		Role:        "orchestrator",
+		ProjectPath: dir,
+		RulesFile:   "big.md",
+	})
+	if err == nil {
+		t.Fatal("expected oversized rules file to fail closed")
+	}
+	if !strings.Contains(err.Error(), "limit") {
+		t.Fatalf("error should mention the size limit: %v", err)
 	}
 }
 

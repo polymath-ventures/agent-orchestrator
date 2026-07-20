@@ -2190,10 +2190,11 @@ func (m *Manager) buildSystemPrompt(ctx context.Context, kind domain.SessionKind
 		if ok {
 			cfg.OrchestratorSessionID = string(orchestratorID)
 		}
-		rules, err := buildProjectRules(projectRulesConfig{
-			ProjectPath:    project.Path,
-			AgentRules:     project.Config.AgentRules,
-			AgentRulesFile: project.Config.AgentRulesFile,
+		rules, err := loadRoleRules(roleRulesConfig{
+			Role:        "worker",
+			ProjectPath: project.Path,
+			InlineRules: project.Config.AgentRules,
+			RulesFile:   project.Config.AgentRulesFile,
 		})
 		if err != nil {
 			return "", err
