@@ -275,8 +275,15 @@ func (t *Tracker) markDown(c Candidate, err error) {
 	c = c.Normalized()
 	reason := err.Error()
 	t.mu.Lock()
-	_, alreadyDown := t.down[c]
-	t.down[c] = downState{reason: reason, changedAt: t.clock()}
+	prev, alreadyDown := t.down[c]
+	// changedAt records the healthy->down transition time and nothing else reads
+	// it for a decision. Preserve it across repeat failures so it stays the
+	// transition time; only the reason and skip count advance while still down.
+	changedAt := t.clock()
+	if alreadyDown {
+		changedAt = prev.changedAt
+	}
+	t.down[c] = downState{reason: reason, changedAt: changedAt}
 	t.skipped[c]++
 	skipped := t.skipped[c]
 	t.mu.Unlock()

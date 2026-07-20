@@ -15,9 +15,15 @@ export type WorkerMixBucket = { agent: string; model: string; weight: string };
 
 const REQUIRED_TOTAL = 100;
 
+// parseWeight reads the numeric value of a weight field. Number(), not
+// parseInt: a number input can legally hold exponent notation like "5e1", and
+// parseInt stops at the "e" and silently reads 5 instead of 50 — corrupting a
+// mix that looks valid in the field. Non-integer or non-finite input counts as 0.
 function parseWeight(weight: string): number {
-	const n = Number.parseInt(weight, 10);
-	return Number.isFinite(n) ? n : 0;
+	const trimmed = weight.trim();
+	if (trimmed === "") return 0;
+	const n = Number(trimmed);
+	return Number.isInteger(n) ? n : 0;
 }
 
 // toWorkerMixForm hydrates the flat editor rows from the persisted config array.
@@ -55,10 +61,14 @@ export function workerMixInvalid(buckets: WorkerMixBucket[]): boolean {
 }
 
 // parseMaxLiveWorkers turns the cap input into the payload value: 0 or blank
-// means unbounded, serialized as `undefined` (omit).
+// means unbounded, serialized as `undefined` (omit). Number(), not parseInt, so
+// exponent notation such as "1e2" reads as 100 rather than being truncated to 1;
+// a non-integer or non-positive value is treated as unbounded.
 export function parseMaxLiveWorkers(value: string): number | undefined {
-	const n = Number.parseInt(value, 10);
-	return Number.isFinite(n) && n > 0 ? n : undefined;
+	const trimmed = value.trim();
+	if (trimmed === "") return undefined;
+	const n = Number(trimmed);
+	return Number.isSafeInteger(n) && n > 0 ? n : undefined;
 }
 
 type AgentCatalog = {

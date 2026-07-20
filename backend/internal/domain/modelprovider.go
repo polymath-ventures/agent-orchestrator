@@ -20,21 +20,23 @@ const (
 // ClassifyModelProvider infers the vendor family of a model string from
 // well-known name fragments. It is deliberately conservative: an unrecognized
 // model returns ProviderUnknown so callers stay permissive rather than reject a
-// model AO simply has not seen.
+// model AO simply has not seen. Family fragments match on letter boundaries so a
+// longer word that merely contains one — e.g. "octopus" containing "opus" — is
+// not misread as that family and falsely rejected on a cross-provider bucket.
 func ClassifyModelProvider(model string) ModelProvider {
 	m := strings.ToLower(strings.TrimSpace(model))
 	if m == "" {
 		return ProviderUnknown
 	}
 	switch {
-	case strings.Contains(m, "claude"),
-		strings.Contains(m, "opus"),
-		strings.Contains(m, "sonnet"),
-		strings.Contains(m, "haiku"),
-		strings.Contains(m, "fable"):
+	case hasModelFamily(m, "claude"),
+		hasModelFamily(m, "opus"),
+		hasModelFamily(m, "sonnet"),
+		hasModelFamily(m, "haiku"),
+		hasModelFamily(m, "fable"):
 		return ProviderAnthropic
-	case strings.Contains(m, "gpt"),
-		strings.Contains(m, "codex"),
+	case hasModelFamily(m, "gpt"),
+		hasModelFamily(m, "codex"),
 		strings.HasPrefix(m, "o1"),
 		strings.HasPrefix(m, "o3"),
 		strings.HasPrefix(m, "o4"):
@@ -42,6 +44,32 @@ func ClassifyModelProvider(model string) ModelProvider {
 	default:
 		return ProviderUnknown
 	}
+}
+
+// hasModelFamily reports whether frag appears in m delimited by non-letters on
+// both sides (string edges, digits, or separators like '-'/'.' all count as
+// boundaries). Model names are lowercase ASCII, so a byte-level letter test is
+// sufficient. This keeps "claude-opus-4" and "gpt-4o" matching while rejecting
+// an embedded substring such as "opus" inside "octopus".
+func hasModelFamily(m, frag string) bool {
+	for start := 0; ; {
+		i := strings.Index(m[start:], frag)
+		if i < 0 {
+			return false
+		}
+		lo := start + i
+		hi := lo + len(frag)
+		beforeOK := lo == 0 || !isASCIILetter(m[lo-1])
+		afterOK := hi == len(m) || !isASCIILetter(m[hi])
+		if beforeOK && afterOK {
+			return true
+		}
+		start = lo + 1
+	}
+}
+
+func isASCIILetter(b byte) bool {
+	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z')
 }
 
 // CompatibleWith reports whether a model of provider p may be passed to a

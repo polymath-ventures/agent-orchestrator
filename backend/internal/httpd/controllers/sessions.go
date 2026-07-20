@@ -137,7 +137,7 @@ func (c *SessionsController) spawn(w http.ResponseWriter, r *http.Request) {
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "DISPLAY_NAME_TOO_LONG", "displayName must be 20 characters or fewer", nil)
 		return
 	}
-	if len(in.Model) > maxModelLen {
+	if utf8.RuneCountInString(in.Model) > maxModelLen {
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "MODEL_TOO_LONG", "model is too long", nil)
 		return
 	}

@@ -416,6 +416,16 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	}
 	argv, err := agent.GetLaunchCommand(ctx, launchCfg)
 	if err != nil {
+		// An adapter that cannot resolve its binary reports ErrAgentBinaryNotFound
+		// from GetLaunchCommand itself (e.g. copilot), which is the same
+		// candidate fault validateAgentBinary catches below — mark the bucket
+		// down here too, or a broken bucket stays healthy and is reselected
+		// forever. Other launch-command errors (prompt/config) are not candidate
+		// faults. Mark down before rollback so caller-cancellation is evaluated at
+		// failure time, not after cleanup may have let the context expire.
+		if errors.Is(err, ports.ErrAgentBinaryNotFound) {
+			m.markMixCandidateDown(ctx, mixSelected, cfg, err)
+		}
 		m.rollbackPreparedSpawnWorkspace(ctx, rec, ws, workspaceProject)
 		m.rollbackSpawnSeedRow(ctx, id)
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: launch command: %w", id, err)
@@ -425,9 +435,12 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	// tmux happily creates a session+pane around a missing command, so an
 	// unresolved binary would leak through as a "live" session that never ran.
 	if err := m.validateAgentBinary(argv); err != nil {
+		// Mark down before rollback: MarkDownForAttempt reads the caller context,
+		// and rollback (workspace destroy + seed delete) can run long enough for a
+		// live-at-failure context to expire, which would wrongly suppress the fault.
+		m.markMixCandidateDown(ctx, mixSelected, cfg, err)
 		m.rollbackPreparedSpawnWorkspace(ctx, rec, ws, workspaceProject)
 		m.rollbackSpawnSeedRow(ctx, id)
-		m.markMixCandidateDown(ctx, mixSelected, cfg, err)
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: %w", id, err)
 	}
 	handle, err := m.runtime.Create(ctx, ports.RuntimeConfig{
@@ -437,9 +450,9 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		Env:           env,
 	})
 	if err != nil {
+		m.markMixCandidateDown(ctx, mixSelected, cfg, err)
 		m.rollbackPreparedSpawnWorkspace(ctx, rec, ws, workspaceProject)
 		m.rollbackSpawnSeedRow(ctx, id)
-		m.markMixCandidateDown(ctx, mixSelected, cfg, err)
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: runtime: %w", id, err)
 	}
 
@@ -1105,7 +1118,13 @@ func (m *Manager) relaunchRestoredSession(ctx context.Context, rec domain.Sessio
 	// its (harness, model) bucket, so relaunching it on a different model would
 	// put the census and the running agent out of step.
 	agentConfig := effectiveAgentConfig(rec.Kind, project.Config)
-	if rec.Model != "" {
+	// A mix-selected session carries its bucket's model authoritatively, including
+	// the empty string (the bucket's "harness default" identity). Applying it
+	// unconditionally for mix-selected rows keeps the relaunched model in step
+	// with the (harness, model) bucket the census counts it in, even when project
+	// config changed after the session launched. Legacy non-mix rows keep the
+	// old "only override when non-empty" fallback.
+	if rec.MixSelected || rec.Model != "" {
 		agentConfig.Model = rec.Model
 	}
 	env := m.runtimeEnv(rec.ID, rec.ProjectID, rec.IssueID, project.Config.Env)

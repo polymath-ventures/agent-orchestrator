@@ -29,6 +29,14 @@ func TestClassifyModelProvider(t *testing.T) {
 		// unrecognized models stay unknown so resolution is permissive.
 		{"llama-3", ProviderUnknown},
 		{"some-internal-model", ProviderUnknown},
+		// A family fragment embedded in a longer word must NOT classify: "octopus"
+		// contains "opus" but is not an Anthropic model, and misclassifying it
+		// would falsely reject it on a non-Anthropic bucket.
+		{"octopus-v1", ProviderUnknown},
+		{"octopus", ProviderUnknown},
+		{"opusculum", ProviderUnknown},
+		{"gpt4", ProviderOpenAI}, // digit boundary still matches the family
+		{"claude-opus-4-1", ProviderAnthropic},
 	}
 	for _, tt := range tests {
 		if got := ClassifyModelProvider(tt.model); got != tt.want {

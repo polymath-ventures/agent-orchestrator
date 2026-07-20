@@ -3,6 +3,7 @@ package sessionmanager
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 
@@ -10,6 +11,35 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
+
+// launchCmdAgent is a fake whose GetLaunchCommand fails with a caller-supplied
+// error, exercising the pre-validateAgentBinary failure path where an adapter
+// (e.g. copilot) reports ErrAgentBinaryNotFound from GetLaunchCommand itself.
+type launchCmdAgent struct {
+	fakeAgent
+	err error
+}
+
+func (a launchCmdAgent) GetLaunchCommand(context.Context, ports.LaunchConfig) ([]string, error) {
+	return nil, a.err
+}
+
+type launchCmdAgents struct{ err error }
+
+func (a launchCmdAgents) Agent(domain.AgentHarness) (ports.Agent, bool) {
+	return launchCmdAgent{err: a.err}, true
+}
+
+func launchCmdFailManager(t *testing.T, tr *candidatehealth.Tracker, launchErr error) *Manager {
+	t.Helper()
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{WorkerMix: singleBucketMix()}}
+	return New(Deps{
+		Runtime: &fakeRuntime{}, Agents: launchCmdAgents{err: launchErr}, Workspace: &fakeWorkspace{}, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st},
+		LookPath: func(string) (string, error) { return "/bin/true", nil }, Health: tr,
+	})
+}
 
 // healthRecordingSink captures candidate-health telemetry so the wiring tests
 // can assert on the events the Tracker emits through the manager.
@@ -96,6 +126,37 @@ func TestSpawn_MixSelectedBinaryMissingMarksDown(t *testing.T) {
 	}
 	if !tr.IsDown(workerMixCandidate(domain.HarnessClaudeCode, "")) {
 		t.Fatal("a mix-selected binary-missing spawn must mark the bucket down")
+	}
+}
+
+// GetLaunchCommand itself can report ErrAgentBinaryNotFound (e.g. copilot
+// resolves its binary there, not just via PATH). That path must mark the bucket
+// down too, or a broken bucket stays healthy and gets reselected forever.
+func TestSpawn_MixSelectedLaunchCommandBinaryMissingMarksDown(t *testing.T) {
+	tr := candidatehealth.New(candidatehealth.Config{Source: "session_manager"})
+	m := launchCmdFailManager(t, tr, fmt.Errorf("copilot: %w", ports.ErrAgentBinaryNotFound))
+
+	_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	if !errors.Is(err, ports.ErrAgentBinaryNotFound) {
+		t.Fatalf("spawn err = %v, want ErrAgentBinaryNotFound", err)
+	}
+	if !tr.IsDown(workerMixCandidate(domain.HarnessClaudeCode, "")) {
+		t.Fatal("GetLaunchCommand returning ErrAgentBinaryNotFound must mark the bucket down")
+	}
+}
+
+// A non-sentinel GetLaunchCommand failure (a prompt/config error, not the
+// candidate's binary) is NOT a candidate fault and must not mark the bucket down.
+func TestSpawn_MixSelectedLaunchCommandGenericErrorDoesNotMarkDown(t *testing.T) {
+	tr := candidatehealth.New(candidatehealth.Config{Source: "session_manager"})
+	m := launchCmdFailManager(t, tr, errors.New("prompt template build failed"))
+
+	_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	if err == nil {
+		t.Fatal("expected spawn to fail")
+	}
+	if tr.IsDown(workerMixCandidate(domain.HarnessClaudeCode, "")) {
+		t.Fatal("a non-binary launch-command error must not mark the bucket down")
 	}
 }
 
