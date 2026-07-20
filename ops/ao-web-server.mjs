@@ -10,6 +10,7 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_DIST_DIR = path.resolve(HERE, "../frontend/dist");
 const DEFAULT_TARGET = "http://127.0.0.1:3001";
 const PROXY_PREFIXES = ["/api", "/healthz", "/readyz", "/mux"];
+const WEBSOCKET_PROXY_PREFIXES = ["/mux"];
 
 const CONTENT_TYPES = new Map([
 	[".css", "text/css; charset=utf-8"],
@@ -109,7 +110,7 @@ function proxyHttp({ apiTarget, request, response }) {
 
 function handleUpgrade({ apiTarget, head, request, socket, trust }) {
 	const url = requestUrl(request);
-	if (!url || !shouldProxy(url.pathname)) {
+	if (!url || !shouldProxyWebSocket(url.pathname)) {
 		socket.end("HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n");
 		return;
 	}
@@ -218,6 +219,10 @@ function safeDecodePath(pathname) {
 
 function shouldProxy(pathname) {
 	return PROXY_PREFIXES.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
+}
+
+function shouldProxyWebSocket(pathname) {
+	return WEBSOCKET_PROXY_PREFIXES.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
 }
 
 function requestUrl(request) {

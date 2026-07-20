@@ -48,7 +48,7 @@ Build the renderer from a release or checked-out source tree:
 
 ```bash
 cd ~/.ao/deploy/current/source
-npm --prefix frontend install --allow-git=all --allow-remote=all
+npm --prefix frontend ci
 npm --prefix frontend run build:web
 ```
 

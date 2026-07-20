@@ -282,6 +282,34 @@ describe("ao web production server", () => {
 		assert.equal(daemonHit, false);
 	});
 
+	it("only proxies websocket upgrades for mux routes", async () => {
+		let daemonHit = false;
+		const daemon = await listen(
+			http.createServer().on("upgrade", (_request, socket) => {
+				daemonHit = true;
+				socket.end();
+			}),
+		);
+		const distDir = await makeDist();
+		const server = await listen(
+			createAoWebServer({
+				distDir,
+				apiTarget: daemon.url,
+				publicUrl: "https://ao.tailnet.example/",
+			}),
+		);
+
+		const response = await rawUpgrade({
+			port: server.port,
+			host: server.host,
+			origin: "https://ao.tailnet.example",
+			pathname: "/api/v1/projects",
+		});
+
+		assert.match(response, /^HTTP\/1\.1 404 Not Found/);
+		assert.equal(daemonHit, false);
+	});
+
 	it("starts when invoked through the release current symlink", async () => {
 		const distDir = await makeDist();
 		const server = await startReleaseSymlinkServer(distDir);
