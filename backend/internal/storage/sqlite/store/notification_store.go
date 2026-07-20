@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 
 	moderncsqlite "modernc.org/sqlite"
 	sqlite3 "modernc.org/sqlite/lib"
@@ -19,6 +20,9 @@ var _ notificationsvc.Store = (*Store)(nil)
 // CreateNotification inserts one unread notification. It returns created=false
 // when the unread dedupe index already has a matching row.
 func (s *Store) CreateNotification(ctx context.Context, rec domain.NotificationRecord) (domain.NotificationRecord, bool, error) {
+	if rec.DedupeKey == "" {
+		rec.DedupeKey = notificationDedupeKey(rec)
+	}
 	if err := rec.Validate(); err != nil {
 		return domain.NotificationRecord{}, false, err
 	}
@@ -34,6 +38,7 @@ func (s *Store) CreateNotification(ctx context.Context, rec domain.NotificationR
 		SessionID: rec.SessionID,
 		ProjectID: rec.ProjectID,
 		PRURL:     rec.PRURL,
+		DedupeKey: rec.DedupeKey,
 		Type:      rec.Type,
 		Title:     rec.Title,
 		Body:      rec.Body,
@@ -89,9 +94,8 @@ func (s *Store) MarkAllNotificationsRead(ctx context.Context) ([]domain.Notifica
 
 func (s *Store) getUnreadNotificationByDedupe(ctx context.Context, rec domain.NotificationRecord) (domain.NotificationRecord, bool, error) {
 	row, err := s.qw.GetUnreadNotificationByDedupe(ctx, gen.GetUnreadNotificationByDedupeParams{
-		SessionID: rec.SessionID,
 		Type:      rec.Type,
-		PRURL:     rec.PRURL,
+		DedupeKey: rec.DedupeKey,
 	})
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.NotificationRecord{}, false, nil
@@ -113,6 +117,7 @@ func notificationFromGen(row gen.Notification) domain.NotificationRecord {
 		SessionID: row.SessionID,
 		ProjectID: row.ProjectID,
 		PRURL:     row.PRURL,
+		DedupeKey: row.DedupeKey,
 		Type:      row.Type,
 		Title:     row.Title,
 		Body:      row.Body,
@@ -127,4 +132,21 @@ func notificationsFromGen(rows []gen.Notification) []domain.NotificationRecord {
 		out = append(out, notificationFromGen(row))
 	}
 	return out
+}
+
+func notificationDedupeKey(rec domain.NotificationRecord) string {
+	var parts []string
+	if rec.ProjectID != "" {
+		parts = append(parts, "project", string(rec.ProjectID))
+	}
+	if rec.SessionID != "" {
+		parts = append(parts, "session", string(rec.SessionID))
+	}
+	if rec.PRURL != "" {
+		parts = append(parts, "pr", rec.PRURL)
+	}
+	if len(parts) > 0 {
+		return strings.Join(parts, ":")
+	}
+	return rec.DedupeKey
 }

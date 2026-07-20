@@ -590,10 +590,12 @@ func (c *SessionsController) activity(w http.ResponseWriter, r *http.Request) {
 	sig := ports.ActivitySignal{
 		Valid:          state != "",
 		State:          state,
+		Harness:        domain.AgentHarness(capActivityMeta(domain.SanitizeControlChars(in.Harness))),
 		Event:          capActivityMeta(domain.SanitizeControlChars(in.Event)),
 		ToolName:       capActivityMeta(domain.SanitizeControlChars(in.ToolName)),
 		ToolUseID:      capActivityMeta(domain.SanitizeControlChars(in.ToolUseID)),
 		AgentSessionID: agentSessionID,
+		Usage:          usageSignal(in.Usage),
 	}
 	if err := c.Activity.ApplyActivitySignal(r.Context(), sessionID(r), sig); err != nil {
 		if errors.Is(err, ports.ErrSessionNotFound) {
@@ -614,6 +616,18 @@ func capActivityMeta(v string) string {
 		return ""
 	}
 	return v
+}
+
+func usageSignal(in *SessionUsagePayload) *ports.UsageSignal {
+	if in == nil {
+		return nil
+	}
+	return &ports.UsageSignal{
+		InputTokens:  in.InputTokens,
+		OutputTokens: in.OutputTokens,
+		TotalTokens:  in.TotalTokens,
+		CostUSD:      in.CostUSD,
+	}
 }
 
 func (c *SessionsController) spawnOrchestrator(w http.ResponseWriter, r *http.Request) {

@@ -31,17 +31,33 @@ const (
 )
 
 type daemonStatus struct {
-	State     daemonState `json:"state"`
-	PID       int         `json:"pid,omitempty"`
-	Port      int         `json:"port,omitempty"`
-	StartedAt *time.Time  `json:"startedAt,omitempty"`
-	Uptime    string      `json:"uptime,omitempty"`
-	RunFile   string      `json:"runFile"`
-	DataDir   string      `json:"dataDir"`
-	Health    string      `json:"health,omitempty"`
-	Ready     string      `json:"ready,omitempty"`
-	Error     string      `json:"error,omitempty"`
+	State     daemonState   `json:"state"`
+	PID       int           `json:"pid,omitempty"`
+	Port      int           `json:"port,omitempty"`
+	StartedAt *time.Time    `json:"startedAt,omitempty"`
+	Uptime    string        `json:"uptime,omitempty"`
+	RunFile   string        `json:"runFile"`
+	DataDir   string        `json:"dataDir"`
+	Health    string        `json:"health,omitempty"`
+	Ready     string        `json:"ready,omitempty"`
+	Quotas    []statusQuota `json:"quotas,omitempty"`
+	Error     string        `json:"error,omitempty"`
 	owned     bool
+}
+
+type statusQuota struct {
+	Harness       string     `json:"harness"`
+	AccountID     string     `json:"accountId"`
+	Model         string     `json:"model,omitempty"`
+	WindowStart   *time.Time `json:"windowStart,omitempty"`
+	WindowEnd     *time.Time `json:"windowEnd,omitempty"`
+	Used          *float64   `json:"used,omitempty"`
+	Remaining     *float64   `json:"remaining,omitempty"`
+	Limit         *float64   `json:"limit,omitempty"`
+	SignalQuality string     `json:"signalQuality"`
+	Source        string     `json:"source"`
+	Basis         string     `json:"basis,omitempty"`
+	ObservedAt    time.Time  `json:"observedAt"`
 }
 
 type probeResult struct {
@@ -133,10 +149,37 @@ func (c *commandContext) inspectDaemon(ctx context.Context) (daemonStatus, error
 	st.Ready = ready.Status
 	if ready.Status == string(stateReady) {
 		st.State = stateReady
+		st.Quotas = c.readStatusQuotas(ctx, info.Port)
 		return st, nil
 	}
 	st.State = stateNotReady
 	return st, nil
+}
+
+func (c *commandContext) readStatusQuotas(ctx context.Context, port int) []statusQuota {
+	reqCtx, cancel := context.WithTimeout(ctx, probeTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, fmt.Sprintf("http://%s:%d/api/v1/metrics", config.LoopbackHost, port), http.NoBody)
+	if err != nil {
+		return nil
+	}
+	resp, err := c.deps.HTTPClient.Do(req)
+	if err != nil {
+		return nil
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil
+	}
+	var body struct {
+		Latest *struct {
+			Quotas []statusQuota `json:"quotas"`
+		} `json:"latest"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil || body.Latest == nil {
+		return nil
+	}
+	return body.Latest.Quotas
 }
 
 func (c *commandContext) readProbe(ctx context.Context, port int, path string) (probeResult, error) {
@@ -216,6 +259,34 @@ func writeStatus(cmd *cobra.Command, st daemonStatus) error {
 			return err
 		}
 	}
+	if len(st.Quotas) > 0 {
+		if _, err := fmt.Fprintln(out, "  quotas:"); err != nil {
+			return err
+		}
+		for _, q := range st.Quotas {
+			if _, err := fmt.Fprintf(out, "    %s/%s: %s", q.Harness, firstNonEmpty(q.AccountID, "unknown"), q.SignalQuality); err != nil {
+				return err
+			}
+			if q.Remaining != nil && q.Limit != nil {
+				if _, err := fmt.Fprintf(out, " %.1f/%.1f remaining", *q.Remaining, *q.Limit); err != nil {
+					return err
+				}
+			}
+			if q.WindowEnd != nil && !q.WindowEnd.IsZero() {
+				if _, err := fmt.Fprintf(out, " until %s", q.WindowEnd.Format(time.RFC3339)); err != nil {
+					return err
+				}
+			}
+			if q.SignalQuality == "none" && q.Basis != "" {
+				if _, err := fmt.Fprintf(out, " (%s)", q.Basis); err != nil {
+					return err
+				}
+			}
+			if _, err := fmt.Fprintln(out); err != nil {
+				return err
+			}
+		}
+	}
 	if st.Error != "" {
 		if _, err := fmt.Fprintf(out, "  error: %s\n", st.Error); err != nil {
 			return err
@@ -229,4 +300,13 @@ func formatUptime(d time.Duration) string {
 		d = 0
 	}
 	return d.Round(time.Second).String()
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
 }

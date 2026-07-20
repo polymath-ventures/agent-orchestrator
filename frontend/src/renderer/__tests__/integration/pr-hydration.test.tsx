@@ -99,6 +99,9 @@ function respondWithProjectAndPRs() {
 				error: undefined,
 			};
 		}
+		if (url === "/api/v1/metrics") {
+			return { data: { history: [] }, error: undefined, response: { status: 200 } };
+		}
 		throw new Error(`unexpected GET ${url}`);
 	});
 }
@@ -162,6 +165,9 @@ function respondWithAttentionPR() {
 				},
 				error: undefined,
 			};
+		}
+		if (url === "/api/v1/metrics") {
+			return { data: { history: [] }, error: undefined, response: { status: 200 } };
 		}
 		if (url === "/api/v1/sessions") {
 			return {

@@ -63,17 +63,20 @@ Alternative considered: represent quota as telemetry events only. That would
 make the current state a query over event history and complicate notification
 dedupe per window.
 
-### Make quota collectors adapter-owned
+### Record no-signal quota snapshots first
 
-Introduce a small quota probe interface implemented by harness adapters that
-can report exact, estimated, or no-signal snapshots. The daemon quota observer
-iterates installed subscription harnesses on a configurable interval and after
-relevant usage signals. Each adapter owns its local file, CLI, header, or API
-knowledge so quota rules stay close to the harness that understands them.
+Introduce a small quota collector interface that can report exact, estimated,
+or no-signal snapshots. The first implementation records durable no-signal
+snapshots for Claude Code, Codex, and the Codex Fugu hook variant because
+current public/local surfaces expose user-facing quota warnings but no stable
+machine-readable quota contract for AO to consume. Future exact or estimated
+probes should stay close to the harness adapter that understands their local
+file, CLI, header, or API shape.
 
 Alternative considered: one central collector that knows every harness format.
-That would duplicate adapter knowledge and make future harness additions more
-fragile.
+That remains the wrong shape for exact/estimated probes, but the no-signal
+baseline is intentionally centralized because it carries no provider-specific
+parser and keeps the operator-facing state honest immediately.
 
 ### Dedupe low-quota notifications at snapshot ingestion
 
@@ -101,7 +104,8 @@ clients.
 1. Add usage extraction tests and port the extractor.
 2. Extend activity DTOs and lifecycle handling to emit usage telemetry.
 3. Add metrics read models over telemetry and expose `/api/v1/metrics`.
-4. Add quota snapshot storage and adapter quota probe interfaces.
+4. Add quota snapshot storage and no-signal quota collection for known
+   subscription harnesses.
 5. Add low-quota notification type and dedupe logic.
 6. Regenerate API schema and wire CLI/UI consumers.
 
@@ -109,12 +113,37 @@ Rollback is straightforward for partial rollout: disabling extraction or quota
 observation leaves existing activity and session behavior unchanged. New
 database migrations must be additive and reversible.
 
-## Open Questions
+## Quota Discovery Findings
 
-- Which Claude Code surfaces provide exact quota windows today versus only
-  usage observations?
-- Which Codex subscription surfaces provide quota windows today versus only
-  usage observations?
-- Should default low-quota thresholds be percent-based, absolute remaining
-  usage, or both? The implementation should support configuration flexible
-  enough for either while choosing one conservative default.
+### Claude Code
+
+Anthropic's Claude Code support docs describe usage and rate limits as
+subscription-plan and model dependent. The documented local/user-facing
+surfaces are messages that a limit was reached and when it resets, `/model`
+for model availability, and `/cost` for the current session's running spend in
+API-key mode. Local CLI help for `claude` 2.1.215 exposes model selection, but
+not a machine-readable quota/status command. This implementation therefore
+records `signalQuality: none` for Claude Code with no numeric quota values.
+
+### Codex
+
+OpenAI's Codex subscription docs describe plan limits through the Codex usage
+dashboard, limit banners, and active-session `/status`. Local CLI help for
+`codex` 0.144.5 exposes model and runtime controls, but not a stable
+machine-readable quota/status command. Codex rollout JSONL can produce token
+usage deltas, but not subscription quota windows. This implementation therefore
+records `signalQuality: none` for Codex with no numeric quota values.
+
+### Codex Fugu
+
+AO already treats `codex-fugu` as a Codex hook variant for usage extraction,
+even though it is not a canonical worker harness in `domain.AllHarnesses`.
+No separate machine-readable quota surface was found for the variant, so it
+inherits Codex's no-signal quota behavior and is recorded as a distinct
+subject for clarity when that hook token is used.
+
+### Low-Quota Thresholds
+
+The first implementation uses a conservative percent threshold over exact or
+estimated snapshots only. No-signal snapshots remain visible in the API, CLI,
+and UI, but never fire low-quota alerts because that would fabricate urgency.

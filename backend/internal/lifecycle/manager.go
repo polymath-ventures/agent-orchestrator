@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"math"
 	"strings"
 	"sync"
 	"time"
@@ -171,6 +172,7 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 		m.mu.Unlock()
 		return err
 	}
+	usageEvent, hasUsageEvent := usageTelemetryEvent(rec, s, now)
 	if metadataChanged {
 		// Fold metadata into rec before copying it into next below, so the
 		// activity and resume handle land in one store update.
@@ -190,9 +192,15 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 			rec.UpdatedAt = now
 			err := m.store.UpdateSession(ctx, rec)
 			m.mu.Unlock()
+			if err == nil && hasUsageEvent {
+				m.emitTelemetry(ctx, usageEvent)
+			}
 			return err
 		}
 		m.mu.Unlock()
+		if hasUsageEvent {
+			m.emitTelemetry(ctx, usageEvent)
+		}
 		return nil
 	}
 	next := rec
@@ -222,12 +230,67 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 	}
 	waitingEvents := m.waitingInputEvents(next, prevState, prevAt, now)
 	m.mu.Unlock()
+	if hasUsageEvent {
+		m.emitTelemetry(ctx, usageEvent)
+	}
 	for _, ev := range waitingEvents {
 		m.emitTelemetry(ctx, ev)
 	}
 	m.emitNotification(ctx, intent)
 	return nil
 }
+
+func usageTelemetryEvent(rec domain.SessionRecord, s ports.ActivitySignal, now time.Time) (ports.TelemetryEvent, bool) {
+	payload := usageTelemetryPayload(s.Usage)
+	if len(payload) == 0 {
+		return ports.TelemetryEvent{}, false
+	}
+	harness := rec.Harness
+	if harness == "" {
+		harness = s.Harness
+	}
+	if harness != "" {
+		payload["harness"] = string(harness)
+	} else {
+		payload["harness"] = "unknown"
+	}
+	projectID := rec.ProjectID
+	sessionID := rec.ID
+	return ports.TelemetryEvent{
+		Name:       "ao.session.usage",
+		Source:     "lifecycle",
+		OccurredAt: now.UTC(),
+		Level:      ports.TelemetryLevelInfo,
+		ProjectID:  &projectID,
+		SessionID:  &sessionID,
+		Payload:    payload,
+	}, true
+}
+
+func usageTelemetryPayload(usage *ports.UsageSignal) map[string]any {
+	if usage == nil {
+		return nil
+	}
+	payload := map[string]any{}
+	addUsageNumber(payload, "input_tokens", usage.InputTokens)
+	addUsageNumber(payload, "output_tokens", usage.OutputTokens)
+	addUsageNumber(payload, "total_tokens", usage.TotalTokens)
+	addUsageNumber(payload, "cost_usd", usage.CostUSD)
+	return payload
+}
+
+func addUsageNumber(payload map[string]any, key string, v *float64) {
+	if v == nil {
+		return
+	}
+	f := *v
+	if math.IsNaN(f) || math.IsInf(f, 0) || f < 0 || f > maxUsageNumericField {
+		return
+	}
+	payload[key] = f
+}
+
+const maxUsageNumericField = 1e14
 
 // toolFlight tracks one session's in-flight tool executions and the pending
 // permission dialog's identity, so a sticky `blocked` is cleared by the post

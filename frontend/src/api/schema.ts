@@ -90,6 +90,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/metrics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Return the latest resource, usage, and quota metrics snapshot plus a short history */
+        get: operations["getMetrics"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/mobile/disable": {
         parameters: {
             query?: never;
@@ -838,6 +855,117 @@ export interface components {
             ok: boolean;
             prNumber: number;
         };
+        MetricsAlert: {
+            kind: string;
+            message: string;
+            severity: string;
+            subject?: string;
+            /** Format: double */
+            threshold: number;
+            /** Format: double */
+            value: number;
+        };
+        MetricsCost: {
+            byHarness: components["schemas"]["MetricsHarnessCost"][];
+            byProject: components["schemas"]["MetricsProjectCost"][];
+            /** Format: double */
+            costUsd: number;
+            /** Format: int64 */
+            events: number;
+            /** Format: int64 */
+            inputTokens: number;
+            /** Format: int64 */
+            outputTokens: number;
+            /** Format: int64 */
+            totalTokens: number;
+            truncated: boolean;
+            /** Format: int64 */
+            windowSeconds: number;
+        };
+        MetricsCostTotals: {
+            /** Format: double */
+            costUsd: number;
+            /** Format: int64 */
+            events: number;
+            /** Format: int64 */
+            inputTokens: number;
+            /** Format: int64 */
+            outputTokens: number;
+            /** Format: int64 */
+            totalTokens: number;
+        };
+        MetricsHarnessCost: {
+            /** Format: double */
+            costUsd: number;
+            /** Format: int64 */
+            events: number;
+            harness: string;
+            /** Format: int64 */
+            inputTokens: number;
+            /** Format: int64 */
+            outputTokens: number;
+            /** Format: int64 */
+            totalTokens: number;
+        };
+        MetricsHost: {
+            diskFreeBytes: number;
+            diskKnown: boolean;
+            diskTotalBytes: number;
+            /** Format: double */
+            loadAvg1: number;
+            /** Format: double */
+            loadAvg5: number;
+            /** Format: double */
+            loadAvg15: number;
+            loadKnown: boolean;
+            memAvailableBytes: number;
+            memKnown: boolean;
+            memTotalBytes: number;
+            numCpu: number;
+        };
+        MetricsProject: {
+            byActivity: {
+                [key: string]: number;
+            } | null;
+            cost: components["schemas"]["MetricsCostTotals"];
+            projectId: string;
+            sessions: number;
+        };
+        MetricsProjectCost: {
+            /** Format: double */
+            costUsd: number;
+            /** Format: int64 */
+            events: number;
+            /** Format: int64 */
+            inputTokens: number;
+            /** Format: int64 */
+            outputTokens: number;
+            projectId: string;
+            /** Format: int64 */
+            totalTokens: number;
+        };
+        MetricsResponse: {
+            history: components["schemas"]["MetricsSnapshot"][];
+            latest?: components["schemas"]["MetricsSnapshot"];
+        };
+        MetricsScope: {
+            matched: boolean;
+            memBytes: number;
+            name: string;
+            sessionId?: string;
+        };
+        MetricsSnapshot: {
+            alerts: components["schemas"]["MetricsAlert"][];
+            /** Format: date-time */
+            collectedAt: string;
+            cost: components["schemas"]["MetricsCost"];
+            host: components["schemas"]["MetricsHost"];
+            projects: components["schemas"]["MetricsProject"][];
+            quotas: components["schemas"]["QuotaSnapshot"][];
+            scopes: components["schemas"]["MetricsScope"][];
+            zombies: number;
+            zombiesKnown: boolean;
+        };
         MobileStatusResponse: {
             enabled: boolean;
             host: string;
@@ -861,11 +989,11 @@ export interface components {
             target: components["schemas"]["NotificationTarget"];
             title: string;
             /** @enum {string} */
-            type: "needs_input" | "ready_to_merge" | "pr_merged" | "pr_closed_unmerged";
+            type: "needs_input" | "ready_to_merge" | "pr_merged" | "pr_closed_unmerged" | "low_quota";
         };
         NotificationTarget: {
             /** @enum {string} */
-            kind: "session" | "pr";
+            kind: "session" | "pr" | "quota";
             prUrl?: string;
             sessionId: string;
         };
@@ -933,6 +1061,23 @@ export interface components {
             path: string;
             resolveError?: string;
             sessionPrefix: string;
+        };
+        QuotaSnapshot: {
+            accountId: string;
+            basis?: string;
+            harness: string;
+            limit?: null | number;
+            model?: string;
+            /** Format: date-time */
+            observedAt: string;
+            remaining?: null | number;
+            signalQuality: string;
+            source: string;
+            used?: null | number;
+            /** Format: date-time */
+            windowEnd?: string;
+            /** Format: date-time */
+            windowStart?: string;
         };
         RemoveProjectResult: {
             projectId: string;
@@ -1090,11 +1235,19 @@ export interface components {
         SessionResponse: {
             session: components["schemas"]["ControllersSessionView"];
         };
+        SessionUsagePayload: {
+            cost_usd?: null | number;
+            input_tokens?: null | number;
+            output_tokens?: null | number;
+            total_tokens?: null | number;
+        };
         SetActivityRequest: {
             /** @description Native agent session identifier used to resume its transcript. */
             agentSessionId?: string;
             /** @description AO hook sub-command that produced this state (e.g. post-tool-use). */
             event?: string;
+            /** @description Agent harness reporting the activity, used for usage telemetry attribution when the session row has no harness. */
+            harness?: string;
             /**
              * @description Agent activity state reported by an agent hook. Optional for metadata-only hooks.
              * @enum {string}
@@ -1104,6 +1257,8 @@ export interface components {
             toolName?: string;
             /** @description Native tool-use id, for tool-use hook events. */
             toolUseId?: string;
+            /** @description Optional per-turn token usage delta extracted from harness-local records. */
+            usage?: components["schemas"]["SessionUsagePayload"];
         };
         SetActivityResponse: {
             ok: boolean;
@@ -1447,6 +1602,35 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    getMetrics: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MetricsResponse"];
                 };
             };
             /** @description Not Implemented */

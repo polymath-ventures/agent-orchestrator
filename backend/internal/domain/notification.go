@@ -17,12 +17,14 @@ const (
 	NotificationPRMerged NotificationType = "pr_merged"
 	// NotificationPRClosedUnmerged means a tracked PR closed without merging.
 	NotificationPRClosedUnmerged NotificationType = "pr_closed_unmerged"
+	// NotificationLowQuota means a subscription harness is nearing its known quota window.
+	NotificationLowQuota NotificationType = "low_quota"
 )
 
 // Valid reports whether t is one of the v1 notification kinds.
 func (t NotificationType) Valid() bool {
 	switch t {
-	case NotificationNeedsInput, NotificationReadyToMerge, NotificationPRMerged, NotificationPRClosedUnmerged:
+	case NotificationNeedsInput, NotificationReadyToMerge, NotificationPRMerged, NotificationPRClosedUnmerged, NotificationLowQuota:
 		return true
 	default:
 		return false
@@ -55,6 +57,7 @@ type NotificationRecord struct {
 	SessionID SessionID
 	ProjectID ProjectID
 	PRURL     string
+	DedupeKey string
 	Type      NotificationType
 	Title     string
 	Body      string
@@ -73,7 +76,11 @@ var (
 
 // Validate checks the required fields and enum values for a stored notification.
 func (r NotificationRecord) Validate() error {
-	if r.SessionID == "" || r.ProjectID == "" || r.Title == "" || r.CreatedAt.IsZero() {
+	if r.Type == NotificationLowQuota {
+		if r.DedupeKey == "" || r.Title == "" || r.CreatedAt.IsZero() {
+			return ErrInvalidNotificationRecord
+		}
+	} else if r.SessionID == "" || r.ProjectID == "" || r.Title == "" || r.CreatedAt.IsZero() {
 		return ErrInvalidNotificationRecord
 	}
 	if !r.Type.Valid() {

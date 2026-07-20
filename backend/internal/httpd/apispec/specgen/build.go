@@ -67,6 +67,8 @@ func Build() ([]byte, error) {
 			"Code-review runs and findings"),
 		*(&openapi31.Tag{Name: "notifications"}).WithDescription(
 			"Durable dashboard notifications"),
+		*(&openapi31.Tag{Name: "metrics"}).WithDescription(
+			"Daemon resource, usage, and quota metrics"),
 		*(&openapi31.Tag{Name: "events"}).WithDescription(
 			"Server-sent CDC event stream with durable replay"),
 		*(&openapi31.Tag{Name: "import"}).WithDescription(
@@ -176,6 +178,7 @@ var schemaNames = map[string]string{
 	"ControllersListSessionPRsResponse":           "ListSessionPRsResponse",
 	"ControllersSetActivityRequest":               "SetActivityRequest",
 	"ControllersSetActivityResponse":              "SetActivityResponse",
+	"ControllersSessionUsagePayload":              "SessionUsagePayload",
 	"ControllersSpawnOrchestratorRequest":         "SpawnOrchestratorRequest",
 	"ControllersSpawnOrchestratorResponse":        "SpawnOrchestratorResponse",
 	"ControllersOrchestratorResponse":             "OrchestratorResponse",
@@ -191,6 +194,17 @@ var schemaNames = map[string]string{
 	"ControllersMarkNotificationReadRequest":      "MarkNotificationReadRequest",
 	"ControllersNotificationEnvelope":             "NotificationEnvelope",
 	"ControllersMarkAllNotificationsReadResponse": "MarkAllNotificationsReadResponse",
+	"ControllersMetricsResponse":                  "MetricsResponse",
+	"MetricsSnapshot":                             "MetricsSnapshot",
+	"MetricsHost":                                 "MetricsHost",
+	"MetricsProject":                              "MetricsProject",
+	"MetricsScope":                                "MetricsScope",
+	"MetricsCostTotals":                           "MetricsCostTotals",
+	"MetricsProjectCost":                          "MetricsProjectCost",
+	"MetricsHarnessCost":                          "MetricsHarnessCost",
+	"MetricsCost":                                 "MetricsCost",
+	"MetricsAlert":                                "MetricsAlert",
+	"DomainQuotaSnapshot":                         "QuotaSnapshot",
 	// httpd/controllers — PR wire envelopes
 	"ControllersMergePRResponse":         "MergePRResponse",
 	"ControllersResolveCommentsRequest":  "ResolveCommentsRequest",
@@ -303,9 +317,23 @@ func operations() []operation {
 	ops = append(ops, prOperations()...)
 	ops = append(ops, reviewOperations()...)
 	ops = append(ops, notificationOperations()...)
+	ops = append(ops, metricsOperations()...)
 	ops = append(ops, importOperations()...)
 	ops = append(ops, mobileOperations()...)
 	return ops
+}
+
+func metricsOperations() []operation {
+	return []operation{
+		{
+			method: http.MethodGet, path: "/api/v1/metrics", id: "getMetrics", tag: "metrics",
+			summary: "Return the latest resource, usage, and quota metrics snapshot plus a short history",
+			resps: []respUnit{
+				{http.StatusOK, controllers.MetricsResponse{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+	}
 }
 
 func agentOperations() []operation {

@@ -36,6 +36,20 @@ const (
 	// DefaultTelemetryPostHogHost is the default PostHog ingestion host when
 	// remote telemetry is enabled and AO_TELEMETRY_POSTHOG_HOST is unset.
 	DefaultTelemetryPostHogHost = "https://us.i.posthog.com"
+	// DefaultMetricsInterval is how often the daemon samples metrics.
+	DefaultMetricsInterval = 30 * time.Second
+	// DefaultMetricsDiskFreePercent fires disk_low when data-volume free space
+	// falls below this percent. Zero disables the alert.
+	DefaultMetricsDiskFreePercent = 10
+	// DefaultMetricsMemAvailablePercent fires mem_low when available memory
+	// falls below this percent. Zero disables the alert.
+	DefaultMetricsMemAvailablePercent = 10
+	// DefaultMetricsLoadPerCore fires load_high when 1-minute load per CPU core
+	// exceeds this ratio. Zero disables the alert.
+	DefaultMetricsLoadPerCore = 1.0
+	// DefaultMetricsZombieSustainTicks is how many consecutive ticks with
+	// zombies are required before the alert fires. Zero disables the alert.
+	DefaultMetricsZombieSustainTicks = 2
 )
 
 // TelemetryRemote selects the remote telemetry exporter.
@@ -55,6 +69,17 @@ type TelemetryConfig struct {
 	Remote      TelemetryRemote
 	PostHogKey  string
 	PostHogHost string
+}
+
+// MetricsConfig controls the daemon metrics observer. Interval <=0 disables
+// the observer and /api/v1/metrics reports not implemented.
+type MetricsConfig struct {
+	Interval            time.Duration
+	DiskFreePercent     float64
+	MemAvailablePercent float64
+	LoadPerCore         float64
+	ZombieSustainTicks  int
+	LowQuotaPercent     float64
 }
 
 // DefaultAllowedOrigins are the browser origins the daemon's CORS boundary
@@ -94,6 +119,8 @@ type Config struct {
 	AllowedOrigins []string
 	// Telemetry controls local/remote telemetry sinks.
 	Telemetry TelemetryConfig
+	// Metrics controls the resource and usage metrics observer.
+	Metrics MetricsConfig
 }
 
 // Addr returns the host:port the HTTP server binds. It uses net.JoinHostPort so
@@ -120,6 +147,12 @@ func (c Config) Addr() string {
 //	AO_TELEMETRY_REMOTE  remote exporter off|posthog (default off)
 //	AO_TELEMETRY_POSTHOG_KEY   PostHog project key
 //	AO_TELEMETRY_POSTHOG_HOST  PostHog host (default DefaultTelemetryPostHogHost)
+//	AO_METRICS_INTERVAL        metrics sampling interval (Go duration, default 30s; 0 disables)
+//	AO_METRICS_DISK_FREE_PERCENT       disk alert threshold percent (0 disables)
+//	AO_METRICS_MEM_AVAILABLE_PERCENT  memory alert threshold percent (0 disables)
+//	AO_METRICS_LOAD_PER_CORE          load alert threshold ratio (0 disables)
+//	AO_METRICS_ZOMBIE_SUSTAIN_TICKS   zombie alert sustain ticks (0 disables)
+//	AO_METRICS_LOW_QUOTA_PERCENT      low-quota threshold percent (default 10; 0 disables)
 //
 // The bind host is not configurable: the daemon is loopback-only by design.
 func Load() (Config, error) {
@@ -133,6 +166,14 @@ func Load() (Config, error) {
 		Telemetry: TelemetryConfig{
 			Remote:      TelemetryRemoteOff,
 			PostHogHost: DefaultTelemetryPostHogHost,
+		},
+		Metrics: MetricsConfig{
+			Interval:            DefaultMetricsInterval,
+			DiskFreePercent:     DefaultMetricsDiskFreePercent,
+			MemAvailablePercent: DefaultMetricsMemAvailablePercent,
+			LoadPerCore:         DefaultMetricsLoadPerCore,
+			ZombieSustainTicks:  DefaultMetricsZombieSustainTicks,
+			LowQuotaPercent:     10,
 		},
 	}
 
@@ -213,6 +254,51 @@ func Load() (Config, error) {
 	if raw := os.Getenv("AO_TELEMETRY_POSTHOG_HOST"); raw != "" {
 		cfg.Telemetry.PostHogHost = raw
 	}
+	if raw := os.Getenv("AO_METRICS_INTERVAL"); raw != "" {
+		d, err := time.ParseDuration(raw)
+		if err != nil {
+			return Config{}, fmt.Errorf("invalid AO_METRICS_INTERVAL %q: %w", raw, err)
+		}
+		if d < 0 {
+			return Config{}, fmt.Errorf("invalid AO_METRICS_INTERVAL %q: must be >= 0", raw)
+		}
+		cfg.Metrics.Interval = d
+	}
+	if raw := os.Getenv("AO_METRICS_DISK_FREE_PERCENT"); raw != "" {
+		v, err := parseNonNegativeFloat("AO_METRICS_DISK_FREE_PERCENT", raw)
+		if err != nil {
+			return Config{}, err
+		}
+		cfg.Metrics.DiskFreePercent = v
+	}
+	if raw := os.Getenv("AO_METRICS_MEM_AVAILABLE_PERCENT"); raw != "" {
+		v, err := parseNonNegativeFloat("AO_METRICS_MEM_AVAILABLE_PERCENT", raw)
+		if err != nil {
+			return Config{}, err
+		}
+		cfg.Metrics.MemAvailablePercent = v
+	}
+	if raw := os.Getenv("AO_METRICS_LOAD_PER_CORE"); raw != "" {
+		v, err := parseNonNegativeFloat("AO_METRICS_LOAD_PER_CORE", raw)
+		if err != nil {
+			return Config{}, err
+		}
+		cfg.Metrics.LoadPerCore = v
+	}
+	if raw := os.Getenv("AO_METRICS_ZOMBIE_SUSTAIN_TICKS"); raw != "" {
+		v, err := strconv.Atoi(raw)
+		if err != nil || v < 0 {
+			return Config{}, fmt.Errorf("invalid AO_METRICS_ZOMBIE_SUSTAIN_TICKS %q: must be >= 0", raw)
+		}
+		cfg.Metrics.ZombieSustainTicks = v
+	}
+	if raw := os.Getenv("AO_METRICS_LOW_QUOTA_PERCENT"); raw != "" {
+		v, err := parseNonNegativeFloat("AO_METRICS_LOW_QUOTA_PERCENT", raw)
+		if err != nil {
+			return Config{}, err
+		}
+		cfg.Metrics.LowQuotaPercent = v
+	}
 
 	runFile, err := resolveRunFilePath()
 	if err != nil {
@@ -249,6 +335,17 @@ func parseTelemetryRemote(raw string) (TelemetryRemote, error) {
 	default:
 		return "", fmt.Errorf("must be off|posthog")
 	}
+}
+
+func parseNonNegativeFloat(name, raw string) (float64, error) {
+	v, err := strconv.ParseFloat(strings.TrimSpace(raw), 64)
+	if err != nil {
+		return 0, fmt.Errorf("invalid %s %q: %w", name, raw, err)
+	}
+	if v < 0 {
+		return 0, fmt.Errorf("invalid %s %q: must be >= 0", name, raw)
+	}
+	return v, nil
 }
 
 // parsePositiveDuration rejects zero and negative durations: a zero

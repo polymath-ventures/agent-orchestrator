@@ -51,6 +51,7 @@ export function setApiBaseUrl(nextBaseUrl: string | null): void {
 const ROUTE_TEMPLATES = [
 	"/api/v1/events",
 	"/api/v1/import",
+	"/api/v1/metrics",
 	"/api/v1/notifications",
 	"/api/v1/notifications/{id}",
 	"/api/v1/notifications/read-all",
