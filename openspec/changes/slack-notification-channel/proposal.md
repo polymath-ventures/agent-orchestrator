@@ -32,6 +32,7 @@ Non-goals (explicit, and they stay non-goals):
 ## Capabilities
 
 ### New Capabilities
+
 - `slack-notifications`: one-way mirroring of AO's existing notifications to a Slack channel via a
   read-only CLI sidecar, including connection lifecycle, gap reconciliation, delivery rendering,
   and configuration/teardown behavior.

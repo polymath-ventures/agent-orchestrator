@@ -36,28 +36,28 @@ Every product command resolves to a daemon HTTP route. Run `ao <command>
 
 ### Product commands
 
-| Command                             | Daemon route                                   |
-| ----------------------------------- | ---------------------------------------------- |
-| `ao project add`                    | `POST /api/v1/projects`                        |
-| `ao project ls`                     | `GET /api/v1/projects`                         |
-| `ao project get <id>`               | `GET /api/v1/projects/{id}`                    |
-| `ao project set-config <id>`        | `PUT /api/v1/projects/{id}/config`             |
-| `ao project rm <id>`                | `DELETE /api/v1/projects/{id}`                 |
-| `ao agent ls`                       | `GET /api/v1/agents`                           |
-| `ao agent ls --refresh`             | `POST /api/v1/agents/refresh`                  |
-| `ao spawn`                          | `POST /api/v1/sessions`                        |
-| `ao session ls`                     | `GET /api/v1/sessions`                         |
-| `ao session get <id>`               | `GET /api/v1/sessions/{id}`                    |
-| `ao session kill <id>`              | `POST /api/v1/sessions/{id}/kill`              |
-| `ao session restore <id>`           | `POST /api/v1/sessions/{id}/restore`           |
-| `ao session rename <id> <name>`     | `PATCH /api/v1/sessions/{id}`                  |
-| `ao session cleanup`                | `POST /api/v1/sessions/cleanup`                |
-| `ao session claim-pr <id> <pr-ref>` | `POST /api/v1/sessions/{id}/pr/claim`          |
-| `ao orchestrator ls`                | `GET /api/v1/orchestrators`                    |
-| `ao send`                           | `POST /api/v1/sessions/{id}/send`              |
-| `ao preview [url]`                  | `POST /api/v1/sessions/{id}/preview`           |
+| Command                             | Daemon route                                                       |
+| ----------------------------------- | ------------------------------------------------------------------ |
+| `ao project add`                    | `POST /api/v1/projects`                                            |
+| `ao project ls`                     | `GET /api/v1/projects`                                             |
+| `ao project get <id>`               | `GET /api/v1/projects/{id}`                                        |
+| `ao project set-config <id>`        | `PUT /api/v1/projects/{id}/config`                                 |
+| `ao project rm <id>`                | `DELETE /api/v1/projects/{id}`                                     |
+| `ao agent ls`                       | `GET /api/v1/agents`                                               |
+| `ao agent ls --refresh`             | `POST /api/v1/agents/refresh`                                      |
+| `ao spawn`                          | `POST /api/v1/sessions`                                            |
+| `ao session ls`                     | `GET /api/v1/sessions`                                             |
+| `ao session get <id>`               | `GET /api/v1/sessions/{id}`                                        |
+| `ao session kill <id>`              | `POST /api/v1/sessions/{id}/kill`                                  |
+| `ao session restore <id>`           | `POST /api/v1/sessions/{id}/restore`                               |
+| `ao session rename <id> <name>`     | `PATCH /api/v1/sessions/{id}`                                      |
+| `ao session cleanup`                | `POST /api/v1/sessions/cleanup`                                    |
+| `ao session claim-pr <id> <pr-ref>` | `POST /api/v1/sessions/{id}/pr/claim`                              |
+| `ao orchestrator ls`                | `GET /api/v1/orchestrators`                                        |
+| `ao send`                           | `POST /api/v1/sessions/{id}/send`                                  |
+| `ao preview [url]`                  | `POST /api/v1/sessions/{id}/preview`                               |
 | `ao notify slack`                   | `GET /api/v1/notifications/stream` (+ `GET /api/v1/notifications`) |
-| `ao hooks <agent> <event>`          | `POST /api/v1/sessions/{id}/activity` (hidden) |
+| `ao hooks <agent> <event>`          | `POST /api/v1/sessions/{id}/activity` (hidden)                     |
 
 `ao agent ls` prints the daemon-supported agent catalog with local install/auth
 readiness. Use `--refresh` to rerun the bounded local probes and `--json` to
@@ -98,7 +98,7 @@ has not already sent, deduping by notification id. One consequence worth knowing
 on first run: any notifications already sitting unread in the bell are delivered
 on startup. Mark them read first if you don't want the backlog.
 
-Nothing is ever read *from* Slack — there is no slash command, interactivity, or
+Nothing is ever read _from_ Slack — there is no slash command, interactivity, or
 reply path. Stopping the process and unsetting the webhook removes the entire
 Slack surface.
 

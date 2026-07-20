@@ -48,7 +48,7 @@ The notifications stream already carries the fully enriched payload — `enrich.
 title and body before the record is published — so the consumer renders and forwards, and owns no
 notification semantics. Consuming `/api/v1/events` instead would mean re-deriving `needs_input` and
 `ready_to_merge` from raw `session_updated` / `pr_updated` rows, duplicating lifecycle policy and
-its dedupe rule. *Alternative rejected: adding a CDC trigger to the `notifications` table.* That
+its dedupe rule. _Alternative rejected: adding a CDC trigger to the `notifications` table._ That
 works and is arguably cleaner long-term, but it is a migration plus a new `cdc.EventType` plus a
 `change_log` CHECK change — upstream-owned surface for a fork-only feature, and unnecessary because
 a purpose-built stream already exists.
@@ -57,11 +57,11 @@ a purpose-built stream already exists.
 
 A parent command with a single child matches existing nesting idiom (`review.go`, `preview.go`).
 It ships inside the binary the operator already has and reuses the run-file/loopback resolution in
-`cli.commandContext`. *Alternative rejected: a standalone process under a new `ops/` directory with
-a systemd unit* — that mirrors the old fork, but this repo has no `ops/`, no `deploy/`, and no
+`cli.commandContext`. _Alternative rejected: a standalone process under a new `ops/` directory with
+a systemd unit_ — that mirrors the old fork, but this repo has no `ops/`, no `deploy/`, and no
 sidecar precedent, so it would add a top-level surface and a second thing to build and ship.
 
-*Alternative rejected: an in-daemon webhook channel.* `notify.Manager` holds a single `publisher`
+_Alternative rejected: an in-daemon webhook channel._ `notify.Manager` holds a single `publisher`
 field and `notify.Publisher` has exactly one implementation — there is no plurality to extend. That
 path means inventing a delivery-target registry, a settings surface, secret storage, and retry, all
 in files upstream owns.
@@ -73,7 +73,7 @@ reconcile loop, and a single delivery worker that drains the queue and posts to 
 the only poster and the only reader of the delivered-ID ledger, so dedupe needs no lock — and, more
 importantly, **no lock is ever held across the network POST**. The stream reader keeps draining the
 daemon's 64-slot subscriber buffer while the worker catches up, so a slow webhook cannot cause the
-hub to drop. (Two earlier iterations got this wrong: the first reconciled *before* consuming; the
+hub to drop. (Two earlier iterations got this wrong: the first reconciled _before_ consuming; the
 second reconciled concurrently but held the deliverer's mutex across the POST, which serialized the
 producers anyway. Both were found in review.)
 
@@ -103,25 +103,12 @@ success means a failed post is simply re-offered by the next periodic reconcile.
 
 The ledger is unbounded. An earlier version evicted the oldest entries, arguing that a notification
 too old to appear in a capped unread listing could never be re-offered. That argument is false: this
-command never marks anything read, so a delivered notification stays *unread* and can re-enter the
+command never marks anything read, so a delivered notification stays _unread_ and can re-enter the
 listing once newer ones are read in the UI. Eviction therefore reintroduces exactly the duplicates
 dedupe exists to prevent. Entries are one notification id apiece, so the ledger stays small in any
 realistic run. (Both defects were found in review.)
 
-### Dedupe by notification ID, recorded only on success, in an unbounded ledger
-
-Delivered notification IDs are held in memory, and an ID is recorded **only after Slack accepts the
-message**. Recording before the post — the original version — meant a failed delivery permanently
-suppressed that notification, because reconciliation would then skip it forever.
-
-The ledger is unbounded. An earlier version evicted the oldest entries, arguing that a notification
-too old to appear in a capped unread listing could never be re-offered. That argument is false: this
-command never marks anything read, so a delivered notification stays *unread* and can re-enter the
-listing once newer ones are read in the UI. Eviction therefore reintroduces exactly the duplicates
-dedupe exists to prevent. Entries are one notification id apiece, so the ledger stays small in any
-realistic run. (Both defects were found in review.)
-
-*Alternative rejected: persisting delivered IDs to disk.* It buys only cross-restart dedupe, whose
+_Alternative rejected: persisting delivered IDs to disk._ It buys only cross-restart dedupe, whose
 failure mode is a duplicate Slack line after a restart, and it introduces state that violates the
 "removing the config leaves zero residue" requirement.
 
