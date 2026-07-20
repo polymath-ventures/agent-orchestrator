@@ -57,7 +57,7 @@
   `go vet ./...`, and `npm run lint`
 - [x] 7.2 Confirm zero daemon surface changed — no migration, no `internal/notify` edit, no
   regenerated OpenAPI or TypeScript schema in the diff
-- [ ] 7.3 Exercise it for real against a running daemon and a live Slack webhook: trigger a
+- [x] 7.3 Exercise it for real against a running daemon and a live Slack webhook: trigger a
   notification, confirm the Slack message, kill and restart the stream, confirm reconciliation
   delivers the gap without duplicates
 - [x] 7.4 Document `AO_SLACK_WEBHOOK_URL` and the command in the appropriate `docs/` page
