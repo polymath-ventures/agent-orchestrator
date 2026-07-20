@@ -114,7 +114,7 @@ past `0007` (every existing install) never re-runs it. Editing `0007` in place w
 admit `codex-fugu` on fresh installs but silently leave every existing install
 rejecting it, because its `sessions.harness` CHECK was frozen at migration time.
 
-So the widening is a new migration, `0025_allow_codex_fugu_harness.sql`, whose Up
+So the widening is a new migration, `0027_allow_codex_fugu_harness.sql`, whose Up
 rewrites the current 23-harness CHECK to add `codex-fugu` (Down reverses). `0007` is
 left byte-identical to `main` except for a corrected header note pointing future
 additions at a new migration.
@@ -175,7 +175,7 @@ machinery.
   Empty-string fallback means the Codex path is unchanged by construction, and the
   existing Codex adapter tests run unmodified as the regression guard. Any change
   that breaks Codex breaks them.
-- **The new migration `0025` uses the same `replace()`-against-exact-text mechanism
+- **The new migration `0027` uses the same `replace()`-against-exact-text mechanism
   as `0007`, so a byte mismatch would no-op silently.** → Both the fresh-migration
   guard and the new upgrade-path test assert the live constraint actually admits
   `codex-fugu`, so a mismatch fails CI rather than corrupting a database.
@@ -194,7 +194,7 @@ machinery.
 
 ## Migration Plan
 
-Additive and reversible. The new `0025` migration's Down reverses its Up
+Additive and reversible. The new `0027` migration's Down reverses its Up
 symmetrically, so rolling back narrows the CHECK again. Rollback is only unsafe if a
 `codex-fugu` session row already exists, which is the normal constraint-narrowing
 caveat and not specific to this change. No data migration, no API break — the spawn

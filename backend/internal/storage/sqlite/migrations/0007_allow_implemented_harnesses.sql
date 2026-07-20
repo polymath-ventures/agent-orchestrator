@@ -8,7 +8,7 @@
 -- an existing database past 0007 never re-runs an edited 0007 and would reject the
 -- new harness on upgrade even though fresh installs accept it. Once later
 -- migrations exist, widen the allowlist with a NEW migration instead (see
--- 0025_allow_codex_fugu_harness.sql).
+-- 0027_allow_codex_fugu_harness.sql).
 
 -- +goose NO TRANSACTION
 -- +goose Up

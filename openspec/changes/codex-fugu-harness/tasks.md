@@ -34,7 +34,7 @@
 ## 6. Persistence
 
 - [x] 6.1 Add `codex-fugu` to the harness list in `migrate_test.go` (fresh path) and add an upgrade-path test (`TestMigrateAdmitsCodexFuguOnUpgradeFromInitialPlatform`) that migrates through 0007 only, asserts codex-fugu is absent, then runs the rest and requires it admitted — both fail first
-- [x] 6.2 Add a NEW migration `0025_allow_codex_fugu_harness.sql` (Up widens the 23-harness CHECK to add codex-fugu, Down reverses) rather than editing 0007 in place: goose tracks by version number, so an edit to already-applied 0007 never re-runs on existing DBs. Correct 0007's now-stale header note. Confirm both tests pass and the constraint actually widened
+- [x] 6.2 Add a NEW migration `0027_allow_codex_fugu_harness.sql` (Up widens the 23-harness CHECK to add codex-fugu, Down reverses) rather than editing 0007 in place: goose tracks by version number, so an edit to already-applied 0007 never re-runs on existing DBs. Correct 0007's now-stale header note. Confirm both tests pass and the constraint actually widened
 
 ## 7. API, CLI, and docs
 

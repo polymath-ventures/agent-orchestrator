@@ -64,7 +64,7 @@ None. `openspec/specs/` carries no existing capability whose requirements change
 - `backend/internal/adapters/agent/activitydispatch/dispatch.go` — deriver entry.
   Required: the adapter installs `ao hooks` callbacks, and a missing entry means its
   activity is silently never reported.
-- `backend/internal/storage/sqlite/migrations/0025_allow_codex_fugu_harness.sql` —
+- `backend/internal/storage/sqlite/migrations/0027_allow_codex_fugu_harness.sql` —
   a **new** migration widening the `sessions.harness` CHECK (Up and Down). Not an
   in-place edit of `0007`: goose tracks applied migrations by version, so an edit to
   already-applied `0007` would never re-run on existing installs. `0007`'s stale
