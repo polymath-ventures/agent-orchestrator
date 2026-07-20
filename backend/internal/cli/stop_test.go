@@ -369,6 +369,90 @@ func TestStopDoesNotUseCgroupHintWithoutMatchingSystemdMainPID(t *testing.T) {
 	}
 }
 
+func TestStopDoesNotFallBackWhenActiveSystemdMainPIDInspectionFails(t *testing.T) {
+	origReadProcCgroup := readProcCgroup
+	readProcCgroup = func(string) ([]byte, error) {
+		return nil, os.ErrNotExist
+	}
+	t.Cleanup(func() { readProcCgroup = origReadProcCgroup })
+
+	cfg := setConfigEnv(t)
+	shutdownCalled := make(chan struct{}, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/healthz":
+			_, _ = fmt.Fprintf(w, `{"status":"ok","service":%q,"pid":%d}`, daemonmeta.ServiceName, os.Getpid())
+		case "/readyz":
+			_, _ = fmt.Fprintf(w, `{"status":"ready","service":%q,"pid":%d}`, daemonmeta.ServiceName, os.Getpid())
+		case "/shutdown":
+			shutdownCalled <- struct{}{}
+			http.Error(w, "unexpected shutdown", http.StatusInternalServerError)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	if err := runfile.Write(cfg.runFile, runfile.Info{PID: os.Getpid(), Port: serverPort(t, srv.URL), StartedAt: time.Unix(100, 0).UTC(), ShutdownToken: "token"}); err != nil {
+		t.Fatal(err)
+	}
+
+	c := &commandContext{deps: Deps{
+		ProcessAlive: func(pid int) bool { return pid == os.Getpid() },
+		LookPath: func(file string) (string, error) {
+			if file == "systemctl" {
+				return "/bin/systemctl", nil
+			}
+			return "", fmt.Errorf("unexpected lookup %q", file)
+		},
+		CommandOutput: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			switch strings.Join(args, " ") {
+			case "--user is-active --quiet ao.service":
+				return nil, nil
+			case "--user show ao.service -P MainPID":
+				return nil, fmt.Errorf("dbus timeout")
+			default:
+				return nil, fmt.Errorf("unexpected systemctl call %q %s", name, strings.Join(args, " "))
+			}
+		},
+	}.withDefaults()}
+
+	_, err := c.stopDaemon(context.Background(), stopOptions{timeout: time.Second})
+	if err == nil || !strings.Contains(err.Error(), "inspect ao.service MainPID") {
+		t.Fatalf("stopDaemon error = %v, want MainPID inspection failure", err)
+	}
+	select {
+	case <-shutdownCalled:
+		t.Fatal("stop used /shutdown after active systemd MainPID inspection failed")
+	default:
+	}
+}
+
+func TestSystemdProbeTimeoutUsesStopTimeoutWithProbeMinimum(t *testing.T) {
+	if got := systemdProbeTimeout(10 * time.Second); got != 10*time.Second {
+		t.Fatalf("systemdProbeTimeout(10s) = %s, want 10s", got)
+	}
+	if got := systemdProbeTimeout(time.Millisecond); got != probeTimeout {
+		t.Fatalf("systemdProbeTimeout(1ms) = %s, want %s", got, probeTimeout)
+	}
+	if got := systemdProbeTimeout(0); got != defaultStopTimeout {
+		t.Fatalf("systemdProbeTimeout(0) = %s, want %s", got, defaultStopTimeout)
+	}
+}
+
+func TestRequestShutdownReportsHTTPStatusText(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+	}))
+	defer srv.Close()
+
+	c := &commandContext{deps: Deps{}.withDefaults()}
+	err := c.requestShutdown(context.Background(), serverPort(t, srv.URL), "token")
+	if err == nil || !strings.Contains(err.Error(), "HTTP 403 Forbidden") {
+		t.Fatalf("requestShutdown error = %v, want HTTP 403 Forbidden", err)
+	}
+}
+
 func TestParseSystemdMainPIDUsesLastNumericLine(t *testing.T) {
 	got, err := parseSystemdMainPID([]byte("warning: noisy stderr before\n\n1234\nwarning: noisy stderr after\n"))
 	if err != nil {

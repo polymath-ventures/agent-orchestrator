@@ -97,24 +97,21 @@ func (c *commandContext) stopSystemdDaemon(ctx context.Context, pid int, timeout
 		return false, nil
 	}
 
-	checkCtx, cancelCheck := context.WithTimeout(ctx, probeTimeout)
+	checkCtx, cancelCheck := context.WithTimeout(ctx, systemdProbeTimeout(timeout))
 	defer cancelCheck()
 	if _, err := c.deps.CommandOutput(checkCtx, systemctl, "--user", "is-active", "--quiet", "ao.service"); err != nil {
+		if checkCtx.Err() != nil {
+			return true, fmt.Errorf("inspect ao.service state: %w", checkCtx.Err())
+		}
 		return false, nil
 	}
 	out, err := c.deps.CommandOutput(checkCtx, systemctl, "--user", "show", "ao.service", "-P", "MainPID")
 	if err != nil {
-		if inUnit {
-			return true, fmt.Errorf("inspect ao.service MainPID: %w", err)
-		}
-		return false, nil
+		return true, fmt.Errorf("inspect ao.service MainPID: %w", err)
 	}
 	mainPID, err := parseSystemdMainPID(out)
 	if err != nil {
-		if inUnit {
-			return true, fmt.Errorf("inspect ao.service MainPID: %w", err)
-		}
-		return false, nil
+		return true, fmt.Errorf("inspect ao.service MainPID: %w", err)
 	}
 	if mainPID != pid {
 		return false, nil
@@ -136,6 +133,16 @@ func (c *commandContext) stopAOService(ctx context.Context, systemctl string, ti
 		return fmt.Errorf("stop ao.service: %w", err)
 	}
 	return nil
+}
+
+func systemdProbeTimeout(timeout time.Duration) time.Duration {
+	if timeout <= 0 {
+		return defaultStopTimeout
+	}
+	if timeout < probeTimeout {
+		return probeTimeout
+	}
+	return timeout
 }
 
 func processInSystemdUnit(pid int, unit string) (bool, error) {
@@ -183,7 +190,7 @@ func (c *commandContext) requestShutdown(ctx context.Context, port int, shutdown
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("HTTP %d", resp.StatusCode)
+		return fmt.Errorf("HTTP %s", resp.Status)
 	}
 	return nil
 }
