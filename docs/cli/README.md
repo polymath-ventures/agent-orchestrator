@@ -24,15 +24,15 @@ Every product command resolves to a daemon HTTP route. Run `ao <command>
 
 ### Daemon control
 
-| Command                       | Purpose                                                                                                                           |
-| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| `ao start`                    | Start the daemon in the background and wait for `/readyz`.                                                                        |
+| Command                       | Purpose                                                                                                                                                                             |
+| ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ao start`                    | Start the daemon in the background and wait for `/readyz`.                                                                                                                          |
 | `ao stop`                     | Gracefully stop the daemon after verifying daemon identity; uses `systemctl --user stop ao.service` when that unit owns the PID, otherwise token-bearing loopback `POST /shutdown`. |
-| `ao status` / `--json`        | Report daemon state from `running.json`, process liveness, `/healthz`, and `/readyz`.                                             |
-| `ao doctor` / `--json`        | Check config, data directory, DB-file presence, daemon state, `git`, and (on Darwin/Linux) `tmux`; on Windows conpty is built in. |
-| `ao completion <shell>`       | Generate completions for `bash`, `zsh`, `fish`, or `powershell`.                                                                  |
-| `ao version` / `ao --version` | Print build metadata.                                                                                                             |
-| `ao daemon`                   | Hidden internal daemon entrypoint used by `ao start`.                                                                             |
+| `ao status` / `--json`        | Report daemon state from `running.json`, process liveness, `/healthz`, and `/readyz`.                                                                                               |
+| `ao doctor` / `--json`        | Check config, data directory, DB-file presence, daemon state, `git`, and (on Darwin/Linux) `tmux`; on Windows conpty is built in.                                                   |
+| `ao completion <shell>`       | Generate completions for `bash`, `zsh`, `fish`, or `powershell`.                                                                                                                    |
+| `ao version` / `ao --version` | Print build metadata.                                                                                                                                                               |
+| `ao daemon`                   | Hidden internal daemon entrypoint used by `ao start`.                                                                                                                               |
 
 ### Product commands
 
@@ -112,18 +112,20 @@ commands yet.
 
 The CLI and daemon share the same environment-driven config:
 
-| Var                   | Default              | Purpose                |
-| --------------------- | -------------------- | ---------------------- |
-| `AO_PORT`             | `3001`               | Loopback daemon port.  |
+| Var                   | Default              | Purpose                            |
+| --------------------- | -------------------- | ---------------------------------- |
+| `AO_PORT`             | `3001`               | Loopback daemon port.              |
 | `AO_RUN_FILE`         | `~/.ao/running.json` | PID/port/shutdown-token handshake. |
-| `AO_DATA_DIR`         | `~/.ao/data`         | SQLite data directory. |
-| `AO_REQUEST_TIMEOUT`  | `60s`                | REST request timeout.  |
-| `AO_SHUTDOWN_TIMEOUT` | `10s`                | Graceful shutdown cap. |
+| `AO_DATA_DIR`         | `~/.ao/data`         | SQLite data directory.             |
+| `AO_REQUEST_TIMEOUT`  | `60s`                | REST request timeout.              |
+| `AO_SHUTDOWN_TIMEOUT` | `10s`                | Graceful shutdown cap.             |
 
 `ao notify slack` additionally reads `AO_SLACK_WEBHOOK_URL` (the Slack incoming
-webhook to post to). A `--webhook-url` flag is accepted, but the environment
-variable is preferred: the command is long-lived, so a flag value would sit
-visible in the process table.
+webhook to post to), falling back to the conventional un-prefixed
+`SLACK_WEBHOOK_URL` if the former is unset. A `--webhook-url` flag is accepted,
+but an environment variable is preferred: the command is long-lived, so a flag
+value would sit visible in the process table. Resolution order is `--webhook-url`
+→ `AO_SLACK_WEBHOOK_URL` → `SLACK_WEBHOOK_URL`.
 
 The daemon always binds `127.0.0.1`.
 
