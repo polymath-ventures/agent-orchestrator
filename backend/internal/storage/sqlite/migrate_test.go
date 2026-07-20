@@ -67,3 +67,42 @@ func TestMigrateAllowsEveryShippedHarness(t *testing.T) {
 		}
 	}
 }
+
+// TestMigrateReadsPreModelSessionRowsAsEmpty guards the additive contract of
+// the sessions.model column: a row written without a model — which is every row
+// that existed before migration 0025 added the column — must read back as the
+// empty string, not NULL, so the read path needs no nullable handling and no
+// existing row is rewritten.
+func TestMigrateReadsPreModelSessionRowsAsEmpty(t *testing.T) {
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "ao.db")+pragmas)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	if err := migrate(db); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	if _, err := db.Exec(
+		`INSERT INTO projects (id, path, registered_at) VALUES ('mer', '/tmp/mer', CURRENT_TIMESTAMP)`,
+	); err != nil {
+		t.Fatalf("seed project: %v", err)
+	}
+	// The column list deliberately omits model: this is exactly the shape of a
+	// row inserted by the pre-0025 InsertSession statement.
+	if _, err := db.Exec(
+		`INSERT INTO sessions (id, project_id, num, activity_last_at, created_at, updated_at)
+		 VALUES ('mer-1', 'mer', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+	); err != nil {
+		t.Fatalf("insert pre-model session row: %v", err)
+	}
+
+	var model string
+	if err := db.QueryRow(`SELECT model FROM sessions WHERE id = 'mer-1'`).Scan(&model); err != nil {
+		t.Fatalf("read model of pre-existing row: %v", err)
+	}
+	if model != "" {
+		t.Fatalf("pre-existing session model = %q, want empty", model)
+	}
+}

@@ -27,6 +27,7 @@ const (
 	maxPromptLen      = 4096
 	maxMessageLen     = 4096
 	maxDisplayNameLen = 20
+	maxModelLen       = 128
 )
 
 var errPreviewFileNotFound = errors.New("preview file not found")
@@ -136,10 +137,16 @@ func (c *SessionsController) spawn(w http.ResponseWriter, r *http.Request) {
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "DISPLAY_NAME_TOO_LONG", "displayName must be 20 characters or fewer", nil)
 		return
 	}
+	if len(in.Model) > maxModelLen {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "MODEL_TOO_LONG", "model is too long", nil)
+		return
+	}
 	if in.Kind == "" {
 		in.Kind = domain.KindWorker
 	}
-	sess, err := c.Svc.Spawn(r.Context(), ports.SpawnConfig{ProjectID: in.ProjectID, IssueID: in.IssueID, Kind: in.Kind, Harness: in.Harness, Branch: in.Branch, Prompt: in.Prompt, DisplayName: displayName})
+	// model is passed through as submitted: the manager owns resolution against
+	// role/project config and trims the value it records on the session row.
+	sess, err := c.Svc.Spawn(r.Context(), ports.SpawnConfig{ProjectID: in.ProjectID, IssueID: in.IssueID, Kind: in.Kind, Harness: in.Harness, Model: in.Model, Branch: in.Branch, Prompt: in.Prompt, DisplayName: displayName})
 	if err != nil {
 		envelope.WriteError(w, r, err)
 		return

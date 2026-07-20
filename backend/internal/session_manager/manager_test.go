@@ -1808,6 +1808,114 @@ func TestRestore_ForwardsResolvedAgentConfigPermissions(t *testing.T) {
 	}
 }
 
+// modelProject builds a project whose base and worker-role configs both name a
+// model, so a test can tell an explicit spawn model from a configured one.
+func modelProject(base, role string) domain.ProjectRecord {
+	return domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{
+		AgentConfig: domain.AgentConfig{Model: base},
+		Worker:      domain.RoleOverride{Harness: domain.HarnessClaudeCode, AgentConfig: domain.AgentConfig{Model: role}},
+	}}
+}
+
+func modelManager(st *fakeStore, agent ports.Agent) *Manager {
+	return New(Deps{
+		Runtime: &fakeRuntime{}, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st},
+		LookPath: func(string) (string, error) { return "/bin/true", nil },
+	})
+}
+
+func TestSpawn_ExplicitModelWinsOverConfigAndIsPersisted(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = modelProject("base-model", "role-model")
+	agent := &recordingAgent{}
+	m := modelManager(st, agent)
+
+	rec, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Model: "explicit-model"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Model != "explicit-model" {
+		t.Fatalf("record model = %q, want explicit-model", rec.Model)
+	}
+	if got := st.sessions["mer-1"].Model; got != "explicit-model" {
+		t.Fatalf("persisted model = %q, want explicit-model", got)
+	}
+	if agent.lastConfig.Model != "explicit-model" {
+		t.Fatalf("launch model = %q, want explicit-model over role config", agent.lastConfig.Model)
+	}
+}
+
+func TestSpawn_OmittedModelFallsBackToConfigResolution(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = modelProject("base-model", "role-model")
+	agent := &recordingAgent{}
+	m := modelManager(st, agent)
+
+	rec, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Model != "role-model" {
+		t.Fatalf("record model = %q, want role-model from config resolution", rec.Model)
+	}
+	if agent.lastConfig.Model != "role-model" {
+		t.Fatalf("launch model = %q, want role-model", agent.lastConfig.Model)
+	}
+}
+
+// A padded model must be trimmed before it is persisted: the worker mix buckets
+// on (harness, model), so an untrimmed row would be counted against a different
+// bucket than the one that selected it.
+func TestSpawn_TrimsModelBeforePersisting(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = modelProject("base-model", "  role-model\t")
+	agent := &recordingAgent{}
+	m := modelManager(st, agent)
+
+	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Model: "  explicit-model\n"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := st.sessions["mer-1"].Model; got != "explicit-model" {
+		t.Fatalf("persisted explicit model = %q, want it trimmed", got)
+	}
+	if agent.lastConfig.Model != "explicit-model" {
+		t.Fatalf("launch model = %q, want it trimmed", agent.lastConfig.Model)
+	}
+
+	// A padded model reaching the spawn from config is trimmed on the same path.
+	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); err != nil {
+		t.Fatal(err)
+	}
+	if got := st.sessions["mer-2"].Model; got != "role-model" {
+		t.Fatalf("persisted config model = %q, want it trimmed", got)
+	}
+}
+
+// Restore relaunches with the model the session was launched with, so a
+// restored session stays in the bucket the census attributes it to.
+func TestRestore_UsesPersistedModel(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = modelProject("base-model", "role-model")
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID:           "mer-1",
+		ProjectID:    "mer",
+		Kind:         domain.KindWorker,
+		Model:        "launched-model",
+		IsTerminated: true,
+		Metadata:     domain.SessionMetadata{Branch: "ao/mer-1", WorkspacePath: "/tmp/ws", AgentSessionID: "native-1"},
+	}
+	agent := &recordingAgent{}
+	m := modelManager(st, agent)
+
+	if _, err := m.RestoreWithMode(ctx, "mer-1"); err != nil {
+		t.Fatal(err)
+	}
+	if agent.lastRestore.Config.Model != "launched-model" {
+		t.Fatalf("restore model = %q, want the persisted launched-model", agent.lastRestore.Config.Model)
+	}
+}
+
 func TestSpawnWorker_IssueWithoutPromptGetsFallbackTaskPrompt(t *testing.T) {
 	st := newFakeStore()
 	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}

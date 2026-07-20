@@ -273,6 +273,10 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	if cfg.Harness == "" {
 		return domain.SessionRecord{}, fmt.Errorf("spawn: %w: configure project %s.agent or pass --harness", ErrMissingHarness, roleConfigName(cfg.Kind))
 	}
+	// The model is resolved once, up front, so the same value is launched with
+	// and recorded on the session row. Trimming here is what lets the worker-mix
+	// census match a bucket's model against the model stored on its sessions.
+	cfg.Model = effectiveModel(cfg.Model, cfg.Kind, project.Config)
 
 	// Reject an unknown harness before any durable state is created. Doing this
 	// after CreateSession would leave a terminated orphan row and waste a
@@ -329,6 +333,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: no agent adapter for harness %q", id, cfg.Harness)
 	}
 	agentConfig := effectiveAgentConfig(cfg.Kind, project.Config)
+	agentConfig.Model = cfg.Model
 	env := m.runtimeEnv(id, cfg.ProjectID, cfg.IssueID, project.Config.Env)
 	m.augmentAgentRuntimeEnv(agent, env)
 	if err := m.prepareWorkspace(ctx, agent, id, ws.Path, systemPrompt, systemPromptFile, agentConfig, env); err != nil {
@@ -505,6 +510,17 @@ func effectiveHarness(explicit domain.AgentHarness, kind domain.SessionKind, cfg
 		return role
 	}
 	return ""
+}
+
+// effectiveModel resolves the model a spawn launches with: an explicit request
+// model wins over the role/project agent config, and either way the result is
+// trimmed so the value recorded on the session row is the bucket identity the
+// worker mix keys on.
+func effectiveModel(explicit string, kind domain.SessionKind, cfg domain.ProjectConfig) string {
+	if m := strings.TrimSpace(explicit); m != "" {
+		return m
+	}
+	return strings.TrimSpace(effectiveAgentConfig(kind, cfg).Model)
 }
 
 func roleConfigName(kind domain.SessionKind) string {
@@ -861,8 +877,14 @@ func (m *Manager) relaunchRestoredSession(ctx context.Context, rec domain.Sessio
 	}
 
 	// Restore re-applies the project's resolved agent config so a configured
-	// model/permissions carry across a restore, matching fresh spawn.
+	// model/permissions carry across a restore, matching fresh spawn. The model
+	// comes from the row rather than config: the session is already counted in
+	// its (harness, model) bucket, so relaunching it on a different model would
+	// put the census and the running agent out of step.
 	agentConfig := effectiveAgentConfig(rec.Kind, project.Config)
+	if rec.Model != "" {
+		agentConfig.Model = rec.Model
+	}
 	env := m.runtimeEnv(rec.ID, rec.ProjectID, rec.IssueID, project.Config.Env)
 	m.augmentAgentRuntimeEnv(agent, env)
 	if err := m.prepareWorkspace(ctx, agent, rec.ID, ws.Path, systemPrompt, systemPromptFile, agentConfig, env); err != nil {
@@ -1822,6 +1844,7 @@ func seedRecord(cfg ports.SpawnConfig, now time.Time) domain.SessionRecord {
 		CreatedAt:   now,
 		UpdatedAt:   now,
 		Harness:     cfg.Harness,
+		Model:       cfg.Model,
 		DisplayName: cfg.DisplayName,
 		Activity:    domain.Activity{State: domain.ActivityIdle, LastActivityAt: now},
 	}

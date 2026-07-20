@@ -21,13 +21,13 @@
 
 ## 4. Make model a first-class spawn input
 
-- [ ] 4.1 Write failing tests for model round-tripping through spawn, persistence, and read-back
-- [ ] 4.2 Add `Model` to `ports.SpawnConfig` and to the `SpawnSessionRequest` DTO
-- [ ] 4.3 Add migration `0025` adding a nullable `model` column to `sessions`, with the down-migration ALTER following the `0019` pattern
-- [ ] 4.4 Add the `sqlc.yaml` override for the new column and run `npm run sqlc`
-- [ ] 4.5 Add `Model` to `domain.SessionRecord` and thread it through `seedRecord` and `effectiveAgentConfig`
-- [ ] 4.6 Run `npm run api` and commit the regenerated `openapi.yaml` and `frontend/src/api/schema.ts` in the same commit
-- [ ] 4.7 Verify pre-existing sessions read back with an empty model, and that the `api-drift` CI job passes locally
+- [x] 4.1 Write failing tests for model round-tripping through spawn, persistence, and read-back
+- [x] 4.2 Add `Model` to `ports.SpawnConfig` and to the `SpawnSessionRequest` DTO
+- [x] 4.3 Add migration `0025` adding a nullable `model` column to `sessions`, with the down-migration ALTER following the `0019` pattern
+- [x] 4.4 Run `npm run sqlc` (no `sqlc.yaml` override needed: `model` is a plain `string`, unlike the columns that map to named `internal/domain` types)
+- [x] 4.5 Add `Model` to `domain.SessionRecord` and thread it through `seedRecord` and `effectiveAgentConfig`
+- [x] 4.6 Run `npm run api` and commit the regenerated `openapi.yaml` and `frontend/src/api/schema.ts` in the same commit
+- [x] 4.7 Verify pre-existing sessions read back with an empty model, and that the `api-drift` CI job passes locally
 
 ## 5. Move harness resolution server-side
 

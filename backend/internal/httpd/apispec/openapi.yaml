@@ -1974,6 +1974,8 @@ components:
           type: string
         kind:
           type: string
+        model:
+          type: string
         previewRevision:
           format: int64
           type: integer
@@ -3245,6 +3247,9 @@ components:
           enum:
           - worker
           - orchestrator
+          type: string
+        model:
+          maxLength: 128
           type: string
         projectId:
           type: string

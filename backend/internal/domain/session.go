@@ -44,13 +44,18 @@ type SessionMetadata struct {
 // facts: identity, agent harness, activity_state, is_terminated, and operational
 // metadata. The user-facing Status is derived from these facts plus PR facts.
 type SessionRecord struct {
-	ID          SessionID    `json:"id"`
-	ProjectID   ProjectID    `json:"projectId"`
-	IssueID     IssueID      `json:"issueId,omitempty"`
-	Kind        SessionKind  `json:"kind"`
-	Harness     AgentHarness `json:"harness,omitempty"`
-	DisplayName string       `json:"displayName,omitempty"`
-	Activity    Activity     `json:"activity"`
+	ID        SessionID    `json:"id"`
+	ProjectID ProjectID    `json:"projectId"`
+	IssueID   IssueID      `json:"issueId,omitempty"`
+	Kind      SessionKind  `json:"kind"`
+	Harness   AgentHarness `json:"harness,omitempty"`
+	// Model is the model the session was launched with, trimmed at spawn. Empty
+	// means none was resolved (or the session predates the column). It is stored
+	// rather than re-derived so the worker-mix census stays correct after the
+	// project config that produced it changes.
+	Model       string   `json:"model,omitempty"`
+	DisplayName string   `json:"displayName,omitempty"`
+	Activity    Activity `json:"activity"`
 	// FirstSignalAt is when the FIRST agent hook callback arrived for the
 	// current spawn/restore: raw signal receipt, independent of the derived
 	// activity state. Zero means no hook has ever reported, which deriveStatus

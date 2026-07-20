@@ -152,6 +152,65 @@ func TestSessionCreateAssignsPerProjectID(t *testing.T) {
 	}
 }
 
+// TestSessionModelRoundTrips covers the model the session was launched with:
+// it is durable so the per-bucket worker census can group live sessions on
+// (harness, model) without re-reading project config, which may have changed
+// since the session launched. A session with no resolved model reads back empty.
+func TestSessionModelRoundTrips(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+
+	withModel := sampleRecord("mer")
+	withModel.Model = "claude-opus-4-6"
+	created, err := s.CreateSession(ctx, withModel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.Model != "claude-opus-4-6" {
+		t.Fatalf("created model = %q, want claude-opus-4-6", created.Model)
+	}
+	got, ok, err := s.GetSession(ctx, created.ID)
+	if err != nil || !ok {
+		t.Fatalf("get: ok=%v err=%v", ok, err)
+	}
+	if got.Model != "claude-opus-4-6" {
+		t.Fatalf("read-back model = %q, want claude-opus-4-6", got.Model)
+	}
+
+	// The model survives an update alongside the rest of the record.
+	got.Metadata.RuntimeHandleID = "h1"
+	if err := s.UpdateSession(ctx, got); err != nil {
+		t.Fatal(err)
+	}
+	if again, _, _ := s.GetSession(ctx, created.ID); again.Model != "claude-opus-4-6" {
+		t.Fatalf("model after update = %q, want claude-opus-4-6", again.Model)
+	}
+
+	// A session spawned with no resolved model carries an empty one everywhere
+	// it is read.
+	bare, err := s.CreateSession(ctx, sampleRecord("mer"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bare.Model != "" {
+		t.Fatalf("bare created model = %q, want empty", bare.Model)
+	}
+	list, err := s.ListSessions(ctx, "mer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, rec := range list {
+		want := "claude-opus-4-6"
+		if rec.ID == bare.ID {
+			want = ""
+		}
+		if rec.Model != want {
+			t.Fatalf("listed %s model = %q, want %q", rec.ID, rec.Model, want)
+		}
+	}
+}
+
 // TestDeleteSessionOnlyRemovesSeedRows covers Bug 4's storage-layer guarantee:
 // DeleteSession removes a session row only when the row is still in seed state
 // (no workspace, no runtime handle, no agent session id, no prompt, not
