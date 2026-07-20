@@ -36,4 +36,4 @@
 - [x] 6.1 Run backend unit tests covering extractor, telemetry, metrics, quota storage, quota observer, and notifications.
 - [x] 6.2 Run API generation and confirm `openapi.yaml` and `frontend/src/api/schema.ts` are current.
 - [x] 6.3 Run frontend typecheck and the relevant UI tests. The frontend package has no `build` script.
-- [x] 6.4 Run a browser-rendered manual check showing nonzero usage, estimated quota, and no-signal quota states.
+- [x] 6.4 Run a browser-rendered manual check showing nonzero usage and no-signal quota states, plus mocked estimated quota rendering for the UI state the first exact/estimated collector will produce.

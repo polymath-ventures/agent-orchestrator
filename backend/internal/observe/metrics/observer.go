@@ -153,7 +153,7 @@ func (o *Observer) Tick(ctx context.Context) Snapshot {
 		if quotas, err := o.deps.Quota.CollectQuota(ctx, now); err != nil {
 			o.logger.Warn("metrics observer: quota collect failed", "err", err)
 		} else {
-			snap.Quotas = quotas
+			snap.Quotas = nonNilQuotaSnapshots(quotas)
 		}
 	}
 
@@ -171,6 +171,13 @@ func (o *Observer) Tick(ctx context.Context) Snapshot {
 		o.logAlert(t)
 	}
 	return snap
+}
+
+func nonNilQuotaSnapshots(quotas []domain.QuotaSnapshot) []domain.QuotaSnapshot {
+	if quotas == nil {
+		return []domain.QuotaSnapshot{}
+	}
+	return quotas
 }
 
 func (o *Observer) logAlert(t AlertTransition) {

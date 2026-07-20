@@ -48,6 +48,7 @@ const listCostTelemetryEventsSince = `-- name: ListCostTelemetryEventsSince :man
 SELECT id, occurred_at, name, source, level, project_id, session_id, request_id, payload_json
 FROM telemetry_event
 WHERE occurred_at >= ?
+  AND name = 'ao.session.usage'
   AND (
     instr(payload_json, '"input_tokens"') > 0 OR
     instr(payload_json, '"output_tokens"') > 0 OR

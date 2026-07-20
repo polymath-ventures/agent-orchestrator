@@ -14,15 +14,15 @@ import (
 const listLatestQuotaSnapshots = `-- name: ListLatestQuotaSnapshots :many
 SELECT q.id, q.harness, q.account_id, q.model, q.window_start, q.window_end, q.used, q.remaining, q.limit_value, q.signal_quality, q.source, q.basis, q.observed_at
 FROM quota_snapshots q
-JOIN (
-    SELECT harness, account_id, model, max(observed_at) AS observed_at
-    FROM quota_snapshots
-    GROUP BY harness, account_id, model
-) latest
-  ON latest.harness = q.harness
- AND latest.account_id = q.account_id
- AND latest.model = q.model
- AND latest.observed_at = q.observed_at
+WHERE q.id = (
+    SELECT latest.id
+    FROM quota_snapshots latest
+    WHERE latest.harness = q.harness
+      AND latest.account_id = q.account_id
+      AND latest.model = q.model
+    ORDER BY latest.observed_at DESC, latest.window_end DESC, latest.window_start DESC, latest.id DESC
+    LIMIT 1
+)
 ORDER BY q.harness ASC, q.account_id ASC, q.model ASC
 `
 

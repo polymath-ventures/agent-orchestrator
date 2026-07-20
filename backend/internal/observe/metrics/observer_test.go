@@ -116,3 +116,13 @@ func TestObserverDegradesOnNilAndFailingCollectors(t *testing.T) {
 		t.Fatalf("failing collectors must degrade to empty facts, got %+v", snap)
 	}
 }
+
+func TestObserverNormalizesNilQuotaCollectorResult(t *testing.T) {
+	o := New(Deps{Quota: fakeQuotaCollector{}}, Config{
+		Clock: fixedClock(), Logger: quietLogger(),
+	})
+	snap := o.Tick(context.Background())
+	if snap.Quotas == nil {
+		t.Fatal("quota snapshots must serialize as an empty array, not null")
+	}
+}
