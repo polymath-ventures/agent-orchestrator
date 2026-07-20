@@ -60,14 +60,21 @@ URL when the notification carries one.
 ### Requirement: Missed notifications are reconciled on connect
 
 The system SHALL reconcile against the daemon's current unread notifications each time it
-establishes or re-establishes a stream connection, and SHALL deliver each notification at most once,
-identified by notification ID. This is required because the daemon's notification stream is
-in-process and best-effort with no replay.
+establishes or re-establishes a stream connection, and SHALL additionally reconcile periodically
+while running, and SHALL deliver each notification at most once, identified by notification ID. This
+is required because the daemon's notification stream is in-process and best-effort with no replay,
+so a notification whose live delivery failed on a stream that never drops would otherwise never be
+retried.
 
 #### Scenario: Notifications published while disconnected
 - **WHEN** the command reconnects after a disconnection during which notifications were published
 - **THEN** it lists the daemon's current unread notifications and delivers those it has not
   previously delivered
+
+#### Scenario: A live delivery failed but the stream stays connected
+- **WHEN** a notification's live delivery fails and the stream connection does not drop
+- **THEN** a later periodic reconciliation re-lists it and delivers it, without requiring a
+  reconnection
 
 #### Scenario: A notification appears in both reconciliation and the live stream
 - **WHEN** the same notification ID is seen both in the reconciliation listing and on the stream

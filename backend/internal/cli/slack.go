@@ -340,6 +340,11 @@ func (c *commandContext) runSlackNotify(ctx context.Context, opts slackNotifyOpt
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
+	// reconcileNow lets the stream loop trigger an immediate reconcile on every
+	// successful (re)connect, on top of the periodic tick. Buffered so a poke is
+	// never lost and never blocks the poker; coalesced if one is already pending.
+	reconcileNow := make(chan struct{}, 1)
+
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go func() {
@@ -348,22 +353,34 @@ func (c *commandContext) runSlackNotify(ctx context.Context, opts slackNotifyOpt
 	}()
 	go func() {
 		defer wg.Done()
-		c.reconcileLoop(runCtx, deliverer, logger)
+		c.reconcileLoop(runCtx, deliverer, logger, reconcileNow)
 	}()
 
 	// The stream loop runs in the foreground and returns an error only when the
 	// FIRST connection fails — a daemon that was never reachable is an operator
 	// error worth exiting on (exit 1). Once connected, drops are transient.
-	err := c.streamLoop(runCtx, deliverer, logger)
+	err := c.streamLoop(runCtx, deliverer, logger, reconcileNow)
 	cancel()
 	wg.Wait()
 	return err
 }
 
+// pokeReconcile requests a reconcile without blocking. If one is already queued,
+// the poke coalesces into it — one extra reconcile is enough.
+func pokeReconcile(ch chan struct{}) {
+	select {
+	case ch <- struct{}{}:
+	default:
+	}
+}
+
 // streamLoop consumes the notification stream, reconnecting with backoff on
 // drop. It returns an error only if the very first connection fails; after that
-// it runs until ctx is cancelled.
-func (c *commandContext) streamLoop(ctx context.Context, deliverer *slackDeliverer, logger *syncLogger) error {
+// it runs until ctx is cancelled. Each successful (re)connect pokes a reconcile
+// so anything the hub dropped while disconnected is recovered promptly, not
+// only at the next periodic tick — the on-connect reconciliation the spec
+// requires.
+func (c *commandContext) streamLoop(ctx context.Context, deliverer *slackDeliverer, logger *syncLogger, reconcileNow chan struct{}) error {
 	connected := false
 	backoff := slackReconnectDelay
 	for ctx.Err() == nil {
@@ -381,6 +398,7 @@ func (c *commandContext) streamLoop(ctx context.Context, deliverer *slackDeliver
 		}
 		connected = true
 		backoff = slackReconnectDelay
+		pokeReconcile(reconcileNow)
 
 		c.consumeSlackStream(ctx, resp, deliverer, logger)
 		_ = resp.Body.Close()
@@ -390,15 +408,19 @@ func (c *commandContext) streamLoop(ctx context.Context, deliverer *slackDeliver
 }
 
 // reconcileLoop delivers the current unread backlog immediately, then re-checks
-// on a fixed interval. It is the safety net for anything the stream missed: a
-// hub-dropped event, or a notification whose live post failed.
-func (c *commandContext) reconcileLoop(ctx context.Context, deliverer *slackDeliverer, logger *syncLogger) {
+// on every reconcile poke (a fresh stream connection) and on a fixed interval.
+// It is the safety net for anything the stream missed: a hub-dropped event, or
+// a notification whose live post failed.
+func (c *commandContext) reconcileLoop(ctx context.Context, deliverer *slackDeliverer, logger *syncLogger, reconcileNow <-chan struct{}) {
+	ticker := time.NewTicker(slackReconcileInterval)
+	defer ticker.Stop()
 	for {
 		c.reconcileSlack(ctx, deliverer, logger)
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(slackReconcileInterval):
+		case <-ticker.C:
+		case <-reconcileNow:
 		}
 	}
 }

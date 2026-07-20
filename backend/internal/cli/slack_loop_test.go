@@ -737,3 +737,51 @@ func (l *lockedWriter) Write(p []byte) (int, error) {
 	defer l.mu.Unlock()
 	return l.w.Write(p)
 }
+
+// On reconnect, a notification published during the outage must be reconciled
+// PROMPTLY — driven by the on-connect poke, not by having to wait out a full
+// periodic interval. Set the periodic interval huge so only the on-connect
+// reconcile can satisfy the test.
+func TestSlackNotifyReconcilesOnConnectNotOnlyOnTick(t *testing.T) {
+	sink := newSlackSink(t)
+	daemon := newFakeDaemon(t, &fakeDaemon{
+		unread: func(connection int) []slackNotification {
+			if connection <= 1 {
+				return nil // nothing before the drop
+			}
+			return []slackNotification{{ID: "ntf_gap", Type: "pr_merged", Title: "During outage"}}
+		},
+		stream: func(_ *testing.T, connection int, _ http.ResponseWriter, _ func(), ctx context.Context) {
+			if connection == 1 {
+				return // drop immediately, forcing a reconnect
+			}
+			<-ctx.Done()
+		},
+	})
+
+	// Fast reconnect, but a periodic interval far longer than the test: if the
+	// gap notification arrives, it can only be via the on-connect reconcile.
+	origDelay, origMax, origRecon := slackReconnectDelay, slackMaxReconnectDelay, slackReconcileInterval
+	slackReconnectDelay = 5 * time.Millisecond
+	slackMaxReconnectDelay = 20 * time.Millisecond
+	slackReconcileInterval = time.Hour
+	t.Cleanup(func() {
+		slackReconnectDelay, slackMaxReconnectDelay, slackReconcileInterval = origDelay, origMax, origRecon
+	})
+
+	cfg := setConfigEnv(t)
+	writeRunFileFor(t, cfg, daemon.srv)
+	ctx := &commandContext{deps: Deps{
+		HTTPClient:   &http.Client{},
+		ProcessAlive: func(int) bool { return true },
+	}.withDefaults()}
+	runCtx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() { errCh <- ctx.runSlackNotify(runCtx, slackNotifyOptions{webhookURL: sink.srv.URL}) }()
+
+	got := sink.waitFor(t, 1)
+	if !strings.Contains(strings.Join(got, "|"), "During outage") {
+		t.Fatalf("expected the gap notification reconciled on reconnect, got %v", got)
+	}
+	expectCleanShutdown(t, cancel, errCh)
+}

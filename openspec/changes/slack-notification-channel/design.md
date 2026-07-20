@@ -77,14 +77,22 @@ hub to drop. (Two earlier iterations got this wrong: the first reconciled *befor
 second reconciled concurrently but held the deliverer's mutex across the POST, which serialized the
 producers anyway. Both were found in review.)
 
-Reconciliation is **periodic, not just on connect**, and that is the load-bearing decision. Because
-the hub is best-effort with no replay, a dropped stream event or a transiently-failed Slack post
-would otherwise be lost until the next reconnect — which, on a healthy long-lived stream, may never
-come. The periodic pass re-lists unread notifications every `slackReconcileInterval` and re-enqueues
-anything the worker has not delivered, so every missed notification lands within one interval,
-independent of stream health. This subsumes the old "subscribe before reconcile" ordering argument:
-a notification published in the gap between the first listing and the subscription is simply
-delivered by the next periodic pass.
+Reconciliation runs **both on every successful (re)connect and on a periodic tick**. The on-connect
+pass is what the spec requires: a notification the hub dropped while the process was disconnected is
+recovered the moment the stream comes back, not after an arbitrary wait. The periodic tick is the
+independent safety net for the case reconnect does not cover — a transiently-failed Slack post on a
+stream that never drops — since the hub is best-effort with no replay. The stream loop pokes a small
+buffered channel on each connect; the reconcile loop selects on that poke, the ticker, or
+cancellation, and re-enqueues anything the worker has not delivered. Dedupe by ID keeps that
+at-most-once. This subsumes the old "subscribe before reconcile" ordering argument: a notification
+published in the gap between the first listing and the subscription is delivered by the next pass.
+
+One residual gap is inherent and accepted: this command has no persistence and delivers only what
+the unread listing still shows, so a notification whose live post fails **and** which the operator
+marks read in the UI before the next reconcile is not delivered. The retry requirement is met (the
+periodic pass retries), but the window cannot be closed without either persistence or reading the
+operator's read-state faster than they set it — neither justified for a best-effort mirror whose
+source, the bell, has the same horizon.
 
 ### Dedupe by notification ID, recorded only on success, in an unbounded ledger
 
