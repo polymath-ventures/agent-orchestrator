@@ -22,10 +22,16 @@ import (
 )
 
 const (
-	// slackWebhookEnv is the documented way to supply the webhook URL. It is
-	// preferred over the flag because the URL is a secret and this command is
-	// long-lived, so a flag value would sit in the process table.
+	// slackWebhookEnv is the documented, preferred way to supply the webhook URL.
+	// It is preferred over the flag because the URL is a secret and this command
+	// is long-lived, so a flag value would sit in the process table. The AO_
+	// prefix matches the repo's env convention.
 	slackWebhookEnv = "AO_SLACK_WEBHOOK_URL"
+
+	// slackWebhookEnvFallback is the un-prefixed name Slack tooling conventionally
+	// uses. It is accepted as a fallback so an operator's existing SLACK_WEBHOOK_URL
+	// works without duplicating it under the AO_ prefix.
+	slackWebhookEnvFallback = "SLACK_WEBHOOK_URL"
 
 	// slackUnreadLimit is the page size reconciliation asks for. The daemon caps
 	// unread listings at 100 and defaults to 50, so asking explicitly is the
@@ -292,8 +298,10 @@ func newNotifySlackCommand(ctx *commandContext) *cobra.Command {
 		Short: "Stream AO notifications to a Slack incoming webhook (one-way)",
 		Long: "Subscribe to the running daemon's notification stream and post every notification " +
 			"to a Slack incoming webhook. Runs until interrupted. Delivery is one-way: nothing is " +
-			"read from Slack.\n\nSupply the webhook URL via " + slackWebhookEnv + " (preferred, so " +
-			"it does not appear in the process table) or --webhook-url.",
+			"read from Slack.\n\nThe webhook URL is resolved in order: --webhook-url, then " +
+			slackWebhookEnv + ", then " + slackWebhookEnvFallback + ". Prefer an environment variable " +
+			"over the flag, since a flag value is visible in the process table; " + slackWebhookEnv +
+			" is the documented name and " + slackWebhookEnvFallback + " is accepted as a fallback.",
 		Args: noArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			// No CLI command is cancellable by default (the root runs with a
@@ -305,7 +313,7 @@ func newNotifySlackCommand(ctx *commandContext) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&opts.webhookURL, "webhook-url", "",
-		"Slack incoming webhook URL (prefer "+slackWebhookEnv+"; a flag value is visible in the process table)")
+		"Slack incoming webhook URL (prefer "+slackWebhookEnv+" or "+slackWebhookEnvFallback+"; a flag value is visible in the process table)")
 	return cmd
 }
 
@@ -322,12 +330,17 @@ func newNotifySlackCommand(ctx *commandContext) *cobra.Command {
 // so every missed notification is delivered within one interval. Dedupe by ID
 // keeps that at-most-once.
 func (c *commandContext) runSlackNotify(ctx context.Context, opts slackNotifyOptions) error {
+	// Precedence: --webhook-url flag, then AO_SLACK_WEBHOOK_URL (preferred), then
+	// the conventional un-prefixed SLACK_WEBHOOK_URL.
 	webhookURL := strings.TrimSpace(opts.webhookURL)
 	if webhookURL == "" {
 		webhookURL = strings.TrimSpace(os.Getenv(slackWebhookEnv))
 	}
 	if webhookURL == "" {
-		return usageError{errors.New("usage: --webhook-url is required (or set " + slackWebhookEnv + ")")}
+		webhookURL = strings.TrimSpace(os.Getenv(slackWebhookEnvFallback))
+	}
+	if webhookURL == "" {
+		return usageError{errors.New("usage: --webhook-url is required (or set " + slackWebhookEnv + " / " + slackWebhookEnvFallback + ")")}
 	}
 
 	client := *c.deps.HTTPClient

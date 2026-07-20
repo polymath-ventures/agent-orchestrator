@@ -208,10 +208,11 @@ func TestSlackNotifyDeliversUnreadBacklogOnStartup(t *testing.T) {
 		t.Fatalf("expected the unread backlog delivered on startup, got %v", got)
 	}
 	// Both routes are exercised: the stream is subscribed and the listing read.
-	paths := daemon.requestPaths()
-	if !containsPath(paths, "/api/v1/notifications/stream") || !containsPath(paths, "/api/v1/notifications") {
-		t.Fatalf("expected both the stream and the listing to be called, got %v", paths)
-	}
+	// The stream connects on an independent goroutine, so poll for it rather than
+	// snapshotting immediately after the reconcile delivery — under load the
+	// stream may not have dialed yet when the backlog notification arrives.
+	waitForPath(t, daemon, "/api/v1/notifications/stream")
+	waitForPath(t, daemon, "/api/v1/notifications")
 	expectCleanShutdown(t, cancel, errCh)
 }
 
@@ -222,6 +223,24 @@ func containsPath(paths []string, want string) bool {
 		}
 	}
 	return false
+}
+
+// waitForPath blocks until the daemon has been asked for the given route, or
+// fails the test after a bounded wait. Used where a route is requested by a
+// background goroutine whose timing the test does not otherwise synchronize on.
+func waitForPath(t *testing.T, daemon *fakeDaemon, want string) {
+	t.Helper()
+	deadline := time.After(5 * time.Second)
+	for {
+		if containsPath(daemon.requestPaths(), want) {
+			return
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("route %s was never requested; saw %v", want, daemon.requestPaths())
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
 }
 
 // A notification whose live post fails while the stream STAYS connected must
@@ -458,6 +477,7 @@ func TestSlackNotifyFailsFastWhenDaemonUnreachableAtStartup(t *testing.T) {
 func TestNotifySlackRequiresWebhookURL(t *testing.T) {
 	setConfigEnv(t)
 	t.Setenv(slackWebhookEnv, "")
+	t.Setenv(slackWebhookEnvFallback, "")
 
 	_, _, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "notify", "slack")
 	if err == nil {
@@ -465,6 +485,26 @@ func TestNotifySlackRequiresWebhookURL(t *testing.T) {
 	}
 	if ExitCode(err) != 2 {
 		t.Fatalf("expected usage exit code 2, got %d for %v", ExitCode(err), err)
+	}
+}
+
+// The standard un-prefixed SLACK_WEBHOOK_URL is accepted as a fallback when the
+// preferred AO_SLACK_WEBHOOK_URL is unset: the command gets past the config gate
+// and fails on the (absent) daemon instead of erroring as CLI misuse.
+func TestNotifySlackReadsWebhookFromFallbackEnv(t *testing.T) {
+	setConfigEnv(t)
+	t.Setenv(slackWebhookEnv, "")
+	t.Setenv(slackWebhookEnvFallback, "https://hooks.slack.example/T/B/X")
+
+	_, _, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "notify", "slack")
+	if err == nil {
+		t.Fatal("expected a daemon error, proving the fallback env satisfied the config gate")
+	}
+	if ExitCode(err) != 1 {
+		t.Fatalf("expected runtime exit code 1, got %d for %v", ExitCode(err), err)
+	}
+	if !strings.Contains(err.Error(), "not running") {
+		t.Fatalf("expected a daemon not-running error, got %v", err)
 	}
 }
 
