@@ -64,8 +64,11 @@ None. `openspec/specs/` carries no existing capability whose requirements change
 - `backend/internal/adapters/agent/activitydispatch/dispatch.go` — deriver entry.
   Required: the adapter installs `ao hooks` callbacks, and a missing entry means its
   activity is silently never reported.
-- `backend/internal/storage/sqlite/migrations/0007_allow_implemented_harnesses.sql` —
-  extended **in place** (both Up and Down), per that file's own stated convention.
+- `backend/internal/storage/sqlite/migrations/0025_allow_codex_fugu_harness.sql` —
+  a **new** migration widening the `sessions.harness` CHECK (Up and Down). Not an
+  in-place edit of `0007`: goose tracks applied migrations by version, so an edit to
+  already-applied `0007` would never re-run on existing installs. `0007`'s stale
+  header note is corrected to point future additions at a new migration.
 - `backend/internal/httpd/controllers/dto.go` — spawn enum tag; `openapi.yaml` and
   `frontend/src/api/schema.ts` regenerate from it.
 - `backend/internal/cli/spawn.go`, `backend/internal/cli/doctor.go`,

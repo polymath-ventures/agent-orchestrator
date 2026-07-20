@@ -41,7 +41,7 @@
 - [x] 7.1 Add `codex-fugu` to the `enum:` struct tag on `SpawnSessionRequest.Harness` in `httpd/controllers/dto.go`
 - [x] 7.2 Run `npm run api` and commit the regenerated `openapi.yaml` and `frontend/src/api/schema.ts` together — do not hand-edit either
 - [x] 7.3 Update the `--harness` help string in `cli/spawn.go`
-- [x] 7.4 Add the `{Name: "codex-fugu", BinaryName: "codex-fugu", VersionArg: "--version"}` entry to `doctorHarnesses` in `cli/doctor.go` and update `doctor_test.go`
+- [x] 7.4 Add the `{Name: "codex-fugu", BinaryName: "codex-fugu", PreArgs: []string{"--no-update"}, VersionArg: "--version"}` entry to `doctorHarnesses` in `cli/doctor.go` (the wrapper needs `--no-update` first, like launch/auth) and update `doctor_test.go`
 - [x] 7.5 Update `skillassets/using-ao/commands/spawn.md`. README agents row and the landing marquee deliberately skipped — public marketing surfaces for a binary nobody outside the fleet can install (see design.md)
 
 ## 8. Frontend

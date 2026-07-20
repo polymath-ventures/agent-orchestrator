@@ -12,11 +12,13 @@ The clean fork has moved since. Three deltas matter:
    adding one are settled — a hand-maintained slice in `registry.Constructors()`,
    a constant plus an `AllHarnesses` entry, and a handful of enumeration lists that
    must stay in sync.
-2. **Migration convention inverted.** The old fork chained a fresh
-   `0023_allow_codex_fugu_harness.sql`. This fork's
-   `0007_allow_implemented_harnesses.sql` carries a header comment stating the
-   opposite rule: *"New harnesses are added here by extending this list, not by
-   chaining a fresh per-harness migration onto the previous one's exact text."*
+2. **Migration convention.** This fork's `0007_allow_implemented_harnesses.sql`
+   carried a header note saying *"New harnesses are added here by extending this
+   list, not by chaining a fresh per-harness migration."* That note only held while
+   0007 was the newest migration; with two dozen later migrations it no longer does
+   (see the Decisions section), so this change adds a new migration — landing in the
+   same place the old fork did (a chained `0023`), for a reason the note did not
+   anticipate.
 3. **No model machinery at all.** This fork has no `domain/modelprovider.go`, no
    `ClassifyModelProvider`, no `knownModelsForHarness`, no `standardModelFor`, and
    no worker mix. Model is an opaque passthrough string on the agent config. Roughly
@@ -192,11 +194,11 @@ machinery.
 
 ## Migration Plan
 
-Additive and reversible. `0007`'s Down string is extended symmetrically with the Up,
-so rolling back narrows the CHECK again. Rollback is only unsafe if a `codex-fugu`
-session row already exists, which is the normal constraint-narrowing caveat and not
-specific to this change. No data migration, no API break — the spawn enum only
-widens.
+Additive and reversible. The new `0025` migration's Down reverses its Up
+symmetrically, so rolling back narrows the CHECK again. Rollback is only unsafe if a
+`codex-fugu` session row already exists, which is the normal constraint-narrowing
+caveat and not specific to this change. No data migration, no API break — the spawn
+enum only widens.
 
 ## Open Questions
 
