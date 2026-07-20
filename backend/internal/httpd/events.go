@@ -13,6 +13,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/cdc"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apispec"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/envelope"
+	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/streamctx"
 )
 
 const (
@@ -27,8 +28,9 @@ type cdcSubscriber interface {
 // EventsController owns the client-facing CDC stream. Durable replay comes from
 // change_log through Source; Broadcaster remains a live-only pub/sub seam.
 type EventsController struct {
-	Source cdc.Source
-	Live   cdcSubscriber
+	Source        cdc.Source
+	Live          cdcSubscriber
+	StreamContext context.Context
 }
 
 // Register mounts the CDC SSE stream route.
@@ -56,7 +58,7 @@ func (c *EventsController) stream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx, cancel := context.WithCancel(r.Context())
+	ctx, cancel := streamctx.WithShutdown(r.Context(), c.StreamContext)
 	defer cancel()
 
 	live := make(chan cdc.Event, eventsLiveBuffer)

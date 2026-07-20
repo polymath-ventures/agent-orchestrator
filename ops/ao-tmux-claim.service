@@ -1,0 +1,7 @@
+[Unit]
+Description=Claim the tmux socket for ao-tmux.service when nothing owns it
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/systemctl --user start --no-block ao-tmux.service
+LogLevelMax=warning

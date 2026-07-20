@@ -12,6 +12,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apispec"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/envelope"
+	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/streamctx"
 	notificationsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/notification"
 )
 
@@ -29,8 +30,9 @@ type NotificationStream interface {
 
 // NotificationsController owns the /notifications routes.
 type NotificationsController struct {
-	Svc    NotificationService
-	Stream NotificationStream
+	Svc           NotificationService
+	Stream        NotificationStream
+	StreamContext context.Context
 }
 
 // Register mounts bounded notification REST routes on the supplied router.
@@ -110,6 +112,8 @@ func (c *NotificationsController) stream(w http.ResponseWriter, r *http.Request)
 	}
 	ch, unsubscribe := c.Stream.Subscribe(domain.ProjectID(r.URL.Query().Get("projectId")))
 	defer unsubscribe()
+	ctx, cancel := c.requestStreamContext(r.Context())
+	defer cancel()
 
 	h := w.Header()
 	h.Set("Content-Type", "text/event-stream; charset=utf-8")
@@ -121,7 +125,7 @@ func (c *NotificationsController) stream(w http.ResponseWriter, r *http.Request)
 
 	for {
 		select {
-		case <-r.Context().Done():
+		case <-ctx.Done():
 			return
 		case rec, ok := <-ch:
 			if !ok {
@@ -132,6 +136,10 @@ func (c *NotificationsController) stream(w http.ResponseWriter, r *http.Request)
 			}
 		}
 	}
+}
+
+func (c *NotificationsController) requestStreamContext(reqCtx context.Context) (context.Context, context.CancelFunc) {
+	return streamctx.WithShutdown(reqCtx, c.StreamContext)
 }
 
 func writeNotificationSSE(w http.ResponseWriter, flusher http.Flusher, rec domain.NotificationRecord) error {

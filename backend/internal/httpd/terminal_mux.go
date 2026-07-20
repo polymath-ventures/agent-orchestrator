@@ -9,6 +9,7 @@ import (
 	"github.com/coder/websocket/wsjson"
 	"github.com/go-chi/chi/v5"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/streamctx"
 	"github.com/aoagents/agent-orchestrator/backend/internal/terminal"
 )
 
@@ -21,17 +22,17 @@ const terminalMuxReadLimit = 1 << 20
 // is intentionally outside the per-request Timeout middleware (the connection is
 // long-lived). When mgr is nil the route is not mounted — the daemon simply has
 // no terminal surface yet.
-func mountTerminalMux(r chi.Router, mgr *terminal.Manager, log *slog.Logger) {
+func mountTerminalMux(streamCtx context.Context, r chi.Router, mgr *terminal.Manager, log *slog.Logger) {
 	if mgr == nil {
 		return
 	}
-	r.Get("/mux", terminalMuxHandler(mgr, log))
+	r.Get("/mux", terminalMuxHandler(streamCtx, mgr, log))
 }
 
 // terminalMuxHandler upgrades the request to a WebSocket and hands the connection to the
 // terminal manager. httpd owns only the upgrade and the transport adaptation;
 // all stream logic lives in internal/terminal.
-func terminalMuxHandler(mgr *terminal.Manager, log *slog.Logger) http.HandlerFunc {
+func terminalMuxHandler(streamCtx context.Context, mgr *terminal.Manager, log *slog.Logger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// InsecureSkipVerify disables coder/websocket's same-origin check: the
 		// daemon binds loopback only and the desktop renderer's origin differs
@@ -42,7 +43,9 @@ func terminalMuxHandler(mgr *terminal.Manager, log *slog.Logger) http.HandlerFun
 			return
 		}
 		c.SetReadLimit(terminalMuxReadLimit)
-		mgr.Serve(r.Context(), &terminalMuxConn{c: c})
+		serveCtx, cancel := streamctx.WithShutdown(r.Context(), streamCtx)
+		defer cancel()
+		mgr.Serve(serveCtx, &terminalMuxConn{c: c})
 	}
 }
 

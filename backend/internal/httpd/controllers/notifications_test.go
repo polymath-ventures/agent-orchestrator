@@ -68,6 +68,14 @@ func newNotificationStreamTestServer(t *testing.T, svc controllers.NotificationS
 	return srv
 }
 
+func newNotificationStreamContextTestServer(streamCtx context.Context, t *testing.T, stream controllers.NotificationStream) *httptest.Server {
+	t.Helper()
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	srv := httptest.NewServer(httpd.NewRouterWithControl(config.Config{}, log, nil, httpd.APIDeps{NotificationStream: stream, StreamContext: streamCtx}, httpd.ControlDeps{}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
 func notificationsvcNotFound() error {
 	return apierr.NotFound("NOTIFICATION_NOT_FOUND", "Unknown unread notification")
 }
@@ -156,6 +164,37 @@ func TestNotificationsAPI_MarkRead(t *testing.T) {
 	mustJSON(t, body, &resp)
 	if resp.Notification.ID != "ntf_1" || resp.Notification.Status != "read" || resp.Notification.Target.Kind != "session" {
 		t.Fatalf("resp = %+v", resp)
+	}
+}
+
+func TestNotificationsStreamStopsWhenStreamContextCanceled(t *testing.T) {
+	streamCtx, cancelStream := context.WithCancel(context.Background())
+	stream := &fakeNotificationStream{ch: make(chan domain.NotificationRecord)}
+	srv := newNotificationStreamContextTestServer(streamCtx, t, stream)
+
+	resp, err := http.Get(srv.URL + "/api/v1/notifications/stream")
+	if err != nil {
+		t.Fatalf("GET stream: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET stream = %d, want 200", resp.StatusCode)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := io.ReadAll(resp.Body)
+		done <- err
+	}()
+	cancelStream()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("read stream after cancel: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("notification stream did not close after stream context cancel")
 	}
 }
 

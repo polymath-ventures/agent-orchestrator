@@ -128,3 +128,86 @@ killing sessions. That is intentionally narrower than a LAN daemon listener:
 boundary. Do not expose the Node server directly on the LAN; if this ever needs
 a non-tailnet listener, use the bearer-auth model in
 `docs/adr/0001-lan-listener-for-mobile.md` instead.
+## Headless Server Standup
+
+AO can run as a headless Linux user service on the Polymath fork. This is
+fork-only infrastructure: upstream's default desktop app still owns daemon
+startup for ordinary installs.
+
+Install the `ao` binary somewhere the user service can execute it. The checked-in
+unit expects:
+
+```bash
+~/.local/bin/ao
+```
+
+Then install and enable the user units:
+
+```bash
+# Prerequisite: tmux must be installed and available on PATH.
+mkdir -p ~/.config/systemd/user
+cp ops/ao.service \
+  ops/ao-tmux.service \
+  ops/ao-tmux-claim.service \
+  ops/ao-tmux-claim.timer \
+  ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now ao-tmux.service ao-tmux-claim.timer ao.service
+```
+
+For unattended server operation, enable lingering for the service account:
+
+```bash
+loginctl enable-linger "$USER"
+```
+
+`ops/ao.service` runs `ao daemon` directly, stores state under `~/.ao`, restarts
+persistently, and uses `KillMode=process` so a daemon restart signals only the
+daemon process. It depends on `ops/ao-tmux.service` because the daemon must not
+be the first process to create the default tmux server. If it were, tmux and
+every agent pane would inherit `ao.service`'s cgroup, and a routine
+`systemctl --user restart ao.service` could kill the live fleet.
+
+`ops/ao-tmux.service` owns the tmux server first and pins `exit-empty off` so the
+server does not disappear when the last session exits. It intentionally has no
+`ExecStop`: a tidy `tmux kill-server` is a fleet kill. Its stop-job hardening
+protects ordinary systemd stop/restart jobs, not direct process kills.
+
+`ops/ao-tmux-claim.timer` periodically asks systemd to start `ao-tmux.service`.
+Most ticks are no-ops. The timer matters after a legacy or crashed tmux server
+frees the socket: the next server should be born under `ao-tmux.service`, not
+lazily under the AO daemon.
+
+`ao stop` preserves operator semantics under `Restart=always`: when the verified
+daemon PID is the `MainPID` of `ao.service`, or `/proc/<pid>/cgroup` shows the
+PID belongs to `ao.service`, the CLI calls `systemctl --user stop ao.service`
+instead of POSTing `/shutdown` and letting systemd immediately restart it. If
+the daemon is not owned by the unit, `ao stop` uses the normal token-bearing
+loopback shutdown path.
+
+Manual restart verification:
+
+```bash
+systemctl --user status ao.service ao-tmux.service
+ao status
+ao session ls
+tmux list-sessions
+systemctl --user restart ao.service
+ao status
+ao session ls
+tmux list-sessions
+```
+
+Expected result: the daemon comes back ready, existing tmux sessions are still
+listed, and AO reattaches to live sessions instead of marking them dead after the
+reaper window. A daemon with zero connected Electron/browser clients should stay
+up; the supervisor only auto-stops an app-owned daemon after a client has
+connected and later disconnected.
+
+Residual risks: a tmux server crash, `tmux kill-server`, `systemctl --user kill`,
+host shutdown, direct PID signals, OOM selection, or user-manager teardown can
+still kill panes. The units remove routine deploy/restart fleet kills; they do
+not make tmux itself unkillable. On migration hosts whose tmux server was already
+spawned by the daemon before these units existed, `KillMode=process` protects
+daemon restarts, but full tmux cgroup ownership moves after reboot, server
+replacement, or socket release.

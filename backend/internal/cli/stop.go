@@ -4,6 +4,9 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"os"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -13,6 +16,8 @@ import (
 )
 
 const defaultStopTimeout = 10 * time.Second
+
+var readProcCgroup = os.ReadFile
 
 type stopOptions struct {
 	timeout time.Duration
@@ -70,13 +75,105 @@ func (c *commandContext) stopDaemon(ctx context.Context, opts stopOptions) (daem
 		return daemonStatus{}, fmt.Errorf("daemon pid %d is alive but ownership could not be verified", st.PID)
 	}
 
-	if err := c.requestShutdown(ctx, st.Port); err != nil {
-		return daemonStatus{}, fmt.Errorf("request daemon shutdown: %w", err)
+	stoppedBySystemd, err := c.stopSystemdDaemon(ctx, st.PID, opts.timeout)
+	if err != nil {
+		return daemonStatus{}, err
+	}
+	if !stoppedBySystemd {
+		if err := c.requestShutdown(ctx, st.Port, st.shutdownToken); err != nil {
+			return daemonStatus{}, fmt.Errorf("request daemon shutdown: %w", err)
+		}
 	}
 	return c.waitForStopped(ctx, st.PID, cfg.RunFilePath, cfg.DataDir, opts.timeout)
 }
 
-func (c *commandContext) requestShutdown(ctx context.Context, port int) error {
+func (c *commandContext) stopSystemdDaemon(ctx context.Context, pid int, timeout time.Duration) (bool, error) {
+	inUnit, _ := processInSystemdUnit(pid, "ao.service")
+	systemctl, err := c.deps.LookPath("systemctl")
+	if err != nil {
+		if inUnit {
+			return true, fmt.Errorf("daemon pid %d is owned by ao.service but systemctl is unavailable: %w", pid, err)
+		}
+		return false, nil
+	}
+
+	checkCtx, cancelCheck := context.WithTimeout(ctx, systemdProbeTimeout(timeout))
+	defer cancelCheck()
+	if _, err := c.deps.CommandOutput(checkCtx, systemctl, "--user", "is-active", "--quiet", "ao.service"); err != nil {
+		if checkCtx.Err() != nil {
+			return true, fmt.Errorf("inspect ao.service state: %w", checkCtx.Err())
+		}
+		return false, nil
+	}
+	out, err := c.deps.CommandOutput(checkCtx, systemctl, "--user", "show", "ao.service", "-P", "MainPID")
+	if err != nil {
+		return true, fmt.Errorf("inspect ao.service MainPID: %w", err)
+	}
+	mainPID, err := parseSystemdMainPID(out)
+	if err != nil {
+		return true, fmt.Errorf("inspect ao.service MainPID: %w", err)
+	}
+	if mainPID != pid {
+		return false, nil
+	}
+
+	if err := c.stopAOService(ctx, systemctl, timeout); err != nil {
+		return true, err
+	}
+	return true, nil
+}
+
+func (c *commandContext) stopAOService(ctx context.Context, systemctl string, timeout time.Duration) error {
+	if timeout <= 0 {
+		timeout = defaultStopTimeout
+	}
+	stopCtx, cancelStop := context.WithTimeout(ctx, timeout)
+	defer cancelStop()
+	if _, err := c.deps.CommandOutput(stopCtx, systemctl, "--user", "--no-block", "stop", "ao.service"); err != nil {
+		return fmt.Errorf("stop ao.service: %w", err)
+	}
+	return nil
+}
+
+func systemdProbeTimeout(timeout time.Duration) time.Duration {
+	if timeout <= 0 {
+		return defaultStopTimeout
+	}
+	if timeout < probeTimeout {
+		return probeTimeout
+	}
+	return timeout
+}
+
+func processInSystemdUnit(pid int, unit string) (bool, error) {
+	data, err := readProcCgroup(fmt.Sprintf("/proc/%d/cgroup", pid))
+	if err != nil {
+		return false, err
+	}
+	return cgroupContainsSystemdUnit(data, unit), nil
+}
+
+func cgroupContainsSystemdUnit(data []byte, unit string) bool {
+	text := string(data)
+	return strings.Contains(text, "/"+unit) || strings.Contains(text, "\\"+unit)
+}
+
+func parseSystemdMainPID(out []byte) (int, error) {
+	lines := strings.Split(string(out), "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := strings.TrimSpace(lines[i])
+		if line == "" {
+			continue
+		}
+		pid, err := strconv.Atoi(line)
+		if err == nil {
+			return pid, nil
+		}
+	}
+	return 0, fmt.Errorf("missing numeric MainPID")
+}
+
+func (c *commandContext) requestShutdown(ctx context.Context, port int, shutdownToken string) error {
 	reqCtx, cancel := context.WithTimeout(ctx, probeTimeout)
 	defer cancel()
 
@@ -84,13 +181,16 @@ func (c *commandContext) requestShutdown(ctx context.Context, port int) error {
 	if err != nil {
 		return err
 	}
+	if shutdownToken != "" {
+		req.Header.Set(runfile.ShutdownTokenHeader, shutdownToken)
+	}
 	resp, err := c.deps.HTTPClient.Do(req)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("HTTP %d", resp.StatusCode)
+		return fmt.Errorf("HTTP %s", resp.Status)
 	}
 	return nil
 }

@@ -1,0 +1,11 @@
+[Unit]
+Description=Retry tmux socket ownership for ao-tmux.service
+
+[Timer]
+OnBootSec=30s
+OnUnitInactiveSec=30s
+AccuracySec=5s
+Unit=ao-tmux-claim.service
+
+[Install]
+WantedBy=timers.target

@@ -44,7 +44,8 @@ docker run --rm --init ao-cli-smoke
 **not** create/migrate `ao.db`) · `TestE2E_StatusStopped` (stopped + idempotent
 stop) · `TestE2E_Lifecycle` (start, ready, idempotent, daemon-created store,
 `/healthz` identity, stop, run-file cleanup) · `TestE2E_ShutdownGuard` (the
-`/shutdown` CSRF + DNS-rebinding 403 guard, daemon survives) ·
+token-bearing `/shutdown` CSRF + DNS-rebinding 403 guard, daemon survives, and
+loopback token request returns 202) ·
 `TestE2E_StaleRunFile` (dead-PID run-file → stale → cleaned) · `TestE2E_ExitCodes`
 (2 usage / 1 runtime / config error) · `TestE2E_Completion` (all four shells).
 

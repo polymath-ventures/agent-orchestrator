@@ -6,8 +6,10 @@ on:
   pull_request:
     paths:
       - "backend/**"
+      - "ops/**"
       - "frontend/src/api/schema.ts"
       - "package.json"
+      - "package-lock.json"
       - ".github/workflows/go.yml"
 
 permissions:
@@ -70,6 +72,18 @@ jobs:
           working-directory: backend
           # Blocking on the full ruleset: the tree is clean at zero findings, so
           # any new issue fails CI rather than being grandfathered.
+
+  ops-units:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Test systemd units
+        run: npm run test:ops
 
   api-drift:
     runs-on: ubuntu-latest

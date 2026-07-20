@@ -1,0 +1,28 @@
+[Unit]
+Description=Agent Orchestrator daemon
+After=network-online.target ao-tmux.service
+Wants=network-online.target
+Requires=ao-tmux.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+# Refuse to be the first process to touch the default tmux socket. A lazily
+# spawned tmux server inherits the daemon unit's cgroup, and then a routine
+# daemon restart can kill every live agent pane before AO can reattach them.
+ExecStartPre=/bin/sh -c 'if ! command -v tmux >/dev/null 2>&1; then echo "ao.service: refusing to start: tmux is not installed; install tmux and start ao-tmux.service first" >&2; exit 127; fi; if tmux list-sessions >/dev/null 2>&1; then exit 0; fi; if tmux list-sessions 2>&1 | grep -qiE "error connecting|no server running"; then echo "ao.service: refusing to start: no tmux server owns the default socket; start ao-tmux.service first" >&2; exit 1; fi; echo "ao.service: refusing to start: tmux ownership probe failed" >&2; tmux list-sessions 2>&1 | sed "s/^/  /" >&2; exit 2'
+ExecStart=%h/.local/bin/ao daemon
+Restart=always
+RestartSec=5s
+Environment=AO_DATA_DIR=%h/.ao
+Environment=AO_RUN_FILE=%h/.ao/running.json
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+
+# Only signal the daemon's main process on restart. Agent panes live under
+# ao-tmux.service, and legacy tmux servers may still be in this cgroup until the
+# next host reboot, so cgroup-wide stop semantics are explicitly avoided.
+KillMode=process
+TimeoutStopSec=60s
+
+[Install]
+WantedBy=default.target
