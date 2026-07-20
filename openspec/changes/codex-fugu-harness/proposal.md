@@ -21,7 +21,7 @@ appear in an upstream PR.
   `ResolveAgentBinary(ctx, binaryName)`. The Windows npm-shim → native-exe
   indirection stays gated on `binaryName == "codex"`.
 - **Suppress the fugu wrapper's update prompt.** `codex-fugu` is an auto-updating
-  wrapper that blocks on a prompt. A `--no-update` flag is emitted as the *first*
+  wrapper that blocks on a prompt. A `--no-update` flag is emitted as the _first_
   argument — before any subcommand — on the launch and restore commands. (This
   fork has no `exec`-style probe path, so there is no third site.)
 - **Route fugu's hooks to its own token.** `appendSessionHookFlags` splits into
@@ -94,8 +94,8 @@ building it now would be speculative surface:
 - `agent:fugu` routing labels and worker-mix wiring. Belongs to GH #3, in flight.
 
 **The `fugu-ultra` manual-only ruling.** The originating issue asks that `fugu-ultra`
-never be selected by mix or intake. In this fork that property holds *by
-construction*: there is no mix, no intake defaulting, and no per-harness model pin
+never be selected by mix or intake. In this fork that property holds _by
+construction_: there is no mix, no intake defaulting, and no per-harness model pin
 for anything to select it. Adding an exclusion list or a detector now would be a
 guard over machinery that does not exist. The ruling is instead recorded here as a
 constraint GH #3 and GH #4 must honor when they build the selecting machinery.

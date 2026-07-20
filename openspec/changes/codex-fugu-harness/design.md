@@ -13,8 +13,8 @@ The clean fork has moved since. Three deltas matter:
    a constant plus an `AllHarnesses` entry, and a handful of enumeration lists that
    must stay in sync.
 2. **Migration convention.** This fork's `0007_allow_implemented_harnesses.sql`
-   carried a header note saying *"New harnesses are added here by extending this
-   list, not by chaining a fresh per-harness migration."* That note only held while
+   carried a header note saying _"New harnesses are added here by extending this
+   list, not by chaining a fresh per-harness migration."_ That note only held while
    0007 was the newest migration; with two dozen later migrations it no longer does
    (see the Decisions section), so this change adds a new migration — landing in the
    same place the old fork did (a chained `0023`), for a reason the note did not
@@ -49,12 +49,12 @@ The clean fork has moved since. Three deltas matter:
 
 ### Parameterize the Codex adapter; do not fork it
 
-The fugu harness is served by the *same* `codex.Plugin` type, carrying five optional
+The fugu harness is served by the _same_ `codex.Plugin` type, carrying five optional
 string fields (manifest id / name / description, binary name, hook token). Each is
 read through an accessor that returns the Codex default when the field is empty, so
 `codex.New()` returns a zero-valued struct that is provably still plain Codex.
 
-*Alternative rejected:* a separate `codexfugu` package embedding or wrapping the
+_Alternative rejected:_ a separate `codexfugu` package embedding or wrapping the
 Codex adapter. That is how most harnesses are added here, and it would have matched
 the surrounding pattern — but fugu is not a different agent, it is the same agent
 behind a different executable name. A second package would duplicate the launch
@@ -63,7 +63,7 @@ Codex change would have to be mirrored by hand or silently drift. The empty-stri
 fallback keeps one implementation and makes the Codex defaults a property of the
 type rather than a thing two files have to agree on.
 
-*Cost accepted:* the Codex adapter gains five fields and five three-line accessors
+_Cost accepted:_ the Codex adapter gains five fields and five three-line accessors
 that only one constructor populates.
 
 ### `--no-update` is emitted positionally, at the front
@@ -71,7 +71,7 @@ that only one constructor populates.
 The fugu wrapper parses `--no-update` only as a top-level flag; behind a subcommand
 it is rejected. So the flag is inserted immediately after the binary in both command
 builders (launch and restore) rather than appended with the other flags. This is
-load-bearing and non-obvious, which is why the spec pins argument *position* and the
+load-bearing and non-obvious, which is why the spec pins argument _position_ and the
 tests assert exact argv rather than set membership.
 
 Note this fork has no `exec`-style model/capability probe — the old fork's
@@ -81,7 +81,7 @@ Codex-only; fugu's doctor coverage is the ordinary `--version` check. Do not con
 this flag with the pre-existing `appendNoUpdateCheckFlag`, which emits the unrelated
 Codex config override `-c check_for_update_on_startup=false` and applies to both.
 
-*Alternative rejected:* setting an env var or a config key to disable the update
+_Alternative rejected:_ setting an env var or a config key to disable the update
 check. The wrapper offers no such knob; the flag is the only documented mechanism.
 
 ### Auth falls back to the shared Codex login, narrowly
@@ -98,7 +98,7 @@ authorized would report a broken worker as healthy. Unknown stays unknown. The o
 fork learned this the hard way and pinned it with a dedicated negative test
 (`TestFuguAuthStatusDoesNotTreatRuntimeHelpAsAuthorized`); that test ports across.
 
-*Alternative rejected:* reading the shared credential file directly. It is faster
+_Alternative rejected:_ reading the shared credential file directly. It is faster
 and needs no subprocess, but it duplicates Codex's own notion of where credentials
 live and would break the moment Codex changes it. Asking the Codex binary keeps one
 source of truth.
@@ -109,7 +109,7 @@ source of truth.
 is only safe **while 0007 is the newest migration**. It no longer is: `0007` was
 born with all 23 harnesses in one commit, no harness has ever been added post-hoc,
 and there are now two dozen later migrations. `migrate()` runs `goose.Up`, and goose
-tracks applied migrations by version *number*, not content — so any database already
+tracks applied migrations by version _number_, not content — so any database already
 past `0007` (every existing install) never re-runs it. Editing `0007` in place would
 admit `codex-fugu` on fresh installs but silently leave every existing install
 rejecting it, because its `sessions.harness` CHECK was frozen at migration time.
@@ -125,7 +125,7 @@ there. A second test, `TestMigrateAdmitsCodexFuguOnUpgradeFromInitialPlatform`,
 migrates only through `0007`, asserts `codex-fugu` is absent, then runs the rest and
 requires it to be admitted — the upgrade path a fresh-migration test cannot see.
 
-*Alternative rejected:* editing `0007` in place, per its header note. Rejected once
+_Alternative rejected:_ editing `0007` in place, per its header note. Rejected once
 the goose-version-tracking behavior was confirmed: it is correct for fresh installs
 and silently broken for every existing one — the header note predates the later
 migrations and no longer holds. (This came out of independent review; the first
@@ -151,13 +151,13 @@ smaller. This is a departure from the old fork, which did edit the docs pages.
 The originating issue's third acceptance criterion is that `fugu-ultra` is never
 selected by mix or intake — explicit spawn only. In this fork that is already true,
 vacuously: there is no worker mix, no intake defaulting, and no per-harness model
-pin. There is nothing that *could* select it.
+pin. There is nothing that _could_ select it.
 
 Adding an exclusion list, a deny-set, or a `manualOnly` flag now would mean building
 a guard over machinery that does not exist, and shipping a rule in the wrong layer —
 the component that owns model selection should own the constraint, and that
 component arrives with GH #3 / GH #4. The old fork reached the same conclusion for a
-different reason: even there, `fugu-ultra` was excluded by *absence* (never pinned as
+different reason: even there, `fugu-ultra` was excluded by _absence_ (never pinned as
 a default, never captured into a config spec, and documented as a policy) rather
 than by a code flag; `grep manualOnly` on the old fork finds only comments.
 
