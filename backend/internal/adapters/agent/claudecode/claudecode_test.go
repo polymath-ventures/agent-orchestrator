@@ -66,19 +66,83 @@ func TestGetLaunchCommandUsesEffortEnvironmentWhenFlagUnsupported(t *testing.T) 
 	if runtime.GOOS == "windows" {
 		t.Skip("shell-script fake is Unix-specific")
 	}
+	callsFile := filepath.Join(t.TempDir(), "help-calls")
+	t.Setenv("AO_CLAUDE_HELP_CALLS", callsFile)
 	bin := writeFakeClaudeScript(t, `#!/bin/sh
+calls=0
+if [ -f "$AO_CLAUDE_HELP_CALLS" ]; then calls=$(cat "$AO_CLAUDE_HELP_CALLS"); fi
+printf '%s' "$((calls + 1))" > "$AO_CLAUDE_HELP_CALLS"
 echo 'Usage: claude [options]'
 `)
 
-	cmd, err := (&Plugin{resolvedBinary: bin}).GetLaunchCommand(context.Background(), ports.LaunchConfig{
+	plugin := &Plugin{resolvedBinary: bin}
+	config := ports.LaunchConfig{
 		Config: ports.AgentConfig{Effort: domain.EffortMax},
-	})
+	}
+	cmd, err := plugin.GetLaunchCommand(context.Background(), config)
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := []string{"env", "CLAUDE_CODE_EFFORT_LEVEL=max", bin}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("command\nwant: %#v\n got: %#v", want, cmd)
+	}
+	if _, err := plugin.GetLaunchCommand(context.Background(), config); err != nil {
+		t.Fatal(err)
+	}
+	calls, err := os.ReadFile(callsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(calls) != "1" {
+		t.Fatalf("successful negative help result was not cached: calls = %q", calls)
+	}
+}
+
+func TestEffortFlagCapabilityRetriesTransientFailureThenCachesSuccess(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell-script fake is Unix-specific")
+	}
+	callsFile := filepath.Join(t.TempDir(), "help-calls")
+	t.Setenv("AO_CLAUDE_HELP_CALLS", callsFile)
+	bin := writeFakeClaudeScript(t, `#!/bin/sh
+calls=0
+if [ -f "$AO_CLAUDE_HELP_CALLS" ]; then calls=$(cat "$AO_CLAUDE_HELP_CALLS"); fi
+calls=$((calls + 1))
+printf '%s' "$calls" > "$AO_CLAUDE_HELP_CALLS"
+if [ "$calls" -eq 1 ]; then exit 1; fi
+echo 'Usage: claude [--effort <level>]'
+`)
+	plugin := &Plugin{resolvedBinary: bin}
+	config := ports.LaunchConfig{Config: ports.AgentConfig{Effort: domain.EffortHigh}}
+
+	first, err := plugin.GetLaunchCommand(context.Background(), config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if contains(first, "--effort") {
+		t.Fatalf("first command %#v used flag after failed capability check", first)
+	}
+	second, err := plugin.GetLaunchCommand(context.Background(), config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsSubsequence(second, []string{"--effort", "high"}) {
+		t.Fatalf("second command %#v did not retry and discover --effort", second)
+	}
+	third, err := plugin.GetLaunchCommand(context.Background(), config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsSubsequence(third, []string{"--effort", "high"}) {
+		t.Fatalf("third command %#v lost cached support", third)
+	}
+	calls, err := os.ReadFile(callsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(calls) != "2" {
+		t.Fatalf("help calls = %q, want 2 (one failure, one cached success)", calls)
 	}
 }
 

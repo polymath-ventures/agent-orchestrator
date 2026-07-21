@@ -143,7 +143,10 @@ func codexAppServerModels(ctx context.Context, binary string) ([]ports.ModelCata
 				efforts = appendUniqueEffort(efforts, effort)
 			}
 		}
-		defaultEffort, _ := parseEffort(native.DefaultReasoningEffort)
+		defaultEffort, hasDefault := parseEffort(native.DefaultReasoningEffort)
+		if !hasDefault && len(efforts) > 0 {
+			defaultEffort = efforts[0]
+		}
 		models = append(models, ports.ModelCatalogEntry{
 			ID: id, Label: label, Efforts: efforts, DefaultEffort: defaultEffort, Dynamic: true,
 		})

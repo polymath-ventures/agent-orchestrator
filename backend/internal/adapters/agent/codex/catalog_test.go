@@ -101,6 +101,26 @@ printf '%s\n' '{"id":2,"result":{"data":[]}}'
 	}
 }
 
+func TestAvailableModelsDefaultsToFirstSupportedEffortWhenNativeDefaultIsAbsent(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell-script app-server fake is Unix-specific")
+	}
+	bin := writeFakeScript(t, `#!/bin/sh
+read init
+printf '%s\n' '{"id":1,"result":{"userAgent":"fake","codexHome":"/tmp","platformFamily":"unix","platformOs":"linux"}}'
+read initialized
+read list
+printf '%s\n' '{"id":2,"result":{"data":[{"id":"gpt-no-default","model":"gpt-no-default","displayName":"GPT No Default","hidden":false,"isDefault":false,"defaultReasoningEffort":"","supportedReasoningEfforts":[{"reasoningEffort":"high","description":"deep"},{"reasoningEffort":"Future-Native","description":"future"}]}]}}'
+`)
+	models, err := (&Plugin{resolvedBinary: bin}).AvailableModels(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(models) != 1 || models[0].DefaultEffort != domain.EffortHigh {
+		t.Fatalf("models = %#v, want first supported effort as default", models)
+	}
+}
+
 func TestAvailableModelsAgainstInstalledCodex(t *testing.T) {
 	if os.Getenv("AO_TEST_CODEX_CATALOG") != "1" {
 		t.Skip("set AO_TEST_CODEX_CATALOG=1 to exercise the installed app-server")

@@ -9,12 +9,18 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
 var ansiEscapePattern = regexp.MustCompile(`\x1b\[[0-9;]*[A-Za-z]`)
+
+const (
+	modelCatalogTimeout   = 45 * time.Second
+	modelCatalogWaitDelay = 2 * time.Second
+)
 
 type verboseModel struct {
 	ID         string                     `json:"id"`
@@ -34,9 +40,14 @@ func (p *Plugin) AvailableModels(ctx context.Context) ([]ports.ModelCatalogEntry
 	if err != nil {
 		return nil, err
 	}
-	out, err := exec.CommandContext(ctx, binary, "models", "--refresh", "--verbose").CombinedOutput()
-	if ctx.Err() != nil {
-		return nil, ctx.Err()
+	catalogCtx, cancel := context.WithTimeout(ctx, modelCatalogTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(catalogCtx, binary, "models", "--refresh", "--verbose")
+	cmd.WaitDelay = modelCatalogWaitDelay
+	configureModelCatalogProcessGroup(cmd)
+	out, err := cmd.CombinedOutput()
+	if catalogCtx.Err() != nil {
+		return nil, catalogCtx.Err()
 	}
 	if err != nil {
 		message := strings.TrimSpace(string(ansiEscapePattern.ReplaceAll(out, nil)))

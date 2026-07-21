@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
@@ -155,5 +156,11 @@ func TestAvailableModelsPreservesContextCancellation(t *testing.T) {
 	}
 	if models != nil {
 		t.Fatalf("models = %#v, want nil", models)
+	}
+}
+
+func TestAvailableModelsOwnsBoundedCatalogTimeout(t *testing.T) {
+	if modelCatalogTimeout != 45*time.Second {
+		t.Fatalf("catalog timeout = %s, want 45s", modelCatalogTimeout)
 	}
 }

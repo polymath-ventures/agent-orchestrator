@@ -716,16 +716,19 @@ func (p *Plugin) supportsEffortFlag(ctx context.Context, binary string) bool {
 	if p.effortFlagChecked {
 		return p.effortFlagIsSupported
 	}
-	p.effortFlagChecked = true
 	helpCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(helpCtx, binary, "--help")
 	cmd.WaitDelay = claudeProbeWaitDelay
 	configureProbeProcessGroup(cmd)
 	out, err := cmd.CombinedOutput()
-	if err == nil && helpCtx.Err() == nil {
-		p.effortFlagIsSupported = strings.Contains(string(out), "--effort")
+	if err != nil || helpCtx.Err() != nil {
+		// A timeout/startup failure says nothing about capability. Leave the
+		// cache unset so the next launch can retry against a healthy CLI.
+		return false
 	}
+	p.effortFlagChecked = true
+	p.effortFlagIsSupported = strings.Contains(string(out), "--effort")
 	return p.effortFlagIsSupported
 }
 

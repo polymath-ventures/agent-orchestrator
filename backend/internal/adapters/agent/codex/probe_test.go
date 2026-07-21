@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
@@ -122,6 +123,20 @@ func TestValidateModelUsageAndSignalFailuresAreProbeUnavailable(t *testing.T) {
 func TestValidateModelOwnsIndependentFortyFiveSecondBudget(t *testing.T) {
 	if probeTimeout != 45*time.Second {
 		t.Fatalf("probe timeout = %s, want 45s", probeTimeout)
+	}
+}
+
+func TestFormatProbeOutputTruncatesUnicodeOnRuneBoundary(t *testing.T) {
+	got := formatProbeOutput([]byte(strings.Repeat("界", 501)))
+	if !utf8.ValidString(got) {
+		t.Fatalf("formatProbeOutput returned invalid UTF-8: %q", got)
+	}
+	if !strings.HasSuffix(got, "...[truncated]") {
+		t.Fatalf("formatProbeOutput did not truncate: %q", got)
+	}
+	wantRunes := len([]rune(": ")) + 500 + len([]rune("...[truncated]"))
+	if utf8.RuneCountInString(got) != wantRunes {
+		t.Fatalf("rune count = %d, want %d", utf8.RuneCountInString(got), wantRunes)
 	}
 }
 

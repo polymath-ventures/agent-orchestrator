@@ -271,7 +271,9 @@ const (
 
 // probeArgs builds the non-interactive, read-only, ephemeral Codex invocation.
 // Interactive TUI flags (notably --ask-for-approval) are invalid on `exec` and
-// must never be added here.
+// must never be added here. It intentionally does not force a minimal reasoning
+// effort: not every model advertises minimal, so that override could make the
+// probe reject locally before the selected model receives the request.
 func (p *Plugin) probeArgs(model string) []string {
 	args := make([]string, 0, 14)
 	p.appendWrapperFlags(&args)
@@ -353,8 +355,9 @@ func formatProbeOutput(out []byte) string {
 	if text == "" {
 		return ""
 	}
-	if len(text) > 500 {
-		text = text[:500] + "...[truncated]"
+	runes := []rune(text)
+	if len(runes) > 500 {
+		text = string(runes[:500]) + "...[truncated]"
 	}
 	return ": " + text
 }
