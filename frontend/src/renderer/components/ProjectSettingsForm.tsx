@@ -375,9 +375,9 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 				</CardHeader>
 				<CardContent className="flex flex-col gap-4">
 					<p className="text-xs leading-row text-muted-foreground">
-						Operator-controlled standing instructions injected verbatim into each role's prompt on the next
-						spawn. A rules file is a repo-relative path; a configured-but-missing, empty, or oversized file
-						fails the spawn loudly rather than silently dropping the instructions.
+						Operator-controlled standing instructions injected verbatim into each role's prompt on the next spawn. A
+						rules file is a repo-relative path; a configured-but-missing, empty, or oversized file fails the spawn
+						loudly rather than silently dropping the instructions.
 					</p>
 					<RulesField
 						label="Worker rules"
@@ -415,9 +415,8 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 				</CardHeader>
 				<CardContent className="flex flex-col gap-3">
 					<p className="text-xs leading-row text-muted-foreground">
-						The exact, fully-assembled system prompt a role receives for this project — base scaffold plus
-						every injected instruction source. Reflects saved config; save your changes above to see them
-						here.
+						The exact, fully-assembled system prompt a role receives for this project — base scaffold plus every
+						injected instruction source. Reflects saved config; save your changes above to see them here.
 					</p>
 					<RolePromptInspector projectId={projectId} />
 				</CardContent>

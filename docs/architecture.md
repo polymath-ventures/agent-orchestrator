@@ -303,7 +303,7 @@ prompt with the override silently omitted.
 
 This visibility is an **operator-facing, out-of-band daemon channel**. It is
 distinct from `systemPromptGuard()`, which instructs the agent to keep its standing
-instructions private in its own output: the guard governs what the *agent* reveals
+instructions private in its own output: the guard governs what the _agent_ reveals
 to its task surface; the operator owns the daemon and can always inspect the full
 assembled prompt. Runtime-native files (`CLAUDE.md`/`AGENTS.md`) are read by the
 agent runtime directly from the worktree — operator-owned repo files, outside AO's

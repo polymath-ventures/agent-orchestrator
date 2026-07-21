@@ -20,7 +20,7 @@ inspect.
 - Add a read-only **effective-prompt visibility** surface that renders the exact, fully-assembled
   prompt a given role receives for a given project — base scaffold plus every injected instruction
   source — exposed through a daemon API route and an `ao` CLI command (`ao role prompt <project>
-  <role>`), and inspectable from the supervisor UI.
+<role>`), and inspectable from the supervisor UI.
 - Establish the invariant that **no role receives prompt content the operator cannot inspect**: every
   constituent piece of a role's prompt is reachable through the visibility surface.
 - Explicitly out of scope / NOT ported from the old fork: the `behavior/` directory machinery,
@@ -30,12 +30,14 @@ inspect.
 ## Capabilities
 
 ### New Capabilities
+
 - `role-instructions`: Per-project, per-role operator-controlled instruction overrides injected
   verbatim into role prompt assembly (fail-closed on misconfiguration), plus a read-only
   effective-prompt visibility surface (daemon API, `ao` CLI, and supervisor UI) that renders the
   exact fully-assembled prompt each role receives.
 
 ### Modified Capabilities
+
 <!-- No existing capability spec covers role prompt assembly; this is net-new behavior. -->
 
 ## Impact

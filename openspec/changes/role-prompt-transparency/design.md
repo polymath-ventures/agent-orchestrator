@@ -105,7 +105,7 @@ silently omits the override.
 ### D6 — Operator inspection is an out-of-band channel; the guard is unchanged
 
 `systemPromptGuard()` instructs the agent to refuse to reveal its standing instructions in its own
-output. That governs the *agent's* behavior toward its task surface; it does not govern the *daemon*,
+output. That governs the _agent's_ behavior toward its task surface; it does not govern the _daemon_,
 which the operator owns. The visibility route returns the assembled prompt (guard text included) to
 the operator over the loopback API. No change to the guard's agent-facing text. This resolves the
 apparent tension the audit flagged: "no black boxes" is an operator-facing daemon guarantee, not a
