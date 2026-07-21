@@ -19,6 +19,11 @@ func TestClassifyModelProvider(t *testing.T) {
 		{"o3", ProviderOpenAI},
 		{"o1-mini", ProviderOpenAI},
 		{"o4-mini", ProviderOpenAI},
+		// Fugu reuses the Codex binary but owns a distinct model namespace. Match
+		// the Fugu family before the generic Codex/OpenAI fragment.
+		{"fugu", ProviderFugu},
+		{"fugu-ultra", ProviderFugu},
+		{"codex-fugu", ProviderFugu},
 		// Classification is case-insensitive and trims surrounding whitespace, so a
 		// model copied out of a config file classifies the same as a typed one.
 		{"CLAUDE-OPUS-4-8", ProviderAnthropic},
@@ -56,6 +61,7 @@ func TestAgentHarnessModelProvider(t *testing.T) {
 	}{
 		{HarnessClaudeCode, ProviderAnthropic},
 		{HarnessCodex, ProviderOpenAI},
+		{HarnessCodexFugu, ProviderFugu},
 		// Every harness AO has not mapped stays unknown (unguarded).
 		{HarnessAider, ProviderUnknown},
 		{HarnessGoose, ProviderUnknown},

@@ -31,6 +31,16 @@ const (
 	AgentAuthStatusUnknown AgentAuthStatus = "unknown"
 )
 
+// Valid reports whether s is one of the three model-probe outcomes.
+func (s ModelValidationStatus) Valid() bool {
+	switch s {
+	case ModelValidationReachable, ModelValidationUnreachable, ModelValidationProbeUnavailable:
+		return true
+	default:
+		return false
+	}
+}
+
 // Agent is the contract every CLI coding agent adapter (claude-code, codex, …)
 // must satisfy. It supplies the argv and process configuration the Session
 // Manager needs to launch, restore, and read back a native agent session.
@@ -90,6 +100,23 @@ type ModelValidationResult struct {
 // use it only from background/advisory paths, never from the spawn hot path.
 type AgentModelValidator interface {
 	ValidateModel(ctx context.Context, model string) (ModelValidationResult, error)
+}
+
+// ModelCatalogEntry is one harness-native model option. IDs and effort values
+// are deliberately not translated into a provider-neutral vocabulary.
+type ModelCatalogEntry struct {
+	ID            string          `json:"id"`
+	Label         string          `json:"label"`
+	Efforts       []domain.Effort `json:"efforts,omitempty"`
+	DefaultEffort domain.Effort   `json:"defaultEffort,omitempty"`
+	Dynamic       bool            `json:"dynamic,omitempty"`
+}
+
+// AgentModelCatalog is the optional offline/local discovery capability for an
+// adapter. A discovery error must remain an error; callers decide whether a
+// cached or known fallback is safe and make that provenance visible.
+type AgentModelCatalog interface {
+	AvailableModels(ctx context.Context) ([]ModelCatalogEntry, error)
 }
 
 // AgentBinaryResolver is the optional capability adapters expose when their

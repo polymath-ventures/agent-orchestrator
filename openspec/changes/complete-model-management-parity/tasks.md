@@ -1,7 +1,7 @@
 ## 1. Freeze the port boundary
 
-- [ ] 1.1 Record the reference-to-current file map for all 25 verified gaps and the 11 history-mined edge cases, including the exact reference `file:line` evidence in the implementation plan and PR body.
-- [ ] 1.2 Identify and preserve the current tree's verified-better behaviors and exclude issue #9's `backend/internal/cli/slack.go` and notify-channel delivery surfaces from the diff.
+- [x] 1.1 Record the reference-to-current file map for all 25 verified gaps and the 11 history-mined edge cases, including the exact reference `file:line` evidence in the implementation plan and PR body.
+- [x] 1.2 Identify and preserve the current tree's verified-better behaviors and exclude issue #9's `backend/internal/cli/slack.go` and notify-channel delivery surfaces from the diff.
 - [ ] 1.3 Add a failing baseline test proving catalog failures are not empty-success, and verify the existing process-tree/pre-prompt liveness and hidden-config/effective-prompt regression tests before changing their seams.
 
 ## 2. Port the authoritative model engine and API
@@ -18,7 +18,7 @@
 - [ ] 3.3 Implement Claude maintained aliases and per-process effort, ensure save/catalog paths issue no paid prompts, and port the hermetic JSON-envelope probe contract for explicit validation/runtime paths.
 - [ ] 3.4 Implement OpenCode `models --refresh --verbose` discovery, provider/model variant parsing, visible cached fallback, and explicit `--model`/`--variant` launch and restore flags.
 - [ ] 3.5 Implement Codex-Fugu catalog loading from `~/.codex/fugu.json`, supported reasoning levels, `max`→`xhigh` normalization, visible known fallback rows, and long-running execution semantics.
-- [ ] 3.6 Restore Fugu-first provider classification and add cross-provider compatibility regression coverage without moving fork-only harness construction into the upstream-candidate portion of the change.
+- [x] 3.6 Restore Fugu-first provider classification and add cross-provider compatibility regression coverage without moving fork-only harness construction into the upstream-candidate portion of the change.
 
 ## 4. Fit enforcement, revalidation, and health into current seams
 
