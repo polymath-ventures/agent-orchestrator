@@ -67,8 +67,8 @@ receive at the time of the request.
 #### Scenario: Visibility reflects a configured override
 
 - **WHEN** a role has an instructions-file override configured and its effective prompt is requested
-- **THEN** the returned prompt contains the verbatim override contents in the position they would be
-  injected at spawn
+- **THEN** the returned prompt contains the override contents (content-preserving) in the position
+  they would be injected at spawn
 
 #### Scenario: Visibility surfaces a misconfiguration instead of hiding it
 

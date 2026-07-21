@@ -11,8 +11,9 @@ inspect.
 ## What Changes
 
 - Add a per-project, per-role operator instructions pointer (an `InstructionsFile`-style override)
-  for the worker, orchestrator, and reviewer roles. When set, its contents are injected **verbatim**
-  into that role's assembled prompt on the next spawn, extending (not replacing) the existing
+  for the worker, orchestrator, and reviewer roles. When set, its contents are injected
+  **content-preserving** (only surrounding whitespace is normalized) into that role's assembled prompt
+  on the next spawn, extending (not replacing) the existing
   upstream instruction surfaces rather than introducing a parallel assembly path.
 - Make the injection **fail-closed**: a configured-but-missing, empty, or oversized instructions
   file fails the spawn loudly with a clear error. There is no silent fallback to defaults when an
@@ -32,7 +33,7 @@ inspect.
 ### New Capabilities
 
 - `role-instructions`: Per-project, per-role operator-controlled instruction overrides injected
-  verbatim into role prompt assembly (fail-closed on misconfiguration), plus a read-only
+  content-preserving into role prompt assembly (fail-closed on misconfiguration), plus a read-only
   effective-prompt visibility surface (daemon API, `ao` CLI, and supervisor UI) that renders the
   exact fully-assembled prompt each role receives.
 

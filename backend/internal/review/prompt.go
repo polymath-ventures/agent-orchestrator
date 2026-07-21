@@ -42,7 +42,7 @@ func ReviewerRules(projectID, projectPath string, cfg domain.ProjectConfig) (str
 }
 
 // AssembleReviewerSystemPrompt returns the reviewer role's full system prompt
-// with the operator's reviewer rules appended verbatim. It is the reviewer
+// with the operator's reviewer rules appended (content-preserving). It is the reviewer
 // analogue of the worker/orchestrator system prompt, exposed so the effective
 // reviewer prompt can be inspected by an operator and is never a black box.
 func AssembleReviewerSystemPrompt(reviewerRules string) string {

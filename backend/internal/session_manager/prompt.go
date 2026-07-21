@@ -180,20 +180,27 @@ func LoadRoleRules(cfg RoleRulesConfig) (string, error) {
 			return "", fail(err)
 		}
 		defer func() { _ = root.Close() }()
-		f, err := root.Open(clean)
-		if err != nil {
-			return "", fail(err)
-		}
-		defer func() { _ = f.Close() }()
-		info, err := f.Stat()
+		// Stat (which does not open the file for reading) BEFORE Open: opening a
+		// FIFO for read blocks until a writer appears, so a non-regular target
+		// must be rejected here rather than after an open that could hang the
+		// spawn/inspection goroutine. Stat also gives the size for the error.
+		info, err := root.Stat(clean)
 		if err != nil {
 			return "", fail(err)
 		}
 		if !info.Mode().IsRegular() {
 			return "", fail(fmt.Errorf("not a regular file"))
 		}
-		// Read at most one byte past the limit so an oversized (or concurrently
-		// growing) file is rejected without loading it all into memory.
+		if info.Size() > maxRoleRulesFileBytes {
+			return "", fail(fmt.Errorf("size %d exceeds limit %d bytes", info.Size(), maxRoleRulesFileBytes))
+		}
+		f, err := root.Open(clean)
+		if err != nil {
+			return "", fail(err)
+		}
+		defer func() { _ = f.Close() }()
+		// Bound the read one byte past the limit as well, so a file that grew
+		// between Stat and Open is still rejected rather than read unbounded.
 		data, err := io.ReadAll(io.LimitReader(f, maxRoleRulesFileBytes+1))
 		if err != nil {
 			return "", fail(err)

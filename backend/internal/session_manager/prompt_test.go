@@ -192,8 +192,9 @@ func TestLoadRoleRules_OversizedFileFailsClosed(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected oversized rules file to fail closed")
 	}
-	if !strings.Contains(err.Error(), "limit") {
-		t.Fatalf("error should mention the size limit: %v", err)
+	// The error names both the actual size and the limit (spec requirement).
+	if !strings.Contains(err.Error(), "limit") || !strings.Contains(err.Error(), "262145") {
+		t.Fatalf("error should mention actual size and the limit: %v", err)
 	}
 }
 

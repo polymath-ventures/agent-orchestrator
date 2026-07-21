@@ -31,7 +31,8 @@ mechanisms and stay rebase-clean.
 **Goals:**
 
 - Bring all three roles to parity with the worker's existing fail-closed file-override pattern:
-  operator-controllable inline + repo-relative-file instructions per project, injected verbatim.
+  operator-controllable inline + repo-relative-file instructions per project, injected
+  content-preserving (only surrounding whitespace normalized).
 - Add a read-only surface that renders the exact, fully-assembled prompt for a `(project, role)`
   pair — base scaffold plus every injected source — from a daemon route, the `ao` CLI, and the UI.
 - Make configured-but-unloadable overrides fail the spawn loudly for every role, never silently.
