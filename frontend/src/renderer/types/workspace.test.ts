@@ -11,6 +11,7 @@ import {
 	toSessionActivity,
 	toSessionStatus,
 	workerDisplayStatus,
+	workerSessions,
 	workerStatusPulses,
 	openPRs,
 	mergedPRCount,
@@ -208,6 +209,16 @@ describe("findProjectOrchestrator", () => {
 		});
 		expect(newestActiveOrchestrator([oldUpdate, newUpdate])).toBe(newUpdate);
 		expect(newestActiveOrchestrator([newUpdate, sameTimesHigherID])).toBe(sameTimesHigherID);
+	});
+});
+
+describe("workerSessions", () => {
+	it("excludes daemon supervisor sessions", () => {
+		const worker = sessionWith({ id: "skills-1", kind: "worker" });
+		const orchestrator = sessionWith({ id: "skills-orchestrator", kind: "orchestrator" });
+		const prime = sessionWith({ id: "skills-prime", kind: "prime" });
+
+		expect(workerSessions([worker, orchestrator, prime])).toEqual([worker]);
 	});
 });
 

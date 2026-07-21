@@ -101,6 +101,12 @@ type Config struct {
 	// Agent is the compatibility agent adapter id selected by AO_AGENT;
 	// startSession fails fast if no adapter with this id is registered.
 	Agent string
+	// PrimeProjectID enables the singleton fleet prime supervisor when set.
+	// Empty leaves the supervisor disabled.
+	PrimeProjectID string
+	// PrimeDisplayName is the optional user-facing display name for daemon-
+	// spawned prime sessions.
+	PrimeDisplayName string
 	// AllowedOrigins are the browser origins granted CORS read access (see
 	// DefaultAllowedOrigins). Overridden by AO_ALLOWED_ORIGINS.
 	AllowedOrigins []string
@@ -133,6 +139,8 @@ func (c Config) Addr() string {
 //	AO_RUN_FILE          running.json path   (default ~/.ao/running.json)
 //	AO_DATA_DIR          durable state dir   (default ~/.ao/data)
 //	AO_AGENT             compatibility agent id (default claude-code)
+//	AO_PRIME_PROJECT_ID  project id whose repo/config hosts the optional fleet prime supervisor (default disabled)
+//	AO_PRIME_DISPLAY_NAME optional display name for the prime supervisor, <= 20 runes
 //	AO_ALLOWED_ORIGINS   CORS origins, comma-separated (default DefaultAllowedOrigins)
 //	AO_MOBILE_ADVERTISED_HOST  host advertised in the Connect Mobile pairing status/QR (default: interface autopick)
 //	AO_TELEMETRY_EVENTS  local event capture off|on (default off)
@@ -191,6 +199,14 @@ func Load() (Config, error) {
 
 	if raw := os.Getenv("AO_AGENT"); raw != "" {
 		cfg.Agent = raw
+	}
+
+	cfg.PrimeProjectID = strings.TrimSpace(os.Getenv("AO_PRIME_PROJECT_ID"))
+	if raw := strings.TrimSpace(os.Getenv("AO_PRIME_DISPLAY_NAME")); raw != "" {
+		if l := len([]rune(raw)); l > 20 {
+			return Config{}, fmt.Errorf("invalid AO_PRIME_DISPLAY_NAME: must be <= 20 characters, got %d", l)
+		}
+		cfg.PrimeDisplayName = raw
 	}
 
 	if raw := strings.TrimSpace(os.Getenv("AO_MOBILE_ADVERTISED_HOST")); raw != "" {

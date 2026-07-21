@@ -68,6 +68,77 @@ func TestMigrateAllowsEveryShippedHarness(t *testing.T) {
 	}
 }
 
+func TestMigrateAllowsPrimeSessionKind(t *testing.T) {
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "ao.db")+pragmas)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	if err := migrate(db); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	var schema string
+	if err := db.QueryRow(
+		"SELECT sql FROM sqlite_master WHERE type='table' AND name='sessions'",
+	).Scan(&schema); err != nil {
+		t.Fatalf("read sessions schema: %v", err)
+	}
+	if !strings.Contains(schema, "'"+string(domain.KindPrime)+"'") {
+		t.Fatalf("sessions.kind CHECK is missing prime; schema:\n%s", schema)
+	}
+
+	if _, err := db.Exec(
+		`INSERT INTO projects (id, path, registered_at) VALUES ('ao', '/tmp/ao', CURRENT_TIMESTAMP)`,
+	); err != nil {
+		t.Fatalf("seed project: %v", err)
+	}
+	if _, err := db.Exec(
+		`INSERT INTO sessions (id, project_id, num, kind, activity_last_at, created_at, updated_at)
+		 VALUES ('ao-prime', 'ao', 1, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+		string(domain.KindPrime),
+	); err != nil {
+		t.Fatalf("insert prime session: %v", err)
+	}
+	if _, err := db.Exec(
+		`INSERT INTO sessions (id, project_id, num, kind, activity_last_at, created_at, updated_at)
+		 VALUES ('ao-prime-2', 'ao', 2, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+		string(domain.KindPrime),
+	); err == nil {
+		t.Fatal("insert second active prime succeeded, want singleton constraint")
+	}
+	if _, err := db.Exec(
+		`INSERT INTO sessions (id, project_id, num, kind, is_terminated, activity_last_at, created_at, updated_at)
+		 VALUES ('ao-prime-terminated', 'ao', 3, ?, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+		string(domain.KindPrime),
+	); err != nil {
+		t.Fatalf("insert terminated prime: %v", err)
+	}
+}
+
+func TestMigrateAllowsPrimeRestartNotification(t *testing.T) {
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "ao.db")+pragmas)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	if err := migrate(db); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	var schema string
+	if err := db.QueryRow(
+		"SELECT sql FROM sqlite_master WHERE type='table' AND name='notifications'",
+	).Scan(&schema); err != nil {
+		t.Fatalf("read notifications schema: %v", err)
+	}
+	if !strings.Contains(schema, "'"+string(domain.NotificationPrimeRestartCapped)+"'") {
+		t.Fatalf("notifications.type CHECK is missing prime restart cap; schema:\n%s", schema)
+	}
+}
+
 // TestMigrateReadsPreModelSessionRowsAsEmpty guards the additive contract of
 // the sessions.model column: a row written without a model — which is every row
 // that existed before migration 0029 added the column — must read back as the

@@ -6,6 +6,7 @@ import { NotificationCenter } from "./NotificationCenter";
 import {
 	findProjectOrchestrator,
 	isOrchestratorSession,
+	isPrimeSession,
 	sessionIsActive,
 	type WorkspaceSession,
 } from "../types/workspace";
@@ -63,6 +64,8 @@ export function ShellTopbar() {
 		: undefined;
 	const isSessionRoute = Boolean(params.sessionId);
 	const isOrchestrator = session ? isOrchestratorSession(session) : false;
+	const isPrime = session ? isPrimeSession(session) : false;
+	const isTerminalOnly = isOrchestrator || isPrime;
 	// Project in scope: the session's workspace wins over the route param so the
 	// cross-project /sessions/$sessionId route still resolves a crumb. A
 	// projectId that no longer resolves (stale route after the project was
@@ -128,7 +131,7 @@ export function ShellTopbar() {
 	return (
 		<header className={cn(topbarHeaderClass, isMac && topbarHeaderMacClass)} style={dragStyle}>
 			<div className="flex min-w-0 items-center gap-3">
-				{isSessionRoute && isOrchestrator ? (
+				{isSessionRoute && isTerminalOnly ? (
 					<div className="inline-flex min-w-0 items-center gap-2">
 						<div className="inline-flex min-w-0 items-center gap-1.5">
 							<span className={topbarProjectLabelClass}>{projectLabel}</span>
@@ -137,7 +140,7 @@ export function ShellTopbar() {
 							</span>
 							<span className="inline-flex h-control-sm items-center gap-1 rounded-md border border-border bg-surface px-2 text-micro font-semibold leading-none tracking-wide-sm text-muted-foreground">
 								<OrchestratorIcon className="size-3 shrink-0" aria-hidden="true" />
-								Orchestrator
+								{isPrime ? "Prime" : "Orchestrator"}
 							</span>
 						</div>
 					</div>
@@ -182,7 +185,7 @@ export function ShellTopbar() {
 						) : null}
 						{/* Kill control sits beside the orchestrator link for active workers —
 						    moved here from the inspector's Summary "Danger zone". */}
-						{!isOrchestrator && session && sessionIsActive(session) ? (
+						{!isTerminalOnly && session && sessionIsActive(session) ? (
 							<TopbarKillButton
 								session={session}
 								orchestratorId={orchestrator?.id}
@@ -198,7 +201,7 @@ export function ShellTopbar() {
 								}}
 							/>
 						) : null}
-						{!isOrchestrator && (
+						{!isTerminalOnly && (
 							<TopbarButton
 								aria-label="Open orchestrator"
 								disabled={isSpawning || isProjectRestarting}
@@ -210,8 +213,8 @@ export function ShellTopbar() {
 								{isProjectRestarting ? "Restarting…" : isSpawning ? "Spawning…" : "Orchestrator"}
 							</TopbarButton>
 						)}
-						{/* Inspector collapse (worker sessions only — orchestrators have no rail). */}
-						{!isOrchestrator && (
+						{/* Inspector collapse (worker sessions only — orchestrators and prime have no rail). */}
+						{!isTerminalOnly && (
 							<TopbarButton
 								aria-label={isInspectorOpen ? "Close inspector panel" : "Open inspector panel"}
 								aria-pressed={isInspectorOpen}

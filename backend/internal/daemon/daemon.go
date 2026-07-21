@@ -211,6 +211,7 @@ func Run() error {
 	if reconcileErr := sessMgr.Reconcile(ctx); reconcileErr != nil {
 		log.Error("reconcile sessions on boot failed", "err", reconcileErr)
 	}
+	primeDone := startPrimeSupervisor(ctx, cfg, sessionSvc, notificationWriter, log)
 
 	// Start the fleet drain sweeper only AFTER boot reconciliation: its immediate
 	// first poll terminates drainable workers of paused projects, which must not
@@ -249,6 +250,7 @@ func Run() error {
 	// runs before the cancel: a non-signal exit path would hang otherwise.
 	stop()
 	<-previewDone
+	<-primeDone
 	<-metricsDone
 	<-modelHealthDone
 	lcStack.Stop()

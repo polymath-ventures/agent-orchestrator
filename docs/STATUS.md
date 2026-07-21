@@ -35,14 +35,20 @@ surface (`npm run sqlc`, `npm run api`).
 - Full session lifecycle over HTTP: list, get, spawn, kill, restore, rename,
   rollback, cleanup, send, activity, PR claim/list. Orchestrator routes
   (list/spawn/get) are wired too.
+- Optional daemon-gated prime supervisor: `AO_PRIME_PROJECT_ID` starts one
+  fleet-wide `prime` session after boot reconciliation, with storage-enforced
+  singleton semantics, bounded idle wakeups, bounded unhealthy replacement, and
+  restart-cap notifications.
 - Project CRUD plus per-project config (`PUT /projects/{id}/config`).
 - PR action engine wired into the API: `POST /prs/{id}/merge` and
   `/prs/{id}/resolve-comments`.
 - Review routes registered: `GET /reviews`, `POST /reviews/execute`,
   `POST /reviews/{id}/send`.
 - Durable dashboard notifications for `needs_input`, `ready_to_merge`,
-  `pr_merged`, and `pr_closed_unmerged`: backend enrichment/persistence,
-  unread list, live notification stream, and read acknowledgement API.
+  `pr_merged`, `pr_closed_unmerged`, `low_quota`, `model_unreachable`,
+  `model_recovered`, and `prime_restart_capped`: backend
+  enrichment/persistence, unread list, live notification stream, and read
+  acknowledgement API.
 - SCM observer (`internal/observe/scm`) wired into the daemon: GitHub provider,
   lazy/non-blocking auth, per-PR polling with ETag guards and semantic diffing,
   feeding PR facts into lifecycle, which sends agent nudges for CI failures,

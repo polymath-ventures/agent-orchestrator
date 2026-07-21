@@ -48,12 +48,19 @@ type ProjectConfig struct {
 	// ReviewerRulesFile is a repo-relative Markdown/text file whose contents are
 	// appended to ReviewerRules for reviewer sessions.
 	ReviewerRulesFile string `json:"reviewerRulesFile,omitempty"`
+	// PrimeRules are project-specific standing instructions for prime sessions.
+	PrimeRules string `json:"primeRules,omitempty"`
+	// PrimeRulesFile is a repo-relative Markdown/text file whose contents are
+	// appended to PrimeRules for prime sessions.
+	PrimeRulesFile string `json:"primeRulesFile,omitempty"`
 
 	// AgentConfig is the default agent config for the project.
 	AgentConfig AgentConfig `json:"agentConfig,omitempty"`
-	// Worker and Orchestrator are role-specific harness/agent-config overrides.
+	// Worker, Orchestrator, and Prime are role-specific harness/agent-config
+	// overrides.
 	Worker       RoleOverride `json:"worker,omitempty"`
 	Orchestrator RoleOverride `json:"orchestrator,omitempty"`
+	Prime        RoleOverride `json:"prime,omitempty"`
 
 	// Reviewers names the agent(s) that review a worker's PR when a review is
 	// triggered. It is configured independently of the Worker override; an empty
@@ -151,7 +158,7 @@ func (c ProjectConfig) Validate() error {
 	if err := validateNameComponent("sessionPrefix", c.SessionPrefix); err != nil {
 		return err
 	}
-	for role, ro := range map[string]RoleOverride{"worker": c.Worker, "orchestrator": c.Orchestrator} {
+	for role, ro := range map[string]RoleOverride{"worker": c.Worker, "orchestrator": c.Orchestrator, "prime": c.Prime} {
 		if ro.Harness != "" && !ro.Harness.IsKnown() {
 			return fmt.Errorf("%s.agent: unknown harness %q", role, ro.Harness)
 		}
@@ -172,6 +179,9 @@ func (c ProjectConfig) Validate() error {
 	}
 	if err := validateRepoRelative(c.ReviewerRulesFile); err != nil {
 		return fmt.Errorf("reviewerRulesFile %q: %w", c.ReviewerRulesFile, err)
+	}
+	if err := validateRepoRelative(c.PrimeRulesFile); err != nil {
+		return fmt.Errorf("primeRulesFile %q: %w", c.PrimeRulesFile, err)
 	}
 	for i, rv := range c.Reviewers {
 		if !rv.Harness.IsKnown() {

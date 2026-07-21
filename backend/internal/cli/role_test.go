@@ -25,9 +25,28 @@ func TestRolePrompt_PrintsAssembledPrompt(t *testing.T) {
 	}
 }
 
+func TestRolePrompt_PrimeIsSupported(t *testing.T) {
+	cfg := setConfigEnv(t)
+	srv, capture := projectServer(t, http.StatusOK, `{"role":"prime","prompt":"ASSEMBLED PRIME PROMPT"}`)
+	writeRunFileFor(t, cfg, srv)
+
+	out, errOut, err := executeCLI(t, Deps{
+		ProcessAlive: func(int) bool { return true },
+	}, "role", "prompt", "demo", "prime")
+	if err != nil {
+		t.Fatalf("unexpected error: %v\nstderr=%s", err, errOut)
+	}
+	if capture.method != http.MethodGet || capture.path != "/api/v1/projects/demo/roles/prime/prompt" {
+		t.Fatalf("request = %s %s, want GET /api/v1/projects/demo/roles/prime/prompt", capture.method, capture.path)
+	}
+	if !strings.Contains(out, "ASSEMBLED PRIME PROMPT") {
+		t.Fatalf("output missing assembled prompt:\n%s", out)
+	}
+}
+
 func TestRolePrompt_UnknownRoleIsUsageError(t *testing.T) {
 	setConfigEnv(t)
-	_, _, err := executeCLI(t, Deps{}, "role", "prompt", "demo", "prime")
+	_, _, err := executeCLI(t, Deps{}, "role", "prompt", "demo", "unknown")
 	if err == nil {
 		t.Fatal("expected usage error for unknown role")
 	}

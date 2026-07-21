@@ -1131,6 +1131,9 @@ export interface components {
             orchestratorRules?: string;
             orchestratorRulesFile?: string;
             postCreate?: string[];
+            prime?: components["schemas"]["RoleOverride"];
+            primeRules?: string;
+            primeRulesFile?: string;
             reviewerRules?: string;
             reviewerRulesFile?: string;
             reviewers?: components["schemas"]["DomainReviewerConfig"][];
@@ -1389,7 +1392,7 @@ export interface components {
             harness?: "claude-code" | "codex" | "codex-fugu" | "aider" | "opencode" | "grok" | "droid" | "amp" | "agy" | "crush" | "cursor" | "qwen" | "copilot" | "goose" | "auggie" | "continue" | "devin" | "cline" | "kimi" | "kiro" | "kilocode" | "vibe" | "pi" | "autohand";
             issueId?: string;
             /** @enum {string} */
-            kind?: "worker" | "orchestrator";
+            kind?: "worker" | "orchestrator" | "prime";
             model?: string;
             projectId: string;
             prompt?: string;
@@ -2646,8 +2649,8 @@ export interface operations {
             path: {
                 /** @description Project identifier (registry key). */
                 id: string;
-                /** @description Agent role: worker, orchestrator, or reviewer. */
-                role: "worker" | "orchestrator" | "reviewer";
+                /** @description Agent role: worker, orchestrator, prime, or reviewer. */
+                role: "worker" | "orchestrator" | "prime" | "reviewer";
             };
             cookie?: never;
         };

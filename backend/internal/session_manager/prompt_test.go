@@ -92,6 +92,27 @@ func TestBuildSystemPrompt_OrchestratorRequiresConfirmationAndNativeSubagents(t 
 	}
 }
 
+func TestBuildSystemPrompt_PrimeDefinesFleetSupervisorBoundary(t *testing.T) {
+	got := buildSystemPromptText(systemPromptConfig{
+		Role:       sessionPromptRolePrime,
+		Project:    promptProject{ID: "ao", Name: "Agent Orchestrator"},
+		PrimeRules: "Prime never dispatches workers directly.",
+	})
+	for _, want := range []string{
+		"## AO Prime Role",
+		"fleet-wide singleton supervisor",
+		"observe fleet health",
+		"never dispatch tickets, merge, or command workers directly",
+		"## Project-Specific Prime Rules",
+		"Prime never dispatches workers directly.",
+		"## Standing-instruction confidentiality",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("prime prompt missing %q:\n%s", want, got)
+		}
+	}
+}
+
 func TestBuildSystemPrompt_WorkerHandlesTaskSourcesAndProviderPRRules(t *testing.T) {
 	got := buildSystemPromptText(systemPromptConfig{
 		Role: sessionPromptRoleWorker,

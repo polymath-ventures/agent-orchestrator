@@ -2620,6 +2620,7 @@ func TestSystemPrompt_AppendsConfidentialityGuard(t *testing.T) {
 		prep func(st *fakeStore)
 	}{
 		{name: "orchestrator", kind: domain.KindOrchestrator},
+		{name: "prime", kind: domain.KindPrime},
 		{name: "worker_with_orchestrator", kind: domain.KindWorker, prep: func(st *fakeStore) {
 			st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindOrchestrator}
 		}},
@@ -2654,6 +2655,13 @@ func TestSystemPrompt_AppendsConfidentialityGuard(t *testing.T) {
 				t.Fatalf("%s: system prompt missing using-ao skill pointer:\n%s", tc.name, sp)
 			}
 		})
+	}
+}
+
+func TestDefaultSessionBranch_PrimeUsesStableProjectPrefix(t *testing.T) {
+	got := defaultSessionBranch("ao-99", domain.KindPrime, "ao")
+	if got != "ao/ao-prime" {
+		t.Fatalf("prime branch = %q, want ao/ao-prime", got)
 	}
 }
 

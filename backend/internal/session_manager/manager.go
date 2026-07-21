@@ -548,7 +548,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 // storage blip must not wedge spawning (the same fail-open posture the read
 // model uses).
 func (m *Manager) guardPaused(ctx context.Context, project domain.ProjectRecord, cfg ports.SpawnConfig) error {
-	if cfg.Force || cfg.Kind == domain.KindOrchestrator {
+	if cfg.Force || cfg.Kind == domain.KindOrchestrator || cfg.Kind == domain.KindPrime {
 		return nil
 	}
 	scope := ""
@@ -831,17 +831,25 @@ func effectiveHarness(explicit domain.AgentHarness, kind domain.SessionKind, cfg
 }
 
 func roleConfigName(kind domain.SessionKind) string {
-	if kind == domain.KindOrchestrator {
+	switch kind {
+	case domain.KindOrchestrator:
 		return "orchestrator"
+	case domain.KindPrime:
+		return "prime"
+	default:
+		return "worker"
 	}
-	return "worker"
 }
 
 func roleOverride(kind domain.SessionKind, cfg domain.ProjectConfig) domain.RoleOverride {
-	if kind == domain.KindOrchestrator {
+	switch kind {
+	case domain.KindOrchestrator:
 		return cfg.Orchestrator
+	case domain.KindPrime:
+		return cfg.Prime
+	default:
+		return cfg.Worker
 	}
-	return cfg.Worker
 }
 
 func launchModelForBucket(harness domain.AgentHarness, model string, mixSelected bool) string {
@@ -2182,8 +2190,11 @@ func seedRecord(cfg ports.SpawnConfig, mixSelected bool, now time.Time) domain.S
 }
 
 func defaultSessionBranch(id domain.SessionID, kind domain.SessionKind, prefix string) string {
-	if kind == domain.KindOrchestrator {
+	switch kind {
+	case domain.KindOrchestrator:
 		return "ao/" + prefix + "-orchestrator"
+	case domain.KindPrime:
+		return "ao/" + prefix + "-prime"
 	}
 	// A fresh, unique branch per worker session: gitworktree can't add a worktree
 	// on a branch already checked out elsewhere (e.g. main). Put the root work
@@ -2212,6 +2223,8 @@ func promptRoleForKind(kind domain.SessionKind) sessionPromptRole {
 	switch kind {
 	case domain.KindOrchestrator:
 		return sessionPromptRoleOrchestrator
+	case domain.KindPrime:
+		return sessionPromptRolePrime
 	case domain.KindWorker:
 		return sessionPromptRoleWorker
 	default:
@@ -2285,6 +2298,18 @@ func (m *Manager) buildSystemPrompt(ctx context.Context, kind domain.SessionKind
 			return "", err
 		}
 		cfg.OrchestratorRules = rules
+	case domain.KindPrime:
+		rules, err := LoadRoleRules(RoleRulesConfig{
+			Role:        "prime",
+			ProjectID:   string(projectID),
+			ProjectPath: project.Path,
+			InlineRules: project.Config.PrimeRules,
+			RulesFile:   project.Config.PrimeRulesFile,
+		})
+		if err != nil {
+			return "", err
+		}
+		cfg.PrimeRules = rules
 	case domain.KindWorker:
 		orchestratorID, ok, err := m.activeOrchestratorSessionID(ctx, projectID)
 		if err != nil {

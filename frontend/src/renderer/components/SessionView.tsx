@@ -10,7 +10,7 @@ import { useUiStore } from "../stores/ui-store";
 import { useShell } from "../lib/shell-context";
 import { useBrowserView } from "../hooks/useBrowserView";
 import { useWorkspaceQuery } from "../hooks/useWorkspaceQuery";
-import { isOrchestratorSession } from "../types/workspace";
+import { isTerminalOnlySession } from "../types/workspace";
 import type { TerminalTarget } from "../types/terminal";
 
 const INSPECTOR_MIN_PERCENT = 22;
@@ -53,9 +53,9 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const [inspectorView, setInspectorView] = useState<InspectorView>("summary");
 
 	const session = workspaces.flatMap((workspace) => workspace.sessions).find((s) => s.id === sessionId);
-	const isOrchestrator = session ? isOrchestratorSession(session) : false;
-	// Orchestrator sessions are terminal-only; only worker sessions have the rail.
-	const hasInspector = !isOrchestrator;
+	const isTerminalOnly = session ? isTerminalOnlySession(session) : false;
+	// Orchestrator and prime sessions are terminal-only; only worker sessions have the rail.
+	const hasInspector = !isTerminalOnly;
 	const previewUrl = session?.previewUrl?.trim() || undefined;
 	const previewRevision = session?.previewRevision;
 	const revealedPreviewRef = useRef<number | null>(null);

@@ -35,7 +35,7 @@ type AgentIDParam struct {
 // RolePromptRoleParam is the {role} path parameter for the effective-prompt
 // visibility route.
 type RolePromptRoleParam struct {
-	Role string `path:"role" description:"Agent role: worker, orchestrator, or reviewer." enum:"worker,orchestrator,reviewer"`
+	Role string `path:"role" description:"Agent role: worker, orchestrator, prime, or reviewer." enum:"worker,orchestrator,prime,reviewer"`
 }
 
 // RolePromptResponse is the body of GET /projects/{id}/roles/{role}/prompt: the
@@ -178,7 +178,7 @@ type ListSessionsResponse struct {
 type SpawnSessionRequest struct {
 	ProjectID domain.ProjectID    `json:"projectId"`
 	IssueID   domain.IssueID      `json:"issueId,omitempty"`
-	Kind      domain.SessionKind  `json:"kind,omitempty" enum:"worker,orchestrator"`
+	Kind      domain.SessionKind  `json:"kind,omitempty" enum:"worker,orchestrator,prime"`
 	Harness   domain.AgentHarness `json:"harness,omitempty" enum:"claude-code,codex,codex-fugu,aider,opencode,grok,droid,amp,agy,crush,cursor,qwen,copilot,goose,auggie,continue,devin,cline,kimi,kiro,kilocode,vibe,pi,autohand"`
 	// Model pins the model for the launched session and wins over any model from
 	// role or project config. Omitted falls back to that config resolution.

@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState, type WheelEvent } from "react
 import { TERMINAL_FONT_SIZE_DEFAULT, TERMINAL_FONT_SIZE_MAX, TERMINAL_FONT_SIZE_MIN } from "../lib/design-tokens";
 import type { Theme } from "../stores/ui-store";
 import type { TerminalTarget } from "../types/terminal";
-import { isOrchestratorSession, type WorkspaceSession } from "../types/workspace";
+import { isOrchestratorSession, isPrimeSession, type WorkspaceSession } from "../types/workspace";
 import { TerminalPane } from "./TerminalPane";
 
 type CenterPaneProps = {
@@ -100,7 +100,13 @@ export function CenterPane({ session, theme, daemonReady, terminalTarget, onSele
 						TERMINAL
 					</span>
 					<span className="min-w-0 truncate font-mono text-control font-semibold text-passive">
-						{!session ? "No session" : isOrchestratorSession(session) ? "Orchestrator" : session.title}
+						{!session
+							? "No session"
+							: isPrimeSession(session)
+								? "Prime"
+								: isOrchestratorSession(session)
+									? "Orchestrator"
+									: session.title}
 					</span>
 				</div>
 				<div className="ml-auto flex items-center gap-3 font-mono text-passive">
