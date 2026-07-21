@@ -6,7 +6,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
-// noSignalGrace is how long after spawn/restore a session may stay silent
+// NoSignalGrace is how long after spawn/restore a session may stay silent
 // before its idle reading is downgraded to StatusNoSignal. It covers the
 // agent's TUI boot plus the gap to the first activity-bearing hook callback
 // (for Codex that is UserPromptSubmit, seconds after the auto-submitted spawn
