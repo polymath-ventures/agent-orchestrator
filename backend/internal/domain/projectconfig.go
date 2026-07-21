@@ -178,7 +178,7 @@ func (c ProjectConfig) Validate() error {
 			return fmt.Errorf("reviewers[%d].harness: unknown harness %q", i, rv.Harness)
 		}
 		if err := rv.AgentConfig.Validate(); err != nil {
-			return fmt.Errorf("reviewers[%d].%w", i, err)
+			return fmt.Errorf("reviewers[%d]: %w", i, err)
 		}
 		if model := rv.AgentConfig.Model; model != "" {
 			if hp := rv.Harness.AgentHarness().ModelProvider(); !ClassifyModelProvider(model).CompatibleWith(hp) {

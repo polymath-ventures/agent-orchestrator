@@ -95,6 +95,10 @@ cache and remains fail-open on missing, stale, or probe-unavailable verdicts.
 Background revalidation owns provider/network calls and emits transition
 notifications.
 
+These probes are real CLI model calls. They run outside the spawn path, but
+operators should expect them to consume provider quota or billable usage for
+each configured pin on each refresh interval.
+
 Alternative considered: probe every explicit spawn synchronously. That gives
 fresh answers but turns provider/network health into spawn latency and failure
 surface, violating the issue's no-network spawn-path requirement.

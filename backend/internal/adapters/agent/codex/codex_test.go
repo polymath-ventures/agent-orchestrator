@@ -719,6 +719,11 @@ func TestModelProbeResultClassifiesUnsupportedModel(t *testing.T) {
 		t.Fatalf("status = %q, want probe-unavailable", got.Status)
 	}
 
+	got = modelProbeResultFromOutput([]byte("model unavailable due to capacity"), errors.New("exit 1"))
+	if got.Status != ports.ModelValidationProbeUnavailable {
+		t.Fatalf("capacity status = %q, want probe-unavailable", got.Status)
+	}
+
 	got = modelProbeResultFromOutput([]byte("OK"), nil)
 	if got.Status != ports.ModelValidationReachable {
 		t.Fatalf("status = %q, want reachable", got.Status)

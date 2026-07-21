@@ -299,8 +299,6 @@ func outputLooksLikeUnsupportedModel(text string) bool {
 		"unsupported model",
 		"model not found",
 		"model does not exist",
-		"not available for model",
-		"model unavailable",
 	} {
 		if strings.Contains(lower, needle) {
 			return true

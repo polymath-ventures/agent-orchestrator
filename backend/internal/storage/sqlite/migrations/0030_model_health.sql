@@ -11,13 +11,9 @@ CREATE TABLE model_health (
     updated_at TIMESTAMP NOT NULL,
     PRIMARY KEY (project_id, harness, model)
 );
-
-CREATE INDEX idx_model_health_project
-    ON model_health(project_id, harness, model);
 -- +goose StatementEnd
 
 -- +goose Down
 -- +goose StatementBegin
-DROP INDEX IF EXISTS idx_model_health_project;
 DROP TABLE IF EXISTS model_health;
 -- +goose StatementEnd

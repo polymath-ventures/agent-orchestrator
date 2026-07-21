@@ -837,17 +837,6 @@ func roleConfigName(kind domain.SessionKind) string {
 	return "worker"
 }
 
-// effectiveAgentConfig merges the role override's agent config over the
-// project's base agent config; set override fields win.
-func effectiveAgentConfig(kind domain.SessionKind, cfg domain.ProjectConfig) ports.AgentConfig {
-	harness := effectiveHarness("", kind, cfg)
-	resolved, err := agentconfig.Effective(kind, cfg, "", harness)
-	if err != nil {
-		return ports.AgentConfig{}
-	}
-	return resolved
-}
-
 func roleOverride(kind domain.SessionKind, cfg domain.ProjectConfig) domain.RoleOverride {
 	if kind == domain.KindOrchestrator {
 		return cfg.Orchestrator

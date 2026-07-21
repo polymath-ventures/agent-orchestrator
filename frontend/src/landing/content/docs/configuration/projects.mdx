@@ -65,7 +65,9 @@ agentConfig:
 `modelByHarness` pins a model only when the resolved session harness matches
 that key. AO ignores a scalar `model` from another known provider for the
 selected harness, rejects known cross-provider pins, and reports configured pin
-availability as cached advisory state in project settings.
+availability as cached advisory state in project settings. Availability refresh
+runs outside the spawn path, but it still invokes the configured provider CLI
+for each pinned model and can consume provider quota or billable usage.
 
 ## Choose The Runtime
 

@@ -165,6 +165,10 @@ ao project set-config agent-orchestrator --default-branch main --model claude-op
 ao project set-config agent-orchestrator --config-json '{"agentConfig":{"modelByHarness":{"codex":{"model":"gpt-5-codex","effort":"high"}}},"reviewers":[{"harness":"codex","agentConfig":{"model":"gpt-5-codex"}}]}'
 ```
 
+Model availability refresh is advisory and cached. It never probes during
+spawn, but background refresh does invoke the configured provider CLI for each
+pinned model and can consume provider quota or billable usage.
+
 ```bash
 # Set an env var and a post-create command
 ao project set-config agent-orchestrator --env "NODE_ENV=development" --post-create "npm install"
