@@ -475,6 +475,20 @@ func TestIsAliveReturnsFalseNilOnErrorConnecting(t *testing.T) {
 	}
 }
 
+func TestIsAliveReturnsFalseNilOnNoCurrentTarget(t *testing.T) {
+	r, fr := newTestRuntime(0)
+	fr.outputs = [][]byte{[]byte("no current target")}
+	fr.err = &exec.ExitError{}
+
+	alive, err := r.IsAlive(context.Background(), ports.RuntimeHandle{ID: "sess-1"})
+	if err != nil {
+		t.Fatalf("IsAlive no current target: %v", err)
+	}
+	if alive {
+		t.Fatal("alive = true, want false")
+	}
+}
+
 // IsAlive must treat any non-"missing" non-zero exit as a probe error so the
 // reaper never reads a transient failure as proof of death.
 func TestIsAliveReportsOtherExitFailuresAsProbeErrors(t *testing.T) {

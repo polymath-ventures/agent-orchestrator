@@ -445,6 +445,7 @@ func sessionMissingOutput(out string) bool {
 	s := strings.ToLower(out)
 	return strings.Contains(s, "can't find session") ||
 		strings.Contains(s, "no server running") ||
+		strings.Contains(s, "no current target") ||
 		strings.Contains(s, "error connecting") ||
 		strings.Contains(s, "session not found")
 }
