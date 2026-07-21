@@ -1,0 +1,17 @@
+[Unit]
+Description=Agent Orchestrator committed-config drift check (fork-only)
+Documentation=https://github.com/polymath-ventures/agent-orchestrator/issues/49
+After=ao.service
+Wants=ao.service
+
+[Service]
+Type=oneshot
+# Compare each committed project snapshot (ops/project-config/<project>.json)
+# against live config via `ao project config diff`. Nonzero exit on drift or an
+# infra error surfaces to `systemctl --user status` and the journal. Never
+# applies — drift is surfaced to the operator, not self-healed.
+Environment=AO_BIN=%h/.local/bin/ao
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/bin/env node %h/.ao/deploy/current/source/ops/config-drift-check.mjs
+NoNewPrivileges=true
+PrivateTmp=true
