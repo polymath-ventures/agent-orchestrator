@@ -14,7 +14,11 @@ func newGitHubTracker() (ports.Tracker, error) {
 
 func logTrackerDisabled(logger *slog.Logger, err error) {
 	if errors.Is(err, trackergithub.ErrNoToken) {
-		logger.Warn("tracker issue prompt enrichment disabled: no usable GitHub token", "err", err)
+		// No token configured is an intentional deployment state (enrichment is
+		// simply off), not a fault — record it at INFO so it documents the
+		// choice in the boot log without surfacing as recurring WARN noise
+		// (GH #39). A genuine setup failure below is unexpected and stays WARN.
+		logger.Info("tracker issue prompt enrichment disabled: no GitHub token configured", "err", err)
 	} else {
 		logger.Warn("tracker issue prompt enrichment disabled: GitHub tracker setup failed", "err", err)
 	}
