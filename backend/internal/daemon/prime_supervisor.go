@@ -215,7 +215,7 @@ func primeActivityTime(sess domain.Session) time.Time {
 	return sess.CreatedAt
 }
 
-func (s *primeSupervisorState) reserveRestart(now time.Time, cfg primeSupervisorConfig) (allowed bool, capped bool) {
+func (s *primeSupervisorState) reserveRestart(now time.Time, cfg primeSupervisorConfig) (allowed, capped bool) {
 	cutoff := now.Add(-cfg.RestartWindow)
 	kept := s.restartAttempts[:0]
 	for _, t := range s.restartAttempts {

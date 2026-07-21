@@ -19,7 +19,7 @@ AO_PRIME_DISPLAY_NAME="AO Prime"
 
 `AO_PRIME_PROJECT_ID` is the registered project whose repository, config, role
 override, and prime rules host the prime session. `AO_PRIME_DISPLAY_NAME` is
-optional, trimmed, and capped at 20 characters.
+optional, trimmed, and capped at 20 runes.
 
 Changing `AO_PRIME_PROJECT_ID` does not move an already healthy active prime.
 The new project is used for the next fresh spawn or clean replacement.
@@ -47,14 +47,14 @@ Prime uses the same role override shape as workers and orchestrators:
 
 ```json
 {
-  "prime": {
-    "harness": "codex",
-    "agentConfig": {
-      "model": "gpt-5.4"
-    }
-  },
-  "primeRules": "Keep fleet-wide state concise.",
-  "primeRulesFile": "docs/prime-rules.md"
+	"prime": {
+		"harness": "codex",
+		"agentConfig": {
+			"model": "gpt-5.4"
+		}
+	},
+	"primeRules": "Keep fleet-wide state concise.",
+	"primeRulesFile": "docs/prime-rules.md"
 }
 ```
 
