@@ -678,4 +678,40 @@ describe("ProjectSettingsForm", () => {
 		]);
 		expect(body.config.maxLiveWorkers).toBe(4);
 	}, 20_000);
+
+	it("preserves per-harness effort when saving a model edit", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "git@github.com:acme/project-one.git",
+			defaultBranch: "main",
+			config: {
+				worker: { agent: "codex" },
+				orchestrator: { agent: "claude-code" },
+				agentConfig: {
+					modelByHarness: {
+						codex: { model: "gpt-5-codex", effort: "high" },
+					},
+				},
+			},
+		});
+
+		renderSettings();
+
+		expect(await screen.findByLabelText("codex model")).toHaveValue("gpt-5-codex");
+		await userEvent.clear(screen.getByLabelText("codex model"));
+		await userEvent.type(screen.getByLabelText("codex model"), "gpt-5.1-codex");
+
+		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
+		const body = putMock.mock.calls[0]?.[1]?.body;
+		// The form has no effort input; a model edit must round-trip the
+		// persisted effort untouched instead of silently wiping it.
+		expect(body.config.agentConfig.modelByHarness).toEqual({
+			codex: { model: "gpt-5.1-codex", effort: "high" },
+		});
+	}, 20_000);
 });
