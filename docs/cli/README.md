@@ -42,6 +42,9 @@ Every product command resolves to a daemon HTTP route. Run `ao <command>
 | `ao project ls`                     | `GET /api/v1/projects`                                                |
 | `ao project get <id>`               | `GET /api/v1/projects/{id}`                                           |
 | `ao project set-config <id>`        | `PUT /api/v1/projects/{id}/config`                                    |
+| `ao project config export <p>`      | `GET /api/v1/projects/{id}`                                           |
+| `ao project config apply <p> <f>`   | `GET` + `PUT /api/v1/projects/{id}/config`                            |
+| `ao project config diff <p> <f>`    | `GET /api/v1/projects/{id}`                                           |
 | `ao project rm <id>`                | `DELETE /api/v1/projects/{id}`                                        |
 | `ao role prompt <project> <role>`   | `GET /api/v1/projects/{id}/roles/{role}/prompt`                       |
 | `ao pause [project] [--hard]`       | `POST /api/v1/projects/{id}/pause` (or `/fleet/pause` with `--all`)   |
@@ -85,6 +88,26 @@ at idle; `--hard` terminates live workers immediately (orchestrators stay alive
 in every mode). Pause state also appears in `ao status` (`fleet:` line) and
 `ao project ls` / `ao project get`. `ao spawn --force` overrides an active pause
 for a single spawn.
+
+`ao project config` treats a project's stored config as versionable JSON.
+`export <project>` prints the stored config (the persisted override set the
+daemon serves, not defaults-resolved) as canonical JSON (sorted keys, stable
+formatting) — two exports of unchanged config are byte-identical, and every field
+the daemon serializes is captured, including ones the flag-based `set-config`
+mirror does not model. `apply <project> <file>` is **surgical**: it overlays only
+the top-level fields named in the spec file onto the live config (via a
+read-modify-write against the existing config PUT) and leaves every unnamed field
+untouched; a spec equal to live config performs no write. `diff <project> <file>`
+compares only the fields named in the spec against live config, prints each
+drifted field (spec vs live), and exits nonzero on drift — so it can gate a CI
+job or a scheduled drift check. Unknown field names are rejected by the daemon's
+strict config decoder rather than re-validated client-side.
+
+> **Secret handling:** an exported config can include `env` values that carry
+> credentials. Treat an export as sensitive — review it before committing to
+> version control, and prefer restricting file permissions (e.g. redirect to a
+> `0600` file) over pasting it into shared locations. `diff` redacts the value
+> of the `env` field in its output so drift checks are safe to run in CI logs.
 
 `ao preview` resolves its session from the `AO_SESSION_ID` environment variable
 (it is meant to run inside a session), not a flag. With no argument it

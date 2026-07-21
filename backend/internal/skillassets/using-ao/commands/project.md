@@ -183,3 +183,37 @@ ao project set-config agent-orchestrator --agent-rules "Run focused tests before
 # Load worker rules from a repo-relative file
 ao project set-config agent-orchestrator --agent-rules-file docs/ao-worker-rules.md
 ```
+
+---
+
+### ao project config
+
+Treat a project's stored config as versionable JSON: export it, apply a partial spec surgically, or diff a spec against live config. Built on the existing project config surface — no new daemon behavior.
+
+**Syntax:**
+```
+ao project config export <project>
+ao project config apply <project> <file>
+ao project config diff <project> <file>
+```
+
+- **export** prints the project's full stored config (the persisted override set) as canonical JSON (sorted keys, stable formatting). Two exports of unchanged config are byte-identical. An exported config can include `env` values with credentials — treat it as sensitive.
+- **apply** is surgical: only the top-level fields named in `<file>` change; every other live field is preserved. A spec equal to live config makes no change and performs no write. A missing/unreadable/invalid-JSON spec exits 2; an unknown config key is rejected by the daemon.
+- **diff** compares only the fields named in `<file>` against live config, prints each drifted field, and exits nonzero on drift (zero when in sync) — so it can gate CI or a scheduled drift check. It never writes, and redacts the value of the `env` field so drift checks are safe to run in CI logs.
+
+**Examples:**
+
+```bash
+# Snapshot a project's config to a versioned file
+ao project config export agent-orchestrator > config/agent-orchestrator.json
+```
+
+```bash
+# Restore only the fields in the file, leaving everything else untouched
+ao project config apply agent-orchestrator config/agent-orchestrator.json
+```
+
+```bash
+# Fail a CI check when live config has drifted from the committed spec
+ao project config diff agent-orchestrator config/agent-orchestrator.json
+```
