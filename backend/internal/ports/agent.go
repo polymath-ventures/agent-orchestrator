@@ -31,16 +31,6 @@ const (
 	AgentAuthStatusUnknown AgentAuthStatus = "unknown"
 )
 
-// Valid reports whether s is one of the three model-probe outcomes.
-func (s ModelValidationStatus) Valid() bool {
-	switch s {
-	case ModelValidationReachable, ModelValidationUnreachable, ModelValidationProbeUnavailable:
-		return true
-	default:
-		return false
-	}
-}
-
 // Agent is the contract every CLI coding agent adapter (claude-code, codex, …)
 // must satisfy. It supplies the argv and process configuration the Session
 // Manager needs to launch, restore, and read back a native agent session.
@@ -86,6 +76,16 @@ const (
 	// ModelValidationProbeUnavailable means auth, quota, timeout, or transport prevented validation.
 	ModelValidationProbeUnavailable ModelValidationStatus = "probe-unavailable"
 )
+
+// Valid reports whether s is one of the three model-probe outcomes.
+func (s ModelValidationStatus) Valid() bool {
+	switch s {
+	case ModelValidationReachable, ModelValidationUnreachable, ModelValidationProbeUnavailable:
+		return true
+	default:
+		return false
+	}
+}
 
 // ModelValidationResult reports whether an adapter could prove a model is
 // usable. Probe-unavailable is intentionally distinct from unreachable:
