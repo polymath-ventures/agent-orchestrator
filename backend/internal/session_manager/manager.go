@@ -2894,10 +2894,10 @@ func restoreArgv(ctx context.Context, agent ports.Agent, id domain.SessionID, wo
 	if ok {
 		return cmd, ports.PromptDeliveryInCommand, RestoreModeNative, nil
 	}
-	// A saved prompt is replayed fresh. An orchestrator is promptless by design
-	// and relaunches with the system prompt only. A promptless WORKER has no task
-	// and no session id to restore from: do not blank-relaunch it.
-	if meta.Prompt == "" && kind != domain.KindOrchestrator {
+	// A saved prompt is replayed fresh. Terminal-only sessions are promptless by
+	// design and relaunch with the system prompt only. A promptless WORKER has no
+	// task and no session id to restore from: do not blank-relaunch it.
+	if meta.Prompt == "" && kind != domain.KindOrchestrator && kind != domain.KindPrime {
 		return nil, "", "", ErrNotResumable
 	}
 	// Fall through to a fresh launch. Command-delivered agents receive

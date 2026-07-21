@@ -3144,6 +3144,28 @@ func TestRestore_PromptlessUnresumableRelaunchesFresh(t *testing.T) {
 	}
 }
 
+func TestRestore_PromptlessUnresumablePrimeRelaunchesFresh(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["ao-prime"] = domain.SessionRecord{
+		ID: "ao-prime", ProjectID: "ao", Kind: domain.KindPrime, IsTerminated: true,
+		Metadata: domain.SessionMetadata{WorkspacePath: "/ws/ao-prime", Branch: "ao/ao-prime"},
+		Activity: domain.Activity{State: domain.ActivityExited},
+	}
+	rt := &fakeRuntime{}
+	lookPath := func(string) (string, error) { return "/bin/true", nil }
+	m := New(Deps{Runtime: rt, Agents: fakeAgents{}, Workspace: &fakeWorkspace{}, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
+
+	if _, err := m.RestoreWithMode(ctx, "ao-prime"); err != nil {
+		t.Fatalf("promptless unresumable prime must relaunch fresh, got err = %v", err)
+	}
+	if rt.created != 1 {
+		t.Fatalf("runtime.Create = %d, want 1 (fresh launch)", rt.created)
+	}
+	if st.sessions["ao-prime"].IsTerminated {
+		t.Error("prime must be live after fresh relaunch")
+	}
+}
+
 // TestRestore_PromptlessWorkerNotResumable is the RED test for the promptless-worker
 // fix: a KindWorker session with no prompt and no captured AgentSessionID (so the
 // adapter returns ok=false) must NOT be blank-relaunched. The session had no task

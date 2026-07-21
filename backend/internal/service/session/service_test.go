@@ -1146,6 +1146,17 @@ func (f fakeSCM) FetchReviewThreads(context.Context, ports.SCMPRRef) (ports.SCMR
 	return f.review, f.reviewErr
 }
 
+func TestClaimPRRejectsPrimeSession(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["ao-prime"] = domain.SessionRecord{ID: "ao-prime", ProjectID: "ao", Kind: domain.KindPrime}
+	svc := NewWithDeps(Deps{Store: st})
+
+	_, err := svc.ClaimPR(context.Background(), "ao-prime", "7", ClaimPROptions{})
+	if !errors.Is(err, ErrSessionNotClaimable) {
+		t.Fatalf("ClaimPR prime err = %v, want ErrSessionNotClaimable", err)
+	}
+}
+
 func TestClaimPRMapsObserverAndStoreErrors(t *testing.T) {
 	st := newFakeStore()
 	now := time.Date(2026, 6, 4, 12, 0, 0, 0, time.UTC)
