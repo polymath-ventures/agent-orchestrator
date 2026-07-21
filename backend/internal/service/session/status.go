@@ -13,7 +13,7 @@ import (
 // prompt — its SessionStart hook fires earlier but carries no activity state);
 // past it, a silent session is indistinguishable from one with a broken hook
 // pipeline, and the dashboard must not claim a confident "idle".
-const noSignalGrace = 90 * time.Second
+const NoSignalGrace = 90 * time.Second
 
 // deriveStatus computes the display status. signalCapable says whether this
 // session's harness has an activity hook pipeline at all; only then can
@@ -51,7 +51,7 @@ func deriveStatus(rec domain.SessionRecord, prs []domain.PRFacts, now time.Time,
 	// No hook callback has ever arrived for this spawn/restore even though the
 	// harness has a hook pipeline. The seeded LastActivityAt marks the launch,
 	// so once the grace passes the honest status is "no signal", not "idle".
-	if signalCapable && rec.FirstSignalAt.IsZero() && now.Sub(rec.Activity.LastActivityAt) > noSignalGrace {
+	if signalCapable && rec.FirstSignalAt.IsZero() && now.Sub(rec.Activity.LastActivityAt) > NoSignalGrace {
 		return domain.StatusNoSignal
 	}
 	return domain.StatusIdle

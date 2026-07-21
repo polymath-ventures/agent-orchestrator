@@ -132,6 +132,17 @@ func (s *Sweeper) drainProject(ctx context.Context, id domain.ProjectID) error {
 			live++
 			continue
 		}
+		// A fresh spawn reads idle during the pre-first-signal boot grace (no
+		// hook callback has arrived yet), so that "idle" is not evidence of a
+		// quiet worker — count it live and let a later tick decide once a real
+		// signal (or the no_signal downgrade) exists. The guard is bounded by
+		// the same grace deriveStatus uses rather than keyed on the zero value
+		// alone: hook-less harnesses never set FirstSignalAt and would
+		// otherwise be undrainable forever.
+		if sess.Status == domain.StatusIdle && sess.FirstSignalAt.IsZero() && s.clock().Sub(sess.CreatedAt) <= sessionsvc.NoSignalGrace {
+			live++
+			continue
+		}
 		// Kill's bool reports whether the workspace was reclaimed, NOT whether the
 		// session was terminated: a dirty worktree is preserved (bool=false) but
 		// the session is still marked terminated. So a nil error means the worker
