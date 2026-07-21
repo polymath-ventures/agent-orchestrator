@@ -727,11 +727,17 @@ function patchHarnessModel(form: HarnessModelForm, harness: string, model: strin
 
 function buildHarnessModelConfig(form: HarnessModelForm) {
 	const entries = Object.entries(form)
-		.map(
-			([harness, value]) =>
-				[harness, { model: value.model.trim(), ...(value.effort ? { effort: value.effort } : {}) }] as const,
-		)
-		.filter(([, value]) => value.model !== "");
+		.map(([harness, value]) => {
+			const model = value.model.trim();
+			// An entry is kept if it pins a model OR carries an effort: the
+			// daemon accepts effort-only overrides, so an empty model field
+			// must not delete a persisted effort the form cannot display.
+			const out: { model?: string; effort?: string } = {};
+			if (model) out.model = model;
+			if (value.effort) out.effort = value.effort;
+			return [harness, out] as const;
+		})
+		.filter(([, value]) => Object.keys(value).length > 0);
 	return entries.length > 0 ? Object.fromEntries(entries) : undefined;
 }
 

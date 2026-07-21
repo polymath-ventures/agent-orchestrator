@@ -714,4 +714,41 @@ describe("ProjectSettingsForm", () => {
 			codex: { model: "gpt-5.1-codex", effort: "high" },
 		});
 	}, 20_000);
+
+	it("keeps effort-only entries and clearing a model preserves its effort", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "git@github.com:acme/project-one.git",
+			defaultBranch: "main",
+			config: {
+				worker: { agent: "codex" },
+				orchestrator: { agent: "claude-code" },
+				agentConfig: {
+					modelByHarness: {
+						codex: { model: "gpt-5-codex", effort: "high" },
+						"claude-code": { effort: "low" }, // effort-only: legal daemon config
+					},
+				},
+			},
+		});
+
+		renderSettings();
+
+		expect(await screen.findByLabelText("codex model")).toHaveValue("gpt-5-codex");
+		await userEvent.clear(screen.getByLabelText("codex model"));
+
+		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
+		const body = putMock.mock.calls[0]?.[1]?.body;
+		// Clearing the model unpins it but must not delete the effort; the
+		// untouched effort-only entry must survive the save verbatim.
+		expect(body.config.agentConfig.modelByHarness).toEqual({
+			codex: { effort: "high" },
+			"claude-code": { effort: "low" },
+		});
+	}, 20_000);
 });
