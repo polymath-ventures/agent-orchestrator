@@ -333,6 +333,11 @@ func (s *Service) SpawnOrchestrator(ctx context.Context, projectID domain.Projec
 		return domain.Session{}, err
 	}
 	if err := verifyOrchestratorReplacement(project, sess); err != nil {
+		// Same rollback contract as SpawnPrime: never leave an unverified
+		// singleton live for the next ensure pass to adopt.
+		if retireErr := s.manager.RetireForReplacement(ctx, sess.ID); retireErr != nil {
+			return domain.Session{}, fmt.Errorf("%w (and retiring the unverified orchestrator failed: %v)", err, retireErr)
+		}
 		return domain.Session{}, err
 	}
 	return sess, nil
@@ -341,6 +346,12 @@ func (s *Service) SpawnOrchestrator(ctx context.Context, projectID domain.Projec
 // SpawnPrime spawns or returns the optional global prime supervisor. The host
 // project supplies the workspace/config, but singleton semantics are fleet-wide.
 func (s *Service) SpawnPrime(ctx context.Context, projectID domain.ProjectID, clean bool) (domain.Session, error) {
+	// Prime is a fleet-wide singleton; serialize under a fixed key so two
+	// concurrent ensure calls cannot race check-then-spawn (the DB partial
+	// unique index would fail the loser with an opaque 500 otherwise).
+	unlock := s.lockOrchestratorProject("__fleet_prime__")
+	defer unlock()
+
 	project, err := s.requireProject(ctx, projectID)
 	if err != nil {
 		return domain.Session{}, err
@@ -364,6 +375,12 @@ func (s *Service) SpawnPrime(ctx context.Context, projectID domain.ProjectID, cl
 		return domain.Session{}, err
 	}
 	if err := verifyPrimeReplacement(project, sess); err != nil {
+		// The unverified session is already live; without retiring it the
+		// next supervisor tick would see an active prime and silently adopt
+		// it. Retire so the fleet is primeless and replacement re-enters.
+		if retireErr := s.manager.RetireForReplacement(ctx, sess.ID); retireErr != nil {
+			return domain.Session{}, fmt.Errorf("%w (and retiring the unverified prime failed: %v)", err, retireErr)
+		}
 		return domain.Session{}, err
 	}
 	return sess, nil
@@ -500,6 +517,12 @@ func (s *Service) lockOrchestratorProject(projectID domain.ProjectID) func() {
 
 // Restore relaunches a terminated session and returns the API-facing read model.
 func (s *Service) Restore(ctx context.Context, id domain.SessionID) (RestoreOutcome, error) {
+	// The manual-spawn ban extends to restore: relaunching a leftover
+	// terminated prime through the public restore endpoint would create an
+	// unsupervised prime even with the env gate unset.
+	if rec, ok, err := s.store.GetSession(ctx, id); err == nil && ok && rec.Kind == domain.KindPrime {
+		return RestoreOutcome{}, apierr.Forbidden("PRIME_MANUAL_RESTORE_FORBIDDEN", "Prime sessions are managed only by the env-gated supervisor and cannot be restored manually", nil)
+	}
 	res, err := s.manager.RestoreWithMode(ctx, id)
 	if err != nil {
 		return RestoreOutcome{}, toAPIError(err)

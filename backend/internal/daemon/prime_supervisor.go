@@ -152,8 +152,18 @@ func ensurePrime(ctx context.Context, cfg primeSupervisorConfig, state *primeSup
 	}
 	if !ok {
 		allowed, capped := state.reserveRestart(now, cfg)
-		if capped && state.lastPrime.ID != "" {
-			notifyPrimeRestartCapped(ctx, notifier, state.lastPrime, now)
+		if capped {
+			// A prime that has NEVER spawned still deserves the cap alert —
+			// a permanently failing SpawnPrime (e.g. a mistyped
+			// AO_PRIME_PROJECT_ID) would otherwise cap in total silence.
+			// Fall back to a project-scoped identity when no prime was
+			// ever observed.
+			capSubject := state.lastPrime
+			if capSubject.ID == "" {
+				capSubject.ProjectID = cfg.ProjectID
+				capSubject.DisplayName = "Prime (never spawned)"
+			}
+			notifyPrimeRestartCapped(ctx, notifier, capSubject, now)
 		}
 		if !allowed {
 			return
@@ -282,7 +292,7 @@ func notifyPrimeRestartCapped(ctx context.Context, notifier notificationSink, se
 		Type:               domain.NotificationPrimeRestartCapped,
 		SessionID:          sess.ID,
 		ProjectID:          sess.ProjectID,
-		DedupeKey:          fmt.Sprintf("prime:restart-capped:%s", sess.ID),
+		DedupeKey:          fmt.Sprintf("prime:restart-capped:%s:%s", sess.ProjectID, sess.ID),
 		CreatedAt:          now,
 		SessionDisplayName: sess.DisplayName,
 		Message:            "AO tried to replace the unhealthy prime three times in the last hour and paused automatic replacement. Inspect the active prime before restarting it.",
