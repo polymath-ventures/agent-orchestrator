@@ -380,10 +380,15 @@ type fakeStore struct {
 	projects    []domain.ProjectRecord
 	sessions    []domain.SessionRecord
 	sessionsErr error
+	fleetPaused bool
 }
 
 func (f *fakeStore) ListProjects(context.Context) ([]domain.ProjectRecord, error) {
 	return append([]domain.ProjectRecord(nil), f.projects...), nil
+}
+
+func (f *fakeStore) GetFleetPaused(context.Context) (bool, error) {
+	return f.fleetPaused, nil
 }
 
 func (f *fakeStore) ListAllSessions(context.Context) ([]domain.SessionRecord, error) {
