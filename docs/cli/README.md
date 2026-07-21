@@ -112,14 +112,14 @@ commands yet.
 
 The CLI and daemon share the same environment-driven config:
 
-| Var                   | Default              | Purpose                            |
-| --------------------- | -------------------- | ---------------------------------- |
-| `AO_PORT`             | `3001`               | Loopback daemon port.              |
-| `AO_RUN_FILE`         | `~/.ao/running.json` | PID/port/shutdown-token handshake. |
-| `AO_DATA_DIR`         | `~/.ao/data`         | SQLite data directory.             |
-| `AO_REQUEST_TIMEOUT`  | `60s`                | REST request timeout.              |
-| `AO_SHUTDOWN_TIMEOUT` | `10s`                | Graceful shutdown cap.             |
-| `AO_MOBILE_ADVERTISED_HOST` | *(autopick)* | Host (IP or DNS name) advertised in the Connect Mobile pairing status/QR, for daemons reached on an address that interface autopick cannot discover (e.g. a tailnet name). Advertise-only; does not change what the LAN listener binds. |
+| Var                         | Default              | Purpose                                                                                                                                                                                                                                 |
+| --------------------------- | -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `AO_PORT`                   | `3001`               | Loopback daemon port.                                                                                                                                                                                                                   |
+| `AO_RUN_FILE`               | `~/.ao/running.json` | PID/port/shutdown-token handshake.                                                                                                                                                                                                      |
+| `AO_DATA_DIR`               | `~/.ao/data`         | SQLite data directory.                                                                                                                                                                                                                  |
+| `AO_REQUEST_TIMEOUT`        | `60s`                | REST request timeout.                                                                                                                                                                                                                   |
+| `AO_SHUTDOWN_TIMEOUT`       | `10s`                | Graceful shutdown cap.                                                                                                                                                                                                                  |
+| `AO_MOBILE_ADVERTISED_HOST` | _(autopick)_         | Host (IP or DNS name) advertised in the Connect Mobile pairing status/QR, for daemons reached on an address that interface autopick cannot discover (e.g. a tailnet name). Advertise-only; does not change what the LAN listener binds. |
 
 `ao notify slack` additionally reads `AO_SLACK_WEBHOOK_URL` (the Slack incoming
 webhook to post to), falling back to the conventional un-prefixed
