@@ -39,27 +39,41 @@ restart_and_verify() {
   log "Services restarted: ${SERVICES[*]}"
 
   # The daemon writes running.json (pid/port) once it has bound its port.
+  # Identity, not just liveness: the healthz responder must be the daemon this
+  # deploy installed (executablePath) and the process the run file names (pid)
+  # — a stale or foreign daemon on the same port must not satisfy the gate.
   local run_file="${AO_RUN_FILE:-$HOME/.ao/running.json}" port=""
   for _ in $(seq 1 30); do
-    port="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["port"])' "$run_file" 2>/dev/null || true)"
-    if [ -n "$port" ] && curl -fsS -m 3 "http://127.0.0.1:$port/healthz" >/dev/null 2>&1; then
-      break
-    fi
-    port=""
+    port="$(python3 - "$run_file" "$BIN_TARGET" <<'PY' 2>/dev/null || true
+import json, sys, urllib.request
+run = json.load(open(sys.argv[1]))
+health = json.load(urllib.request.urlopen(f"http://127.0.0.1:{run['port']}/healthz", timeout=3))
+assert health.get("status") == "ok"
+assert health.get("pid") == run["pid"], f"healthz pid {health.get('pid')} != run-file pid {run['pid']}"
+assert health.get("executablePath") == sys.argv[2], f"responder is {health.get('executablePath')}, not {sys.argv[2]}"
+print(run["port"])
+PY
+)"
+    [ -n "$port" ] && break
     sleep 2
   done
-  [ -n "$port" ] || die "daemon healthz never came up (run file: $run_file)"
-  log "Daemon healthy on 127.0.0.1:$port."
+  [ -n "$port" ] || die "daemon healthz never verified as the installed binary (run file: $run_file)"
+  log "Daemon healthy and identity-verified on 127.0.0.1:$port."
 
   # ao-web serves the shell and proxies the daemon on the same origin.
   curl -fsS -m 5 "http://127.0.0.1:5173/healthz" >/dev/null || die "ao-web proxy is not serving /healthz"
   local public_url
   public_url="$(systemctl --user show ao-web.service -p Environment | tr ' ' '\n' | sed -n 's/^AO_WEB_PUBLIC_URL=//p' | head -1)"
   if [ -n "$public_url" ]; then
-    local code
+    local code api_code
     code="$(curl -s -m 10 -o /dev/null -w '%{http_code}' "$public_url/" || true)"
     [ "$code" = "200" ] || die "public URL $public_url returned HTTP ${code:-unreachable}"
-    log "Public URL $public_url returned HTTP 200."
+    # The shell loading is not enough: a browser at the public origin must be
+    # able to reach the proxied daemon, which requires the daemon's CORS
+    # allowlist to include this origin (AO_ALLOWED_ORIGINS).
+    api_code="$(curl -s -m 10 -o /dev/null -w '%{http_code}' -H "Origin: $public_url" "$public_url/healthz" || true)"
+    [ "$api_code" = "200" ] || die "browser-mode API check failed: $public_url/healthz with Origin header returned HTTP ${api_code:-unreachable} (check AO_ALLOWED_ORIGINS on the daemon)"
+    log "Public URL $public_url returned HTTP 200 (shell + browser-mode API)."
   else
     log "WARN: AO_WEB_PUBLIC_URL not set on ao-web.service; skipping public check."
   fi
@@ -98,6 +112,7 @@ rollback() {
   log "Rolling back to $prev"
   ln -sfn "$prev" "$CURRENT"
   install -m 755 "$prev/bin/ao" "$BIN_TARGET"
+  sync_units "$prev"
   cat "$prev/REVISION" > "$LAST_FILE"
   restart_and_verify
   log "Rollback complete: $(cat "$prev/REVISION")"
@@ -121,7 +136,11 @@ deploy() {
   echo "$sha" > "$rel/REVISION"
   git -C "$root" remote get-url origin > "$rel/SOURCE_REPO"
   git -C "$root" rev-parse "$sha:frontend" > "$rel/FRONTEND_TREE"
-  cp "$rel"/source/ops/ao*.service "$rel"/source/ops/ao*.timer "$rel/systemd/" 2>/dev/null || true
+  local staged
+  for staged in "$rel"/source/ops/ao*.service "$rel"/source/ops/ao*.timer; do
+    [ -e "$staged" ] || continue
+    cp "$staged" "$rel/systemd/"
+  done
 
   log "Building backend."
   (cd "$rel/source/backend" && go build -trimpath -o "$rel/bin/ao" ./cmd/ao)

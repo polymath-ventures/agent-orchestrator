@@ -30,4 +30,10 @@ test("deploy.sh keeps its load-bearing invariants", async () => {
   assert.match(text, /running\.json/);
   // Boot-log findings must be surfaced, never swallowed.
   assert.match(text, /Boot-log findings/);
+  // Rollback must also roll units back, not just the binary and symlink.
+  assert.match(text, /sync_units "\$prev"/);
+  // The health gate must verify identity (pid + executablePath), not mere 200s.
+  assert.match(text, /executablePath/);
+  // The public check must exercise the browser-mode API path with an Origin.
+  assert.match(text, /-H "Origin: \$public_url"/);
 });
