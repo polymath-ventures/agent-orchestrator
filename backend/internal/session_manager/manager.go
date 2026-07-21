@@ -78,7 +78,17 @@ var (
 	// ErrModelHarnessMismatch means a requested model is known to belong to a
 	// different provider than the resolved harness.
 	ErrModelHarnessMismatch = agentconfig.ErrModelHarnessMismatch
+	// ErrModelUnreachable means a fresh cached verdict definitively rejected the
+	// resolved model or effort. Spawn returns it before creating durable state.
+	ErrModelUnreachable = errors.New("session: resolved model selection is unreachable")
 )
+
+// SpawnModelSelectionValidator supplies cache-only model and effort verdicts
+// for the resolved launch pair. Implementations must never perform discovery or
+// provider calls on this path.
+type SpawnModelSelectionValidator interface {
+	ValidateSpawnSelection(ctx context.Context, harness domain.AgentHarness, model string, effort domain.Effort) (ports.ModelValidationResult, error)
+}
 
 // Env vars a spawned process reads to learn who it is.
 const (
@@ -211,6 +221,8 @@ type Manager struct {
 	// wired at daemon assembly), so the manager itself has no telemetry
 	// dependency — it only calls health-policy methods.
 	health *candidatehealth.Tracker
+	// modelValidator consumes only previously cached model/catalog verdicts.
+	modelValidator SpawnModelSelectionValidator
 }
 
 // sendConfirmConfig bounds the best-effort activity-confirmation loop run after
@@ -267,6 +279,8 @@ type Deps struct {
 	// Nil defaults to a sink-less Tracker: candidate health still narrows and
 	// recovers buckets, only the structured events are dropped.
 	Health *candidatehealth.Tracker
+	// ModelValidator is the unified agent model service's cache-only spawn view.
+	ModelValidator SpawnModelSelectionValidator
 }
 
 // New builds a Session Manager from its dependencies, defaulting the clock to
@@ -287,8 +301,9 @@ func New(d Deps) *Manager {
 			attemptDeadline: sendConfirmAttemptDeadline,
 			maxAttempts:     sendConfirmMaxAttempts,
 		},
-		logger: d.Logger,
-		health: d.Health,
+		logger:         d.Logger,
+		health:         d.Health,
+		modelValidator: d.ModelValidator,
 	}
 	if m.health == nil {
 		// A sink-less Tracker keeps selection narrowing and recovery working in
@@ -367,6 +382,17 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	if _, ok := m.agents.Agent(cfg.Harness); !ok {
 		return domain.SessionRecord{}, fmt.Errorf("spawn: %w: %q", ErrUnknownHarness, cfg.Harness)
 	}
+	// Resolve the remaining launch config before the model gate so effort is
+	// validated as part of the exact native selection. This is the same resolver
+	// result used later for adapter launch; only the already-resolved model is
+	// overlaid for explicit pins and worker-mix buckets.
+	agentConfig, err := agentconfig.Effective(cfg.Kind, project.Config, "", cfg.Harness)
+	if err != nil {
+		return domain.SessionRecord{}, fmt.Errorf("spawn: agent config: %w", err)
+	}
+	if err := m.validateSpawnSelection(ctx, cfg.Harness, cfg.Model, agentConfig.Effort); err != nil {
+		return domain.SessionRecord{}, fmt.Errorf("spawn: %w", err)
+	}
 
 	if err := m.validateRuntimePrerequisites(); err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("spawn: %w", err)
@@ -414,12 +440,6 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		m.destroySpawnWorkspace(ctx, ws, workspaceProject)
 		m.rollbackSpawnSeedRow(ctx, id)
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: no agent adapter for harness %q", id, cfg.Harness)
-	}
-	agentConfig, err := agentconfig.Effective(cfg.Kind, project.Config, "", cfg.Harness)
-	if err != nil {
-		m.destroySpawnWorkspace(ctx, ws, workspaceProject)
-		m.rollbackSpawnSeedRow(ctx, id)
-		return domain.SessionRecord{}, fmt.Errorf("spawn %s: agent config: %w", id, err)
 	}
 	agentConfig.Model = launchModelForBucket(cfg.Harness, cfg.Model, mixSelected)
 	runtimeToken, err := newRuntimeToken()
@@ -690,6 +710,41 @@ func (m *Manager) resolveSpawnTarget(ctx context.Context, cfg ports.SpawnConfig,
 		return "", "", false, err
 	}
 	return harness, strings.TrimSpace(resolved.Model), false, nil
+}
+
+func (m *Manager) validateSpawnSelection(ctx context.Context, harness domain.AgentHarness, model string, effort domain.Effort) error {
+	if m.modelValidator == nil {
+		return nil
+	}
+	result, err := m.modelValidator.ValidateSpawnSelection(ctx, harness, model, effort)
+	if err != nil {
+		m.warnSpawnSelectionUnavailable(harness, model, effort, err.Error())
+		return nil
+	}
+	if result.Status == ports.ModelValidationUnreachable {
+		reason := strings.TrimSpace(result.Message)
+		if reason == "" {
+			reason = "the provider rejected this model selection"
+		}
+		return fmt.Errorf("%w: harness %q model %q effort %q: %s", ErrModelUnreachable, harness, model, effort, reason)
+	}
+	if result.Status != ports.ModelValidationReachable {
+		reason := strings.TrimSpace(result.Message)
+		if reason == "" {
+			reason = "no fresh cached model selection verdict"
+		}
+		m.warnSpawnSelectionUnavailable(harness, model, effort, reason)
+	}
+	return nil
+}
+
+func (m *Manager) warnSpawnSelectionUnavailable(harness domain.AgentHarness, model string, effort domain.Effort, reason string) {
+	m.logger.Warn("model validation unavailable; continuing spawn",
+		"harness", harness,
+		"model", model,
+		"effort", effort,
+		"reason", reason,
+	)
 }
 
 // selectMixBucket picks the bucket the next unpinned worker spawn launches on.

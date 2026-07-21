@@ -8,6 +8,7 @@ import (
 	"time"
 
 	agentregistry "github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/registry"
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -52,10 +53,15 @@ type Inventory struct {
 type Service struct {
 	agents []agentregistry.HarnessAgent
 
-	mu          sync.RWMutex
-	inventory   Inventory
-	lastRefresh time.Time
-	refreshMu   sync.Mutex
+	mu             sync.RWMutex
+	inventory      Inventory
+	lastRefresh    time.Time
+	refreshMu      sync.Mutex
+	modelMu        sync.Mutex
+	modelRefreshMu sync.Mutex
+	modelCache     modelAvailabilityCache
+	catalogCache   map[domain.AgentHarness]cachedModelCatalog
+	pinVerdicts    map[string]pinVerdict
 }
 
 // New returns an agent inventory service backed by the daemon's shipped
@@ -67,11 +73,16 @@ func New() *Service {
 // NewWithAgents returns an inventory service over a caller-provided adapter
 // slice. It is used by focused tests.
 func NewWithAgents(agents []agentregistry.HarnessAgent) *Service {
-	return &Service{agents: agents, inventory: Inventory{
-		Supported:  supportedInfos(agents),
-		Installed:  []Info{},
-		Authorized: []Info{},
-	}}
+	return &Service{
+		agents:       agents,
+		catalogCache: make(map[domain.AgentHarness]cachedModelCatalog),
+		pinVerdicts:  make(map[string]pinVerdict),
+		inventory: Inventory{
+			Supported:  supportedInfos(agents),
+			Installed:  []Info{},
+			Authorized: []Info{},
+		},
+	}
 }
 
 // List returns the cached agent inventory without running probes. Installed and

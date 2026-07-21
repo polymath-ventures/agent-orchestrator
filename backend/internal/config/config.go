@@ -29,6 +29,12 @@ const (
 	// DefaultShutdownTimeout is the hard cap on graceful shutdown. After this
 	// the process exits even if connections are still draining.
 	DefaultShutdownTimeout = 10 * time.Second
+	// DefaultAgentHealthInterval is how often configured harnesses are checked
+	// for local installation and authentication readiness.
+	DefaultAgentHealthInterval = 5 * time.Minute
+	// DefaultModelRevalidationInterval is deliberately daily because model
+	// validation may issue real provider requests.
+	DefaultModelRevalidationInterval = 24 * time.Hour
 	// DefaultAgent is the compatibility value used when AO_AGENT is unset. The
 	// daemon validates it at startup, but worker/orchestrator spawns resolve from
 	// explicit requests or project role config instead of falling back to it.
@@ -101,6 +107,12 @@ type Config struct {
 	// Agent is the compatibility agent adapter id selected by AO_AGENT;
 	// startSession fails fast if no adapter with this id is registered.
 	Agent string
+	// AgentHealthInterval controls scheduled install/auth health checks. Zero
+	// disables the scheduled monitor without affecting explicit health reads.
+	AgentHealthInterval time.Duration
+	// ModelRevalidationInterval controls scheduled model-pin reachability
+	// checks. Zero disables scheduled revalidation.
+	ModelRevalidationInterval time.Duration
 	// PrimeProjectID enables the singleton fleet prime supervisor when set.
 	// Empty leaves the supervisor disabled.
 	PrimeProjectID string
@@ -139,6 +151,8 @@ func (c Config) Addr() string {
 //	AO_RUN_FILE          running.json path   (default ~/.ao/running.json)
 //	AO_DATA_DIR          durable state dir   (default ~/.ao/data)
 //	AO_AGENT             compatibility agent id (default claude-code)
+//	AO_AGENT_HEALTH_INTERVAL agent install/auth probe period (Go duration >= 0, 0 disables, default 5m)
+//	AO_MODEL_REVALIDATION_INTERVAL model-pin probe period (Go duration >= 0, 0 disables, default 24h)
 //	AO_PRIME_PROJECT_ID  project id whose repo/config hosts the optional fleet prime supervisor (default disabled)
 //	AO_PRIME_DISPLAY_NAME optional display name for the prime supervisor, <= 20 runes
 //	AO_ALLOWED_ORIGINS   CORS origins, comma-separated (default DefaultAllowedOrigins)
@@ -154,12 +168,14 @@ func (c Config) Addr() string {
 // The bind host is not configurable: the daemon is loopback-only by design.
 func Load() (Config, error) {
 	cfg := Config{
-		Host:            LoopbackHost,
-		Port:            DefaultPort,
-		RequestTimeout:  DefaultRequestTimeout,
-		ShutdownTimeout: DefaultShutdownTimeout,
-		Agent:           DefaultAgent,
-		AllowedOrigins:  DefaultAllowedOrigins,
+		Host:                      LoopbackHost,
+		Port:                      DefaultPort,
+		RequestTimeout:            DefaultRequestTimeout,
+		ShutdownTimeout:           DefaultShutdownTimeout,
+		Agent:                     DefaultAgent,
+		AgentHealthInterval:       DefaultAgentHealthInterval,
+		ModelRevalidationInterval: DefaultModelRevalidationInterval,
+		AllowedOrigins:            DefaultAllowedOrigins,
 		Telemetry: TelemetryConfig{
 			Remote:      TelemetryRemoteOff,
 			PostHogHost: DefaultTelemetryPostHogHost,
@@ -199,6 +215,20 @@ func Load() (Config, error) {
 
 	if raw := os.Getenv("AO_AGENT"); raw != "" {
 		cfg.Agent = raw
+	}
+	if raw := os.Getenv("AO_AGENT_HEALTH_INTERVAL"); raw != "" {
+		duration, err := parseNonNegativeDuration("AO_AGENT_HEALTH_INTERVAL", raw)
+		if err != nil {
+			return Config{}, err
+		}
+		cfg.AgentHealthInterval = duration
+	}
+	if raw := os.Getenv("AO_MODEL_REVALIDATION_INTERVAL"); raw != "" {
+		duration, err := parseNonNegativeDuration("AO_MODEL_REVALIDATION_INTERVAL", raw)
+		if err != nil {
+			return Config{}, err
+		}
+		cfg.ModelRevalidationInterval = duration
 	}
 
 	cfg.PrimeProjectID = strings.TrimSpace(os.Getenv("AO_PRIME_PROJECT_ID"))
@@ -260,12 +290,9 @@ func Load() (Config, error) {
 		cfg.Telemetry.PostHogHost = raw
 	}
 	if raw := os.Getenv("AO_METRICS_INTERVAL"); raw != "" {
-		d, err := time.ParseDuration(raw)
+		d, err := parseNonNegativeDuration("AO_METRICS_INTERVAL", raw)
 		if err != nil {
-			return Config{}, fmt.Errorf("invalid AO_METRICS_INTERVAL %q: %w", raw, err)
-		}
-		if d < 0 {
-			return Config{}, fmt.Errorf("invalid AO_METRICS_INTERVAL %q: must be >= 0", raw)
+			return Config{}, err
 		}
 		cfg.Metrics.Interval = d
 	}
@@ -337,6 +364,19 @@ func parsePositiveDuration(name, raw string) (time.Duration, error) {
 		return 0, fmt.Errorf("invalid %s %q: must be > 0", name, raw)
 	}
 	return d, nil
+}
+
+// parseNonNegativeDuration accepts zero as a documented disable sentinel but
+// rejects malformed and negative durations.
+func parseNonNegativeDuration(name, raw string) (time.Duration, error) {
+	duration, err := time.ParseDuration(raw)
+	if err != nil {
+		return 0, fmt.Errorf("invalid %s %q: %w", name, raw, err)
+	}
+	if duration < 0 {
+		return 0, fmt.Errorf("invalid %s %q: must be >= 0", name, raw)
+	}
+	return duration, nil
 }
 
 // resolveRunFilePath picks where running.json lives. An explicit AO_RUN_FILE

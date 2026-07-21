@@ -187,6 +187,8 @@ var schemaNames = map[string]string{
 	"AgentInventory":                              "ListAgentsResponse",
 	"AgentInfo":                                   "AgentInfo",
 	"AgentProbeResult":                            "ProbeAgentResponse",
+	"AgenthealthHarnessHealth":                    "AgentHarnessHealth",
+	"AgenthealthSnapshot":                         "AgentHealthSnapshot",
 	"ControllersListNotificationsQuery":           "ListNotificationsQuery",
 	"ControllersNotificationStreamQuery":          "NotificationStreamQuery",
 	"ControllersNotificationIDParam":              "NotificationIDParam",
@@ -346,6 +348,25 @@ func agentOperations() []operation {
 			resps: []respUnit{
 				{http.StatusOK, controllers.ListAgentsResponse{}},
 				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodGet, path: "/api/v1/agents/models", id: "listAgentModels", tag: "agents",
+			summary:    "Return harness-native model catalogs and configured-pin availability",
+			pathParams: []any{controllers.ListAgentModelsQuery{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.ListAgentModelsResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodGet, path: "/api/v1/agents/health", id: "getAgentHealth", tag: "agents",
+			summary: "Return the cached install and authentication health snapshot",
+			resps: []respUnit{
+				{http.StatusOK, controllers.AgentHealthResponse{}},
 				{http.StatusNotImplemented, envelope.APIError{}},
 			},
 		},

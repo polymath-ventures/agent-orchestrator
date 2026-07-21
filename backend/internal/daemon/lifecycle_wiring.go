@@ -95,7 +95,7 @@ type sessionLifecycle interface {
 // store + LCM, the per-session agent resolver, and the agent messenger. The
 // returned service is mounted at httpd APIDeps.Sessions. It also returns the
 // manager so the caller can wire Reconcile into the boot sequence.
-func startSession(cfg config.Config, runtime runtimeselect.Runtime, store *sqlite.Store, lcm *lifecycle.Manager, messenger ports.AgentMessenger, telemetry ports.EventSink, log *slog.Logger) (*sessionsvc.Service, reviewsvc.Manager, sessionLifecycle, error) {
+func startSession(cfg config.Config, runtime runtimeselect.Runtime, store *sqlite.Store, lcm *lifecycle.Manager, messenger ports.AgentMessenger, modelValidator sessionmanager.SpawnModelSelectionValidator, telemetry ports.EventSink, log *slog.Logger) (*sessionsvc.Service, reviewsvc.Manager, sessionLifecycle, error) {
 	defaultAgent := cfg.Agent
 	if defaultAgent == "" {
 		defaultAgent = config.DefaultAgent
@@ -126,15 +126,16 @@ func startSession(cfg config.Config, runtime runtimeselect.Runtime, store *sqlit
 		Logger:    log,
 	})
 	mgr := sessionmanager.New(sessionmanager.Deps{
-		Runtime:   runtime,
-		Agents:    agents,
-		Workspace: ws,
-		Store:     store,
-		Messenger: messenger,
-		Lifecycle: lcm,
-		DataDir:   cfg.DataDir,
-		Logger:    log,
-		Health:    health,
+		Runtime:        runtime,
+		Agents:         agents,
+		Workspace:      ws,
+		Store:          store,
+		Messenger:      messenger,
+		Lifecycle:      lcm,
+		DataDir:        cfg.DataDir,
+		Logger:         log,
+		Health:         health,
+		ModelValidator: modelValidator,
 	})
 	scmProvider, err := newGitHubSCMProvider(log)
 	if err != nil {

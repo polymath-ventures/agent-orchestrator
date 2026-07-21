@@ -38,6 +38,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/agents/health": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Return the cached install and authentication health snapshot */
+        get: operations["getAgentHealth"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/agents/models": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Return harness-native model catalogs and configured-pin availability */
+        get: operations["listAgentModels"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/agents/refresh": {
         parameters: {
             query?: never;
@@ -822,6 +856,32 @@ export interface components {
             };
             permissions?: string;
         };
+        AgentHarnessHealth: {
+            authStatus?: string;
+            /** Format: date-time */
+            changedAt: string;
+            /** Format: date-time */
+            checkedAt: string;
+            health: string;
+            id: string;
+            label: string;
+            reason?: string;
+            remedy?: string;
+        };
+        AgentHarnessModels: {
+            catalogReason?: string;
+            /** @enum {string} */
+            catalogSource: "adapter" | "cached-adapter" | "known-set" | "configured-pins" | "none";
+            catalogVerified: boolean;
+            id: string;
+            label: string;
+            models: components["schemas"]["AgentModelAvailability"][];
+        };
+        AgentHealthSnapshot: {
+            /** Format: date-time */
+            checkedAt: string;
+            harnesses: components["schemas"]["AgentHarnessHealth"][];
+        };
         AgentInfo: {
             /**
              * @description Advisory local auth probe result. authorized means a recent local probe passed; spawn remains the authoritative validation point.
@@ -830,6 +890,24 @@ export interface components {
             authStatus?: "authorized" | "unauthorized" | "unknown";
             id: string;
             label: string;
+        };
+        AgentModelAvailability: {
+            defaultEffort?: string;
+            dynamic?: boolean;
+            efforts?: string[];
+            label: string;
+            model: string;
+            reason?: string;
+            /** @enum {string} */
+            reasonCode?: "not-probed" | "probe-unavailable" | "no-capability";
+            /** @enum {string} */
+            status: "reachable" | "unreachable" | "unknown";
+            verified: boolean;
+        };
+        AgentModelAvailabilityResponse: {
+            /** Format: date-time */
+            checkedAt: string;
+            harnesses: components["schemas"]["AgentHarnessModels"][];
         };
         CancelReviewResponse: {
             reviewerHandleId: string;
@@ -1533,6 +1611,85 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ProbeAgentResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    getAgentHealth: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentHealthSnapshot"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    listAgentModels: {
+        parameters: {
+            query?: {
+                /** @description Bypass the five-minute request cache and refresh native harness catalogs. */
+                force?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentModelAvailabilityResponse"];
                 };
             };
             /** @description Bad Request */

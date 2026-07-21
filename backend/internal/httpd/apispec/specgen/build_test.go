@@ -38,3 +38,26 @@ func TestBuild_Deterministic(t *testing.T) {
 		t.Fatal("Build() is not deterministic across calls")
 	}
 }
+
+func TestBuildIncludesAgentModelsAndHealthContracts(t *testing.T) {
+	got, err := specgen.Build()
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	for _, want := range [][]byte{
+		[]byte("/api/v1/agents/models:"),
+		[]byte("operationId: listAgentModels"),
+		[]byte("name: force"),
+		[]byte("catalogSource:"),
+		[]byte("catalogReason:"),
+		[]byte("catalogVerified:"),
+		[]byte("defaultEffort:"),
+		[]byte("/api/v1/agents/health:"),
+		[]byte("operationId: getAgentHealth"),
+		[]byte("remedy:"),
+	} {
+		if !bytes.Contains(got, want) {
+			t.Fatalf("generated spec missing %q", want)
+		}
+	}
+}

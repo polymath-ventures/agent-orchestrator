@@ -135,7 +135,8 @@ func Run() error {
 	// selected runtime, a gitworktree workspace, the per-session agent resolver
 	// (AO_AGENT validated here for compatibility), and the agent messenger, then mount it
 	// on the API.
-	sessionSvc, reviewSvc, sessMgr, err := startSession(cfg, runtimeAdapter, store, lcStack.LCM, messenger, telemetrySink, log)
+	agentSvc := agentsvc.New()
+	sessionSvc, reviewSvc, sessMgr, err := startSession(cfg, runtimeAdapter, store, lcStack.LCM, messenger, agentSvc, telemetrySink, log)
 	if err != nil {
 		stop()
 		lcStack.Stop()
@@ -145,7 +146,8 @@ func Run() error {
 		return fmt.Errorf("wire session service: %w", err)
 	}
 	lcStack.trackerDone = startTrackerIntake(ctx, store, sessionSvc, log)
-	agentSvc := agentsvc.New()
+	configuredModels := newConfiguredProjectModels(store, log)
+	agentHealthMonitor := newAgentHealthMonitor(agentSvc, configuredModels, log)
 	go func() {
 		if _, err := agentSvc.Refresh(ctx); err != nil {
 			log.Warn("initial agent catalog refresh failed", "err", err)
@@ -166,9 +168,12 @@ func Run() error {
 	mc := &controllers.MobileController{Bridge: bs}
 
 	srv, err := httpd.NewWithDeps(cfg, log, termMgr, httpd.APIDeps{
-		Projects:           projectsvc.NewWithDeps(projectsvc.Deps{Store: store, Sessions: sessionSvc, ModelHealth: modelHealthSvc, DefaultHarness: domain.AgentHarness(cfg.Agent), Telemetry: telemetrySink}),
+		Projects:           projectsvc.NewWithDeps(projectsvc.Deps{Store: store, Sessions: sessionSvc, ModelHealth: modelHealthSvc, ModelValidator: agentSvc, DefaultHarness: domain.AgentHarness(cfg.Agent), Telemetry: telemetrySink, Logger: log}),
 		RolePrompt:         roleprompt.New(sessMgr, store),
 		Agents:             agentSvc,
+		AgentModels:        agentSvc,
+		AgentModelPins:     configuredModels,
+		AgentHealth:        agentHealthMonitor,
 		Sessions:           sessionSvc,
 		Reviews:            reviewSvc,
 		Notifications:      notifier,
@@ -189,6 +194,7 @@ func Run() error {
 		}
 		return err
 	}
+	agentHealthDone := startAgentHealthMonitor(ctx, agentHealthMonitor, cfg.AgentHealthInterval, log)
 	previewDone := preview.NewPoller(store, sessionSvc, "http://"+srv.Addr().String(), preview.PollerConfig{Logger: log}).Start(ctx)
 
 	// Late-bind: the LAN listener shares the exact loopback router instance so
@@ -253,6 +259,7 @@ func Run() error {
 	<-primeDone
 	<-metricsDone
 	<-modelHealthDone
+	<-agentHealthDone
 	lcStack.Stop()
 	lanStopCtx, lanCancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 	defer lanCancel()

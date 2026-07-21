@@ -3,15 +3,19 @@ package project
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/agentconfig"
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
@@ -69,14 +73,23 @@ type ModelAvailabilityReader interface {
 	ListProject(ctx context.Context, projectID domain.ProjectID) ([]domain.ModelAvailability, error)
 }
 
+// ModelSelectionValidator is the config-write validation surface owned by the
+// unified agent model service. It may run bounded catalog/provider checks;
+// callers block only on the typed unreachable verdict.
+type ModelSelectionValidator interface {
+	ValidateModelSelection(ctx context.Context, harness domain.AgentHarness, model string, effort domain.Effort) (ports.ModelValidationResult, error)
+}
+
 // Service implements project registration and lookup use-cases for controllers.
 type Service struct {
 	store          Store
 	sessions       SessionTeardowner
 	modelHealth    ModelAvailabilityReader
+	modelValidator ModelSelectionValidator
 	clock          func() time.Time
 	telemetry      ports.EventSink
 	defaultHarness domain.AgentHarness
+	logger         *slog.Logger
 	// addMu serialises the whole body of Add. Workspace registration performs
 	// filesystem mutations (git init, .gitignore writes, commits) that are not
 	// covered by the store's own writeMu, so path/id conflict checks plus the
@@ -94,8 +107,10 @@ type Deps struct {
 	Store          Store
 	Sessions       SessionTeardowner
 	ModelHealth    ModelAvailabilityReader
+	ModelValidator ModelSelectionValidator
 	Clock          func() time.Time
 	Telemetry      ports.EventSink
+	Logger         *slog.Logger
 }
 
 // New returns a project service backed by the given durable store.
@@ -113,12 +128,17 @@ func NewWithDeps(d Deps) *Service {
 		store:          d.Store,
 		sessions:       d.Sessions,
 		modelHealth:    d.ModelHealth,
+		modelValidator: d.ModelValidator,
 		clock:          d.Clock,
 		telemetry:      d.Telemetry,
 		defaultHarness: defaultHarness,
+		logger:         d.Logger,
 	}
 	if s.clock == nil {
 		s.clock = time.Now
+	}
+	if s.logger == nil {
+		s.logger = slog.Default()
 	}
 	return s
 }
@@ -242,8 +262,8 @@ func (m *Service) Add(ctx context.Context, in AddInput) (Project, error) {
 
 	var projectConfig domain.ProjectConfig
 	if in.Config != nil {
-		if err := in.Config.Validate(); err != nil {
-			return Project{}, apierr.Invalid("INVALID_PROJECT_CONFIG", err.Error(), nil)
+		if err := m.validateProjectConfig(ctx, *in.Config); err != nil {
+			return Project{}, err
 		}
 		projectConfig = *in.Config
 	}
@@ -561,8 +581,8 @@ func (m *Service) SetConfig(ctx context.Context, id domain.ProjectID, in SetConf
 	if err := validateProjectID(id); err != nil {
 		return Project{}, err
 	}
-	if err := in.Config.Validate(); err != nil {
-		return Project{}, apierr.Invalid("INVALID_PROJECT_CONFIG", err.Error(), nil)
+	if err := validateProjectConfigStatic(in.Config); err != nil {
+		return Project{}, err
 	}
 	row, ok, err := m.store.GetProject(ctx, string(id))
 	if err != nil {
@@ -571,11 +591,172 @@ func (m *Service) SetConfig(ctx context.Context, id domain.ProjectID, in SetConf
 	if !ok || !row.ArchivedAt.IsZero() {
 		return Project{}, apierr.NotFound("PROJECT_NOT_FOUND", "Unknown project")
 	}
+	if err := m.validateConfiguredModels(ctx, in.Config); err != nil {
+		return Project{}, err
+	}
 	row.Config = in.Config
 	if err := m.store.UpsertProject(ctx, row); err != nil {
 		return Project{}, apierr.Internal("PROJECT_CONFIG_UPDATE_FAILED", "Failed to update project config")
 	}
 	return m.projectFromRow(row), nil
+}
+
+type configuredModelSelection struct {
+	scope   string
+	harness domain.AgentHarness
+	model   string
+	effort  domain.Effort
+}
+
+const projectConfigModelValidationTimeout = 45 * time.Second
+
+func (m *Service) validateProjectConfig(ctx context.Context, cfg domain.ProjectConfig) error {
+	if err := validateProjectConfigStatic(cfg); err != nil {
+		return err
+	}
+	return m.validateConfiguredModels(ctx, cfg)
+}
+
+func validateProjectConfigStatic(cfg domain.ProjectConfig) error {
+	if err := cfg.Validate(); err != nil {
+		return apierr.Invalid("INVALID_PROJECT_CONFIG", err.Error(), nil)
+	}
+	if err := validateRoleModelCompatibility(cfg); err != nil {
+		return apierr.Invalid("INVALID_PROJECT_CONFIG", err.Error(), nil)
+	}
+	return nil
+}
+
+func (m *Service) validateConfiguredModels(ctx context.Context, cfg domain.ProjectConfig) error {
+	if m.modelValidator == nil {
+		return nil
+	}
+	for _, selection := range configuredModelSelections(cfg) {
+		validationCtx, cancel := context.WithTimeout(ctx, projectConfigModelValidationTimeout)
+		result, err := m.modelValidator.ValidateModelSelection(validationCtx, selection.harness, selection.model, selection.effort)
+		cancel()
+		if err != nil {
+			m.warnModelValidationUnavailable(selection, err.Error())
+			continue
+		}
+		if result.Status == ports.ModelValidationUnreachable {
+			message := strings.TrimSpace(result.Message)
+			if message == "" {
+				message = "the provider rejected this model selection"
+			}
+			return apierr.Invalid("MODEL_UNREACHABLE", message, map[string]any{
+				"scope":   selection.scope,
+				"harness": selection.harness,
+				"model":   selection.model,
+				"effort":  selection.effort,
+			})
+		}
+		if result.Status != ports.ModelValidationReachable {
+			message := strings.TrimSpace(result.Message)
+			if message == "" {
+				message = "model selection could not be verified"
+			}
+			m.warnModelValidationUnavailable(selection, message)
+		}
+	}
+	return nil
+}
+
+func (m *Service) warnModelValidationUnavailable(selection configuredModelSelection, reason string) {
+	m.logger.Warn("model validation unavailable; accepting project config",
+		"scope", selection.scope,
+		"harness", selection.harness,
+		"model", selection.model,
+		"effort", selection.effort,
+		"reason", reason,
+	)
+}
+
+func validateRoleModelCompatibility(cfg domain.ProjectConfig) error {
+	roles := []struct {
+		name string
+		role domain.RoleOverride
+	}{
+		{name: "worker", role: cfg.Worker},
+		{name: "orchestrator", role: cfg.Orchestrator},
+		{name: "prime", role: cfg.Prime},
+	}
+	for _, item := range roles {
+		model := strings.TrimSpace(item.role.AgentConfig.Model)
+		if item.role.Harness == "" || model == "" {
+			continue
+		}
+		provider := item.role.Harness.ModelProvider()
+		if !domain.ClassifyModelProvider(model).CompatibleWith(provider) {
+			return fmt.Errorf("%s.agentConfig.model: %q is not a %s model", item.name, model, provider)
+		}
+	}
+	return nil
+}
+
+func configuredModelSelections(cfg domain.ProjectConfig) []configuredModelSelection {
+	var selections []configuredModelSelection
+	addRole := func(scope string, kind domain.SessionKind, harness domain.AgentHarness, spawnModel string) {
+		harness = agentconfig.EffectiveHarness(harness, kind, cfg)
+		if harness == "" {
+			return
+		}
+		resolved, err := agentconfig.Effective(kind, cfg, spawnModel, harness)
+		if err != nil || (strings.TrimSpace(resolved.Model) == "" && resolved.Effort == "") {
+			return
+		}
+		selections = append(selections, configuredModelSelection{
+			scope: scope, harness: harness, model: strings.TrimSpace(resolved.Model), effort: resolved.Effort,
+		})
+	}
+	addConfigs := func(scope string, harness domain.AgentHarness, override domain.AgentConfig) {
+		if harness == "" {
+			return
+		}
+		resolved, err := agentconfig.EffectiveFromConfigs(cfg.AgentConfig, override, "", harness)
+		if err != nil || (strings.TrimSpace(resolved.Model) == "" && resolved.Effort == "") {
+			return
+		}
+		selections = append(selections, configuredModelSelection{
+			scope: scope, harness: harness, model: strings.TrimSpace(resolved.Model), effort: resolved.Effort,
+		})
+	}
+
+	addRole("worker", domain.KindWorker, "", "")
+	addRole("orchestrator", domain.KindOrchestrator, "", "")
+	addRole("prime", domain.KindPrime, "", "")
+	for i, reviewer := range cfg.Reviewers {
+		addConfigs("reviewers["+strconv.Itoa(i)+"]", reviewer.Harness.AgentHarness(), reviewer.AgentConfig)
+	}
+	addHarnessMap := func(scope string, kind domain.SessionKind, models map[domain.AgentHarness]domain.HarnessModel) {
+		harnesses := make([]domain.AgentHarness, 0, len(models))
+		for harness := range models {
+			harnesses = append(harnesses, harness)
+		}
+		sort.Slice(harnesses, func(i, j int) bool { return harnesses[i] < harnesses[j] })
+		for _, harness := range harnesses {
+			addRole(scope+"["+string(harness)+"]", kind, harness, "")
+		}
+	}
+	addHarnessMap("agentConfig.modelByHarness", domain.KindWorker, cfg.AgentConfig.ModelByHarness)
+	addHarnessMap("worker.agentConfig.modelByHarness", domain.KindWorker, cfg.Worker.AgentConfig.ModelByHarness)
+	addHarnessMap("orchestrator.agentConfig.modelByHarness", domain.KindOrchestrator, cfg.Orchestrator.AgentConfig.ModelByHarness)
+	addHarnessMap("prime.agentConfig.modelByHarness", domain.KindPrime, cfg.Prime.AgentConfig.ModelByHarness)
+	for i, bucket := range cfg.WorkerMix {
+		addRole("workerMix["+strconv.Itoa(i)+"]", domain.KindWorker, bucket.Harness, bucket.Model)
+	}
+
+	seen := make(map[string]struct{}, len(selections))
+	unique := make([]configuredModelSelection, 0, len(selections))
+	for _, selection := range selections {
+		key := string(selection.harness) + "\x00" + selection.model + "\x00" + string(selection.effort)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		unique = append(unique, selection)
+	}
+	return unique
 }
 
 // resolveGitOriginURL returns the project's `origin` remote URL via
