@@ -34,5 +34,5 @@
 ## 6. Review and merge-readiness
 
 - [x] 6.1 Push each completed implementation phase and run the configured phase-review for the API/storage and persistence phases (sensitive state/data paths).
-- [ ] 6.2 Run final-review with an independent cross-family reviewer plus the PR-integrated reviewer when available; resolve all current-head findings and record convergence/no-ping-pong.
-- [ ] 6.3 Rebase onto the freshly fetched default branch, rerun full CI if rewritten, push with `--force-with-lease` only when required, and report the PR merge-ready without merging absent explicit authorization.
+- [x] 6.2 Run final-review with an independent cross-family reviewer plus the PR-integrated reviewer when available; resolve all current-head findings and record convergence/no-ping-pong.
+- [x] 6.3 Rebase onto the freshly fetched default branch, rerun full CI if rewritten, push with `--force-with-lease` only when required, and report the PR merge-ready without merging absent explicit authorization.
