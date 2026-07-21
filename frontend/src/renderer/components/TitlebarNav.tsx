@@ -1,7 +1,7 @@
 import { useCanGoBack, useRouter } from "@tanstack/react-router";
 import { ArrowLeft, ArrowRight, PanelLeft } from "lucide-react";
 import { useEffect, useState } from "react";
-import { useUiStore } from "../stores/ui-store";
+import { useSidebar } from "./ui/sidebar";
 
 const isMac = typeof navigator !== "undefined" && /Mac|iPod|iPhone|iPad/.test(navigator.userAgent);
 const noDragStyle = isMac ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperties) : undefined;
@@ -37,7 +37,13 @@ function useCanGoForward(): boolean {
 }
 
 export function TitlebarNav() {
-	const { isSidebarOpen, toggleSidebar } = useUiStore();
+	// Drive the sidebar through the SidebarProvider context, not the ui-store
+	// bool: the context toggle is viewport-aware. Below MOBILE_BREAKPOINT the
+	// sidebar is a Sheet controlled by `openMobile`, so the store bool never
+	// opens it (GH #46). The desktop path still round-trips through the
+	// provider's onOpenChange in _shell, which persists the ui-store preference.
+	const { open, openMobile, isMobile, toggleSidebar } = useSidebar();
+	const isSidebarOpen = isMobile ? openMobile : open;
 	const router = useRouter();
 	const canGoBack = useCanGoBack();
 	const canGoForward = useCanGoForward();

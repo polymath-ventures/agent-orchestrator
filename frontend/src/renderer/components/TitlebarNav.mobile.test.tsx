@@ -27,7 +27,8 @@ describe("TitlebarNav mobile sidebar toggle", () => {
 	const originalUserAgent = navigator.userAgent;
 
 	beforeEach(() => {
-		// iOS UA so the macOS-style cluster (today the only mobile toggle host) renders.
+		// iOS UA so the titlebar cluster (today the only mobile toggle host)
+		// renders and exercises the reported browser-on-phone surface.
 		Object.defineProperty(navigator, "userAgent", {
 			configurable: true,
 			value:
@@ -60,5 +61,8 @@ describe("TitlebarNav mobile sidebar toggle", () => {
 		fireEvent.click(screen.getByRole("button", { name: /expand sidebar|collapse sidebar/i }));
 
 		await waitFor(() => expect(screen.getByText("sidebar-body")).toBeInTheDocument());
+		// The label now reflects the open Sheet. The open Sheet marks the
+		// background subtree aria-hidden, so include hidden elements in the query.
+		expect(screen.getByRole("button", { name: "Collapse sidebar", hidden: true })).toBeInTheDocument();
 	});
 });
