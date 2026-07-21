@@ -32,17 +32,21 @@ func (s fakeSessions) ListAllSessions(context.Context) ([]domain.SessionRecord, 
 }
 
 type fakeRuntime struct {
-	alive   bool
-	err     error
-	running bool
-	runErr  error
+	alive      bool
+	err        error
+	running    bool
+	runErr     error
+	gotCommand *string
 }
 
 func (r fakeRuntime) IsAlive(context.Context, ports.RuntimeHandle) (bool, error) {
 	return r.alive, r.err
 }
 
-func (r fakeRuntime) IsRunningCommand(context.Context, ports.RuntimeHandle, string) (bool, error) {
+func (r fakeRuntime) IsRunningCommand(_ context.Context, _ ports.RuntimeHandle, command string) (bool, error) {
+	if r.gotCommand != nil {
+		*r.gotCommand = command
+	}
 	return r.running, r.runErr
 }
 
@@ -117,5 +121,25 @@ func TestTick_SkipsSessionWithoutHandle(t *testing.T) {
 	}
 	if _, probed := lcm.observed["mer-1"]; probed {
 		t.Fatal("a session without a runtime handle must be skipped")
+	}
+}
+
+// The launch-process sweep must probe with the session's persisted launch
+// command: an empty command degrades pgrep to "any child of the pane shell
+// counts as the agent", which is exactly the false-alive class the sweep
+// exists to catch.
+func TestTick_LaunchSweepUsesPersistedCommand(t *testing.T) {
+	lcm := &fakeLCM{}
+	sess := probableSession("mer-1")
+	sess.Harness = domain.HarnessCodex
+	sess.Metadata.LaunchCommand = "codex"
+	sessions := fakeSessions{rows: []domain.SessionRecord{sess}}
+	var got string
+	rt := fakeRuntime{alive: true, running: true, gotCommand: &got}
+	if err := newReaper(lcm, sessions, rt).Tick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got != "codex" {
+		t.Fatalf("probe command = %q, want the persisted launch command", got)
 	}
 }

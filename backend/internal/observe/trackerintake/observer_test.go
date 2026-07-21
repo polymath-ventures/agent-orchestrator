@@ -430,6 +430,10 @@ type fakeSpawner struct {
 	// the test exercises the same errors.Is traversal the daemon relies on.
 	capIssue  domain.IssueID
 	capActive bool
+	// pausedIssue returns the project-paused sentinel while pausedActive is
+	// true, modeling a pause gate racing the intake poll.
+	pausedIssue  domain.IssueID
+	pausedActive bool
 }
 
 func (f *fakeSpawner) Spawn(_ context.Context, cfg ports.SpawnConfig) (domain.Session, error) {
@@ -440,9 +444,31 @@ func (f *fakeSpawner) Spawn(_ context.Context, cfg ports.SpawnConfig) (domain.Se
 	if f.capActive && cfg.IssueID == f.capIssue {
 		return domain.Session{}, fmt.Errorf("spawn: %w", sessionmanager.ErrWorkerConcurrencyCap)
 	}
+	if f.pausedActive && cfg.IssueID == f.pausedIssue {
+		return domain.Session{}, fmt.Errorf("spawn: %w", sessionmanager.ErrProjectPaused)
+	}
 	return domain.Session{SessionRecord: domain.SessionRecord{ID: domain.SessionID(string(cfg.ProjectID) + "-1"), ProjectID: cfg.ProjectID, IssueID: cfg.IssueID, Kind: cfg.Kind}}, nil
 }
 
 func discardLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
+}
+
+// A pause gate racing the poll refuses the spawn; that is an operator state,
+// not a fault — the issue defers without tripping the failure backoff, so
+// intake resumes immediately after the project is unpaused.
+func TestPollDefersPausedProjectIssueWithoutBackoff(t *testing.T) {
+	store, tracker := capIntakeFixtures()
+	spawner := &fakeSpawner{pausedIssue: "github:acme/demo#12", pausedActive: true}
+	observer := New(singleResolver(tracker), store, spawner, Config{Logger: discardLogger()})
+
+	if err := observer.Poll(context.Background()); err != nil {
+		t.Fatalf("Poll() error = %v", err)
+	}
+	if len(spawner.calls) != 1 {
+		t.Fatalf("spawn attempts = %d, want 1", len(spawner.calls))
+	}
+	if len(observer.backoffUntil) != 0 {
+		t.Fatalf("backoffUntil = %v, want empty — a pause deferral must not trigger failure backoff", observer.backoffUntil)
+	}
 }

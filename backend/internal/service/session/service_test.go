@@ -1294,3 +1294,16 @@ func containsString(values []string, want string) bool {
 	}
 	return false
 }
+
+// A configured-but-unusable role rules file is an operator config error and
+// must map to a 4xx with the file detail, not pass through as a sanitized 500.
+func TestToAPIError_RulesLoadError(t *testing.T) {
+	err := fmt.Errorf("spawn mer-1: %w", &sessionmanager.RulesLoadError{
+		ProjectID: "mer", Role: "worker", File: "rules/worker.md", Err: errors.New("no such file"),
+	})
+	mapped := toAPIError(err)
+	var e *apierr.Error
+	if !errors.As(mapped, &e) || e.Kind != apierr.KindInvalid || e.Code != "ROLE_RULES_LOAD_FAILED" {
+		t.Fatalf("mapped = %v, want Invalid ROLE_RULES_LOAD_FAILED", mapped)
+	}
+}

@@ -211,3 +211,31 @@ func (s *captureSink) Emit(_ context.Context, ev ports.TelemetryEvent) {
 	s.events = append(s.events, ev)
 }
 func (*captureSink) Close(context.Context) error { return nil }
+
+// A fresh spawn reads idle until its first hook callback arrives, so soft
+// drain must not kill it during the boot grace. A signal-less idle past the
+// grace (hook-less harness) and a genuinely idle signaled worker both drain.
+func TestTick_SkipsPreFirstSignalIdleWithinGrace(t *testing.T) {
+	now := fixedClock()()
+	fresh := worker("paused", "1", domain.StatusIdle)
+	fresh.CreatedAt = now.Add(-10 * time.Second) // mid-boot, no signal yet
+	hookless := worker("paused", "2", domain.StatusIdle)
+	hookless.CreatedAt = now.Add(-5 * time.Minute) // past grace, never signals
+	signaled := worker("paused", "3", domain.StatusIdle)
+	signaled.CreatedAt = now.Add(-10 * time.Second)
+	signaled.FirstSignalAt = now.Add(-5 * time.Second) // real idle reading
+
+	store := &fakeStore{projects: []domain.ProjectRecord{{ID: "paused", Paused: true}}}
+	sessions := &fakeSessions{byProject: map[domain.ProjectID][]domain.Session{
+		"paused": {fresh, hookless, signaled},
+	}}
+	sw := New(store, sessions, Config{Clock: fixedClock()})
+
+	if err := sw.Tick(context.Background()); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	want := []domain.SessionID{"paused-2", "paused-3"}
+	if len(sessions.killed) != 2 || sessions.killed[0] != want[0] || sessions.killed[1] != want[1] {
+		t.Fatalf("killed = %v, want %v (mid-boot paused-1 must be spared)", sessions.killed, want)
+	}
+}

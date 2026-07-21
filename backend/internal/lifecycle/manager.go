@@ -570,6 +570,7 @@ func mergeMetadata(base, in domain.SessionMetadata) domain.SessionMetadata {
 	set(&base.WorkspacePath, in.WorkspacePath)
 	set(&base.RuntimeHandleID, in.RuntimeHandleID)
 	set(&base.RuntimeToken, in.RuntimeToken)
+	set(&base.LaunchCommand, in.LaunchCommand)
 	set(&base.AgentSessionID, in.AgentSessionID)
 	set(&base.Prompt, in.Prompt)
 	return base

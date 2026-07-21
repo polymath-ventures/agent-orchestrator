@@ -705,25 +705,39 @@ function blankToUndefined<T extends object>(obj: T): T | undefined {
 	return Object.values(obj).some((v) => v !== undefined) ? obj : undefined;
 }
 
+// HarnessModelForm mirrors the per-harness config entries. The form only
+// exposes a model input, but effort must round-trip untouched: rebuilding
+// entries as { model } alone would silently wipe a persisted effort on save.
+type HarnessModelForm = Record<string, { model: string; effort?: string }>;
+
 function toHarnessModelForm(modelByHarness: ModelByHarness | undefined) {
-	const out: Record<string, { model: string }> = {};
+	const out: HarnessModelForm = {};
 	for (const [harness, value] of Object.entries(modelByHarness ?? {})) {
-		out[harness] = { model: value?.model ?? "" };
+		out[harness] = { model: value?.model ?? "", effort: value?.effort };
 	}
 	return out;
 }
 
-function patchHarnessModel(form: Record<string, { model: string }>, harness: string, model: string) {
+function patchHarnessModel(form: HarnessModelForm, harness: string, model: string) {
 	return {
 		...form,
 		[harness]: { ...(form[harness] ?? {}), model },
 	};
 }
 
-function buildHarnessModelConfig(form: Record<string, { model: string }>) {
+function buildHarnessModelConfig(form: HarnessModelForm) {
 	const entries = Object.entries(form)
-		.map(([harness, value]) => [harness, { model: value.model.trim() }] as const)
-		.filter(([, value]) => value.model !== "");
+		.map(([harness, value]) => {
+			const model = value.model.trim();
+			// An entry is kept if it pins a model OR carries an effort: the
+			// daemon accepts effort-only overrides, so an empty model field
+			// must not delete a persisted effort the form cannot display.
+			const out: { model?: string; effort?: string } = {};
+			if (model) out.model = model;
+			if (value.effort) out.effort = value.effort;
+			return [harness, out] as const;
+		})
+		.filter(([, value]) => Object.keys(value).length > 0);
 	return entries.length > 0 ? Object.fromEntries(entries) : undefined;
 }
 
@@ -731,7 +745,7 @@ function buildAgentConfig(
 	current: ProjectConfig["agentConfig"],
 	model: string,
 	permissions: string,
-	modelByHarnessForm: Record<string, { model: string }>,
+	modelByHarnessForm: HarnessModelForm,
 ) {
 	const next = {
 		...current,

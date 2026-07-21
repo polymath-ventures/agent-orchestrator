@@ -230,6 +230,13 @@ func (o *Observer) pollProject(ctx context.Context, project domain.ProjectRecord
 				o.logger.Debug("tracker intake: deferring issue, project at worker cap", "project", project.ID, "issue", issueID)
 				continue
 			}
+			// A paused project (or fleet) refusing spawns is likewise a healthy
+			// operator state, not a fault: the pause gate raced this poll. Defer
+			// identically — unseen, retried after resume, no failure backoff.
+			if errors.Is(err, sessionmanager.ErrProjectPaused) {
+				o.logger.Debug("tracker intake: deferring issue, project paused", "project", project.ID, "issue", issueID)
+				continue
+			}
 			o.logger.Error("tracker intake: spawn issue session failed", "project", project.ID, "issue", issueID, "err", err)
 			spawnFailed = true
 			continue

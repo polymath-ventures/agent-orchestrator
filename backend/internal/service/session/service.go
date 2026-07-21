@@ -583,6 +583,7 @@ func (s *Service) Get(ctx context.Context, id domain.SessionID) (domain.Session,
 // toAPIError maps the session engine's sentinel errors to their REST API
 // equivalents; an unrecognized error passes through and surfaces as a 500.
 func toAPIError(err error) error {
+	var rulesErr *sessionmanager.RulesLoadError
 	switch {
 	case err == nil:
 		return nil
@@ -606,6 +607,11 @@ func toAPIError(err error) error {
 		return apierr.Invalid("UNKNOWN_HARNESS", err.Error(), nil)
 	case errors.Is(err, sessionmanager.ErrMissingHarness):
 		return apierr.Invalid("AGENT_REQUIRED", err.Error(), nil)
+	case errors.As(err, &rulesErr):
+		// A configured-but-unusable role rules file is an operator config
+		// error, not a server fault: surface the role/project/file detail as
+		// a 4xx instead of a sanitized 500.
+		return apierr.Invalid("ROLE_RULES_LOAD_FAILED", rulesErr.Error(), nil)
 	case errors.Is(err, sessionmanager.ErrProjectPaused):
 		// The project or the fleet is paused, so new work is gated. A pause is an
 		// operator state, not a server fault: 409 lets a client resume (or pass
