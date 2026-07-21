@@ -39,7 +39,11 @@ func TestSlackDeliveryStateDoesNotMutateOnPersistFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	state.path = filepath.Join("/dev/null", "state.json")
+	parentFile := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(parentFile, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	state.path = filepath.Join(parentFile, "state.json")
 	if err := state.record("n1"); err == nil {
 		t.Fatal("record succeeded with unwritable path")
 	}
