@@ -470,7 +470,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: runtime: %w", id, err)
 	}
 
-	if err := m.verifyLaunchCommandRunning(ctx, handle, argv[0]); err != nil {
+	if err := m.verifyLaunchCommandRunning(ctx, handle, launchProcessCommand(argv)); err != nil {
 		_ = m.runtime.Destroy(ctx, handle)
 		m.rollbackPreparedSpawnWorkspace(ctx, rec, ws, workspaceProject)
 		m.rollbackSpawnSeedRow(ctx, id)
@@ -492,7 +492,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 			return domain.SessionRecord{}, fmt.Errorf("spawn %s: deliver prompt: %w", id, err)
 		}
 	}
-	if err := m.verifyLaunchCommandRunning(ctx, handle, argv[0]); err != nil {
+	if err := m.verifyLaunchCommandRunning(ctx, handle, launchProcessCommand(argv)); err != nil {
 		_ = m.runtime.Destroy(ctx, handle)
 		m.rollbackPreparedSpawnWorkspace(ctx, rec, ws, workspaceProject)
 		m.markSpawnFailedTerminatedWithoutWorkspace(ctx, id)
@@ -1179,7 +1179,7 @@ func (m *Manager) relaunchRestoredSession(ctx context.Context, rec domain.Sessio
 		m.cleanupSystemPromptDir(rec.ID)
 		return RestoreResult{}, fmt.Errorf("restore %s: runtime: %w", rec.ID, err)
 	}
-	if err := m.verifyLaunchCommandRunning(ctx, handle, argv[0]); err != nil {
+	if err := m.verifyLaunchCommandRunning(ctx, handle, launchProcessCommand(argv)); err != nil {
 		_ = m.runtime.Destroy(ctx, handle)
 		m.cleanupSystemPromptDir(rec.ID)
 		return RestoreResult{}, fmt.Errorf("restore %s: launch process: %w", rec.ID, err)
@@ -1209,7 +1209,7 @@ func (m *Manager) relaunchRestoredSession(ctx context.Context, rec domain.Sessio
 			return RestoreResult{}, fmt.Errorf("restore %s: deliver prompt: %w", rec.ID, err)
 		}
 	}
-	if err := m.verifyLaunchCommandRunning(ctx, handle, argv[0]); err != nil {
+	if err := m.verifyLaunchCommandRunning(ctx, handle, launchProcessCommand(argv)); err != nil {
 		_ = m.runtime.Destroy(ctx, handle)
 		m.cleanupSystemPromptDir(rec.ID)
 		return RestoreResult{}, fmt.Errorf("restore %s: launch process: %w", rec.ID, err)
@@ -2461,6 +2461,17 @@ func (m *Manager) verifyLaunchCommandRunning(ctx context.Context, handle ports.R
 		return nil
 	}
 	return fmt.Errorf("%q exited before spawn completed", command)
+}
+
+func launchProcessCommand(argv []string) string {
+	bin, ok := launchBinary(argv)
+	if ok {
+		return bin
+	}
+	if len(argv) == 0 {
+		return ""
+	}
+	return argv[0]
 }
 
 // HookPATH builds the PATH value pinned into a spawned session: the daemon

@@ -175,6 +175,7 @@ type fakeRuntime struct {
 	processAliveByHandle map[string]bool
 	processAliveSeq      []bool
 	processAliveErr      error
+	processCommands      []string
 	destroyedIDs         []string
 }
 
@@ -197,7 +198,8 @@ func (r *fakeRuntime) IsAlive(_ context.Context, handle ports.RuntimeHandle) (bo
 	}
 	return r.aliveByHandle[handle.ID], nil
 }
-func (r *fakeRuntime) IsRunningCommand(_ context.Context, handle ports.RuntimeHandle, _ string) (bool, error) {
+func (r *fakeRuntime) IsRunningCommand(_ context.Context, handle ports.RuntimeHandle, command string) (bool, error) {
+	r.processCommands = append(r.processCommands, command)
 	if r.processAliveErr != nil {
 		return false, r.processAliveErr
 	}
@@ -3135,6 +3137,9 @@ func TestSpawn_ValidatesBinaryAfterEnvPrefix(t *testing.T) {
 	}
 	if !reflect.DeepEqual(rt.lastCfg.Argv, agent.argv) {
 		t.Fatalf("runtime argv = %#v, want original argv %#v", rt.lastCfg.Argv, agent.argv)
+	}
+	if !reflect.DeepEqual(rt.processCommands, []string{"opencode", "opencode"}) {
+		t.Fatalf("process liveness commands = %#v, want resolved env-prefixed binary", rt.processCommands)
 	}
 }
 
