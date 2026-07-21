@@ -47,24 +47,30 @@ type addProjectRequest struct {
 }
 
 type projectSummary struct {
-	ID            string `json:"id"`
-	Name          string `json:"name"`
-	Kind          string `json:"kind"`
-	SessionPrefix string `json:"sessionPrefix"`
-	ResolveError  string `json:"resolveError,omitempty"`
+	ID              string `json:"id"`
+	Name            string `json:"name"`
+	Kind            string `json:"kind"`
+	SessionPrefix   string `json:"sessionPrefix"`
+	ResolveError    string `json:"resolveError,omitempty"`
+	Paused          bool   `json:"paused"`
+	PauseState      string `json:"pauseState,omitempty"`
+	DrainingWorkers int    `json:"drainingWorkers,omitempty"`
 }
 
 type projectDetails struct {
-	ID             string                 `json:"id"`
-	Name           string                 `json:"name"`
-	Kind           string                 `json:"kind"`
-	Path           string                 `json:"path"`
-	Repo           string                 `json:"repo"`
-	DefaultBranch  string                 `json:"defaultBranch"`
-	Agent          string                 `json:"agent,omitempty"`
-	Config         *projectConfig         `json:"config,omitempty"`
-	WorkspaceRepos []workspaceRepoDetails `json:"workspaceRepos,omitempty"`
-	ResolveError   string                 `json:"resolveError,omitempty"`
+	ID              string                 `json:"id"`
+	Name            string                 `json:"name"`
+	Kind            string                 `json:"kind"`
+	Path            string                 `json:"path"`
+	Repo            string                 `json:"repo"`
+	DefaultBranch   string                 `json:"defaultBranch"`
+	Agent           string                 `json:"agent,omitempty"`
+	Config          *projectConfig         `json:"config,omitempty"`
+	WorkspaceRepos  []workspaceRepoDetails `json:"workspaceRepos,omitempty"`
+	ResolveError    string                 `json:"resolveError,omitempty"`
+	Paused          bool                   `json:"paused"`
+	PauseState      string                 `json:"pauseState,omitempty"`
+	DrainingWorkers int                    `json:"drainingWorkers,omitempty"`
 }
 
 type workspaceRepoDetails struct {
@@ -477,6 +483,9 @@ func writeProjectList(cmd *cobra.Command, projects []projectSummary) error {
 	}
 	for _, p := range projects {
 		status := "ok"
+		if p.PauseState == "draining" || p.PauseState == "paused" {
+			status = formatPauseState(p.PauseState, p.DrainingWorkers)
+		}
 		if p.ResolveError != "" {
 			status = "degraded: " + p.ResolveError
 		}

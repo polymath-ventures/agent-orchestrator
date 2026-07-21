@@ -40,6 +40,7 @@ type daemonStatus struct {
 	DataDir       string        `json:"dataDir"`
 	Health        string        `json:"health,omitempty"`
 	Ready         string        `json:"ready,omitempty"`
+	Fleet         string        `json:"fleet,omitempty"`
 	Quotas        []statusQuota `json:"quotas,omitempty"`
 	Error         string        `json:"error,omitempty"`
 	owned         bool
@@ -151,11 +152,41 @@ func (c *commandContext) inspectDaemon(ctx context.Context) (daemonStatus, error
 	st.Ready = ready.Status
 	if ready.Status == string(stateReady) {
 		st.State = stateReady
+		st.Fleet = c.readFleetStatus(ctx, info.Port)
 		st.Quotas = c.readStatusQuotas(ctx, info.Port)
 		return st, nil
 	}
 	st.State = stateNotReady
 	return st, nil
+}
+
+// readFleetStatus reports "paused" or "running" from the daemon's /fleet route.
+// Best-effort: a probe failure returns "" so the status line is simply omitted.
+func (c *commandContext) readFleetStatus(ctx context.Context, port int) string {
+	reqCtx, cancel := context.WithTimeout(ctx, probeTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, fmt.Sprintf("http://%s:%d/api/v1/fleet", config.LoopbackHost, port), http.NoBody)
+	if err != nil {
+		return ""
+	}
+	resp, err := c.deps.HTTPClient.Do(req)
+	if err != nil {
+		return ""
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return ""
+	}
+	var body struct {
+		Paused bool `json:"paused"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return ""
+	}
+	if body.Paused {
+		return "paused"
+	}
+	return "running"
 }
 
 func (c *commandContext) readStatusQuotas(ctx context.Context, port int) []statusQuota {
@@ -258,6 +289,11 @@ func writeStatus(cmd *cobra.Command, st daemonStatus) error {
 	}
 	if st.Ready != "" {
 		if _, err := fmt.Fprintf(out, "  readyz: %s\n", st.Ready); err != nil {
+			return err
+		}
+	}
+	if st.Fleet != "" {
+		if _, err := fmt.Fprintf(out, "  fleet: %s\n", st.Fleet); err != nil {
 			return err
 		}
 	}

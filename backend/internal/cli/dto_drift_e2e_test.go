@@ -181,6 +181,14 @@ func (f *fakeProjectManager) Remove(context.Context, domain.ProjectID) (projects
 	return projectsvc.RemoveResult{}, nil
 }
 
+func (f *fakeProjectManager) SetProjectPaused(context.Context, domain.ProjectID, bool, bool) (projectsvc.Project, error) {
+	return projectsvc.Project{}, nil
+}
+
+func (f *fakeProjectManager) FleetPaused(context.Context) (bool, error) { return false, nil }
+
+func (f *fakeProjectManager) SetFleetPaused(context.Context, bool, bool) error { return nil }
+
 // startDriftTestDaemon stands up the real router+controllers backed by the
 // supplied fakes and points the CLI's run-file at it. The CLI discovers the
 // server purely via AO_RUN_FILE + the run-file port, so this is a genuine
