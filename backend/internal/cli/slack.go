@@ -37,9 +37,9 @@ const (
 
 	// slackUnreadLimit is the page size reconciliation asks for. The daemon caps
 	// unread listings at 100 and defaults to 50, so asking explicitly is the
-	// difference between seeing the last 50 and the last 100 missed
-	// notifications. A backlog deeper than this cannot be recovered from the
-	// listing at all — documented in docs/cli/README.md.
+	// difference between reading 50 and 100 notifications per cursor page.
+	// Reconciliation keeps requesting pages until the full unread backlog is
+	// exhausted.
 	slackUnreadLimit = 100
 
 	// slackStreamLineCap bounds a single SSE line. Notification bodies are short
