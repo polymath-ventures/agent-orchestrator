@@ -3,7 +3,8 @@
 ### Requirement: Export project config as canonical JSON
 
 The system SHALL provide `ao project config export <project>` that writes the
-named project's full effective configuration to stdout as JSON. The output
+named project's full stored configuration (the config overrides the daemon
+persists and serves) to stdout as JSON. The output
 SHALL be canonical — deterministic key ordering and stable formatting — so that
 two exports of unchanged config are byte-identical and the output is
 diff-friendly under version control. Export SHALL capture every field the daemon
@@ -17,7 +18,7 @@ does not recognize SHALL surface the daemon error and exit nonzero.
 
 - **WHEN** an operator runs `ao project config export <project>` for a project
   that exists
-- **THEN** the command prints the project's full effective config as JSON to
+- **THEN** the command prints the project's full stored config as JSON to
   stdout and exits zero
 
 #### Scenario: Two exports of unchanged config are byte-stable

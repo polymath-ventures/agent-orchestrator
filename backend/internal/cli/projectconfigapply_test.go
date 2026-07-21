@@ -163,6 +163,28 @@ func TestProjectConfigApply_InvalidJSONIsUsageError(t *testing.T) {
 	}
 }
 
+func TestProjectConfigApply_EmptySpecIsUsageError(t *testing.T) {
+	cfg := setConfigEnv(t)
+	srv, capture := startConfigRoundTripServer(t, applyLiveConfig, http.StatusOK)
+	writeRunFileFor(t, cfg, srv)
+
+	// An empty spec file must not be treated as a no-op — it is operator error.
+	spec := writeSpecFile(t, "   \n")
+
+	_, _, err := executeCLI(t, Deps{
+		ProcessAlive: func(int) bool { return true },
+	}, "project", "config", "apply", "demo", spec)
+	if err == nil {
+		t.Fatal("expected error for empty spec file")
+	}
+	if got := ExitCode(err); got != 2 {
+		t.Fatalf("exit code = %d, want 2 (usage error)", got)
+	}
+	if capture.putCalled {
+		t.Fatal("must not PUT on an empty spec file")
+	}
+}
+
 func TestProjectConfigApply_UnknownFieldRejectedByDaemon(t *testing.T) {
 	cfg := setConfigEnv(t)
 	// Daemon 400s the PUT (simulating DisallowUnknownFields).

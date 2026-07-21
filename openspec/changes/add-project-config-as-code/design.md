@@ -12,14 +12,18 @@ PATCH/merge route. The CLI carries a hand-maintained struct mirror of the config
 domain type — it omits `Reviewers`, `WorkerMix`, and `MaxLiveWorkers`.
 
 This change adds `ao project config export|apply|diff` on top of that existing
-surface, with no daemon or storage changes.
+surface, with no daemon or storage changes. Note the GET returns the project's
+**stored** config (`row.Config`, the persisted override set) — it is not
+defaults-resolved — so export/apply/diff operate on stored overrides, which is
+the correct unit for a versionable, restorable config-as-code round trip.
 
 ## Goals / Non-Goals
 
 **Goals:**
 
-- Lossless export of a project's full effective config as canonical, byte-stable
-  JSON — independent of the CLI's (incomplete) typed mirror.
+- Lossless export of a project's full stored config (the persisted override set,
+  not defaults-resolved) as canonical, byte-stable JSON — independent of the
+  CLI's (incomplete) typed mirror.
 - Surgical apply: a spec naming a subset of fields changes exactly those fields
   and nothing else.
 - Diff with a drift-signalling exit code, ignoring fields the spec does not name.

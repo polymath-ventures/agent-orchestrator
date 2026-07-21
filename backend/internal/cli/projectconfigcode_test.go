@@ -152,6 +152,53 @@ func TestDiffConfig_IgnoresUnnamedFields(t *testing.T) {
 	}
 }
 
+func TestDiffConfig_DistinguishesNullFromAbsent(t *testing.T) {
+	// Spec sets a field to explicit null; live does not have the field at all.
+	live := map[string]any{"defaultBranch": "main"}
+	spec := map[string]any{"sessionPrefix": nil}
+	drift := diffConfig(live, spec)
+	if len(drift) != 1 {
+		t.Fatalf("drift = %v, want one entry (null spec vs absent live is a change)", drift)
+	}
+	if drift[0].LivePresent {
+		t.Fatalf("LivePresent = true, want false (field absent from live)")
+	}
+
+	// Now live explicitly holds null too → no drift.
+	live2 := map[string]any{"sessionPrefix": nil}
+	if d := diffConfig(live2, spec); len(d) != 0 {
+		t.Fatalf("drift = %v, want none (null == null)", d)
+	}
+}
+
+func TestParseSpecObject_RejectsEmptyNullAndTrailing(t *testing.T) {
+	cases := map[string]string{
+		"empty":           "",
+		"whitespace":      "   \n ",
+		"null":            "null",
+		"trailing-object": `{"a":1}{"b":2}`,
+		"array":           `[1,2,3]`,
+		"scalar":          `42`,
+		"invalid":         `{not json`,
+	}
+	for name, in := range cases {
+		if _, err := parseSpecObject([]byte(in)); err == nil {
+			t.Errorf("parseSpecObject(%s=%q) = nil error, want error", name, in)
+		}
+	}
+}
+
+func TestParseSpecObject_AcceptsObjectWithTrailingWhitespace(t *testing.T) {
+	// Canonical exports end with a trailing newline — must still parse.
+	spec, err := parseSpecObject([]byte("{\n  \"defaultBranch\": \"main\"\n}\n"))
+	if err != nil {
+		t.Fatalf("parseSpecObject: %v", err)
+	}
+	if spec["defaultBranch"] != "main" {
+		t.Fatalf("spec = %v, want defaultBranch=main", spec)
+	}
+}
+
 // mustNumber builds a json.Number the way UseNumber-decoded config carries them,
 // so test expectations compare like-for-like with parsed config values.
 func mustNumber(s string) any {

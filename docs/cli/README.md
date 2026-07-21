@@ -89,8 +89,9 @@ in every mode). Pause state also appears in `ao status` (`fleet:` line) and
 `ao project ls` / `ao project get`. `ao spawn --force` overrides an active pause
 for a single spawn.
 
-`ao project config` treats a project's effective config as versionable JSON.
-`export <project>` prints the full config as canonical JSON (sorted keys, stable
+`ao project config` treats a project's stored config as versionable JSON.
+`export <project>` prints the stored config (the persisted override set the
+daemon serves, not defaults-resolved) as canonical JSON (sorted keys, stable
 formatting) — two exports of unchanged config are byte-identical, and every field
 the daemon serializes is captured, including ones the flag-based `set-config`
 mirror does not model. `apply <project> <file>` is **surgical**: it overlays only
@@ -101,6 +102,11 @@ compares only the fields named in the spec against live config, prints each
 drifted field (spec vs live), and exits nonzero on drift — so it can gate a CI
 job or a scheduled drift check. Unknown field names are rejected by the daemon's
 strict config decoder rather than re-validated client-side.
+
+> **Secret handling:** an exported config can include `env` values that carry
+> credentials. Treat an export as sensitive — review it before committing to
+> version control, and prefer restricting file permissions (e.g. redirect to a
+> `0600` file) over pasting it into shared locations.
 
 `ao preview` resolves its session from the `AO_SESSION_ID` environment variable
 (it is meant to run inside a session), not a flag. With no argument it

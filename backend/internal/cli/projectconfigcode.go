@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"reflect"
 	"sort"
 )
@@ -15,15 +16,20 @@ import (
 // contract. See openspec/changes/add-project-config-as-code/design.md.
 
 // configDrift is one field where a spec value disagrees with live config.
+// LivePresent distinguishes a live value that is explicitly JSON null (present,
+// Live == nil) from one that is absent from live config entirely (not present).
 type configDrift struct {
-	Field string
-	Spec  any
-	Live  any
+	Field       string
+	Spec        any
+	Live        any
+	LivePresent bool
 }
 
 // parseConfigObject decodes a JSON object into map[string]any using UseNumber so
 // integer fields (e.g. maxLiveWorkers) survive the decode/re-encode round-trip
-// exactly. A JSON `null` config decodes to an empty object.
+// exactly. It is lenient: an empty or `null` payload decodes to an empty object,
+// which is correct for reading a project's live config (an unset config is
+// serialized as null / absent). Spec files use the strict parseSpecObject.
 func parseConfigObject(raw []byte) (map[string]any, error) {
 	trimmed := bytes.TrimSpace(raw)
 	if len(trimmed) == 0 || string(trimmed) == "null" {
@@ -37,6 +43,30 @@ func parseConfigObject(raw []byte) (map[string]any, error) {
 	}
 	if obj == nil {
 		obj = map[string]any{}
+	}
+	return obj, nil
+}
+
+// parseSpecObject strictly parses an operator-supplied config spec: it requires
+// exactly one JSON object (not null, not an array/scalar) followed by EOF, so an
+// empty file, a bare `null`, or trailing garbage (`{…}{…}`) is a hard error
+// rather than a silent no-op or a partial apply. UseNumber preserves integers.
+func parseSpecObject(raw []byte) (map[string]any, error) {
+	if len(bytes.TrimSpace(raw)) == 0 {
+		return nil, errors.New("spec is empty: expected a JSON object")
+	}
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	var obj map[string]any
+	if err := dec.Decode(&obj); err != nil {
+		return nil, err
+	}
+	if obj == nil {
+		return nil, errors.New("spec is JSON null: expected a JSON object")
+	}
+	// Reject any trailing content after the first object.
+	if dec.More() {
+		return nil, errors.New("spec has trailing content after the JSON object")
 	}
 	return obj, nil
 }
@@ -85,14 +115,16 @@ func overlayConfig(live, spec map[string]any) (map[string]any, []string) {
 }
 
 // diffConfig reports, for each top-level key named in spec, where the spec value
-// disagrees with live config. Keys not named in spec are ignored. Results are
-// sorted by field name.
+// disagrees with live config. A key absent from live is drift (mirrors
+// overlayConfig, which treats it as a change) and is recorded with
+// LivePresent=false so callers can render "absent" distinctly from an explicit
+// JSON null. Keys not named in spec are ignored. Results are sorted by field name.
 func diffConfig(live, spec map[string]any) []configDrift {
 	var drift []configDrift
 	for k, specVal := range spec {
-		liveVal := live[k]
-		if !reflect.DeepEqual(liveVal, specVal) {
-			drift = append(drift, configDrift{Field: k, Spec: specVal, Live: liveVal})
+		liveVal, present := live[k]
+		if !present || !reflect.DeepEqual(liveVal, specVal) {
+			drift = append(drift, configDrift{Field: k, Spec: specVal, Live: liveVal, LivePresent: present})
 		}
 	}
 	sort.Slice(drift, func(i, j int) bool { return drift[i].Field < drift[j].Field })

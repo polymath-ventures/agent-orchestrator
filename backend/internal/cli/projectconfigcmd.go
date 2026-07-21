@@ -24,7 +24,7 @@ func newProjectConfigCommand(ctx *commandContext) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "config",
 		Short: "Export, apply, and diff a project's config as code",
-		Long: "Treat a project's effective config as versionable JSON.\n\n" +
+		Long: "Treat a project's stored config as versionable JSON.\n\n" +
 			"  export <project>        print the full config as canonical JSON\n" +
 			"  apply  <project> <file> apply only the fields named in a spec file\n" +
 			"  diff   <project> <file> report drift between a spec file and live config",
@@ -55,7 +55,7 @@ func readSpecFile(path string) (map[string]any, error) {
 	if err != nil {
 		return nil, usageError{fmt.Errorf("read spec file: %w", err)}
 	}
-	spec, err := parseConfigObject(raw)
+	spec, err := parseSpecObject(raw)
 	if err != nil {
 		return nil, usageError{fmt.Errorf("parse spec file %s: %w", path, err)}
 	}
@@ -162,7 +162,7 @@ func newProjectConfigDiffCommand(ctx *commandContext) *cobra.Command {
 			var b strings.Builder
 			fmt.Fprintf(&b, "drift in project %s config (%d field(s)):\n", id, len(drift))
 			for _, d := range drift {
-				fmt.Fprintf(&b, "  %s: spec=%s live=%s\n", d.Field, jsonScalar(d.Spec), jsonScalar(d.Live))
+				fmt.Fprintf(&b, "  %q: spec=%s live=%s\n", d.Field, jsonScalar(d.Spec), liveScalar(d))
 			}
 			if _, err := fmt.Fprint(out, b.String()); err != nil {
 				return err
@@ -173,15 +173,23 @@ func newProjectConfigDiffCommand(ctx *commandContext) *cobra.Command {
 	}
 }
 
-// jsonScalar renders a decoded JSON value compactly for drift output. A missing
-// live value (field absent from live config) renders as (absent).
+// jsonScalar renders a decoded JSON value compactly for drift output. An
+// explicit JSON null renders as `null` (json.Marshal(nil)); absence from live
+// config is rendered separately by liveScalar as `(absent)`.
 func jsonScalar(v any) string {
-	if v == nil {
-		return "(absent)"
-	}
 	b, err := json.Marshal(v)
 	if err != nil {
 		return fmt.Sprintf("%v", v)
 	}
 	return string(b)
+}
+
+// liveScalar renders the live side of a drift entry, distinguishing a field that
+// is absent from live config ("(absent)") from one explicitly set to JSON null
+// ("null").
+func liveScalar(d configDrift) string {
+	if !d.LivePresent {
+		return "(absent)"
+	}
+	return jsonScalar(d.Live)
 }

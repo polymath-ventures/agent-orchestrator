@@ -129,3 +129,27 @@ func TestE2E_ProjectConfigRoundTrip(t *testing.T) {
 		t.Fatal("diff should report drift after surgical change")
 	}
 }
+
+// TestE2E_ProjectConfigApply_UnknownKeyRejectedByRealDecoder proves the design's
+// D5 claim end-to-end: an unknown config key is rejected by the controller's
+// strict decoder (DisallowUnknownFields) with a nonzero exit and no SetConfig
+// call — the daemon, not the CLI, is the authoritative key validator.
+func TestE2E_ProjectConfigApply_UnknownKeyRejectedByRealDecoder(t *testing.T) {
+	pm := &statefulProjectManager{
+		fakeProjectManager: &fakeProjectManager{},
+		config:             domain.ProjectConfig{DefaultBranch: "main"},
+	}
+	startDriftTestDaemon(t, &fakeSessionService{}, pm)
+
+	spec := writeSpecFile(t, `{"notARealConfigField":"x"}`)
+	out, err := runConfigCLI(t, "project", "config", "apply", "demo", spec)
+	if err == nil {
+		t.Fatalf("expected nonzero exit for unknown config key; output=%s", out)
+	}
+	if got := ExitCode(err); got != 1 {
+		t.Fatalf("exit code = %d, want 1 (daemon rejection)", got)
+	}
+	if pm.setCalls != 0 {
+		t.Fatalf("SetConfig calls = %d, want 0 (strict decoder rejects before service)", pm.setCalls)
+	}
+}
