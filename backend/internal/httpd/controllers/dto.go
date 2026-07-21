@@ -189,6 +189,9 @@ type SpawnSessionRequest struct {
 	// `ao spawn --name` always sets it; other clients (e.g. the desktop new-task
 	// dialog) may omit it and fall back to the session id in the read model.
 	DisplayName string `json:"displayName,omitempty" maxLength:"20"`
+	// Force overrides the pause guard: a forced worker spawn proceeds even while
+	// the project or fleet is paused. It is the operator's manual escape hatch.
+	Force bool `json:"force,omitempty"`
 }
 
 // SessionResponse is the { session } body shared by session create/get.

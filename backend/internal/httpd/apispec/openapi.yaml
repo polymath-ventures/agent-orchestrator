@@ -3375,6 +3375,8 @@ components:
         displayName:
           maxLength: 20
           type: string
+        force:
+          type: boolean
         harness:
           enum:
           - claude-code
