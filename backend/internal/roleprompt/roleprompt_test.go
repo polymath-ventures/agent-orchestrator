@@ -51,7 +51,7 @@ func TestRolePrompt_WorkerAndOrchestrator(t *testing.T) {
 	}
 }
 
-func TestRolePrompt_ReviewerIncludesRulesVerbatim(t *testing.T) {
+func TestRolePrompt_ReviewerIncludesRulesContent(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "rev.md"), []byte("Reviewer file rule.\n"), 0o644); err != nil {
 		t.Fatal(err)

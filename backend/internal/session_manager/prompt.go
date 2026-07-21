@@ -180,11 +180,17 @@ func LoadRoleRules(cfg RoleRulesConfig) (string, error) {
 			return "", fail(err)
 		}
 		defer func() { _ = root.Close() }()
-		// Stat (which does not open the file for reading) BEFORE Open: opening a
-		// FIFO for read blocks until a writer appears, so a non-regular target
-		// must be rejected here rather than after an open that could hang the
-		// spawn/inspection goroutine. Stat also gives the size for the error.
-		info, err := root.Stat(clean)
+		// Open non-blocking, then validate the *opened* handle: O_NONBLOCK keeps
+		// open() from hanging on a FIFO (which blocks until a writer appears), and
+		// checking the type/size via f.Stat() on this same descriptor closes the
+		// Stat-then-Open race — a regular file swapped for a FIFO after a
+		// pre-open stat can no longer reintroduce the hang.
+		f, err := root.OpenFile(clean, rulesFileOpenFlag, 0)
+		if err != nil {
+			return "", fail(err)
+		}
+		defer func() { _ = f.Close() }()
+		info, err := f.Stat()
 		if err != nil {
 			return "", fail(err)
 		}
@@ -194,19 +200,14 @@ func LoadRoleRules(cfg RoleRulesConfig) (string, error) {
 		if info.Size() > maxRoleRulesFileBytes {
 			return "", fail(fmt.Errorf("size %d exceeds limit %d bytes", info.Size(), maxRoleRulesFileBytes))
 		}
-		f, err := root.Open(clean)
-		if err != nil {
-			return "", fail(err)
-		}
-		defer func() { _ = f.Close() }()
 		// Bound the read one byte past the limit as well, so a file that grew
-		// between Stat and Open is still rejected rather than read unbounded.
+		// after the size check is still rejected rather than read unbounded.
 		data, err := io.ReadAll(io.LimitReader(f, maxRoleRulesFileBytes+1))
 		if err != nil {
 			return "", fail(err)
 		}
 		if int64(len(data)) > maxRoleRulesFileBytes {
-			return "", fail(fmt.Errorf("size exceeds limit %d bytes", maxRoleRulesFileBytes))
+			return "", fail(fmt.Errorf("size at least %d exceeds limit %d bytes", len(data), maxRoleRulesFileBytes))
 		}
 		if strings.TrimSpace(string(data)) == "" {
 			return "", fail(fmt.Errorf("file is empty"))

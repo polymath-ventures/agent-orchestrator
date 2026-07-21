@@ -39,7 +39,7 @@ type LaunchSpec struct {
 	ReviewQueue   []ports.ReviewTask
 	ReviewIndex   int
 	// ReviewerRules is the operator-controlled standing instructions for the
-	// reviewer role, already merged (inline + file) and injected verbatim into
+	// reviewer role, already merged (inline + file) and injected, content-preserving, into
 	// the reviewer system prompt. Empty when the project configures none.
 	ReviewerRules string
 }

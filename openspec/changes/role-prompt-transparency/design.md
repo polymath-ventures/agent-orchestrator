@@ -55,7 +55,7 @@ mechanisms and stay rebase-clean.
 
 Generalize the existing worker-only `buildProjectRules(inline, file, projectPath)` into a per-role
 helper that takes `(inlineRules, rulesFile)` for any role and returns the merged, fail-closed block.
-This reuses the proven load + verbatim-merge + hard-error semantics and the existing repo-relative
+This reuses the proven load + content-preserving-merge + hard-error semantics and the existing repo-relative
 path validation. **Alternative rejected:** a new standalone `RoleOverride.InstructionsFile` loader
 (as in the old fork) — it would duplicate `buildProjectRules`' loading and validation and diverge
 from the worker's already-shipped surface, exactly the parallel path the ticket says to avoid.

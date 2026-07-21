@@ -115,7 +115,7 @@ func TestBuildSystemPrompt_WorkerHandlesTaskSourcesAndProviderPRRules(t *testing
 	}
 }
 
-func TestLoadRoleRules_MergesInlineAndFileVerbatim(t *testing.T) {
+func TestLoadRoleRules_MergesInlineAndFileContent(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "rules.md"), []byte("File rule.\n"), 0o644); err != nil {
 		t.Fatal(err)

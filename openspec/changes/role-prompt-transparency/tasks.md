@@ -1,6 +1,6 @@
 ## 1. Shared fail-closed per-role instructions loader
 
-- [x] 1.1 Write failing tests for a generalized per-role rules loader in `backend/internal/session_manager`: given `(inlineRules, rulesFile, projectPath)` it returns the verbatim inline+file merge; a missing/unreadable file returns a hard error; an empty/whitespace-only file returns a hard error; a file exceeding a max-size bound returns a hard error naming the limit and actual size.
+- [x] 1.1 Write failing tests for a generalized per-role rules loader in `backend/internal/session_manager`: given `(inlineRules, rulesFile, projectPath)` it returns the content-preserving inline+file merge; a missing/unreadable file returns a hard error; an empty/whitespace-only file returns a hard error; a file exceeding a max-size bound returns a hard error naming the limit and actual size.
 - [x] 1.2 Generalize `buildProjectRules` into a role-agnostic loader (`LoadRoleRules`) that satisfies 1.1, adding the new empty and oversized checks; keep the existing repo-relative path validation (`projectRelativeFile` / `validateRepoRelative`).
 - [x] 1.3 Re-point the existing worker `## Project Rules` injection at the generalized loader; confirm existing worker tests still pass (behavior preserved except the new empty/oversized guards).
 
@@ -13,7 +13,7 @@
 
 ## 3. Orchestrator and reviewer prompt injection
 
-- [x] 3.1 Write a failing test that an orchestrator spawn injects `OrchestratorRulesFile` contents verbatim under `## Project-Specific Orchestrator Rules`, and fails closed when the file is missing/empty/oversized.
+- [x] 3.1 Write a failing test that an orchestrator spawn injects `OrchestratorRulesFile` contents (content-preserving) under `## Project-Specific Orchestrator Rules`, and fails closed when the file is missing/empty/oversized.
 - [x] 3.2 Wire the orchestrator assembly (`buildSystemPromptText` orchestrator branch) to load via the shared loader, merging inline `OrchestratorRules` + `OrchestratorRulesFile`.
 - [x] 3.3 Write a failing test that a reviewer launch injects `ReviewerRules`/`ReviewerRulesFile` into the reviewer system prompt and fails closed on misconfiguration.
 - [x] 3.4 Thread resolved reviewer rules through `review.LaunchSpec` and inject them in `reviewTexts` at the reviewer system-prompt position, loading via the shared loader daemon-side; keep the rest of the reviewer prompt unchanged.
@@ -39,5 +39,5 @@
 
 - [x] 7.1 Full backend gate: `go build ./...`, `go test ./...`, `go test -race ./...`, `go vet ./...` green.
 - [x] 7.2 Repo gate: `npm run lint` (my packages clean), `npm run frontend:typecheck`, `npm run api` (clean tree), format check green.
-- [x] 7.3 End-to-end verify: set an override file per role on a project, confirmed it appears verbatim in `ao role prompt <project> <role>`; pointed a role at a missing file and confirmed both the CLI (exit 1) and the visibility route (HTTP 422) fail loudly with a clear error.
+- [x] 7.3 End-to-end verify: set an override file per role on a project, confirmed its content appears in `ao role prompt <project> <role>`; pointed a role at a missing file and confirmed both the CLI (exit 1) and the visibility route (HTTP 422) fail loudly with a clear error.
 - [x] 7.4 Update `docs/` architecture notes for the new role-instructions surface and visibility route; note the operator-inspection-vs-`systemPromptGuard` boundary.
