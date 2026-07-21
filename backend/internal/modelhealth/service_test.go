@@ -117,6 +117,26 @@ func TestListProjectReportsNotProbedAndNoCapability(t *testing.T) {
 	}
 }
 
+func TestConfiguredPinsIgnoreScalarCrossProviderModels(t *testing.T) {
+	pins := configuredPins(domain.ProjectConfig{
+		AgentConfig: domain.AgentConfig{Model: "claude-opus-4-5"},
+		Worker: domain.RoleOverride{
+			Harness:     domain.HarnessCodex,
+			AgentConfig: domain.AgentConfig{Model: "claude-sonnet-4-5"},
+		},
+		Orchestrator: domain.RoleOverride{
+			Harness: domain.HarnessClaudeCode,
+		},
+	}, domain.HarnessCodex)
+
+	if len(pins) != 1 {
+		t.Fatalf("pins = %+v, want only the compatible claude-code scalar pin", pins)
+	}
+	if pins[0] != (modelPin{Harness: domain.HarnessClaudeCode, Model: "claude-opus-4-5"}) {
+		t.Fatalf("pin = %+v, want claude-code scalar pin only", pins[0])
+	}
+}
+
 func TestRefreshProjectEmitsTransitionNotification(t *testing.T) {
 	now := time.Date(2026, 7, 20, 15, 0, 0, 0, time.UTC)
 	project := domain.ProjectRecord{

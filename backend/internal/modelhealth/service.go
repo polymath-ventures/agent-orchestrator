@@ -285,7 +285,7 @@ func configuredPins(cfg domain.ProjectConfig, defaultHarness domain.AgentHarness
 	seen := map[modelPin]struct{}{}
 	add := func(h domain.AgentHarness, model string) {
 		model = strings.TrimSpace(model)
-		if h == "" || model == "" {
+		if h == "" || model == "" || !domain.ClassifyModelProvider(model).CompatibleWith(h.ModelProvider()) {
 			return
 		}
 		seen[modelPin{Harness: h, Model: model}] = struct{}{}
@@ -328,7 +328,7 @@ func addRolePins(seen map[modelPin]struct{}, role domain.RoleOverride, defaultHa
 	if h == "" {
 		h = defaultHarness
 	}
-	if model := strings.TrimSpace(role.AgentConfig.Model); model != "" && h != "" {
+	if model := strings.TrimSpace(role.AgentConfig.Model); model != "" && h != "" && domain.ClassifyModelProvider(model).CompatibleWith(h.ModelProvider()) {
 		seen[modelPin{Harness: h, Model: model}] = struct{}{}
 	}
 	addFromHarnessMap(seen, role.AgentConfig.ModelByHarness)

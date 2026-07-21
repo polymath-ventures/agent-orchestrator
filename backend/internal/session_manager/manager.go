@@ -421,7 +421,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		m.rollbackSpawnSeedRow(ctx, id)
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: agent config: %w", id, err)
 	}
-	agentConfig.Model = cfg.Model
+	agentConfig.Model = launchModelForBucket(cfg.Harness, cfg.Model, mixSelected)
 	runtimeToken, err := newRuntimeToken()
 	if err != nil {
 		m.rollbackSpawnSeedRow(ctx, id)
@@ -844,6 +844,17 @@ func roleOverride(kind domain.SessionKind, cfg domain.ProjectConfig) domain.Role
 	return cfg.Worker
 }
 
+func launchModelForBucket(harness domain.AgentHarness, model string, mixSelected bool) string {
+	model = strings.TrimSpace(model)
+	if model != "" {
+		return model
+	}
+	if mixSelected {
+		return domain.DefaultModelForHarness(harness)
+	}
+	return ""
+}
+
 // sessionPrefix returns the display prefix for a project: the explicit
 // SessionPrefix when set, otherwise the first 12 characters of the project ID.
 func sessionPrefix(project domain.ProjectRecord) string {
@@ -1178,13 +1189,12 @@ func (m *Manager) relaunchRestoredSession(ctx context.Context, rec domain.Sessio
 	if err != nil {
 		return RestoreResult{}, fmt.Errorf("restore %s: agent config: %w", rec.ID, err)
 	}
-	// A mix-selected session carries its bucket's model authoritatively, including
-	// the empty string (the bucket's "harness default" identity). Applying it
-	// unconditionally for mix-selected rows keeps the relaunched model in step
-	// with the (harness, model) bucket the census counts it in, even when project
-	// config changed after the session launched. Legacy non-mix rows keep the
-	// old "only override when non-empty" fallback.
-	if rec.MixSelected || rec.Model != "" {
+	// A mix-selected session carries its bucket's model authoritatively. The
+	// empty string remains the persisted bucket identity, but the adapter still
+	// receives that harness's default model rather than a later project scalar.
+	if rec.MixSelected {
+		agentConfig.Model = launchModelForBucket(rec.Harness, rec.Model, true)
+	} else if rec.Model != "" {
 		agentConfig.Model = rec.Model
 	}
 	runtimeToken, err := newRuntimeToken()

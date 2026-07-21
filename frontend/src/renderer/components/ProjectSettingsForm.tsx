@@ -735,7 +735,7 @@ function buildAgentConfig(
 ) {
 	const next = {
 		...current,
-		model: model || undefined,
+		model: model.trim() || undefined,
 		permissions: permissions || undefined,
 	};
 	const modelByHarness = buildHarnessModelConfig(modelByHarnessForm);
@@ -752,7 +752,7 @@ function buildReviewerConfig(current: ReviewerConfig | undefined, harness: strin
 	const reviewer = { ...current, harness };
 	const agentConfig = blankToUndefined({
 		...current?.agentConfig,
-		model: model || undefined,
+		model: model.trim() || undefined,
 	});
 	if (agentConfig) {
 		return [{ ...reviewer, agentConfig }];

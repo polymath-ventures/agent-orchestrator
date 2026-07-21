@@ -2047,6 +2047,27 @@ func TestSpawn_UnpinnedClaudeCodeUsesDefaultModel(t *testing.T) {
 	}
 }
 
+func TestSpawn_EmptyMixBucketLaunchesHarnessDefault(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{
+		AgentConfig: domain.AgentConfig{Model: "claude-opus-4-5"},
+		WorkerMix:   domain.WorkerMix{{Harness: domain.HarnessClaudeCode, Weight: 100}},
+	}}
+	agent := &recordingAgent{}
+	m := modelManager(st, agent)
+
+	rec, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Model != "" {
+		t.Fatalf("record model = %q, want empty mix-bucket identity", rec.Model)
+	}
+	if agent.lastConfig.Model != domain.DefaultModelForHarness(domain.HarnessClaudeCode) {
+		t.Fatalf("launch model = %q, want harness default", agent.lastConfig.Model)
+	}
+}
+
 func TestSpawn_ExplicitCrossProviderModelRejectedBeforeState(t *testing.T) {
 	st := newFakeStore()
 	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{
@@ -2124,6 +2145,33 @@ func TestRestore_UsesPersistedModel(t *testing.T) {
 	}
 	if agent.lastRestore.Config.Model != "launched-model" {
 		t.Fatalf("restore model = %q, want the persisted launched-model", agent.lastRestore.Config.Model)
+	}
+}
+
+func TestRestore_EmptyMixBucketLaunchesHarnessDefault(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{
+		AgentConfig: domain.AgentConfig{Model: "claude-opus-4-5"},
+		WorkerMix:   domain.WorkerMix{{Harness: domain.HarnessClaudeCode, Weight: 100}},
+	}}
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID:           "mer-1",
+		ProjectID:    "mer",
+		Kind:         domain.KindWorker,
+		Harness:      domain.HarnessClaudeCode,
+		Model:        "",
+		MixSelected:  true,
+		IsTerminated: true,
+		Metadata:     domain.SessionMetadata{Branch: "ao/mer-1", WorkspacePath: "/tmp/ws", AgentSessionID: "native-1"},
+	}
+	agent := &recordingAgent{}
+	m := modelManager(st, agent)
+
+	if _, err := m.RestoreWithMode(ctx, "mer-1"); err != nil {
+		t.Fatal(err)
+	}
+	if agent.lastRestore.Config.Model != domain.DefaultModelForHarness(domain.HarnessClaudeCode) {
+		t.Fatalf("restore model = %q, want harness default", agent.lastRestore.Config.Model)
 	}
 }
 

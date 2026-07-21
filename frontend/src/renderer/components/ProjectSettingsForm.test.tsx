@@ -168,9 +168,11 @@ describe("ProjectSettingsForm", () => {
 		await userEvent.clear(screen.getByLabelText("Session prefix"));
 		await userEvent.type(screen.getByLabelText("Session prefix"), "rel");
 		await userEvent.clear(screen.getByLabelText("Model override"));
-		await userEvent.type(screen.getByLabelText("Model override"), "gpt-5-codex");
+		await userEvent.type(screen.getByLabelText("Model override"), "  gpt-5-codex  ");
 		await userEvent.clear(screen.getByLabelText("codex model"));
 		await userEvent.type(screen.getByLabelText("codex model"), "gpt-5.1-codex");
+		await userEvent.clear(screen.getByLabelText("Reviewer model"));
+		await userEvent.type(screen.getByLabelText("Reviewer model"), "  claude-reviewer  ");
 		await chooseOption(workerAgent, "OpenCode");
 		await chooseOption(orchestratorAgent, "Goose");
 		await chooseOption(permissionMode, "Bypass permissions");
@@ -200,7 +202,7 @@ describe("ProjectSettingsForm", () => {
 						},
 						permissions: "bypass-permissions",
 					},
-					reviewers: [{ harness: "claude-code", agentConfig: { model: "claude-review" } }],
+					reviewers: [{ harness: "claude-code", agentConfig: { model: "claude-reviewer" } }],
 				},
 			},
 		});
