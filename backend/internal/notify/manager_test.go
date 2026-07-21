@@ -93,3 +93,25 @@ func TestHubProjectFilter(t *testing.T) {
 		t.Fatal("expected filtered notification")
 	}
 }
+
+// The cap alert must survive enrichment and validation even when no prime
+// ever spawned: no SessionID, and a ProjectID that may not resolve to a real
+// project. Dropping it here was the production failure mode the supervisor
+// unit test could not see.
+func TestEnrichPrimeRestartCappedWithoutSession(t *testing.T) {
+	rec, err := enrich(Intent{
+		Type:      domain.NotificationPrimeRestartCapped,
+		DedupeKey: "prime:restart-capped:mistyped-project:",
+		CreatedAt: time.Date(2026, 7, 21, 10, 0, 0, 0, time.UTC),
+		Message:   "cap",
+	})
+	if err != nil {
+		t.Fatalf("enrich: %v", err)
+	}
+	if err := rec.Validate(); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if rec.SessionID != "" || rec.ProjectID != "" {
+		t.Fatalf("refs = session %q project %q, want both empty preserved", rec.SessionID, rec.ProjectID)
+	}
+}

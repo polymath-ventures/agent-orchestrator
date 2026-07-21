@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -253,4 +254,42 @@ type fakePrimeNotifier struct {
 func (f *fakePrimeNotifier) Notify(_ context.Context, intent ports.NotificationIntent) error {
 	f.intents = append(f.intents, intent)
 	return nil
+}
+
+// A prime that has never spawned successfully (e.g. mistyped
+// AO_PRIME_PROJECT_ID) must still alert when the restart budget caps —
+// silence here was the failure mode: three Warn logs and nothing else.
+func TestEnsurePrimeCapAlertsWhenPrimeNeverSpawned(t *testing.T) {
+	base := time.Date(2026, 7, 21, 10, 0, 0, 0, time.UTC)
+	sessions := &fakePrimeSessions{}
+	state := &primeSupervisorState{
+		restartAttempts: []time.Time{
+			base.Add(-50 * time.Minute),
+			base.Add(-30 * time.Minute),
+			base.Add(-10 * time.Minute),
+		},
+	}
+	notifier := &fakePrimeNotifier{}
+
+	ensurePrime(context.Background(), testPrimeConfig(base), state, sessions, notifier)
+
+	if sessions.spawnCalls != 0 {
+		t.Fatalf("SpawnPrime calls = %d, want capped at zero", sessions.spawnCalls)
+	}
+	if len(notifier.intents) != 1 {
+		t.Fatalf("notifications = %d, want one cap alert even with no lastPrime", len(notifier.intents))
+	}
+	got := notifier.intents[0]
+	if got.Type != domain.NotificationPrimeRestartCapped {
+		t.Fatalf("notification type = %q, want prime restart cap", got.Type)
+	}
+	// No session/project references: the configured project may not exist and
+	// a dangling id would be rejected by the notifications project FK. The
+	// configured value travels in the message and dedupe key.
+	if got.SessionID != "" || got.ProjectID != "" {
+		t.Fatalf("notification refs = session %q project %q, want both empty", got.SessionID, got.ProjectID)
+	}
+	if !strings.Contains(got.Message, string(testPrimeConfig(base).ProjectID)) || !strings.Contains(got.DedupeKey, string(testPrimeConfig(base).ProjectID)) {
+		t.Fatalf("message/dedupe must name the configured project: %+v", got)
+	}
 }

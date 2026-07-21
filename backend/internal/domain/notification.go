@@ -83,7 +83,11 @@ var (
 
 // Validate checks the required fields and enum values for a stored notification.
 func (r NotificationRecord) Validate() error {
-	if r.Type == NotificationLowQuota || r.Type == NotificationModelUnreachable || r.Type == NotificationModelRecovered {
+	if r.Type == NotificationLowQuota || r.Type == NotificationModelUnreachable || r.Type == NotificationModelRecovered || r.Type == NotificationPrimeRestartCapped {
+		// PrimeRestartCapped is sessionless-capable: the alert must persist
+		// even when no prime ever spawned (there is no session to cite) and
+		// even when the configured project id is invalid — that misconfig is
+		// exactly what the alert exists to surface.
 		if r.DedupeKey == "" || r.Title == "" || r.CreatedAt.IsZero() {
 			return ErrInvalidNotificationRecord
 		}

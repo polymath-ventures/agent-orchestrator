@@ -355,6 +355,7 @@ type fakeCommander struct {
 	cleanupErr      error
 	spawnErr        error
 	spawnRecord     domain.SessionRecord
+	restoreCalls    int
 	spawned         bool
 	spawnedCfg      ports.SpawnConfig
 	killsAtSpawn    int
@@ -375,6 +376,7 @@ func (f *fakeCommander) Spawn(_ context.Context, cfg ports.SpawnConfig) (domain.
 	return domain.SessionRecord{ID: "mer-9", ProjectID: cfg.ProjectID, Kind: cfg.Kind, Harness: cfg.Harness}, nil
 }
 func (f *fakeCommander) RestoreWithMode(context.Context, domain.SessionID) (sessionmanager.RestoreResult, error) {
+	f.restoreCalls++
 	if f.restoreErr != nil {
 		return sessionmanager.RestoreResult{}, f.restoreErr
 	}
@@ -1431,5 +1433,80 @@ func TestToAPIError_RulesLoadError(t *testing.T) {
 	var e *apierr.Error
 	if !errors.As(mapped, &e) || e.Kind != apierr.KindInvalid || e.Code != "ROLE_RULES_LOAD_FAILED" {
 		t.Fatalf("mapped = %v, want Invalid ROLE_RULES_LOAD_FAILED", mapped)
+	}
+}
+
+// A spawned singleton that fails replacement verification must be retired,
+// not left live for the next ensure tick to adopt.
+func TestSpawnPrimeRetiresUnverifiedReplacement(t *testing.T) {
+	st := newFakeStore()
+	st.projects["ao"] = domain.ProjectRecord{
+		ID:     "ao",
+		Config: domain.ProjectConfig{Prime: domain.RoleOverride{Harness: domain.HarnessCodex}},
+	}
+	fc := &fakeCommander{spawnRecord: domain.SessionRecord{
+		ID:        "ao-prime",
+		ProjectID: "ao",
+		Kind:      domain.KindPrime,
+		Harness:   domain.HarnessClaudeCode, // mismatch → verification failure
+		Metadata:  domain.SessionMetadata{Branch: "ao/ao-prime"},
+	}}
+	svc := &Service{manager: fc, store: st}
+
+	_, err := svc.SpawnPrime(context.Background(), "ao", true)
+	if err == nil {
+		t.Fatal("want verification failure")
+	}
+	if len(fc.retired) != 1 || fc.retired[0] != "ao-prime" {
+		t.Fatalf("retired = %v, want the unverified prime retired", fc.retired)
+	}
+}
+
+// The manual-spawn ban extends to restore: a leftover terminated prime must
+// not be resurrectable through the public restore endpoint.
+func TestRestoreRejectsPrimeSession(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["ao-prime"] = domain.SessionRecord{
+		ID:           "ao-prime",
+		ProjectID:    "ao",
+		Kind:         domain.KindPrime,
+		IsTerminated: true,
+	}
+	fc := &fakeCommander{}
+	svc := &Service{manager: fc, store: st}
+
+	_, err := svc.Restore(context.Background(), "ao-prime")
+	var e *apierr.Error
+	if !errors.As(err, &e) || e.Code != "PRIME_MANUAL_RESTORE_FORBIDDEN" {
+		t.Fatalf("Restore err = %v, want PRIME_MANUAL_RESTORE_FORBIDDEN", err)
+	}
+	if fc.restoreCalls != 0 {
+		t.Fatalf("restore reached the manager %d times, want 0", fc.restoreCalls)
+	}
+}
+
+// The orchestrator path shares SpawnPrime's rollback contract: a spawned
+// orchestrator that fails replacement verification must be retired.
+func TestSpawnOrchestratorRetiresUnverifiedReplacement(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{
+		ID:     "mer",
+		Config: domain.ProjectConfig{Orchestrator: domain.RoleOverride{Harness: domain.HarnessCodex}},
+	}
+	fc := &fakeCommander{spawnRecord: domain.SessionRecord{
+		ID:        "mer-orc",
+		ProjectID: "mer",
+		Kind:      domain.KindOrchestrator,
+		Harness:   domain.HarnessClaudeCode, // mismatch → verification failure
+		Metadata:  domain.SessionMetadata{Branch: "ao/mer-orchestrator"},
+	}}
+	svc := &Service{manager: fc, store: st}
+
+	_, err := svc.SpawnOrchestrator(context.Background(), "mer", true)
+	if err == nil {
+		t.Fatal("want verification failure")
+	}
+	if len(fc.retired) != 1 || fc.retired[0] != "mer-orc" {
+		t.Fatalf("retired = %v, want the unverified orchestrator retired", fc.retired)
 	}
 }
