@@ -162,7 +162,7 @@ func newProjectConfigDiffCommand(ctx *commandContext) *cobra.Command {
 			var b strings.Builder
 			fmt.Fprintf(&b, "drift in project %s config (%d field(s)):\n", id, len(drift))
 			for _, d := range drift {
-				fmt.Fprintf(&b, "  %q: spec=%s live=%s\n", d.Field, jsonScalar(d.Spec), liveScalar(d))
+				fmt.Fprintf(&b, "  %q: spec=%s live=%s\n", d.Field, specScalar(d.Field, d.Spec), liveScalar(d))
 			}
 			if _, err := fmt.Fprint(out, b.String()); err != nil {
 				return err
@@ -174,8 +174,7 @@ func newProjectConfigDiffCommand(ctx *commandContext) *cobra.Command {
 }
 
 // jsonScalar renders a decoded JSON value compactly for drift output. An
-// explicit JSON null renders as `null` (json.Marshal(nil)); absence from live
-// config is rendered separately by liveScalar as `(absent)`.
+// explicit JSON null renders as `null` (json.Marshal(nil)).
 func jsonScalar(v any) string {
 	b, err := json.Marshal(v)
 	if err != nil {
@@ -184,12 +183,32 @@ func jsonScalar(v any) string {
 	return string(b)
 }
 
-// liveScalar renders the live side of a drift entry, distinguishing a field that
-// is absent from live config ("(absent)") from one explicitly set to JSON null
-// ("null").
+// sensitiveConfigField reports whether a config field's values may carry secrets
+// (e.g. env vars) and so must be redacted in diff output, which can be captured
+// in CI logs. Export stays lossless (it is the restore source and its secret
+// exposure is documented); diff only needs to show which field drifted.
+func sensitiveConfigField(field string) bool {
+	return field == "env"
+}
+
+// specScalar renders the spec side of a drift entry, redacting the value of a
+// sensitive field.
+func specScalar(field string, v any) string {
+	if sensitiveConfigField(field) {
+		return "<redacted>"
+	}
+	return jsonScalar(v)
+}
+
+// liveScalar renders the live side of a drift entry: "(absent)" when the field is
+// absent from live config (distinct from an explicit JSON null), redacted when
+// the field is sensitive, else the JSON value.
 func liveScalar(d configDrift) string {
 	if !d.LivePresent {
 		return "(absent)"
+	}
+	if sensitiveConfigField(d.Field) {
+		return "<redacted>"
 	}
 	return jsonScalar(d.Live)
 }

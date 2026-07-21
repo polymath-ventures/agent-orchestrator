@@ -106,7 +106,8 @@ strict config decoder rather than re-validated client-side.
 > **Secret handling:** an exported config can include `env` values that carry
 > credentials. Treat an export as sensitive — review it before committing to
 > version control, and prefer restricting file permissions (e.g. redirect to a
-> `0600` file) over pasting it into shared locations.
+> `0600` file) over pasting it into shared locations. `diff` redacts the value
+> of the `env` field in its output so drift checks are safe to run in CI logs.
 
 `ao preview` resolves its session from the `AO_SESSION_ID` environment variable
 (it is meant to run inside a session), not a flag. With no argument it

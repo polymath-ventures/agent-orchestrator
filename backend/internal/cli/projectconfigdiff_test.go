@@ -75,3 +75,31 @@ func TestProjectConfigDiff_IgnoresUnnamedFields(t *testing.T) {
 		t.Fatal("diff must never PUT")
 	}
 }
+
+func TestProjectConfigDiff_RedactsEnvValues(t *testing.T) {
+	cfg := setConfigEnv(t)
+	// Live and spec both carry an env secret that differs → env drifts.
+	srv, capture := startConfigRoundTripServer(t, `{"env":{"TOKEN":"live-secret"}}`, http.StatusOK)
+	writeRunFileFor(t, cfg, srv)
+
+	spec := writeSpecFile(t, `{"env":{"TOKEN":"spec-secret"}}`)
+
+	out, _, err := executeCLI(t, Deps{
+		ProcessAlive: func(int) bool { return true },
+	}, "project", "config", "diff", "demo", spec)
+	if err == nil {
+		t.Fatal("expected drift on env")
+	}
+	if capture.putCalled {
+		t.Fatal("diff must never PUT")
+	}
+	if strings.Contains(out, "live-secret") || strings.Contains(out, "spec-secret") {
+		t.Fatalf("diff leaked env secret values into output: %q", out)
+	}
+	if !strings.Contains(out, "<redacted>") {
+		t.Fatalf("diff should redact the env field value: %q", out)
+	}
+	if !strings.Contains(out, "env") {
+		t.Fatalf("diff should still name the drifted env field: %q", out)
+	}
+}

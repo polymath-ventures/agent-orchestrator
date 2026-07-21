@@ -199,7 +199,7 @@ ao project config diff <project> <file>
 
 - **export** prints the project's full stored config (the persisted override set) as canonical JSON (sorted keys, stable formatting). Two exports of unchanged config are byte-identical. An exported config can include `env` values with credentials — treat it as sensitive.
 - **apply** is surgical: only the top-level fields named in `<file>` change; every other live field is preserved. A spec equal to live config makes no change and performs no write. A missing/unreadable/invalid-JSON spec exits 2; an unknown config key is rejected by the daemon.
-- **diff** compares only the fields named in `<file>` against live config, prints each drifted field, and exits nonzero on drift (zero when in sync) — so it can gate CI or a scheduled drift check. It never writes.
+- **diff** compares only the fields named in `<file>` against live config, prints each drifted field, and exits nonzero on drift (zero when in sync) — so it can gate CI or a scheduled drift check. It never writes, and redacts the value of the `env` field so drift checks are safe to run in CI logs.
 
 **Examples:**
 

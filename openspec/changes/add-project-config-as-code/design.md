@@ -1,8 +1,8 @@
 ## Context
 
-A project's effective config is `domain.ProjectConfig`
+A project's config is `domain.ProjectConfig`
 (`backend/internal/domain/projectconfig.go:20`), persisted in the daemon's
-SQLite store. The CLI already reads it (`ao project get <id>` → `GET
+SQLite store as a sparse override set (every field is `omitempty`). The CLI already reads it (`ao project get <id>` → `GET
 /api/v1/projects/{id}`, config is one field of the project detail) and writes it
 (`ao project set-config <id>` → `PUT /api/v1/projects/{id}/config`, handled by
 `Service.SetConfig` at `service/project/service.go:558`, which does

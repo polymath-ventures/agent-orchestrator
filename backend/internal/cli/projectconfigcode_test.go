@@ -173,13 +173,15 @@ func TestDiffConfig_DistinguishesNullFromAbsent(t *testing.T) {
 
 func TestParseSpecObject_RejectsEmptyNullAndTrailing(t *testing.T) {
 	cases := map[string]string{
-		"empty":           "",
-		"whitespace":      "   \n ",
-		"null":            "null",
-		"trailing-object": `{"a":1}{"b":2}`,
-		"array":           `[1,2,3]`,
-		"scalar":          `42`,
-		"invalid":         `{not json`,
+		"empty":            "",
+		"whitespace":       "   \n ",
+		"null":             "null",
+		"trailing-object":  `{"a":1}{"b":2}`,
+		"trailing-brace":   `{"a":1}}`,
+		"trailing-bracket": `{"a":1}]`,
+		"array":            `[1,2,3]`,
+		"scalar":           `42`,
+		"invalid":          `{not json`,
 	}
 	for name, in := range cases {
 		if _, err := parseSpecObject([]byte(in)); err == nil {
@@ -196,6 +198,18 @@ func TestParseSpecObject_AcceptsObjectWithTrailingWhitespace(t *testing.T) {
 	}
 	if spec["defaultBranch"] != "main" {
 		t.Fatalf("spec = %v, want defaultBranch=main", spec)
+	}
+}
+
+func TestParseSpecObject_RejectsNullValuedField(t *testing.T) {
+	// The config model has no nullable fields, so an explicit null can never
+	// converge — it must be rejected at parse time.
+	if _, err := parseSpecObject([]byte(`{"sessionPrefix":null}`)); err == nil {
+		t.Fatal("parseSpecObject accepted a null-valued field; want error")
+	}
+	// A normal object still parses.
+	if _, err := parseSpecObject([]byte(`{"sessionPrefix":"demo"}`)); err != nil {
+		t.Fatalf("parseSpecObject rejected a valid object: %v", err)
 	}
 }
 

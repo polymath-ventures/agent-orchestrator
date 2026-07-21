@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"reflect"
 	"sort"
 )
@@ -49,8 +51,9 @@ func parseConfigObject(raw []byte) (map[string]any, error) {
 
 // parseSpecObject strictly parses an operator-supplied config spec: it requires
 // exactly one JSON object (not null, not an array/scalar) followed by EOF, so an
-// empty file, a bare `null`, or trailing garbage (`{…}{…}`) is a hard error
-// rather than a silent no-op or a partial apply. UseNumber preserves integers.
+// empty file, a bare `null`, trailing garbage (`{…}{…}`, `{…}}`), or a null-valued
+// field is a hard error rather than a silent no-op or a partial apply. UseNumber
+// preserves integers.
 func parseSpecObject(raw []byte) (map[string]any, error) {
 	if len(bytes.TrimSpace(raw)) == 0 {
 		return nil, errors.New("spec is empty: expected a JSON object")
@@ -64,9 +67,21 @@ func parseSpecObject(raw []byte) (map[string]any, error) {
 	if obj == nil {
 		return nil, errors.New("spec is JSON null: expected a JSON object")
 	}
-	// Reject any trailing content after the first object.
-	if dec.More() {
+	// Require EOF after the first object. dec.More() is unreliable at the top
+	// level (it returns false before a stray `}`/`]`), so decode a second value
+	// and insist it is io.EOF — this rejects `{…}}`, `{…}]`, and `{…}{…}`.
+	var trailing json.RawMessage
+	if err := dec.Decode(&trailing); err != io.EOF {
 		return nil, errors.New("spec has trailing content after the JSON object")
+	}
+	// The config model has no nullable fields (every field is omitempty and a
+	// JSON null decodes to the zero value, which the daemon then omits). An
+	// explicit null in a spec can therefore never converge (apply/diff would
+	// forever see null-in-spec vs absent-in-live), so reject it at the door.
+	for k, v := range obj {
+		if v == nil {
+			return nil, fmt.Errorf("spec field %q is null: omit the field instead of setting it to null", k)
+		}
 	}
 	return obj, nil
 }
