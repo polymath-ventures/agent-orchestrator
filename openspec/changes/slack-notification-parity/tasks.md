@@ -6,7 +6,7 @@
 
 ## 2. PORT — Persist delivery state and eliminate restart floods
 
-- [ ] 2.1 Write failing tests for ledger load, missing/corrupt ledger recovery, AO-data-dir default path + override, parent-directory creation, atomic temp-file rename, and tail-bounded delivered IDs. Reference: `ao-slack-notifier.mjs:74,351-355,610-646`; state shape: `:619-634`.
+- [x] 2.1 Write failing tests for ledger load, missing/corrupt ledger recovery, AO-data-dir default path + override, parent-directory creation, atomic temp-file rename, and tail-bounded delivered IDs. Reference: `ao-slack-notifier.mjs:74,351-355,610-646`; state shape: `:619-634`.
 - [x] 2.2 Implement the smallest Go ledger containing `version`, `initialized`, and delivered notification IDs; use code-owned path creation and atomic replacement under AO's configured data directory. Do not port reference-only attention/thread/digest fields. Reference port manifest: `ao-slack-notifier.mjs:417,610-646,619-634`.
 - [x] 2.3 Write failing tests that first run seeds every paged unread ID without posting, persists `initialized`, and subsequent runs deliver only new IDs; implement bootstrap seed-before-stream. Reference: `ao-slack-notifier.mjs:717,725-745,784-790,808`.
 - [x] 2.4 Write failing tests proving the in-memory delivered set is not mutated until Slack acceptance AND ledger persistence both succeed; implement that write-order invariant so persist failure causes safe re-offer. Reference lesson: PR #198 cycle 1; reference success-path state write: `ao-slack-notifier.mjs:794-806`.

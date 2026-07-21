@@ -384,15 +384,15 @@ func (c *commandContext) runSlackNotify(ctx context.Context, opts slackNotifyOpt
 	if err != nil {
 		return err
 	}
+	if state.warning != "" {
+		logger.printf("%s", state.warning)
+	}
 	if !state.Initialized {
 		unread, err := c.listUnreadSlack(ctx)
 		if err != nil {
 			return fmt.Errorf("seed Slack delivery state: %w", err)
 		}
-		ids := make([]string, 0, len(unread))
-		for _, n := range unread {
-			ids = append(ids, n.ID)
-		}
+		ids := slackSeedIDs(unread)
 		if err := state.initialize(ids); err != nil {
 			return err
 		}
@@ -427,6 +427,18 @@ func (c *commandContext) runSlackNotify(ctx context.Context, opts slackNotifyOpt
 	cancel()
 	wg.Wait()
 	return err
+}
+
+// slackSeedIDs turns the daemon's newest-first unread listing into oldest-first
+// insertion order. The bounded ledger then retains the newest IDs if a backlog
+// exceeds its cap, matching steady-state delivery order and preventing a
+// first-reconcile flood.
+func slackSeedIDs(unread []slackNotification) []string {
+	ids := make([]string, 0, len(unread))
+	for i := len(unread) - 1; i >= 0; i-- {
+		ids = append(ids, unread[i].ID)
+	}
+	return ids
 }
 
 // pokeReconcile requests a reconcile without blocking. If one is already queued,

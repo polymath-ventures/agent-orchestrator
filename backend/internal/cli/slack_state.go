@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 )
@@ -22,6 +23,7 @@ type slackDeliveryState struct {
 	Delivered   []string `json:"delivered"`
 	path        string
 	seen        map[string]struct{}
+	warning     string
 }
 
 func loadSlackDeliveryState() (*slackDeliveryState, error) {
@@ -42,7 +44,17 @@ func loadSlackDeliveryState() (*slackDeliveryState, error) {
 		return nil, fmt.Errorf("read Slack delivery state: %w", err)
 	}
 	if err := json.Unmarshal(data, s); err != nil {
-		return nil, fmt.Errorf("decode Slack delivery state: %w", err)
+		backup := fmt.Sprintf("%s.corrupt-%d", path, time.Now().UnixNano())
+		if renameErr := os.Rename(path, backup); renameErr != nil {
+			return nil, errors.Join(
+				fmt.Errorf("decode Slack delivery state: %w", err),
+				fmt.Errorf("backup corrupt Slack delivery state: %w", renameErr),
+			)
+		}
+		return &slackDeliveryState{
+			Version: 1, path: path, seen: map[string]struct{}{},
+			warning: fmt.Sprintf("corrupt Slack delivery state moved to %s; reseeding unread notifications", backup),
+		}, nil
 	}
 	s.path = path
 	s.seen = make(map[string]struct{}, len(s.Delivered))

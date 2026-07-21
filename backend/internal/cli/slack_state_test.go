@@ -66,3 +66,43 @@ func TestSlackDeliveryStateTailBoundsIDs(t *testing.T) {
 		t.Fatalf("tail-bound state size=%d", len(state.Delivered))
 	}
 }
+
+func TestSlackSeedIDsKeepsNewestWhenLedgerIsCapped(t *testing.T) {
+	setConfigEnv(t)
+	t.Setenv(slackStateEnv, filepath.Join(t.TempDir(), "state.json"))
+	unread := make([]slackNotification, slackStateLimit+1)
+	for i := range unread {
+		unread[i].ID = string(rune(i + 1)) // daemon order: newest first
+	}
+	state, err := loadSlackDeliveryState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := state.initialize(slackSeedIDs(unread)); err != nil {
+		t.Fatal(err)
+	}
+	if !state.contains(unread[0].ID) || state.contains(unread[len(unread)-1].ID) {
+		t.Fatalf("capped seed did not retain newest IDs")
+	}
+}
+
+func TestSlackDeliveryStateRecoversCorruptFile(t *testing.T) {
+	setConfigEnv(t)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "state.json")
+	t.Setenv(slackStateEnv, path)
+	if err := os.WriteFile(path, []byte(`{"broken"`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	state, err := loadSlackDeliveryState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Initialized || state.warning == "" {
+		t.Fatalf("recovered state = %+v", state)
+	}
+	matches, err := filepath.Glob(path + ".corrupt-*")
+	if err != nil || len(matches) != 1 {
+		t.Fatalf("corrupt backup matches=%v err=%v", matches, err)
+	}
+}
