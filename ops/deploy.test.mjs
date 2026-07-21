@@ -36,4 +36,6 @@ test("deploy.sh keeps its load-bearing invariants", async () => {
   assert.match(text, /executablePath/);
   // The public check must exercise the browser-mode API path with an Origin.
   assert.match(text, /-H "Origin: \$public_url"/);
+  // All dependencies are checked before any mutation happens.
+  assert.match(text, /missing dependency/);
 });

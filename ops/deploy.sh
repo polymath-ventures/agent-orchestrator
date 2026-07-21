@@ -31,6 +31,15 @@ SERVICES=(ao-web.service ao.service)
 log() { printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" | tee -a "$LOG_FILE"; }
 die() { log "FATAL: $*"; exit 1; }
 
+# Every dependency is checked BEFORE any mutation: discovering a missing tool
+# mid-deploy would leave the system half-flipped with a misleading error.
+preflight() {
+  local dep
+  for dep in git go npm curl python3 systemctl journalctl cmp install; do
+    command -v "$dep" >/dev/null 2>&1 || die "missing dependency: $dep"
+  done
+}
+
 repo_root() { cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd; }
 
 restart_and_verify() {
@@ -164,7 +173,7 @@ deploy() {
 }
 
 case "${1:-}" in
-  --rollback) rollback ;;
+  --rollback) preflight; rollback ;;
   --help|-h) sed -n '2,18p' "${BASH_SOURCE[0]}"; exit 0 ;;
-  *) deploy "${1:-origin/main}" ;;
+  *) preflight; deploy "${1:-origin/main}" ;;
 esac
