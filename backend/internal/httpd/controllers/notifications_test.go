@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-chi/chi/v5"
+
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd"
@@ -220,6 +222,30 @@ func TestNotificationsStreamStopsWhenStreamContextCanceled(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("notification stream did not close after stream context cancel")
+	}
+}
+
+func TestNotificationsStreamEmitsHeartbeatWhileIdle(t *testing.T) {
+	stream := &fakeNotificationStream{ch: make(chan domain.NotificationRecord)}
+	router := chi.NewRouter()
+	controller := &controllers.NotificationsController{
+		Stream: stream, HeartbeatInterval: 5 * time.Millisecond,
+	}
+	controller.RegisterStream(router)
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/notifications/stream")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	line, err := bufio.NewReader(resp.Body).ReadString('\n')
+	if err != nil {
+		t.Fatal(err)
+	}
+	if line != ": keepalive\n" {
+		t.Fatalf("heartbeat = %q", line)
 	}
 }
 

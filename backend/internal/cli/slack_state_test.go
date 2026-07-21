@@ -48,29 +48,31 @@ func TestSlackDeliveryStateDoesNotMutateOnPersistFailure(t *testing.T) {
 	}
 }
 
-func TestSlackDeliveryStateTailBoundsIDs(t *testing.T) {
+func TestSlackDeliveryStateRetainsAllIDs(t *testing.T) {
 	setConfigEnv(t)
 	t.Setenv(slackStateEnv, filepath.Join(t.TempDir(), "state.json"))
 	state, err := loadSlackDeliveryState()
 	if err != nil {
 		t.Fatal(err)
 	}
-	ids := make([]string, slackStateLimit+1)
+	const count = 2001
+	ids := make([]string, count)
 	for i := range ids {
 		ids[i] = string(rune(i + 1))
 	}
 	if err := state.record(ids...); err != nil {
 		t.Fatal(err)
 	}
-	if len(state.Delivered) != slackStateLimit || state.contains(ids[0]) || !state.contains(ids[len(ids)-1]) {
-		t.Fatalf("tail-bound state size=%d", len(state.Delivered))
+	if len(state.Delivered) != count || !state.contains(ids[0]) || !state.contains(ids[len(ids)-1]) {
+		t.Fatalf("unbounded state size=%d", len(state.Delivered))
 	}
 }
 
-func TestSlackSeedIDsKeepsNewestWhenLedgerIsCapped(t *testing.T) {
+func TestSlackSeedIDsRetainsWholeBacklog(t *testing.T) {
 	setConfigEnv(t)
 	t.Setenv(slackStateEnv, filepath.Join(t.TempDir(), "state.json"))
-	unread := make([]slackNotification, slackStateLimit+1)
+	const count = 2001
+	unread := make([]slackNotification, count)
 	for i := range unread {
 		unread[i].ID = string(rune(i + 1)) // daemon order: newest first
 	}
@@ -81,8 +83,8 @@ func TestSlackSeedIDsKeepsNewestWhenLedgerIsCapped(t *testing.T) {
 	if err := state.initialize(slackSeedIDs(unread)); err != nil {
 		t.Fatal(err)
 	}
-	if !state.contains(unread[0].ID) || state.contains(unread[len(unread)-1].ID) {
-		t.Fatalf("capped seed did not retain newest IDs")
+	if len(state.Delivered) != count || !state.contains(unread[0].ID) || !state.contains(unread[len(unread)-1].ID) {
+		t.Fatalf("seed did not retain whole backlog")
 	}
 }
 

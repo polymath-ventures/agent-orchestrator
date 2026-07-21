@@ -6,7 +6,7 @@
 
 ## 2. PORT — Persist delivery state and eliminate restart floods
 
-- [x] 2.1 Write failing tests for ledger load, missing/corrupt ledger recovery, AO-data-dir default path + override, parent-directory creation, atomic temp-file rename, and tail-bounded delivered IDs. Reference: `ao-slack-notifier.mjs:74,351-355,610-646`; state shape: `:619-634`.
+- [x] 2.1 Write failing tests for ledger load, missing/corrupt ledger recovery, AO-data-dir default path + override, parent-directory creation, atomic temp-file rename, and full delivered-ID retention. Reference: `ao-slack-notifier.mjs:74,351-355,610-646`; state shape: `:619-634`.
 - [x] 2.2 Implement the smallest Go ledger containing `version`, `initialized`, and delivered notification IDs; use code-owned path creation and atomic replacement under AO's configured data directory. Do not port reference-only attention/thread/digest fields. Reference port manifest: `ao-slack-notifier.mjs:417,610-646,619-634`.
 - [x] 2.3 Write failing tests that first run seeds every paged unread ID without posting, persists `initialized`, and subsequent runs deliver only new IDs; implement bootstrap seed-before-stream. Reference: `ao-slack-notifier.mjs:717,725-745,784-790,808`.
 - [x] 2.4 Write failing tests proving the in-memory delivered set is not mutated until Slack acceptance AND ledger persistence both succeed; implement that write-order invariant so persist failure causes safe re-offer. Reference lesson: PR #198 cycle 1; reference success-path state write: `ao-slack-notifier.mjs:794-806`.
@@ -21,7 +21,7 @@
 
 - [ ] 4.1 Write failing stream-loop tests for N=3 consecutive post-connect failures, one alert per outage, latch reset on recovery, optional member mention, and unchanged first-connect runtime failure; implement the latched daemon-unreachable alert. Reference: `ao-slack-notifier.mjs:1017-1045,1179-1180,1211`.
 - [x] 4.2 Preserve and regression-test this fork's superior cancellation-aware 2s→30s exponential reconnect backoff and periodic reconcile instead of porting the reference's flat 10s retry. Current improvement: `slack.go:56-78,398-419`; anti-reference: `ao-slack-notifier.mjs:80,1204-1216`.
-- [ ] 4.3 Probe the daemon notification SSE handler for periodic comment heartbeats; if absent, write a failing controller test and add the minimal `: keepalive` tick + flush. Verify the Slack consumer ignores comments. History lesson #86; consumer: `slack.go:509-510`.
+- [x] 4.3 Probe the daemon notification SSE handler for periodic comment heartbeats; if absent, write a failing controller test and add the minimal `: keepalive` tick + flush. Verify the Slack consumer ignores comments. History lesson #86; consumer: `slack.go:509-510`.
 - [ ] 4.4 Add/extend SIGTERM cancellation tests covering backoff sleep, in-flight stream fetch, Slack POST, ledger persist boundary, and multi-page reconciliation. Reference lesson: #197/PR #200; current cancellation machinery: `slack.go:69-78,310-312`.
 
 ## 5. Verification checklist, docs, and generated contracts

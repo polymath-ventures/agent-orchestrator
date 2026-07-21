@@ -31,12 +31,13 @@ type NotificationStream interface {
 
 // NotificationsController owns the /notifications routes.
 type NotificationsController struct {
-	Svc           NotificationService
-	Stream        NotificationStream
-	StreamContext context.Context
+	Svc               NotificationService
+	Stream            NotificationStream
+	StreamContext     context.Context
+	HeartbeatInterval time.Duration
 }
 
-var notificationHeartbeatInterval = 20 * time.Second
+const notificationHeartbeatInterval = 20 * time.Second
 
 // Register mounts bounded notification REST routes on the supplied router.
 func (c *NotificationsController) Register(r chi.Router) {
@@ -125,7 +126,11 @@ func (c *NotificationsController) stream(w http.ResponseWriter, r *http.Request)
 	h.Set("X-Accel-Buffering", "no")
 	w.WriteHeader(http.StatusOK)
 	flusher.Flush()
-	heartbeat := time.NewTicker(notificationHeartbeatInterval)
+	heartbeatInterval := c.HeartbeatInterval
+	if heartbeatInterval <= 0 {
+		heartbeatInterval = notificationHeartbeatInterval
+	}
+	heartbeat := time.NewTicker(heartbeatInterval)
 	defer heartbeat.Stop()
 
 	for {

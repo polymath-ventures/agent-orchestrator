@@ -61,10 +61,10 @@ notification IDs plus a bootstrap-`initialized` flag (`:622-626`).
   in-memory set are only updated AFTER Slack accepts a post and the persist write succeeds. A
   delivered ID is never marked before the write, so a persist failure re-offers the notification
   rather than silently suppressing it forever.
-- **Ledger stays append-only / tail-bounded, never evicted below what can re-appear unread.** The
-  round-1 comment (`slack.go:226-232`) already established that eviction reintroduces duplicates
-  because this command never marks anything read; persisting preserves that property. Bound growth
-  by tail-capping to a large limit (reference `SEEN_LIMIT` 2000, `:75,:613`).
+- **Ledger stays append-only and unbounded by design.** The round-1 comment
+  (`slack.go:226-232`) established that eviction reintroduces duplicates because this command never
+  marks anything read. The reference could bound `seen` only because it also persisted a catch-up
+  cursor; this smaller Go port keeps every delivered ID instead of adding a second cursor subsystem.
 
 **Alternatives rejected:** in-memory only (status quo — the flood cause, gap 1); marking
 notifications read after posting (would mutate shared daemon state the UI bell owns, and history

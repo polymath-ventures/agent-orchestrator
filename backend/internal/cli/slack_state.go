@@ -12,9 +12,8 @@ import (
 )
 
 const (
-	slackStateEnv   = "AO_SLACK_NOTIFIER_STATE"
-	slackStateFile  = "slack-notifier-state.json"
-	slackStateLimit = 2000
+	slackStateEnv  = "AO_SLACK_NOTIFIER_STATE"
+	slackStateFile = "slack-notifier-state.json"
 )
 
 type slackDeliveryState struct {
@@ -84,13 +83,6 @@ func (s *slackDeliveryState) record(ids ...string) error {
 		}
 		seen[id] = struct{}{}
 		candidate = append(candidate, id)
-	}
-	if len(candidate) > slackStateLimit {
-		candidate = append([]string(nil), candidate[len(candidate)-slackStateLimit:]...)
-		seen = make(map[string]struct{}, len(candidate))
-		for _, id := range candidate {
-			seen[id] = struct{}{}
-		}
 	}
 	next := *s
 	next.Delivered, next.seen = candidate, seen
