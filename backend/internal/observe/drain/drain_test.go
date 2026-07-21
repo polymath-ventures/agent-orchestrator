@@ -2,6 +2,7 @@ package drain
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -9,6 +10,8 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	sessionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/session"
 )
+
+var errTestKill = errors.New("kill failed")
 
 type fakeStore struct {
 	projects    []domain.ProjectRecord
@@ -23,9 +26,9 @@ func (f *fakeStore) GetFleetPaused(context.Context) (bool, error) { return f.fle
 type fakeSessions struct {
 	byProject map[domain.ProjectID][]domain.Session
 	killed    []domain.SessionID
-	// killNoop marks ids whose Kill returns killed=false (e.g. dirty worktree
-	// preserved), so they stay live.
-	killNoop map[domain.SessionID]bool
+	// killErr marks ids whose Kill returns an error (transient failure), so they
+	// stay live and retry next tick.
+	killErr map[domain.SessionID]bool
 }
 
 func (f *fakeSessions) List(_ context.Context, filter sessionsvc.ListFilter) ([]domain.Session, error) {
@@ -33,8 +36,8 @@ func (f *fakeSessions) List(_ context.Context, filter sessionsvc.ListFilter) ([]
 }
 
 func (f *fakeSessions) Kill(_ context.Context, id domain.SessionID) (bool, error) {
-	if f.killNoop[id] {
-		return false, nil
+	if f.killErr[id] {
+		return false, errTestKill
 	}
 	f.killed = append(f.killed, id)
 	// Model the clean teardown: the session becomes terminated, so a later tick
@@ -143,6 +146,27 @@ func TestTick_DrainCompleteFiresOnce(t *testing.T) {
 	}
 	if drainEvents != 1 {
 		t.Fatalf("drain_complete fired %d times, want exactly 1", drainEvents)
+	}
+}
+
+// A Kill that errors leaves the worker live (retried next tick) and defers the
+// drain-complete signal; a Kill that succeeds (even bool=false for a preserved
+// dirty worktree — the session is still terminated) counts as drained.
+func TestTick_KillErrorKeepsWorkerLive(t *testing.T) {
+	store := &fakeStore{projects: []domain.ProjectRecord{{ID: "p", Paused: true}}}
+	sessions := &fakeSessions{
+		byProject: map[domain.ProjectID][]domain.Session{"p": {worker("p", "1", domain.StatusIdle)}},
+		killErr:   map[domain.SessionID]bool{"p-1": true},
+	}
+	sink := &captureSink{}
+	sw := New(store, sessions, Config{Clock: fixedClock(), Telemetry: sink})
+	if err := sw.Tick(context.Background()); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	for _, ev := range sink.events {
+		if ev.Name == "ao.fleet.drain_complete" {
+			t.Fatalf("drain_complete fired while a worker is still live (kill errored)")
+		}
 	}
 }
 

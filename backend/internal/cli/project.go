@@ -516,6 +516,7 @@ func writeProjectDetails(cmd *cobra.Command, res projectGetResult) error {
 		{label: "repo", value: p.Repo},
 		{label: "default branch", value: p.DefaultBranch},
 		{label: "agent", value: p.Agent},
+		{label: "pause", value: formatPauseState(p.PauseState, p.DrainingWorkers)},
 		{label: "config", value: formatProjectConfig(p.Config)},
 		{label: "resolve error", value: p.ResolveError},
 	}

@@ -523,11 +523,15 @@ function ProjectItem({
 	// button: navigate to it when present, otherwise spawn one first.
 	const orchestrator = newestActiveOrchestrator(workspace.sessions);
 
-	// Per-project pause lifecycle. `draining` means a soft pause is in flight and
-	// live workers are finishing; `paused` (or draining) both mean new work is
-	// held, so the kebab offers Resume and the row shows a badge.
-	const paused = workspace.paused ?? false;
+	// Per-project pause lifecycle. `gated` is the EFFECTIVE state (derived from
+	// pauseState, which folds in the fleet flag) and drives the row badge, so a
+	// fleet-paused project still shows Paused/Draining even when its own bit is
+	// clear. `projectPaused` is the project's OWN bit and drives the kebab, which
+	// toggles the per-project pause specifically (a project pause set here
+	// survives a fleet resume, by design).
+	const projectPaused = workspace.paused ?? false;
 	const draining = workspace.pauseState === "draining";
+	const gated = draining || workspace.pauseState === "paused";
 	const pauseProject = useMutation({
 		mutationFn: async () => {
 			const { error } = await apiClient.POST("/api/v1/projects/{id}/pause", {
@@ -632,7 +636,7 @@ function ProjectItem({
 				<span className="sidebar-expanded-chrome min-w-0 flex-1 truncate group-data-[collapsible=icon]:hidden">
 					{workspace.name}
 				</span>
-				{paused && (
+				{gated && (
 					<Badge
 						variant={draining ? "warning" : "neutral"}
 						className="sidebar-expanded-chrome h-4 shrink-0 px-1.5 text-micro font-medium group-data-[collapsible=icon]:hidden"
@@ -700,15 +704,15 @@ function ProjectItem({
 							New session
 						</DropdownMenuItem>
 						<DropdownMenuSeparator />
-						{paused ? (
+						{projectPaused ? (
 							<DropdownMenuItem disabled={pauseBusy} onSelect={() => void resumeProject.mutate()}>
 								<Play aria-hidden="true" />
-								Resume
+								Resume project
 							</DropdownMenuItem>
 						) : (
 							<DropdownMenuItem disabled={pauseBusy} onSelect={() => void pauseProject.mutate()}>
 								<Pause aria-hidden="true" />
-								Pause
+								Pause project
 							</DropdownMenuItem>
 						)}
 						<DropdownMenuSeparator />

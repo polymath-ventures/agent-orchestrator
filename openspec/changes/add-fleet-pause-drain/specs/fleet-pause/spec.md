@@ -112,7 +112,7 @@ forced spawn SHALL override the pause guard.
 
 #### Scenario: Orchestrator stays alive under pause
 
-- **WHEN** a scope is paused (soft or hard-with-orchestrator-exclusion)
+- **WHEN** a scope is paused in any mode (soft, per-project hard, or fleet hard)
 - **THEN** orchestrator sessions are not terminated by the pause and continue running
 
 #### Scenario: Forced spawn overrides the guard

@@ -9,7 +9,7 @@
 
 - [x] 2.1 Add `PauseState` type + `PauseStateRunning|Draining|Paused` constants and `computePauseState(projectPaused, fleetPaused, liveWorkers)` in the project service types; unit-test the three transitions incl. draining count.
 - [x] 2.2 Add `liveWorkersByProject` (count non-terminated `KindWorker` sessions per project) and a `withPauseState` read-model fan-in; test against a fake session list.
-- [x] 2.3 Implement `SetProjectPaused(ctx,id,paused,hard)` (404 on missing/archived; writes only the bit; on `paused&&hard` calls session hard-drain for the project, orchestrators excluded), `FleetPaused(ctx)`, and `SetFleetPaused(ctx,paused,hard)` (on `paused&&hard` fan out hard-drain across all projects, orchestrators included). Table-test each incl. error envelopes.
+- [x] 2.3 Implement `SetProjectPaused(ctx,id,paused,hard)` (404 on missing/archived; writes only the bit; on `paused&&hard` calls session hard-drain for the project, orchestrators excluded), `FleetPaused(ctx)`, and `SetFleetPaused(ctx,paused,hard)` (on `paused&&hard` fan out worker hard-drain across all projects; orchestrators stay alive in every mode). Table-test each incl. error envelopes.
 
 ## 3. Enforcement: spawn guard
 

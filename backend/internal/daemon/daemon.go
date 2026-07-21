@@ -135,7 +135,6 @@ func Run() error {
 		return fmt.Errorf("wire session service: %w", err)
 	}
 	lcStack.trackerDone = startTrackerIntake(ctx, store, sessionSvc, log)
-	lcStack.drainDone = startDrain(ctx, store, sessionSvc, telemetrySink, log)
 	agentSvc := agentsvc.New()
 	go func() {
 		if _, err := agentSvc.Refresh(ctx); err != nil {
@@ -201,6 +200,12 @@ func Run() error {
 	if reconcileErr := sessMgr.Reconcile(ctx); reconcileErr != nil {
 		log.Error("reconcile sessions on boot failed", "err", reconcileErr)
 	}
+
+	// Start the fleet drain sweeper only AFTER boot reconciliation: its immediate
+	// first poll terminates drainable workers of paused projects, which must not
+	// race Reconcile's adoption/restore of crash-surviving sessions for the same
+	// worktree.
+	lcStack.drainDone = startDrain(ctx, store, sessionSvc, telemetrySink, log)
 
 	// ponytail: 5s tolerates a brief frontend restart; tune if dev hot-reload trips it.
 	const supervisorGrace = 5 * time.Second

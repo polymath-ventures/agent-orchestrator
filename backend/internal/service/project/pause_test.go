@@ -2,6 +2,7 @@ package project_test
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -14,10 +15,12 @@ import (
 // fakePauseSessions records Kill calls and satisfies the project service's
 // session collaborator (teardown + kill).
 type fakePauseSessions struct {
-	mu       sync.Mutex
-	killed   []domain.SessionID
-	killErr  error
-	torndown []domain.ProjectID
+	mu        sync.Mutex
+	killed    []domain.SessionID
+	attempted []domain.SessionID
+	killErr   error
+	failIDs   map[domain.SessionID]bool
+	torndown  []domain.ProjectID
 }
 
 func (f *fakePauseSessions) TeardownProject(_ context.Context, p domain.ProjectID) error {
@@ -30,12 +33,18 @@ func (f *fakePauseSessions) TeardownProject(_ context.Context, p domain.ProjectI
 func (f *fakePauseSessions) Kill(_ context.Context, id domain.SessionID) (bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.attempted = append(f.attempted, id)
 	if f.killErr != nil {
 		return false, f.killErr
+	}
+	if f.failIDs[id] {
+		return false, errKillFailed
 	}
 	f.killed = append(f.killed, id)
 	return true, nil
 }
+
+var errKillFailed = errors.New("kill failed")
 
 func newPauseStore(t *testing.T) *sqlite.Store {
 	t.Helper()
@@ -115,6 +124,30 @@ func TestSetProjectPausedHardKillsWorkersNotOrchestrators(t *testing.T) {
 	}
 }
 
+// A hard drain is best-effort: one worker's Kill failure must not stop the
+// others from being terminated. Every eligible worker is attempted and the
+// error is surfaced.
+func TestSetProjectPausedHardIsBestEffortOnKillError(t *testing.T) {
+	ctx := context.Background()
+	store := newPauseStore(t)
+	seedPauseProject(t, store, "proj")
+	w1 := seedSession(t, store, "proj", domain.KindWorker)
+	w2 := seedSession(t, store, "proj", domain.KindWorker)
+	sessions := &fakePauseSessions{failIDs: map[domain.SessionID]bool{w1: true}}
+	m := project.NewWithDeps(project.Deps{Store: store, Sessions: sessions})
+
+	_, err := m.SetProjectPaused(ctx, "proj", true, true)
+	if err == nil {
+		t.Fatalf("expected an error surfaced from the failing Kill")
+	}
+	if len(sessions.attempted) != 2 {
+		t.Fatalf("attempted %d kills, want 2 (both workers attempted despite w1 failing)", len(sessions.attempted))
+	}
+	if len(sessions.killed) != 1 || sessions.killed[0] != w2 {
+		t.Fatalf("killed = %v, want only w2 (%s) succeeded", sessions.killed, w2)
+	}
+}
+
 // Fleet pause is a daemon-global flag that round-trips and is reflected in the
 // per-project derived state.
 func TestFleetPauseReflectedInProjectState(t *testing.T) {
@@ -144,14 +177,14 @@ func TestFleetPauseReflectedInProjectState(t *testing.T) {
 	}
 }
 
-// A hard fleet pause fans out termination across all projects, orchestrators
-// included.
-func TestSetFleetPausedHardDrainsAllProjectsIncludingOrchestrators(t *testing.T) {
+// A hard fleet pause fans out worker termination across all projects but leaves
+// orchestrators alive (they stay up so supervision/alerting keeps running).
+func TestSetFleetPausedHardDrainsWorkersNotOrchestrators(t *testing.T) {
 	ctx := context.Background()
 	store := newPauseStore(t)
 	seedPauseProject(t, store, "p1")
 	seedPauseProject(t, store, "p2")
-	seedSession(t, store, "p1", domain.KindWorker)
+	w := seedSession(t, store, "p1", domain.KindWorker)
 	seedSession(t, store, "p2", domain.KindOrchestrator)
 	sessions := &fakePauseSessions{}
 	m := project.NewWithDeps(project.Deps{Store: store, Sessions: sessions})
@@ -159,7 +192,7 @@ func TestSetFleetPausedHardDrainsAllProjectsIncludingOrchestrators(t *testing.T)
 	if err := m.SetFleetPaused(ctx, true, true); err != nil {
 		t.Fatalf("SetFleetPaused hard: %v", err)
 	}
-	if len(sessions.killed) != 2 {
-		t.Fatalf("fleet hard pause killed %d sessions, want 2 (worker + orchestrator)", len(sessions.killed))
+	if len(sessions.killed) != 1 || sessions.killed[0] != w {
+		t.Fatalf("fleet hard pause killed %v, want only the worker %s (orchestrators stay alive)", sessions.killed, w)
 	}
 }

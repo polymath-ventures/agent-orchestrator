@@ -59,7 +59,11 @@ export function FleetSection() {
 	});
 
 	const paused = query.data ?? false;
-	const busy = pause.isPending || pauseHard.isPending || resume.isPending;
+	// Until the status is known (loading or errored), disable the actions rather
+	// than defaulting to "Running" — acting on an unknown state could pause/resume
+	// the wrong way.
+	const statusKnown = query.isSuccess;
+	const busy = pause.isPending || pauseHard.isPending || resume.isPending || !statusKnown;
 	const actionError = pause.error ?? pauseHard.error ?? resume.error;
 
 	return (
@@ -80,6 +84,8 @@ export function FleetSection() {
 							<span className="min-w-0 flex-1 truncate">
 								{query.isLoading ? (
 									<span className="text-passive">Checking…</span>
+								) : query.isError ? (
+									<span className="text-error">Unknown (daemon unreachable)</span>
 								) : paused ? (
 									<span className="text-muted-foreground">Paused</span>
 								) : (

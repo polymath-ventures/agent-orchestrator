@@ -132,16 +132,16 @@ func (s *Sweeper) drainProject(ctx context.Context, id domain.ProjectID) error {
 			live++
 			continue
 		}
-		killed, err := s.sessions.Kill(ctx, sess.ID)
-		if err != nil {
-			live++ // transient: retry next tick
+		// Kill's bool reports whether the workspace was reclaimed, NOT whether the
+		// session was terminated: a dirty worktree is preserved (bool=false) but
+		// the session is still marked terminated. So a nil error means the worker
+		// is drained regardless of the bool; only a real error leaves it live to
+		// retry next tick.
+		if _, err := s.sessions.Kill(ctx, sess.ID); err != nil {
+			live++
 			continue
 		}
-		if killed {
-			drained++
-		} else {
-			live++ // no-op kill (e.g. dirty worktree preserved) — still live
-		}
+		drained++
 	}
 	if live > 0 {
 		s.hadLive[id] = true
