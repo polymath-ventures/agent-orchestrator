@@ -80,7 +80,7 @@ func (m *Service) SetFleetPaused(ctx context.Context, paused, hard bool) error {
 	if err := m.store.SetFleetPaused(ctx, paused); err != nil {
 		return apierr.Internal("FLEET_PAUSE_FAILED", "Failed to update fleet pause state")
 	}
-	if !(paused && hard) {
+	if !paused || !hard {
 		return nil
 	}
 	projects, err := m.store.ListProjects(ctx)
