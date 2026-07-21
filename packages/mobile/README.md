@@ -38,7 +38,10 @@ desktop/CLI ───── 127.0.0.1:3001 (loopback, no auth, unchanged)
 
 Transport is **plaintext HTTP by design** — this is a trusted-home-network tool. On
 untrusted Wi-Fi, use Tailscale instead and point the app at the `100.x` address or MagicDNS
-name. Background: [`docs/adr/0001-lan-listener-for-mobile.md`](../../docs/adr/0001-lan-listener-for-mobile.md).
+name. Setting `AO_MOBILE_ADVERTISED_HOST` on the daemon (e.g. to the MagicDNS name) makes
+the pairing QR and status advertise that host directly, so the scan flow works over the
+tailnet too; on a tailnet-only Linux host the daemon falls back to its `100.x` address
+automatically. Background: [`docs/adr/0001-lan-listener-for-mobile.md`](../../docs/adr/0001-lan-listener-for-mobile.md).
 
 ## Prerequisites
 

@@ -149,8 +149,9 @@ func Run() error {
 	// left nil, hand its controller into NewWithDeps, then once srv exists,
 	// build the LAN listener over srv.Handler() and assign it onto bs.LAN.
 	bs := &controllers.BridgeService{
-		ConfigPath:  mobilebridge.Path(cfg.DataDir),
-		DefaultPort: mobilebridge.DefaultPort,
+		ConfigPath:     mobilebridge.Path(cfg.DataDir),
+		DefaultPort:    mobilebridge.DefaultPort,
+		AdvertisedHost: cfg.MobileAdvertisedHost,
 	}
 	mc := &controllers.MobileController{Bridge: bs}
 

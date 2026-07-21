@@ -104,6 +104,11 @@ type Config struct {
 	// AllowedOrigins are the browser origins granted CORS read access (see
 	// DefaultAllowedOrigins). Overridden by AO_ALLOWED_ORIGINS.
 	AllowedOrigins []string
+	// MobileAdvertisedHost, when set (AO_MOBILE_ADVERTISED_HOST), is the host —
+	// IP or DNS name — advertised to pairing phones in the Connect Mobile
+	// status/QR instead of the autopicked interface address. It does not change
+	// what the LAN listener binds; it only changes what is advertised.
+	MobileAdvertisedHost string
 	// Telemetry controls local/remote telemetry sinks.
 	Telemetry TelemetryConfig
 	// Metrics controls the usage and quota metrics observer.
@@ -129,6 +134,7 @@ func (c Config) Addr() string {
 //	AO_DATA_DIR          durable state dir   (default ~/.ao/data)
 //	AO_AGENT             compatibility agent id (default claude-code)
 //	AO_ALLOWED_ORIGINS   CORS origins, comma-separated (default DefaultAllowedOrigins)
+//	AO_MOBILE_ADVERTISED_HOST  host advertised in the Connect Mobile pairing status/QR (default: interface autopick)
 //	AO_TELEMETRY_EVENTS  local event capture off|on (default off)
 //	AO_TELEMETRY_METRICS local metric capture off|on (default off)
 //	AO_TELEMETRY_REMOTE  remote exporter off|posthog (default off)
@@ -185,6 +191,10 @@ func Load() (Config, error) {
 
 	if raw := os.Getenv("AO_AGENT"); raw != "" {
 		cfg.Agent = raw
+	}
+
+	if raw := strings.TrimSpace(os.Getenv("AO_MOBILE_ADVERTISED_HOST")); raw != "" {
+		cfg.MobileAdvertisedHost = raw
 	}
 
 	if raw, ok := os.LookupEnv("AO_ALLOWED_ORIGINS"); ok && raw != "" {

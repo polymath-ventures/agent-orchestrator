@@ -10,7 +10,7 @@ import (
 func TestLoadDefaults(t *testing.T) {
 	// Clear every recognised var so we observe pure defaults regardless of the
 	// surrounding environment.
-	for _, k := range []string{"AO_PORT", "AO_REQUEST_TIMEOUT", "AO_SHUTDOWN_TIMEOUT", "AO_RUN_FILE", "AO_DATA_DIR", "AO_AGENT", "AO_ALLOWED_ORIGINS", "AO_TELEMETRY_EVENTS", "AO_TELEMETRY_METRICS", "AO_TELEMETRY_REMOTE", "AO_TELEMETRY_POSTHOG_KEY", "AO_TELEMETRY_POSTHOG_HOST", "AO_METRICS_INTERVAL", "AO_METRICS_LOW_QUOTA_PERCENT"} {
+	for _, k := range []string{"AO_PORT", "AO_REQUEST_TIMEOUT", "AO_SHUTDOWN_TIMEOUT", "AO_RUN_FILE", "AO_DATA_DIR", "AO_AGENT", "AO_ALLOWED_ORIGINS", "AO_MOBILE_ADVERTISED_HOST", "AO_TELEMETRY_EVENTS", "AO_TELEMETRY_METRICS", "AO_TELEMETRY_REMOTE", "AO_TELEMETRY_POSTHOG_KEY", "AO_TELEMETRY_POSTHOG_HOST", "AO_METRICS_INTERVAL", "AO_METRICS_LOW_QUOTA_PERCENT"} {
 		t.Setenv(k, "")
 	}
 
@@ -54,6 +54,9 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.Metrics.Interval != DefaultMetricsInterval || cfg.Metrics.LowQuotaPercent != DefaultMetricsLowQuotaPercent {
 		t.Fatalf("Metrics defaults = %+v", cfg.Metrics)
 	}
+	if cfg.MobileAdvertisedHost != "" {
+		t.Errorf("MobileAdvertisedHost = %q, want empty default", cfg.MobileAdvertisedHost)
+	}
 }
 
 func TestLoadOverrides(t *testing.T) {
@@ -69,6 +72,7 @@ func TestLoadOverrides(t *testing.T) {
 	t.Setenv("AO_TELEMETRY_POSTHOG_HOST", "https://eu.i.posthog.com")
 	t.Setenv("AO_METRICS_INTERVAL", "2m")
 	t.Setenv("AO_METRICS_LOW_QUOTA_PERCENT", "7.5")
+	t.Setenv("AO_MOBILE_ADVERTISED_HOST", "  ao-server.example.ts.net  ")
 
 	cfg, err := Load()
 	if err != nil {
@@ -97,6 +101,9 @@ func TestLoadOverrides(t *testing.T) {
 	}
 	if cfg.Metrics.Interval != 2*time.Minute || cfg.Metrics.LowQuotaPercent != 7.5 {
 		t.Fatalf("Metrics config = %+v", cfg.Metrics)
+	}
+	if cfg.MobileAdvertisedHost != "ao-server.example.ts.net" {
+		t.Errorf("MobileAdvertisedHost = %q, want trimmed override", cfg.MobileAdvertisedHost)
 	}
 }
 
