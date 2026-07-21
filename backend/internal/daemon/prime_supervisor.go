@@ -170,6 +170,7 @@ func ensurePrime(ctx context.Context, cfg primeSupervisorConfig, state *primeSup
 		state.resetIdleWake()
 		return
 	}
+	state.resetRestart()
 	if primeShouldWake(active, now, cfg.IdleWakeAfter) {
 		if state.reserveIdleWake(now, cfg) {
 			if err := sessions.Send(ctx, active.ID, primeIdleWakeMessage); err != nil {
@@ -256,6 +257,12 @@ func (s *primeSupervisorState) reserveIdleWake(now time.Time, cfg primeSuperviso
 func (s *primeSupervisorState) resetIdleWake() {
 	s.nextIdleWakeAt = time.Time{}
 	s.idleWakeBackoff = 0
+}
+
+func (s *primeSupervisorState) resetRestart() {
+	s.restartAttempts = nil
+	s.nextRestartAt = time.Time{}
+	s.restartBackoff = 0
 }
 
 func notifyPrimeRestartCapped(ctx context.Context, notifier notificationSink, sess domain.Session, now time.Time) {

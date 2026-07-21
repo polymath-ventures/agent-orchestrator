@@ -117,6 +117,30 @@ func TestMigrateAllowsPrimeSessionKind(t *testing.T) {
 	}
 }
 
+func TestMigrateAllowsModelHealthNotifications(t *testing.T) {
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "ao.db")+pragmas)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	if err := migrate(db); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	var schema string
+	if err := db.QueryRow(
+		"SELECT sql FROM sqlite_master WHERE type='table' AND name='notifications'",
+	).Scan(&schema); err != nil {
+		t.Fatalf("read notifications schema: %v", err)
+	}
+	for _, typ := range []domain.NotificationType{domain.NotificationModelUnreachable, domain.NotificationModelRecovered} {
+		if !strings.Contains(schema, "'"+string(typ)+"'") {
+			t.Fatalf("notifications.type CHECK is missing %s; schema:\n%s", typ, schema)
+		}
+	}
+}
+
 func TestMigrateAllowsPrimeRestartNotification(t *testing.T) {
 	db, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "ao.db")+pragmas)
 	if err != nil {

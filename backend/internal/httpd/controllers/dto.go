@@ -178,7 +178,7 @@ type ListSessionsResponse struct {
 type SpawnSessionRequest struct {
 	ProjectID domain.ProjectID    `json:"projectId"`
 	IssueID   domain.IssueID      `json:"issueId,omitempty"`
-	Kind      domain.SessionKind  `json:"kind,omitempty" enum:"worker,orchestrator,prime"`
+	Kind      domain.SessionKind  `json:"kind,omitempty" enum:"worker,orchestrator"`
 	Harness   domain.AgentHarness `json:"harness,omitempty" enum:"claude-code,codex,codex-fugu,aider,opencode,grok,droid,amp,agy,crush,cursor,qwen,copilot,goose,auggie,continue,devin,cline,kimi,kiro,kilocode,vibe,pi,autohand"`
 	// Model pins the model for the launched session and wins over any model from
 	// role or project config. Omitted falls back to that config resolution.

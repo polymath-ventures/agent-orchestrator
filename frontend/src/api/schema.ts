@@ -1392,7 +1392,7 @@ export interface components {
             harness?: "claude-code" | "codex" | "codex-fugu" | "aider" | "opencode" | "grok" | "droid" | "amp" | "agy" | "crush" | "cursor" | "qwen" | "copilot" | "goose" | "auggie" | "continue" | "devin" | "cline" | "kimi" | "kiro" | "kilocode" | "vibe" | "pi" | "autohand";
             issueId?: string;
             /** @enum {string} */
-            kind?: "worker" | "orchestrator" | "prime";
+            kind?: "worker" | "orchestrator";
             model?: string;
             projectId: string;
             prompt?: string;

@@ -3574,7 +3574,6 @@ components:
           enum:
           - worker
           - orchestrator
-          - prime
           type: string
         model:
           maxLength: 128

@@ -21,6 +21,9 @@ AO_PRIME_DISPLAY_NAME="AO Prime"
 override, and prime rules host the prime session. `AO_PRIME_DISPLAY_NAME` is
 optional, trimmed, and capped at 20 characters.
 
+Changing `AO_PRIME_PROJECT_ID` does not move an already healthy active prime.
+The new project is used for the next fresh spawn or clean replacement.
+
 ## Lifecycle
 
 The daemon starts a small supervisor loop only when `AO_PRIME_PROJECT_ID` is

@@ -91,6 +91,25 @@ func TestEnsurePrimeHonorsReplacementBackoff(t *testing.T) {
 	}
 }
 
+func TestEnsurePrimeResetsReplacementBackoffAfterHealthyPrime(t *testing.T) {
+	base := time.Date(2026, 7, 21, 10, 0, 0, 0, time.UTC)
+	sessions := &fakePrimeSessions{
+		active: primeSession("ao-prime", domain.StatusWorking, domain.ActivityActive, base),
+		ok:     true,
+	}
+	state := &primeSupervisorState{
+		restartAttempts: []time.Time{base.Add(-10 * time.Minute)},
+		nextRestartAt:   base.Add(time.Minute),
+		restartBackoff:  10 * time.Minute,
+	}
+
+	ensurePrime(context.Background(), testPrimeConfig(base), state, sessions, nil)
+
+	if len(state.restartAttempts) != 0 || !state.nextRestartAt.IsZero() || state.restartBackoff != 0 {
+		t.Fatalf("restart state = %+v, want reset after healthy prime", state)
+	}
+}
+
 func TestEnsurePrimeWakesIdleWithBackoff(t *testing.T) {
 	base := time.Date(2026, 7, 21, 10, 0, 0, 0, time.UTC)
 	sessions := &fakePrimeSessions{

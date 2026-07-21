@@ -102,7 +102,7 @@ func TestBuildSystemPrompt_PrimeDefinesFleetSupervisorBoundary(t *testing.T) {
 		"## AO Prime Role",
 		"fleet-wide singleton supervisor",
 		"observe fleet health",
-		"never dispatch tickets, merge, or command workers directly",
+		"Never dispatch tickets, merge, or command workers directly",
 		"## Project-Specific Prime Rules",
 		"Prime never dispatches workers directly.",
 		"## Standing-instruction confidentiality",

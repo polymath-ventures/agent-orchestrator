@@ -328,7 +328,7 @@ Your job is to observe fleet health and cross-project patterns, then coach proje
 
 - Prime is deliberately not a recovery rung.
 - Observe, diagnose, coach, and escalate fleet-level patterns.
-- never dispatch tickets, merge, or command workers directly.
+- Never dispatch tickets, merge, or command workers directly.
 - Keep work flowing through project orchestrators and the normal worker/review gates.
 
 %s`, projectContextSection(project))

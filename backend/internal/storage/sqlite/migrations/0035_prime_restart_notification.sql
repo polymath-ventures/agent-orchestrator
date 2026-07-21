@@ -9,8 +9,8 @@ PRAGMA writable_schema = ON;
 UPDATE sqlite_master
 SET sql = replace(
     sql,
-    '''low_quota''',
-    '''low_quota'', ''model_unreachable'', ''model_recovered'', ''prime_restart_capped'''
+    '''model_recovered''',
+    '''model_recovered'', ''prime_restart_capped'''
 )
 WHERE type = 'table' AND name = 'notifications';
 -- +goose StatementEnd
@@ -26,8 +26,8 @@ PRAGMA writable_schema = ON;
 UPDATE sqlite_master
 SET sql = replace(
     sql,
-    '''low_quota'', ''model_unreachable'', ''model_recovered'', ''prime_restart_capped''',
-    '''low_quota'''
+    '''model_recovered'', ''prime_restart_capped''',
+    '''model_recovered'''
 )
 WHERE type = 'table' AND name = 'notifications';
 -- +goose StatementEnd

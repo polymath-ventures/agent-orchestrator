@@ -20,7 +20,7 @@ WHERE type = 'table' AND name = 'sessions';
 PRAGMA writable_schema = RESET;
 -- +goose StatementEnd
 -- +goose StatementBegin
-CREATE UNIQUE INDEX idx_sessions_active_prime_singleton ON sessions (kind)
+CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_active_prime_singleton ON sessions (kind)
 WHERE kind = 'prime' AND is_terminated = 0;
 -- +goose StatementEnd
 
