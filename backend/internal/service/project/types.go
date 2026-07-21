@@ -11,19 +11,28 @@ type Summary struct {
 	SessionPrefix     string              `json:"sessionPrefix"`
 	OrchestratorAgent domain.AgentHarness `json:"orchestratorAgent,omitempty"`
 	ResolveError      string              `json:"resolveError,omitempty"`
+	// Paused is the project's own pause bit; PauseState is the derived
+	// running/draining/paused state (accounting for the fleet flag); and
+	// DrainingWorkers is the count of workers still finishing under a pause.
+	Paused          bool       `json:"paused"`
+	PauseState      PauseState `json:"pauseState,omitempty"`
+	DrainingWorkers int        `json:"drainingWorkers,omitempty"`
 }
 
 // Project is the full read-model returned by GET /api/v1/projects/{id}.
 type Project struct {
-	ID             domain.ProjectID      `json:"id"`
-	Name           string                `json:"name"`
-	Kind           domain.ProjectKind    `json:"kind"`
-	Path           string                `json:"path"`
-	Repo           string                `json:"repo"`
-	DefaultBranch  string                `json:"defaultBranch"`
-	Agent          string                `json:"agent,omitempty"`
-	Config         *domain.ProjectConfig `json:"config,omitempty"`
-	WorkspaceRepos []WorkspaceRepo       `json:"workspaceRepos,omitempty"`
+	ID              domain.ProjectID      `json:"id"`
+	Name            string                `json:"name"`
+	Kind            domain.ProjectKind    `json:"kind"`
+	Path            string                `json:"path"`
+	Repo            string                `json:"repo"`
+	DefaultBranch   string                `json:"defaultBranch"`
+	Agent           string                `json:"agent,omitempty"`
+	Config          *domain.ProjectConfig `json:"config,omitempty"`
+	WorkspaceRepos  []WorkspaceRepo       `json:"workspaceRepos,omitempty"`
+	Paused          bool                  `json:"paused"`
+	PauseState      PauseState            `json:"pauseState,omitempty"`
+	DrainingWorkers int                   `json:"drainingWorkers,omitempty"`
 }
 
 // Degraded is returned in place of Project when project config failed to load.

@@ -645,6 +645,51 @@ func projectOperations() []operation {
 				{http.StatusInternalServerError, envelope.APIError{}},
 			},
 		},
+		{
+			method: http.MethodPost, path: "/api/v1/projects/{id}/pause", id: "pauseProject", tag: "projects",
+			summary:    "Pause a project; ?hard=true terminates live workers immediately",
+			pathParams: []any{controllers.ProjectIDParam{}, controllers.HardPauseParam{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.ProjectResponse{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/projects/{id}/resume", id: "resumeProject", tag: "projects",
+			summary:    "Resume a paused project",
+			pathParams: []any{controllers.ProjectIDParam{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.ProjectResponse{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodGet, path: "/api/v1/fleet", id: "getFleetStatus", tag: "projects",
+			summary: "Report the daemon-global fleet pause status",
+			resps: []respUnit{
+				{http.StatusOK, controllers.FleetStatusResponse{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/fleet/pause", id: "pauseFleet", tag: "projects",
+			summary:    "Pause the whole fleet; ?hard=true terminates live workers immediately",
+			pathParams: []any{controllers.HardPauseParam{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.FleetStatusResponse{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/fleet/resume", id: "resumeFleet", tag: "projects",
+			summary: "Resume the whole fleet",
+			resps: []respUnit{
+				{http.StatusOK, controllers.FleetStatusResponse{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+			},
+		},
 	}
 }
 

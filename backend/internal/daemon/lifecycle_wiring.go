@@ -16,6 +16,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/lifecycle"
+	"github.com/aoagents/agent-orchestrator/backend/internal/observe/drain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/observe/reaper"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	reviewcore "github.com/aoagents/agent-orchestrator/backend/internal/review"
@@ -39,6 +40,7 @@ type lifecycleStack struct {
 	reaperDone  <-chan struct{}
 	scmDone     <-chan struct{}
 	trackerDone <-chan struct{}
+	drainDone   <-chan struct{}
 }
 
 // startLifecycle constructs the Lifecycle Manager over the store and starts the
@@ -61,6 +63,17 @@ func (l *lifecycleStack) Stop() {
 	if l.trackerDone != nil {
 		<-l.trackerDone
 	}
+	if l.drainDone != nil {
+		<-l.drainDone
+	}
+}
+
+// startDrain starts the fleet pause drain sweeper. It is started after
+// startSession because it drives the session service's Kill path (unavailable
+// during startLifecycle, which runs before the session service is built). The
+// goroutine stops when ctx is cancelled; Stop waits for it via drainDone.
+func startDrain(ctx context.Context, store *sqlite.Store, sessions drain.Sessions, telemetry ports.EventSink, logger *slog.Logger) <-chan struct{} {
+	return drain.New(store, sessions, drain.Config{Telemetry: telemetry, Logger: logger}).Start(ctx)
 }
 
 // sessionLifecycle is the narrow surface of sessionmanager.Manager used for

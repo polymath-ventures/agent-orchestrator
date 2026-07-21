@@ -21,6 +21,11 @@ type ChangeLog struct {
 	CreatedAt time.Time
 }
 
+type DaemonSetting struct {
+	ID          int64
+	FleetPaused bool
+}
+
 type Notification struct {
 	ID        string
 	SessionID *domain.SessionID
@@ -132,6 +137,7 @@ type Project struct {
 	ArchivedAt    sql.NullTime
 	Config        sql.NullString
 	Kind          string
+	Paused        bool
 }
 
 type QuotaSnapshot struct {

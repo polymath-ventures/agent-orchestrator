@@ -10,16 +10,19 @@ ON CONFLICT (id) DO UPDATE SET
     kind = excluded.kind;
 
 -- name: GetProject :one
-SELECT id, path, repo_origin_url, display_name, registered_at, archived_at, config, kind
+SELECT id, path, repo_origin_url, display_name, registered_at, archived_at, config, kind, paused
 FROM projects WHERE id = ?;
 
 -- name: ListProjects :many
-SELECT id, path, repo_origin_url, display_name, registered_at, archived_at, config, kind
+SELECT id, path, repo_origin_url, display_name, registered_at, archived_at, config, kind, paused
 FROM projects WHERE archived_at IS NULL ORDER BY id;
 
 -- name: FindProjectByPath :one
-SELECT id, path, repo_origin_url, display_name, registered_at, archived_at, config, kind
+SELECT id, path, repo_origin_url, display_name, registered_at, archived_at, config, kind, paused
 FROM projects WHERE path = ? AND archived_at IS NULL;
 
 -- name: ArchiveProject :execrows
 UPDATE projects SET archived_at = ? WHERE id = ? AND archived_at IS NULL;
+
+-- name: SetProjectPaused :execrows
+UPDATE projects SET paused = ? WHERE id = ?;

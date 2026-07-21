@@ -146,7 +146,7 @@ func (c *SessionsController) spawn(w http.ResponseWriter, r *http.Request) {
 	}
 	// model is passed through as submitted: the manager owns resolution against
 	// role/project config and trims the value it records on the session row.
-	sess, err := c.Svc.Spawn(r.Context(), ports.SpawnConfig{ProjectID: in.ProjectID, IssueID: in.IssueID, Kind: in.Kind, Harness: in.Harness, Model: in.Model, Branch: in.Branch, Prompt: in.Prompt, DisplayName: displayName})
+	sess, err := c.Svc.Spawn(r.Context(), ports.SpawnConfig{ProjectID: in.ProjectID, IssueID: in.IssueID, Kind: in.Kind, Harness: in.Harness, Model: in.Model, Branch: in.Branch, Prompt: in.Prompt, DisplayName: displayName, Force: in.Force})
 	if err != nil {
 		envelope.WriteError(w, r, err)
 		return

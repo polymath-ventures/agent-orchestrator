@@ -36,29 +36,31 @@ Every product command resolves to a daemon HTTP route. Run `ao <command>
 
 ### Product commands
 
-| Command                             | Daemon route                                                       |
-| ----------------------------------- | ------------------------------------------------------------------ |
-| `ao project add`                    | `POST /api/v1/projects`                                            |
-| `ao project ls`                     | `GET /api/v1/projects`                                             |
-| `ao project get <id>`               | `GET /api/v1/projects/{id}`                                        |
-| `ao project set-config <id>`        | `PUT /api/v1/projects/{id}/config`                                 |
-| `ao project rm <id>`                | `DELETE /api/v1/projects/{id}`                                     |
-| `ao role prompt <project> <role>`   | `GET /api/v1/projects/{id}/roles/{role}/prompt`                    |
-| `ao agent ls`                       | `GET /api/v1/agents`                                               |
-| `ao agent ls --refresh`             | `POST /api/v1/agents/refresh`                                      |
-| `ao spawn`                          | `POST /api/v1/sessions`                                            |
-| `ao session ls`                     | `GET /api/v1/sessions`                                             |
-| `ao session get <id>`               | `GET /api/v1/sessions/{id}`                                        |
-| `ao session kill <id>`              | `POST /api/v1/sessions/{id}/kill`                                  |
-| `ao session restore <id>`           | `POST /api/v1/sessions/{id}/restore`                               |
-| `ao session rename <id> <name>`     | `PATCH /api/v1/sessions/{id}`                                      |
-| `ao session cleanup`                | `POST /api/v1/sessions/cleanup`                                    |
-| `ao session claim-pr <id> <pr-ref>` | `POST /api/v1/sessions/{id}/pr/claim`                              |
-| `ao orchestrator ls`                | `GET /api/v1/orchestrators`                                        |
-| `ao send`                           | `POST /api/v1/sessions/{id}/send`                                  |
-| `ao preview [url]`                  | `POST /api/v1/sessions/{id}/preview`                               |
-| `ao notify slack`                   | `GET /api/v1/notifications/stream` (+ `GET /api/v1/notifications`) |
-| `ao hooks <agent> <event>`          | `POST /api/v1/sessions/{id}/activity` (hidden)                     |
+| Command                             | Daemon route                                                          |
+| ----------------------------------- | --------------------------------------------------------------------- |
+| `ao project add`                    | `POST /api/v1/projects`                                               |
+| `ao project ls`                     | `GET /api/v1/projects`                                                |
+| `ao project get <id>`               | `GET /api/v1/projects/{id}`                                           |
+| `ao project set-config <id>`        | `PUT /api/v1/projects/{id}/config`                                    |
+| `ao project rm <id>`                | `DELETE /api/v1/projects/{id}`                                        |
+| `ao role prompt <project> <role>`   | `GET /api/v1/projects/{id}/roles/{role}/prompt`                       |
+| `ao pause [project] [--hard]`       | `POST /api/v1/projects/{id}/pause` (or `/fleet/pause` with `--all`)   |
+| `ao resume [project]`               | `POST /api/v1/projects/{id}/resume` (or `/fleet/resume` with `--all`) |
+| `ao agent ls`                       | `GET /api/v1/agents`                                                  |
+| `ao agent ls --refresh`             | `POST /api/v1/agents/refresh`                                         |
+| `ao spawn`                          | `POST /api/v1/sessions`                                               |
+| `ao session ls`                     | `GET /api/v1/sessions`                                                |
+| `ao session get <id>`               | `GET /api/v1/sessions/{id}`                                           |
+| `ao session kill <id>`              | `POST /api/v1/sessions/{id}/kill`                                     |
+| `ao session restore <id>`           | `POST /api/v1/sessions/{id}/restore`                                  |
+| `ao session rename <id> <name>`     | `PATCH /api/v1/sessions/{id}`                                         |
+| `ao session cleanup`                | `POST /api/v1/sessions/cleanup`                                       |
+| `ao session claim-pr <id> <pr-ref>` | `POST /api/v1/sessions/{id}/pr/claim`                                 |
+| `ao orchestrator ls`                | `GET /api/v1/orchestrators`                                           |
+| `ao send`                           | `POST /api/v1/sessions/{id}/send`                                     |
+| `ao preview [url]`                  | `POST /api/v1/sessions/{id}/preview`                                  |
+| `ao notify slack`                   | `GET /api/v1/notifications/stream` (+ `GET /api/v1/notifications`)    |
+| `ao hooks <agent> <event>`          | `POST /api/v1/sessions/{id}/activity` (hidden)                        |
 
 `ao agent ls` prints the daemon-supported agent catalog with local install/auth
 readiness. Use `--refresh` to rerun the bounded local probes and `--json` to
@@ -76,6 +78,13 @@ catalog and fails early when the selected agent is unsupported, not installed,
 or unauthorized. It warns-but-continues when auth remains unknown because daemon
 spawn remains the authoritative runtime validation point. Use
 `--skip-agent-check` to bypass only this CLI-side preflight.
+
+`ao pause`/`ao resume` gate a single project (positional id) or the whole fleet
+(`--all`). A soft pause stops new intake and spawns and lets live workers drain
+at idle; `--hard` terminates live workers immediately (orchestrators stay alive
+in every mode). Pause state also appears in `ao status` (`fleet:` line) and
+`ao project ls` / `ao project get`. `ao spawn --force` overrides an active pause
+for a single spawn.
 
 `ao preview` resolves its session from the `AO_SESSION_ID` environment variable
 (it is meant to run inside a session), not a flag. With no argument it

@@ -851,6 +851,7 @@ func TestToAPIErrorMapsWorkspaceBranchSentinels(t *testing.T) {
 		{"missing harness", fmt.Errorf("spawn: %w: configure project worker.agent or pass --harness", sessionmanager.ErrMissingHarness), apierr.KindInvalid, "AGENT_REQUIRED"},
 		{"awaiting decision", fmt.Errorf("send mer-1: %w", sessionmanager.ErrAwaitingDecision), apierr.KindConflict, "SESSION_AWAITING_DECISION"},
 		{"worker concurrency cap", fmt.Errorf("spawn: %w: project mer at 4 of 4 live worker(s)", sessionmanager.ErrWorkerConcurrencyCap), apierr.KindConflict, "WORKER_CONCURRENCY_CAP"},
+		{"project paused", fmt.Errorf("spawn: %w: project scope; resume it or pass Force to override", sessionmanager.ErrProjectPaused), apierr.KindConflict, "PROJECT_PAUSED"},
 		{"worker mix exhausted", fmt.Errorf("spawn: %w: project mer configures 3 bucket(s), none selectable", sessionmanager.ErrWorkerMixExhausted), apierr.KindConflict, "WORKER_MIX_EXHAUSTED"},
 	}
 	for _, tc := range cases {

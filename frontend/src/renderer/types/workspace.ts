@@ -179,6 +179,9 @@ export function canonicalTrackerIssueId(issueId?: string): string | undefined {
 
 export type ProjectKind = "single_repo" | "workspace";
 
+/** Fleet/per-project pause lifecycle, mirrors the daemon's ProjectSummary. */
+export type PauseState = "running" | "draining" | "paused";
+
 export type WorkspaceRepoSummary = {
 	name: string;
 	relativePath: string;
@@ -318,6 +321,12 @@ export type WorkspaceSummary = {
 	type?: "main" | "worktree";
 	orchestratorAgent?: AgentProvider;
 	accentColor?: string;
+	/** Whether the project is paused (soft or hard). */
+	paused?: boolean;
+	/** Draining = live workers finishing before the pause takes hold. */
+	pauseState?: PauseState;
+	/** Workers still draining while pauseState === "draining". */
+	drainingWorkers?: number;
 	diff?: {
 		additions: number;
 		deletions: number;

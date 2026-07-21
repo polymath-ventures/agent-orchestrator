@@ -55,6 +55,18 @@ type ProjectResponse struct {
 	Project projectsvc.Project `json:"project"`
 }
 
+// FleetStatusResponse is the body of GET /fleet and the fleet pause/resume
+// routes.
+type FleetStatusResponse struct {
+	Paused bool `json:"paused"`
+}
+
+// HardPauseParam is the optional ?hard query flag on the pause routes. When
+// true, live workers are terminated immediately instead of drained at idle.
+type HardPauseParam struct {
+	Hard bool `query:"hard,omitempty" description:"Terminate live workers immediately instead of draining at idle."`
+}
+
 // GetProjectResponse is the { status, project } body of GET /projects/{id},
 // where project is oneOf Project|Degraded discriminated by status.
 type GetProjectResponse struct {
@@ -177,6 +189,9 @@ type SpawnSessionRequest struct {
 	// `ao spawn --name` always sets it; other clients (e.g. the desktop new-task
 	// dialog) may omit it and fall back to the session id in the read model.
 	DisplayName string `json:"displayName,omitempty" maxLength:"20"`
+	// Force overrides the pause guard: a forced worker spawn proceeds even while
+	// the project or fleet is paused. It is the operator's manual escape hatch.
+	Force bool `json:"force,omitempty"`
 }
 
 // SessionResponse is the { session } body shared by session create/get.

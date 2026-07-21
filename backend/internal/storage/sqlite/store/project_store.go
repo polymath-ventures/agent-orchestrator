@@ -138,6 +138,34 @@ func (s *Store) ArchiveProject(ctx context.Context, id string, at time.Time) (bo
 	return n > 0, nil
 }
 
+// SetProjectPaused writes only the per-project pause bit, leaving the config
+// column untouched. Reports whether a matching row was updated.
+func (s *Store) SetProjectPaused(ctx context.Context, id string, paused bool) (bool, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	n, err := s.qw.SetProjectPaused(ctx, gen.SetProjectPausedParams{
+		Paused: paused,
+		ID:     domain.ProjectID(id),
+	})
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
+}
+
+// GetFleetPaused reads the daemon-global fleet pause flag. The single
+// daemon_settings row is seeded unpaused at migration time.
+func (s *Store) GetFleetPaused(ctx context.Context) (bool, error) {
+	return s.qr.GetFleetPaused(ctx)
+}
+
+// SetFleetPaused writes the daemon-global fleet pause flag.
+func (s *Store) SetFleetPaused(ctx context.Context, paused bool) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	return s.qw.SetFleetPaused(ctx, paused)
+}
+
 func projectRowFromGen(p gen.Project) domain.ProjectRecord {
 	r := domain.ProjectRecord{
 		ID:            string(p.ID),
@@ -147,6 +175,7 @@ func projectRowFromGen(p gen.Project) domain.ProjectRecord {
 		RegisteredAt:  p.RegisteredAt,
 		Kind:          domain.ProjectKind(p.Kind).WithDefault(),
 		Config:        unmarshalProjectConfig(p.Config),
+		Paused:        p.Paused,
 	}
 	if p.ArchivedAt.Valid {
 		r.ArchivedAt = p.ArchivedAt.Time

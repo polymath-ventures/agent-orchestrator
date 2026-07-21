@@ -606,6 +606,11 @@ func toAPIError(err error) error {
 		return apierr.Invalid("UNKNOWN_HARNESS", err.Error(), nil)
 	case errors.Is(err, sessionmanager.ErrMissingHarness):
 		return apierr.Invalid("AGENT_REQUIRED", err.Error(), nil)
+	case errors.Is(err, sessionmanager.ErrProjectPaused):
+		// The project or the fleet is paused, so new work is gated. A pause is an
+		// operator state, not a server fault: 409 lets a client resume (or pass
+		// Force) rather than read it as a crash.
+		return apierr.Conflict("PROJECT_PAUSED", err.Error(), nil)
 	case errors.Is(err, sessionmanager.ErrWorkerConcurrencyCap):
 		// Capacity is a transient state, not a server fault: the project is at
 		// its live-worker ceiling. 409 lets a client retry once a worker frees.

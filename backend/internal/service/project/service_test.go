@@ -120,6 +120,10 @@ func (f *fakeProjectTeardowner) TeardownProject(_ context.Context, project domai
 	return f.err
 }
 
+func (f *fakeProjectTeardowner) Kill(_ context.Context, _ domain.SessionID) (bool, error) {
+	return true, nil
+}
+
 func TestManager_AddListGetRemove(t *testing.T) {
 	ctx := context.Background()
 	m := newManager(t)

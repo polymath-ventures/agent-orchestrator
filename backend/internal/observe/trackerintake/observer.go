@@ -37,6 +37,9 @@ const (
 type Store interface {
 	ListProjects(ctx context.Context) ([]domain.ProjectRecord, error)
 	ListAllSessions(ctx context.Context) ([]domain.SessionRecord, error)
+	// GetFleetPaused reports the daemon-global fleet pause flag. When set, the
+	// whole intake tick is skipped.
+	GetFleetPaused(ctx context.Context) (bool, error)
 }
 
 // Spawner is the session creation surface used by intake.
@@ -126,13 +129,21 @@ func (o *Observer) Poll(ctx context.Context) error {
 		return nil
 	}
 	now := o.clock().UTC()
+	// A fleet pause gates every project: skip the whole tick before touching any
+	// tracker. Fail open on a read error so a storage blip cannot silently wedge
+	// intake.
+	if paused, err := o.store.GetFleetPaused(ctx); err == nil && paused {
+		o.logger.Debug("tracker intake: fleet paused, skipping tick")
+		return nil
+	}
 	projects, err := o.store.ListProjects(ctx)
 	if err != nil {
 		return err
 	}
 	enabledProjects := make([]domain.ProjectRecord, 0, len(projects))
 	for _, project := range projects {
-		if project.Config.TrackerIntake.Enabled {
+		// A paused project keeps its intake config but dispatches nothing.
+		if project.Config.TrackerIntake.Enabled && !project.Paused {
 			enabledProjects = append(enabledProjects, project)
 		}
 	}

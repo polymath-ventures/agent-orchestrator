@@ -25,6 +25,7 @@ type fakeStore struct {
 	pr            map[domain.SessionID]domain.PRFacts
 	projects      map[string]domain.ProjectRecord
 	workspaceRepo map[string][]domain.WorkspaceRepoRecord
+	fleetPaused   bool
 	num           int
 	deleteErr     error
 	upsertWTErr   error
@@ -47,6 +48,9 @@ func newFakeStore() *fakeStore {
 func (f *fakeStore) GetProject(_ context.Context, id string) (domain.ProjectRecord, bool, error) {
 	r, ok := f.projects[id]
 	return r, ok, nil
+}
+func (f *fakeStore) GetFleetPaused(context.Context) (bool, error) {
+	return f.fleetPaused, nil
 }
 func (f *fakeStore) ListWorkspaceRepos(_ context.Context, projectID string) ([]domain.WorkspaceRepoRecord, error) {
 	return f.workspaceRepo[projectID], nil
