@@ -56,6 +56,16 @@ func newTestRuntime(chunkSize int) (*Runtime, *fakeRunner) {
 	return r, fr
 }
 
+func commandExitError(t *testing.T, code string) *exec.ExitError {
+	t.Helper()
+	err := exec.Command("sh", "-c", "exit "+code).Run()
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) {
+		t.Fatalf("exit %s produced %T, want *exec.ExitError", code, err)
+	}
+	return exitErr
+}
+
 // -- Options / New tests --
 
 func TestNewDefaultsToPortableShell(t *testing.T) {
@@ -506,7 +516,7 @@ func TestIsRunningCommandMatchesExpectedChildCommand(t *testing.T) {
 func TestIsRunningCommandReturnsFalseWhenExpectedChildMissing(t *testing.T) {
 	r, fr := newTestRuntime(0)
 	fr.outputs = [][]byte{[]byte("123\n"), nil}
-	fr.errs = []error{nil, &exec.ExitError{}}
+	fr.errs = []error{nil, commandExitError(t, "1")}
 
 	running, err := r.IsRunningCommand(context.Background(), ports.RuntimeHandle{ID: "sess-1"}, "codex")
 	if err != nil {
@@ -517,6 +527,20 @@ func TestIsRunningCommandReturnsFalseWhenExpectedChildMissing(t *testing.T) {
 	}
 	if got, want := fr.calls[1].args, []string{"-P", "123", "-f", "codex"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("process probe args = %#v, want %#v", got, want)
+	}
+}
+
+func TestIsRunningCommandReportsPgrepErrors(t *testing.T) {
+	r, fr := newTestRuntime(0)
+	fr.outputs = [][]byte{[]byte("123\n"), nil}
+	fr.errs = []error{nil, commandExitError(t, "2")}
+
+	running, err := r.IsRunningCommand(context.Background(), ports.RuntimeHandle{ID: "sess-1"}, "codex")
+	if err == nil {
+		t.Fatal("IsRunningCommand err = nil, want probe error for pgrep failure")
+	}
+	if running {
+		t.Fatal("running = true on probe failure")
 	}
 }
 

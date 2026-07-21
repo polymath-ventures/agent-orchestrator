@@ -6,6 +6,7 @@ package conpty
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"syscall"
 	"time"
@@ -188,17 +189,12 @@ func clientStatusAlive(addr string, useInnerAlive bool) (alive bool, transientEr
 	}
 
 	aliveC := make(chan bool, 1)
+	var statusErr error
 	parser := NewMessageParser(func(msgType byte, payload []byte) {
 		if msgType == MsgStatusRes {
 			var sp StatusPayload
 			if err := json.Unmarshal(payload, &sp); err != nil {
-				if useInnerAlive {
-					return
-				}
-				select {
-				case aliveC <- false:
-				default:
-				}
+				statusErr = fmt.Errorf("conpty status: decode response: %w", err)
 				return
 			}
 			alive := true
@@ -218,6 +214,9 @@ func clientStatusAlive(addr string, useInnerAlive bool) (alive bool, transientEr
 		n, err := conn.Read(buf)
 		if n > 0 {
 			parser.Feed(buf[:n])
+		}
+		if statusErr != nil {
+			return false, statusErr
 		}
 		select {
 		case result := <-aliveC:

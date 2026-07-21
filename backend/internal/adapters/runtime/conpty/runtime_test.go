@@ -657,6 +657,41 @@ func TestIsAlive_RefusedIsGone_TimeoutIsTransient(t *testing.T) {
 	}
 }
 
+func TestClientStatusAlive_MalformedStatusIsTransient(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer ln.Close()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		buf := make([]byte, 64)
+		_, _ = conn.Read(buf)
+		frame, _ := EncodeMessage(MsgStatusRes, []byte("{not-json"))
+		_, _ = conn.Write(frame)
+	}()
+
+	alive, err := clientIsAlive(ln.Addr().String())
+	if alive {
+		t.Fatal("clientIsAlive malformed status alive=true, want false")
+	}
+	if err == nil {
+		t.Fatal("clientIsAlive malformed status err=nil, want transient decode error")
+	}
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("malformed status server did not finish")
+	}
+}
+
 // TestClientKill_Idempotent verifies clientKill on a dead address returns nil.
 func TestClientKill_Idempotent(t *testing.T) {
 	if err := clientKill("127.0.0.1:1"); err != nil {

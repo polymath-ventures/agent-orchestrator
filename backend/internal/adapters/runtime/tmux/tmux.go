@@ -233,7 +233,7 @@ func (r *Runtime) IsRunningCommand(ctx context.Context, handle ports.RuntimeHand
 	childOut, err := r.runner.Run(ctx, nil, "pgrep", args...)
 	if err != nil {
 		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) && strings.TrimSpace(string(childOut)) == "" {
+		if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 && strings.TrimSpace(string(childOut)) == "" {
 			return false, nil
 		}
 		return false, fmt.Errorf("tmux runtime: inspect child process %d: %w", pid, err)
