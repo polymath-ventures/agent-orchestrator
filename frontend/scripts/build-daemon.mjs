@@ -12,6 +12,9 @@ const outPath = join(outDir, process.platform === "win32" ? "ao.exe" : "ao");
 const cliVersionSymbol = "github.com/aoagents/agent-orchestrator/backend/internal/cli.Version";
 
 export function daemonBuildArgs(outputPath, version) {
+	if (typeof version !== "string" || version.trim() === "") {
+		throw new Error("build-daemon: frontend/package.json must contain a non-empty version");
+	}
 	return ["build", "-ldflags", `-X ${cliVersionSymbol}=${version}`, "-o", outputPath, "./cmd/ao"];
 }
 

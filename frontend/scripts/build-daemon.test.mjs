@@ -14,4 +14,10 @@ describe("daemonBuildArgs", () => {
 			"./cmd/ao",
 		]);
 	});
+
+	it.each([undefined, "", "   "])("rejects a missing or empty package version (%j)", (version) => {
+		expect(() => daemonBuildArgs("/tmp/ao", version)).toThrow(
+			"build-daemon: frontend/package.json must contain a non-empty version",
+		);
+	});
 });
