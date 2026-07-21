@@ -1,0 +1,194 @@
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import assert from "node:assert/strict";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, beforeEach, describe, it } from "node:test";
+
+import { checkDrift, refreshSnapshot, trackedProjects } from "./config-drift-check.mjs";
+
+let dir;
+const cleanup = [];
+
+beforeEach(async () => {
+	dir = await mkdtemp(path.join(os.tmpdir(), "config-drift-"));
+	cleanup.push(() => rm(dir, { recursive: true, force: true }));
+});
+
+afterEach(async () => {
+	await Promise.all(cleanup.splice(0).map((fn) => fn()));
+});
+
+async function seedSnapshot(project, body = "{}\n") {
+	await writeFile(path.join(dir, `${project}.json`), body);
+}
+
+// A fake `run` that returns a scripted result keyed by project, and records
+// every invocation so tests can assert exactly what was called.
+function fakeRun(script) {
+	const calls = [];
+	const run = async (args) => {
+		calls.push(args);
+		const project = args[3];
+		const scripted = script[project] ?? { code: 0, stdout: "", stderr: "" };
+		if (typeof scripted === "function") return scripted(args);
+		return scripted;
+	};
+	run.calls = calls;
+	return run;
+}
+
+describe("trackedProjects", () => {
+	it("is exactly the *.json files in the snapshot dir, sorted, and nothing else", async () => {
+		await seedSnapshot("beta");
+		await seedSnapshot("alpha");
+		await writeFile(path.join(dir, "README.md"), "not a snapshot");
+		await writeFile(path.join(dir, "notes.txt"), "not a snapshot");
+
+		const projects = await trackedProjects(dir);
+		assert.deepEqual(
+			projects.map((p) => p.project),
+			["alpha", "beta"],
+		);
+		for (const p of projects) {
+			assert.equal(p.file, path.join(dir, `${p.project}.json`));
+		}
+	});
+
+	it("returns empty for a dir with no snapshots (and does not throw on a missing dir)", async () => {
+		assert.deepEqual(await trackedProjects(path.join(dir, "does-not-exist")), []);
+	});
+});
+
+describe("checkDrift", () => {
+	it("exits zero and reports every project in sync when all diffs pass", async () => {
+		await seedSnapshot("alpha");
+		await seedSnapshot("beta");
+		const run = fakeRun({ alpha: { code: 0 }, beta: { code: 0 } });
+
+		const { exitCode, results } = await checkDrift({ snapshotDir: dir, run });
+
+		assert.equal(exitCode, 0);
+		assert.deepEqual(
+			results.map((r) => r.status),
+			["ok", "ok"],
+		);
+	});
+
+	it("invokes `project config diff <project> <snapshot>` once per snapshot", async () => {
+		await seedSnapshot("alpha");
+		await seedSnapshot("beta");
+		const run = fakeRun({});
+
+		await checkDrift({ snapshotDir: dir, run });
+
+		assert.equal(run.calls.length, 2);
+		assert.deepEqual(run.calls[0], ["project", "config", "diff", "alpha", path.join(dir, "alpha.json")]);
+		assert.deepEqual(run.calls[1], ["project", "config", "diff", "beta", path.join(dir, "beta.json")]);
+	});
+
+	it("exits nonzero, names each drifted project, and carries the diff output", async () => {
+		await seedSnapshot("alpha");
+		await seedSnapshot("beta");
+		const run = fakeRun({
+			alpha: { code: 0 },
+			beta: { code: 1, stdout: "maxConcurrency: spec=2 live=5\n" },
+		});
+
+		const { exitCode, results } = await checkDrift({ snapshotDir: dir, run });
+
+		assert.notEqual(exitCode, 0);
+		const beta = results.find((r) => r.project === "beta");
+		assert.equal(beta.status, "drift");
+		assert.match(beta.detail, /maxConcurrency/);
+		const alpha = results.find((r) => r.project === "alpha");
+		assert.equal(alpha.status, "ok");
+	});
+
+	it("checks every project even when an early one drifts (aggregate, not fail-fast)", async () => {
+		await seedSnapshot("alpha");
+		await seedSnapshot("beta");
+		await seedSnapshot("gamma");
+		const run = fakeRun({
+			alpha: { code: 1, stdout: "drift\n" },
+			beta: { code: 0 },
+			gamma: { code: 1, stdout: "drift\n" },
+		});
+
+		const { exitCode, results } = await checkDrift({ snapshotDir: dir, run });
+
+		assert.notEqual(exitCode, 0);
+		assert.equal(run.calls.length, 3);
+		assert.deepEqual(
+			results.map((r) => `${r.project}:${r.status}`),
+			["alpha:drift", "beta:ok", "gamma:drift"],
+		);
+	});
+
+	it("reports a setup/usage error (exit 2) distinctly from drift", async () => {
+		await seedSnapshot("alpha");
+		const run = fakeRun({ alpha: { code: 2, stderr: "usage error\n" } });
+
+		const { exitCode, results } = await checkDrift({ snapshotDir: dir, run });
+
+		assert.notEqual(exitCode, 0);
+		assert.equal(results[0].status, "error");
+		assert.notEqual(results[0].status, "drift");
+	});
+
+	it("never invokes apply and never mutates a snapshot file", async () => {
+		await seedSnapshot("alpha", '{"before":true}\n');
+		const run = fakeRun({ alpha: { code: 1, stdout: "drift\n" } });
+
+		await checkDrift({ snapshotDir: dir, run });
+
+		for (const call of run.calls) {
+			assert.equal(call[2], "diff");
+			assert.notEqual(call[2], "apply");
+		}
+		assert.equal(await readFile(path.join(dir, "alpha.json"), "utf8"), '{"before":true}\n');
+	});
+});
+
+describe("refreshSnapshot", () => {
+	it("writes the fresh export to the snapshot file so a later diff is in sync", async () => {
+		await seedSnapshot("alpha", '{"stale":true}\n');
+		const exported = '{"fresh":true}\n';
+		const run = fakeRun({ alpha: { code: 0, stdout: exported } });
+
+		const result = await refreshSnapshot({ snapshotDir: dir, project: "alpha", run });
+
+		assert.equal(result.changed, true);
+		assert.equal(run.calls[0][2], "export");
+		assert.equal(await readFile(path.join(dir, "alpha.json"), "utf8"), exported);
+	});
+
+	it("leaves the file byte-unchanged when live config already matches (no spurious diff)", async () => {
+		const current = '{"same":true}\n';
+		await seedSnapshot("alpha", current);
+		const run = fakeRun({ alpha: { code: 0, stdout: current } });
+
+		const result = await refreshSnapshot({ snapshotDir: dir, project: "alpha", run });
+
+		assert.equal(result.changed, false);
+		assert.equal(await readFile(path.join(dir, "alpha.json"), "utf8"), current);
+	});
+
+	it("never invokes apply (refresh is export-only, no live-config mutation)", async () => {
+		await seedSnapshot("alpha");
+		const run = fakeRun({ alpha: { code: 0, stdout: "{}\n" } });
+
+		await refreshSnapshot({ snapshotDir: dir, project: "alpha", run });
+
+		for (const call of run.calls) {
+			assert.notEqual(call[2], "apply");
+		}
+	});
+
+	it("surfaces a failed export as an error and does not overwrite the snapshot", async () => {
+		await seedSnapshot("alpha", '{"kept":true}\n');
+		const run = fakeRun({ alpha: { code: 1, stderr: "daemon down\n" } });
+
+		await assert.rejects(refreshSnapshot({ snapshotDir: dir, project: "alpha", run }), /export failed/i);
+		assert.equal(await readFile(path.join(dir, "alpha.json"), "utf8"), '{"kept":true}\n');
+	});
+});
