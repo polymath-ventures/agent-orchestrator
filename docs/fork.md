@@ -44,6 +44,13 @@ routes (`/api`, `/healthz`, `/readyz`, and `/mux`) from the same browser origin.
 It does not replace the desktop release flow and it does not make npm the
 canonical install path.
 
+**Deploys are one command**: `ops/deploy.sh [ref]` builds an immutable release
+(backend binary + web bundle), flips `~/.ao/deploy/current`, syncs top-level
+systemd units (never `*.service.d/` drop-ins), restarts `ao`/`ao-web`, and
+verifies daemon health, the public URL, and the fresh boot log.
+`ops/deploy.sh --rollback` re-flips to the previous release. The manual steps
+below remain as the reference for what the script does.
+
 Build the renderer from a release or checked-out source tree:
 
 ```bash
@@ -128,6 +135,7 @@ killing sessions. That is intentionally narrower than a LAN daemon listener:
 boundary. Do not expose the Node server directly on the LAN; if this ever needs
 a non-tailnet listener, use the bearer-auth model in
 `docs/adr/0001-lan-listener-for-mobile.md` instead.
+
 ## Headless Server Standup
 
 AO can run as a headless Linux user service on the Polymath fork. This is
