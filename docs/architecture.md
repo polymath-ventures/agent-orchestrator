@@ -285,10 +285,11 @@ daemon-side at spawn from a small hardcoded scaffold plus operator-controlled
 sources. The operator surface is per-project config on `domain.ProjectConfig`:
 `agentRules`/`agentRulesFile` (worker), `orchestratorRules`/`orchestratorRulesFile`
 (orchestrator), and `reviewerRules`/`reviewerRulesFile` (reviewer). Inline text and
-a repo-relative file are merged verbatim by the shared loader
+a repo-relative file are merged, content-preserving, by the shared loader
 `sessionmanager.LoadRoleRules`, which is **fail-closed**: a configured file that is
-missing, unreadable, empty, or over the size limit fails the spawn loudly rather
-than silently dropping the operator's standing rules.
+missing, unreadable, empty, oversized, not a regular file, or escaping the project
+root (the file is read through a root-confined `os.Root` handle) fails the spawn
+loudly rather than silently dropping the operator's standing rules.
 
 The effective prompt is inspectable read-only via
 `GET /api/v1/projects/{id}/roles/{role}/prompt` (CLI: `ao role prompt <project>

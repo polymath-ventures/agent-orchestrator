@@ -44,11 +44,17 @@ func (c *RolePromptController) get(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, roleprompt.ErrProjectNotFound):
 		envelope.WriteAPIError(w, r, http.StatusNotFound, "not_found", "PROJECT_NOT_FOUND", err.Error(), nil)
 		return
-	case err != nil:
+	case roleprompt.IsRulesMisconfig(err):
 		// A configured-but-unloadable operator rules override surfaces here as
 		// the same fail-closed error a spawn would raise, rather than a prompt
 		// with the override silently omitted.
 		envelope.WriteAPIError(w, r, http.StatusUnprocessableEntity, "unprocessable", "ROLE_PROMPT_UNAVAILABLE", err.Error(), nil)
+		return
+	case err != nil:
+		// Any other failure (store, context cancellation, unexpected internal
+		// fault) is not an operator config problem — surface it as a sanitized
+		// 500 rather than mislabeling it a 422 and leaking internal details.
+		envelope.WriteError(w, r, err)
 		return
 	}
 	envelope.WriteJSON(w, http.StatusOK, RolePromptResponse{Role: role, Prompt: prompt})

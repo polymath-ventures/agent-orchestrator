@@ -2192,6 +2192,7 @@ func (m *Manager) buildSystemPrompt(ctx context.Context, kind domain.SessionKind
 	case domain.KindOrchestrator:
 		rules, err := LoadRoleRules(RoleRulesConfig{
 			Role:        "orchestrator",
+			ProjectID:   string(projectID),
 			ProjectPath: project.Path,
 			InlineRules: project.Config.OrchestratorRules,
 			RulesFile:   project.Config.OrchestratorRulesFile,
@@ -2210,6 +2211,7 @@ func (m *Manager) buildSystemPrompt(ctx context.Context, kind domain.SessionKind
 		}
 		rules, err := LoadRoleRules(RoleRulesConfig{
 			Role:        "worker",
+			ProjectID:   string(projectID),
 			ProjectPath: project.Path,
 			InlineRules: project.Config.AgentRules,
 			RulesFile:   project.Config.AgentRulesFile,

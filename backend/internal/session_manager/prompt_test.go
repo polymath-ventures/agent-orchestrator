@@ -1,6 +1,7 @@
 package sessionmanager
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -193,6 +194,52 @@ func TestLoadRoleRules_OversizedFileFailsClosed(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "limit") {
 		t.Fatalf("error should mention the size limit: %v", err)
+	}
+}
+
+func TestLoadRoleRules_SymlinkEscapeFailsClosed(t *testing.T) {
+	// A rules-file path that is lexically repo-relative but symlinks outside the
+	// project root must not be followed — it would inject an external secret into
+	// the prompt (and the visibility API).
+	dir := t.TempDir()
+	secret := filepath.Join(t.TempDir(), "secret.txt")
+	if err := os.WriteFile(secret, []byte("TOP SECRET"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "rules.md")
+	if err := os.Symlink(secret, link); err != nil {
+		t.Skipf("symlinks unsupported: %v", err)
+	}
+	got, err := LoadRoleRules(RoleRulesConfig{
+		Role:        "worker",
+		ProjectID:   "mer",
+		ProjectPath: dir,
+		RulesFile:   "rules.md",
+	})
+	if err == nil {
+		t.Fatalf("expected escaping symlink to fail closed, got prompt: %q", got)
+	}
+	if strings.Contains(got, "TOP SECRET") {
+		t.Fatal("external secret leaked through a symlink")
+	}
+}
+
+func TestLoadRoleRules_ErrorNamesProject(t *testing.T) {
+	_, err := LoadRoleRules(RoleRulesConfig{
+		Role:        "reviewer",
+		ProjectID:   "mercury",
+		ProjectPath: t.TempDir(),
+		RulesFile:   "missing.md",
+	})
+	if err == nil {
+		t.Fatal("expected missing file to fail closed")
+	}
+	if !strings.Contains(err.Error(), "mercury") {
+		t.Fatalf("error should name the project: %v", err)
+	}
+	var rle *RulesLoadError
+	if !errors.As(err, &rle) {
+		t.Fatalf("expected a RulesLoadError, got %T", err)
 	}
 }
 

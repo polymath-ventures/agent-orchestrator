@@ -3,6 +3,9 @@ package review
 import (
 	"fmt"
 	"strings"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	sessionmanager "github.com/aoagents/agent-orchestrator/backend/internal/session_manager"
 )
 
 // reviewTexts returns the user-facing prompt and the system prompt to deliver to
@@ -21,6 +24,22 @@ const reviewerSystemPromptBase = `## Code reviewer role
 You are an AO code reviewer. You review the requested pull request changes in the current checkout — do not start unrelated work. Inspect what each PR changed by diffing the checkout against the PR's base branch, and review for correctness bugs, missing error handling, security issues, test coverage, and clear deviations from the surrounding code's conventions. Prefer a few high-confidence findings over nitpicks.
 
 Post your review as a comment on the pull request, stating clearly whether it needs changes or is ready, with inline comments for specific findings. Do not push commits, edit files, or modify the branch — review only.`
+
+// ReviewerRules loads the operator-controlled reviewer standing instructions for
+// a project (inline + repo-relative file) through the shared role-rules loader.
+// It is the single entry point both the reviewer spawn path and the
+// effective-prompt visibility path use, so what an operator inspects always
+// matches what the reviewer is actually launched with. Fail-closed:
+// misconfiguration returns a sessionmanager.RulesLoadError.
+func ReviewerRules(projectID, projectPath string, cfg domain.ProjectConfig) (string, error) {
+	return sessionmanager.LoadRoleRules(sessionmanager.RoleRulesConfig{
+		Role:        "reviewer",
+		ProjectID:   projectID,
+		ProjectPath: projectPath,
+		InlineRules: cfg.ReviewerRules,
+		RulesFile:   cfg.ReviewerRulesFile,
+	})
+}
 
 // AssembleReviewerSystemPrompt returns the reviewer role's full system prompt
 // with the operator's reviewer rules appended verbatim. It is the reviewer

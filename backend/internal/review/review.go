@@ -19,7 +19,6 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
-	sessionmanager "github.com/aoagents/agent-orchestrator/backend/internal/session_manager"
 )
 
 // ErrInvalid and ErrNotFound let the transport layer map failures to 422/404.
@@ -332,12 +331,7 @@ func (e *Engine) reviewerRules(ctx stdctx.Context, worker domain.SessionRecord) 
 	if !ok {
 		return "", nil
 	}
-	return sessionmanager.LoadRoleRules(sessionmanager.RoleRulesConfig{
-		Role:        "reviewer",
-		ProjectPath: proj.Path,
-		InlineRules: proj.Config.ReviewerRules,
-		RulesFile:   proj.Config.ReviewerRulesFile,
-	})
+	return ReviewerRules(string(worker.ProjectID), proj.Path, proj.Config)
 }
 
 func reviewQueue(runs []domain.ReviewRun) []ports.ReviewTask {

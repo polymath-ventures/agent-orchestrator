@@ -37,6 +37,16 @@ var ErrUnknownRole = errors.New("unknown role")
 // maps it to a not-found error.
 var ErrProjectNotFound = errors.New("project not found")
 
+// IsRulesMisconfig reports whether err is a configured-but-unusable operator
+// rules file (missing, empty, oversized, not a regular file, or escaping the
+// project root). Transports map it to a client 4xx; every other error is an
+// internal fault that must surface as a sanitized 5xx, not be mislabeled a
+// config problem.
+func IsRulesMisconfig(err error) bool {
+	var rle *sessionmanager.RulesLoadError
+	return errors.As(err, &rle)
+}
+
 // SessionPromptAssembler assembles the worker/orchestrator system prompt for a
 // project. *session_manager.Manager satisfies it via RoleSystemPrompt.
 type SessionPromptAssembler interface {
@@ -82,12 +92,9 @@ func (a *Assembler) RolePrompt(ctx context.Context, projectID domain.ProjectID, 
 	case RoleOrchestrator:
 		return a.sessions.RoleSystemPrompt(ctx, domain.KindOrchestrator, projectID)
 	default: // RoleReviewer
-		rules, err := sessionmanager.LoadRoleRules(sessionmanager.RoleRulesConfig{
-			Role:        RoleReviewer,
-			ProjectPath: proj.Path,
-			InlineRules: proj.Config.ReviewerRules,
-			RulesFile:   proj.Config.ReviewerRulesFile,
-		})
+		// Same loader the reviewer spawn path uses (review.ReviewerRules), so
+		// what the operator inspects matches what the reviewer is launched with.
+		rules, err := review.ReviewerRules(string(projectID), proj.Path, proj.Config)
 		if err != nil {
 			return "", err
 		}

@@ -3,9 +3,11 @@ package controllers_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
@@ -13,6 +15,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/controllers"
 	"github.com/aoagents/agent-orchestrator/backend/internal/roleprompt"
+	sessionmanager "github.com/aoagents/agent-orchestrator/backend/internal/session_manager"
 )
 
 type fakeRolePrompt struct {
@@ -72,11 +75,27 @@ func TestRolePromptController_NotFound(t *testing.T) {
 }
 
 func TestRolePromptController_MisconfiguredOverrideIsUnprocessable(t *testing.T) {
-	svc := &fakeRolePrompt{err: fmt.Errorf("reviewer rules file docs/x.md: file is empty")}
+	svc := &fakeRolePrompt{err: &sessionmanager.RulesLoadError{
+		ProjectID: "mer", Role: "reviewer", File: "docs/x.md", Err: errors.New("file is empty"),
+	}}
 	rr := httptest.NewRecorder()
 	rolePromptRouter(svc).ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/projects/mer/roles/reviewer/prompt", nil))
 	if rr.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("status = %d, want 422; body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestRolePromptController_InternalErrorIsSanitized500(t *testing.T) {
+	// A non-config failure (store/context/internal) must not be mislabeled a 422
+	// config problem, and its raw detail must not leak.
+	svc := &fakeRolePrompt{err: fmt.Errorf("database connection refused: secret-host:5432")}
+	rr := httptest.NewRecorder()
+	rolePromptRouter(svc).ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/projects/mer/roles/worker/prompt", nil))
+	if rr.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500; body=%s", rr.Code, rr.Body.String())
+	}
+	if strings.Contains(rr.Body.String(), "secret-host") {
+		t.Fatalf("internal detail leaked in response: %s", rr.Body.String())
 	}
 }
 

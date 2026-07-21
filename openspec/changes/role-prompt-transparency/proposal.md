@@ -54,8 +54,8 @@ inspect.
   effective-prompt route.
 - **Frontend (Electron/React):** a read-only settings inspector surface that renders the assembled
   prompt per role and lets the operator set each role's instructions-file override per project.
-- **Storage:** a new migration for the per-role instruction pointer fields (no edits to already-
-  merged migrations).
+- **Storage:** no migration — `ProjectConfig` persists as one JSON blob, so the new optional
+  instruction-pointer fields need no schema or sqlc change.
 - **Upstream:** the audit, the visibility surface, and the per-role instructions extension are all
   intended as upstream-candidate work; keep the change rebase-clean and idiomatic to upstream's
   existing mechanisms.

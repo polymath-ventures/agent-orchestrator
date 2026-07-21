@@ -3,17 +3,18 @@
 ### Requirement: Per-role operator instruction override
 
 The system SHALL allow an operator to configure, per project and per role (worker, orchestrator,
-reviewer), a pointer to an operator-owned instructions file whose contents are injected verbatim
-into that role's assembled prompt on the next spawn. The override SHALL extend the role's existing
-instruction sources rather than replace the base scaffold, and its content SHALL NOT be transformed,
-summarized, or reordered before injection.
+reviewer), a pointer to an operator-owned instructions file whose contents are injected into that
+role's assembled prompt on the next spawn. The override SHALL extend the role's existing instruction
+sources rather than replace the base scaffold, and its content SHALL NOT be summarized, reordered, or
+otherwise modified before injection (only surrounding whitespace is normalized for clean assembly).
 
-#### Scenario: Configured override is injected verbatim on next spawn
+#### Scenario: Configured override content is injected unchanged on next spawn
 
 - **WHEN** an operator sets a role's instructions-file override for a project and a new session for
   that role is spawned
-- **THEN** the exact byte-for-byte contents of the referenced file appear in that role's assembled
-  prompt, and no separate parallel prompt-assembly path is used
+- **THEN** the referenced file's content appears unchanged (not summarized, reordered, or edited;
+  aside from surrounding-whitespace normalization) in that role's assembled prompt, and no separate
+  parallel prompt-assembly path is used
 
 #### Scenario: No override configured leaves the role prompt unchanged
 

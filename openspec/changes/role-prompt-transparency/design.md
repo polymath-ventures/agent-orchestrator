@@ -68,8 +68,9 @@ inline + file pair:
 - Reviewer: add `ReviewerRules` (inline) and `ReviewerRulesFile` (repo-relative) — net-new surface.
 
 Worker already has both (`AgentRules`/`AgentRulesFile`), so no new worker field. Each new field gets
-a `ao project ... --*-rules[-file]` flag and flows through the existing config DTO + `PUT` route; a
-new migration adds the columns. **Alternative rejected:** one generic `map[role]RulesOverride` — it
+a `ao project ... --*-rules[-file]` flag and flows through the existing config DTO + `PUT` route. No
+migration is needed: `ProjectConfig` persists as a single JSON blob, so new optional fields require no
+schema or sqlc change (see tasks.md 2.3). **Alternative rejected:** one generic `map[role]RulesOverride` — it
 would break the established one-field-per-concern `ProjectConfig` shape, complicate the CLI flags and
 the DTO/OpenAPI contract, and make upstreaming harder than mirroring the existing precedent.
 
@@ -137,12 +138,13 @@ route's output by definition, not a hidden channel.
 
 ## Migration Plan
 
-- Add one new migration for the `OrchestratorRulesFile`, `ReviewerRules`, and `ReviewerRulesFile`
-  columns; do not edit merged migrations. Regenerate sqlc.
-- Regenerate the API contract (controller DTO + `npm run api`) for the new visibility route and any
+- No migration or sqlc change: the new `OrchestratorRulesFile`, `ReviewerRules`, and
+  `ReviewerRulesFile` fields live on `ProjectConfig`, which persists as a single JSON blob, so
+  optional additions are absorbed with no schema change.
+- Regenerate the API contract (controller DTO + `npm run api`) for the new visibility route and the
   config-DTO field additions; commit generated OpenAPI/TS together.
 - Backward compatible: all new fields are optional; absent = current behavior (no override, prompt
-  unchanged). No data backfill. Rollback is dropping the new route/flags/columns; existing rows are
+  unchanged). No data backfill. Rollback is dropping the new route/flags/fields; existing rows are
   unaffected because empty overrides are inert.
 
 ## Open Questions

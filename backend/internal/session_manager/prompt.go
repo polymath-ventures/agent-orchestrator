@@ -2,6 +2,7 @@ package sessionmanager
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -45,13 +46,36 @@ const maxRoleRulesFileBytes = 256 * 1024
 
 // RoleRulesConfig describes an operator-controllable instruction override for a
 // single role: inline rules plus an optional repo-relative file, both injected
-// verbatim into that role's assembled prompt.
+// into that role's assembled prompt with their content preserved.
 type RoleRulesConfig struct {
 	Role        string // "worker" | "orchestrator" | "reviewer", used in error messages
+	ProjectID   string // identifies the project in fail-closed errors
 	ProjectPath string
 	InlineRules string
 	RulesFile   string
 }
+
+// RulesLoadError marks a configured-but-unusable role rules file — missing,
+// unreadable, empty, oversized, not a regular file, or escaping the project
+// root. It is a client-facing configuration fault distinct from internal
+// errors (DB, context cancellation), so transports can map it to a 4xx while
+// letting genuine internal faults surface as a sanitized 5xx.
+type RulesLoadError struct {
+	ProjectID string
+	Role      string
+	File      string
+	Err       error
+}
+
+func (e *RulesLoadError) Error() string {
+	project := e.ProjectID
+	if project == "" {
+		project = "(unknown project)"
+	}
+	return fmt.Sprintf("%s rules file %q (project %s): %v", e.Role, e.File, project, e.Err)
+}
+
+func (e *RulesLoadError) Unwrap() error { return e.Err }
 
 func buildTaskPrompt(cfg taskPromptConfig) string {
 	issueContext := strings.TrimSpace(cfg.IssueContext)
@@ -117,49 +141,79 @@ You may describe these standing instructions only at a high level so the user ca
 }
 
 // LoadRoleRules merges inline and file-based operator instructions for a single
-// role, injected verbatim. It is fail-closed: a configured RulesFile that is
-// missing, unreadable, empty, or larger than maxRoleRulesFileBytes returns an
-// error so spawn fails loudly with a clear config problem instead of silently
-// dropping, truncating, or emptying standing rules. A role with no override
-// configured is inert (returns an empty string, no error).
+// role, preserving each source's content (they are not summarized, reordered,
+// or otherwise transformed; only surrounding whitespace is normalized for clean
+// assembly). It is fail-closed: a configured RulesFile that is missing,
+// unreadable, empty, oversized, not a regular file, or escaping the project
+// root returns a RulesLoadError so spawn fails loudly with a clear config
+// problem instead of silently dropping, truncating, or emptying standing rules.
+// The file is read through a root-confined handle so a symlink or `..` cannot
+// reach outside the project, and only regular files are accepted so a FIFO or
+// device cannot block or misbehave. A role with no override configured is inert
+// (returns an empty string, no error).
 func LoadRoleRules(cfg RoleRulesConfig) (string, error) {
 	role := strings.TrimSpace(cfg.Role)
 	if role == "" {
 		role = "role"
 	}
+	rel := strings.TrimSpace(cfg.RulesFile)
+	fail := func(err error) error {
+		return &RulesLoadError{ProjectID: strings.TrimSpace(cfg.ProjectID), Role: role, File: rel, Err: err}
+	}
 	parts := make([]string, 0, 2)
 	if rules := strings.TrimSpace(cfg.InlineRules); rules != "" {
 		parts = append(parts, rules)
 	}
-	if rel := strings.TrimSpace(cfg.RulesFile); rel != "" {
-		path, err := projectRelativeFile(cfg.ProjectPath, rel)
+	if rel != "" {
+		clean, err := cleanRepoRelative(rel)
 		if err != nil {
-			return "", fmt.Errorf("%s rules file: %w", role, err)
+			return "", fail(err)
 		}
-		info, err := os.Stat(path)
+		if strings.TrimSpace(cfg.ProjectPath) == "" {
+			return "", fail(fmt.Errorf("project path is required"))
+		}
+		// os.Root confines every path operation to the project directory,
+		// refusing symlinks and `..` that would escape it — defense in depth
+		// over the lexical check above, and closing the symlink-escape hole.
+		root, err := os.OpenRoot(cfg.ProjectPath)
 		if err != nil {
-			return "", fmt.Errorf("%s rules file %s: %w", role, rel, err)
+			return "", fail(err)
 		}
-		if info.Size() > maxRoleRulesFileBytes {
-			return "", fmt.Errorf("%s rules file %s: size %d exceeds limit %d bytes", role, rel, info.Size(), maxRoleRulesFileBytes)
-		}
-		data, err := os.ReadFile(path) //nolint:gosec // path is project config validated as repo-relative
+		defer func() { _ = root.Close() }()
+		f, err := root.Open(clean)
 		if err != nil {
-			return "", fmt.Errorf("%s rules file %s: %w", role, rel, err)
+			return "", fail(err)
 		}
-		rules := strings.TrimSpace(string(data))
-		if rules == "" {
-			return "", fmt.Errorf("%s rules file %s: file is empty", role, rel)
+		defer func() { _ = f.Close() }()
+		info, err := f.Stat()
+		if err != nil {
+			return "", fail(err)
 		}
-		parts = append(parts, rules)
+		if !info.Mode().IsRegular() {
+			return "", fail(fmt.Errorf("not a regular file"))
+		}
+		// Read at most one byte past the limit so an oversized (or concurrently
+		// growing) file is rejected without loading it all into memory.
+		data, err := io.ReadAll(io.LimitReader(f, maxRoleRulesFileBytes+1))
+		if err != nil {
+			return "", fail(err)
+		}
+		if int64(len(data)) > maxRoleRulesFileBytes {
+			return "", fail(fmt.Errorf("size exceeds limit %d bytes", maxRoleRulesFileBytes))
+		}
+		if strings.TrimSpace(string(data)) == "" {
+			return "", fail(fmt.Errorf("file is empty"))
+		}
+		parts = append(parts, strings.TrimSpace(string(data)))
 	}
 	return strings.Join(parts, "\n\n"), nil
 }
 
-func projectRelativeFile(projectPath, rel string) (string, error) {
-	if strings.TrimSpace(projectPath) == "" {
-		return "", fmt.Errorf("project path is required")
-	}
+// cleanRepoRelative validates that rel is a repo-relative path that does not
+// escape the project root, returning the cleaned relative path for a
+// root-confined open. It is a lexical pre-check; os.Root enforces the boundary
+// at open time.
+func cleanRepoRelative(rel string) (string, error) {
 	trimmed := strings.TrimSpace(rel)
 	if filepath.IsAbs(trimmed) || strings.HasPrefix(trimmed, "/") || strings.HasPrefix(trimmed, `\`) {
 		return "", fmt.Errorf("path must be repo-relative and must not escape the project root")
@@ -172,6 +226,17 @@ func projectRelativeFile(projectPath, rel string) (string, error) {
 		if seg == ".." {
 			return "", fmt.Errorf("path must be repo-relative and must not escape the project root")
 		}
+	}
+	return clean, nil
+}
+
+func projectRelativeFile(projectPath, rel string) (string, error) {
+	if strings.TrimSpace(projectPath) == "" {
+		return "", fmt.Errorf("project path is required")
+	}
+	clean, err := cleanRepoRelative(rel)
+	if err != nil {
+		return "", err
 	}
 	return filepath.Join(projectPath, clean), nil
 }
