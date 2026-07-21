@@ -37,25 +37,44 @@ export function isValidProject(project) {
 	);
 }
 
-// trackedProjects enumerates the snapshot dir: exactly the `*.json` files whose
-// base name is a valid project id, sorted by project id. A missing dir yields no
-// projects rather than throwing. Files whose name is not a valid project id
-// (e.g. `--help.json`) are skipped — they cannot be a real project, since such a
-// name could not be passed to the `ao` CLI.
-export async function trackedProjects(snapshotDir) {
+// listSnapshotEntries classifies every `*.json` entry in the snapshot dir into
+// `projects` (valid, regular-file snapshots to check) and `anomalies` (a `*.json`
+// entry that is not a usable snapshot: an invalid project-id name that could not
+// be passed to the CLI, or a non-regular file such as a symlink). `dirMissing`
+// is true when the directory itself does not exist. Anomalies and a missing dir
+// are surfaced by checkDrift as errors rather than silently dropped, so a
+// misconfigured or tampered snapshot set can never read as a clean "no drift".
+export async function listSnapshotEntries(snapshotDir) {
 	let entries;
 	try {
 		entries = await readdir(snapshotDir, { withFileTypes: true });
 	} catch (err) {
-		if (err.code === "ENOENT") return [];
+		if (err.code === "ENOENT") return { projects: [], anomalies: [], dirMissing: true };
 		throw err;
 	}
-	return entries
-		.filter((e) => e.isFile() && e.name.endsWith(".json"))
-		.map((e) => e.name.slice(0, -".json".length))
-		.filter((project) => isValidProject(project))
-		.sort((a, b) => a.localeCompare(b))
-		.map((project) => ({ project, file: path.join(snapshotDir, `${project}.json`) }));
+	const projects = [];
+	const anomalies = [];
+	for (const e of entries) {
+		if (!e.name.endsWith(".json")) continue;
+		const project = e.name.slice(0, -".json".length);
+		if (!isValidProject(project)) {
+			anomalies.push({ name: e.name, reason: "not a valid project id" });
+		} else if (!e.isFile()) {
+			anomalies.push({ name: e.name, reason: "not a regular file (e.g. symlink)" });
+		} else {
+			projects.push({ project, file: path.join(snapshotDir, e.name) });
+		}
+	}
+	projects.sort((a, b) => a.project.localeCompare(b.project));
+	anomalies.sort((a, b) => a.name.localeCompare(b.name));
+	return { projects, anomalies, dirMissing: false };
+}
+
+// trackedProjects returns just the valid, regular-file snapshots (used by
+// refresh to resolve the project set). Enumeration anomalies are surfaced by
+// checkDrift, not here.
+export async function trackedProjects(snapshotDir) {
+	return (await listSnapshotEntries(snapshotDir)).projects;
 }
 
 // checkDrift runs `ao project config diff <project> <snapshot>` for every tracked
@@ -74,8 +93,22 @@ export async function trackedProjects(snapshotDir) {
 // run distinguishes "config actually drifted" (1) from "the check itself is
 // misconfigured" (2) from "clean" (0).
 export async function checkDrift({ snapshotDir, run }) {
-	const projects = await trackedProjects(snapshotDir);
+	const { projects, anomalies, dirMissing } = await listSnapshotEntries(snapshotDir);
 	const results = [];
+	if (dirMissing) {
+		results.push({
+			project: snapshotDir,
+			status: "error",
+			code: null,
+			detail: "snapshot directory does not exist",
+		});
+	}
+	// A `*.json` entry that is not a usable snapshot is an error, not a silent
+	// skip — otherwise a symlinked or mis-named snapshot would go unchecked and
+	// the run would falsely read as clean.
+	for (const { name, reason } of anomalies) {
+		results.push({ project: name, status: "error", code: null, detail: reason });
+	}
 	for (const { project, file } of projects) {
 		let code;
 		let stdout = "";

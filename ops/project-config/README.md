@@ -106,7 +106,8 @@ git commit -m "ops: refresh <project> config snapshot"
 
 The reviewed baseline only moves when a human commits a refreshed snapshot — so
 an intentional config change lands as an ordinary, reviewable diff, and anything
-the drift check flags that you did _not_ intend is real drift to investigate.
+the drift check flags that you did _not_ intend requires investigation (genuine
+drift, or a per-project runtime failure — read the printed detail).
 
 > **Initial bootstrap:** the first snapshot for each project is created with the
 > `--refresh` command above, run once against the live daemon on the ops host and

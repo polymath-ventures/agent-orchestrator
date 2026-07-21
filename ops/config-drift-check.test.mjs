@@ -220,6 +220,45 @@ describe("checkDrift", () => {
 		}
 		assert.equal(await readFile(path.join(dir, "alpha.json"), "utf8"), '{"before":true}\n');
 	});
+
+	it("exits 0 with no results for a present-but-empty snapshot dir (legit bootstrap state)", async () => {
+		const run = fakeRun({});
+		const { exitCode, results } = await checkDrift({ snapshotDir: dir, run });
+		assert.equal(exitCode, 0);
+		assert.equal(results.length, 0);
+		assert.equal(run.calls.length, 0);
+	});
+
+	it("surfaces a MISSING snapshot dir as an error (exit 2), not a silent clean run", async () => {
+		const run = fakeRun({});
+		const { exitCode, results } = await checkDrift({ snapshotDir: path.join(dir, "nope"), run });
+		assert.equal(exitCode, 2);
+		assert.equal(results.length, 1);
+		assert.equal(results[0].status, "error");
+		assert.match(results[0].detail, /does not exist/);
+	});
+
+	it("surfaces an invalid-named or non-regular *.json entry as an error, never a silent skip or a CLI arg", async () => {
+		await seedSnapshot("alpha");
+		await writeFile(path.join(dir, "--help.json"), "{}\n"); // invalid project id
+		const target = path.join(dir, "beta-data");
+		await writeFile(target, "{}\n");
+		await symlink(target, path.join(dir, "beta.json")); // non-regular entry
+		const run = fakeRun({ alpha: { code: 0 } });
+
+		const { exitCode, results } = await checkDrift({ snapshotDir: dir, run });
+
+		assert.equal(exitCode, 2);
+		// alpha (the only valid regular snapshot) is the only thing diff runs on.
+		assert.deepEqual(
+			run.calls.map((c) => c[3]),
+			["alpha"],
+		);
+		const errors = results.filter((r) => r.status === "error").map((r) => r.project);
+		assert.ok(errors.includes("--help.json"), "invalid name surfaced");
+		assert.ok(errors.includes("beta.json"), "symlink surfaced");
+		assert.equal(results.find((r) => r.project === "alpha").status, "ok");
+	});
 });
 
 describe("refreshSnapshot", () => {
