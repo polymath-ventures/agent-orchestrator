@@ -135,6 +135,7 @@ func Run() error {
 		return fmt.Errorf("wire session service: %w", err)
 	}
 	lcStack.trackerDone = startTrackerIntake(ctx, store, sessionSvc, log)
+	lcStack.drainDone = startDrain(ctx, store, sessionSvc, telemetrySink, log)
 	agentSvc := agentsvc.New()
 	go func() {
 		if _, err := agentSvc.Refresh(ctx); err != nil {
