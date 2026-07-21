@@ -140,6 +140,70 @@ paths:
       summary: Stream CDC events with durable replay
       tags:
       - events
+  /api/v1/fleet:
+    get:
+      operationId: getFleetStatus
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ControllersFleetStatusResponse'
+          description: OK
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+      summary: Report the daemon-global fleet pause status
+      tags:
+      - projects
+  /api/v1/fleet/pause:
+    post:
+      operationId: pauseFleet
+      parameters:
+      - description: Terminate live workers immediately instead of draining at idle.
+        in: query
+        name: hard
+        schema:
+          description: Terminate live workers immediately instead of draining at idle.
+          type: boolean
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ControllersFleetStatusResponse'
+          description: OK
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+      summary: Pause the whole fleet; ?hard=true terminates live workers immediately
+      tags:
+      - projects
+  /api/v1/fleet/resume:
+    post:
+      operationId: resumeFleet
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ControllersFleetStatusResponse'
+          description: OK
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+      summary: Resume the whole fleet
+      tags:
+      - projects
   /api/v1/import:
     get:
       operationId: getImportStatus
@@ -737,9 +801,9 @@ paths:
       summary: Replace a project's per-project config
       tags:
       - projects
-  /api/v1/projects/{id}/roles/{role}/prompt:
-    get:
-      operationId: getRolePrompt
+  /api/v1/projects/{id}/pause:
+    post:
+      operationId: pauseProject
       parameters:
       - description: Project identifier (registry key).
         in: path
@@ -748,49 +812,65 @@ paths:
         schema:
           description: Project identifier (registry key).
           type: string
-      - description: 'Agent role: worker, orchestrator, or reviewer.'
-        in: path
-        name: role
-        required: true
+      - description: Terminate live workers immediately instead of draining at idle.
+        in: query
+        name: hard
         schema:
-          description: 'Agent role: worker, orchestrator, or reviewer.'
-          enum:
-          - worker
-          - orchestrator
-          - reviewer
-          type: string
+          description: Terminate live workers immediately instead of draining at idle.
+          type: boolean
       responses:
         "200":
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ControllersRolePromptResponse'
+                $ref: '#/components/schemas/ProjectResponse'
           description: OK
-        "400":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/APIError'
-          description: Bad Request
         "404":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/APIError'
           description: Not Found
-        "422":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/APIError'
-          description: Unprocessable Entity
         "500":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/APIError'
           description: Internal Server Error
-      summary: Render the exact assembled system prompt a role receives for a project
+      summary: Pause a project; ?hard=true terminates live workers immediately
+      tags:
+      - projects
+  /api/v1/projects/{id}/resume:
+    post:
+      operationId: resumeProject
+      parameters:
+      - description: Project identifier (registry key).
+        in: path
+        name: id
+        required: true
+        schema:
+          description: Project identifier (registry key).
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+      summary: Resume a paused project
       tags:
       - projects
   /api/v1/projects/initialize:
@@ -2009,15 +2089,12 @@ components:
       - sessionId
       - reason
       type: object
-    ControllersRolePromptResponse:
+    ControllersFleetStatusResponse:
       properties:
-        prompt:
-          type: string
-        role:
-          type: string
+        paused:
+          type: boolean
       required:
-      - role
-      - prompt
+      - paused
       type: object
     ControllersSessionView:
       properties:
@@ -2650,16 +2727,10 @@ components:
           $ref: '#/components/schemas/RoleOverride'
         orchestratorRules:
           type: string
-        orchestratorRulesFile:
-          type: string
         postCreate:
           items:
             type: string
           type: array
-        reviewerRules:
-          type: string
-        reviewerRulesFile:
-          type: string
         reviewers:
           items:
             $ref: '#/components/schemas/DomainReviewerConfig'
@@ -3232,10 +3303,6 @@ components:
         harness:
           description: Agent harness reporting the activity, used for usage telemetry
             attribution when the session row has no harness.
-          type: string
-        runtimeToken:
-          description: Runtime generation token exported to this session's hooks;
-            stale tokens are ignored.
           type: string
         state:
           description: Agent activity state reported by an agent hook. Optional for

@@ -41,6 +41,17 @@ type Manager interface {
 	// Remove unregisters a project, stopping its sessions and reclaiming
 	// managed workspaces.
 	Remove(ctx context.Context, id domain.ProjectID) (RemoveResult, error)
+
+	// SetProjectPaused sets or clears a project's pause bit, hard-draining its
+	// live workers when paused hard. Returns the updated read-model.
+	SetProjectPaused(ctx context.Context, id domain.ProjectID, paused, hard bool) (Project, error)
+
+	// FleetPaused reports the daemon-global fleet pause flag.
+	FleetPaused(ctx context.Context) (bool, error)
+
+	// SetFleetPaused sets or clears the daemon-global fleet pause flag,
+	// fanning out a hard drain across all projects when paused hard.
+	SetFleetPaused(ctx context.Context, paused, hard bool) error
 }
 
 // SessionTeardowner is the narrow session-service surface project use-cases

@@ -55,6 +55,18 @@ type ProjectResponse struct {
 	Project projectsvc.Project `json:"project"`
 }
 
+// FleetStatusResponse is the body of GET /fleet and the fleet pause/resume
+// routes.
+type FleetStatusResponse struct {
+	Paused bool `json:"paused"`
+}
+
+// HardPauseParam is the optional ?hard query flag on the pause routes. When
+// true, live workers are terminated immediately instead of drained at idle.
+type HardPauseParam struct {
+	Hard bool `query:"hard,omitempty" description:"Terminate live workers immediately instead of draining at idle."`
+}
+
 // GetProjectResponse is the { status, project } body of GET /projects/{id},
 // where project is oneOf Project|Degraded discriminated by status.
 type GetProjectResponse struct {

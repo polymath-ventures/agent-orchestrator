@@ -72,6 +72,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/fleet": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Report the daemon-global fleet pause status */
+        get: operations["getFleetStatus"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/fleet/pause": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Pause the whole fleet; ?hard=true terminates live workers immediately */
+        post: operations["pauseFleet"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/fleet/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Resume the whole fleet */
+        post: operations["resumeFleet"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/import": {
         parameters: {
             query?: never;
@@ -331,17 +382,34 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/projects/{id}/roles/{role}/prompt": {
+    "/api/v1/projects/{id}/pause": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /** Render the exact assembled system prompt a role receives for a project */
-        get: operations["getRolePrompt"];
+        get?: never;
         put?: never;
-        post?: never;
+        /** Pause a project; ?hard=true terminates live workers immediately */
+        post: operations["pauseProject"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{id}/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Resume a paused project */
+        post: operations["resumeProject"];
         delete?: never;
         options?: never;
         head?: never;
@@ -766,9 +834,8 @@ export interface components {
             reason: string;
             sessionId: string;
         };
-        ControllersRolePromptResponse: {
-            prompt: string;
-            role: string;
+        ControllersFleetStatusResponse: {
+            paused: boolean;
         };
         ControllersSessionView: {
             activity: components["schemas"]["DomainActivity"];
@@ -1016,10 +1083,7 @@ export interface components {
             maxLiveWorkers?: number;
             orchestrator?: components["schemas"]["RoleOverride"];
             orchestratorRules?: string;
-            orchestratorRulesFile?: string;
             postCreate?: string[];
-            reviewerRules?: string;
-            reviewerRulesFile?: string;
             reviewers?: components["schemas"]["DomainReviewerConfig"][];
             sessionPrefix?: string;
             symlinks?: string[];
@@ -1235,8 +1299,6 @@ export interface components {
             event?: string;
             /** @description Agent harness reporting the activity, used for usage telemetry attribution when the session row has no harness. */
             harness?: string;
-            /** @description Runtime generation token exported to this session's hooks; stale tokens are ignored. */
-            runtimeToken?: string;
             /**
              * @description Agent activity state reported by an agent hook. Optional for metadata-only hooks.
              * @enum {string}
@@ -1526,6 +1588,96 @@ export interface operations {
             };
             /** @description Not Implemented */
             501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    getFleetStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ControllersFleetStatusResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    pauseFleet: {
+        parameters: {
+            query?: {
+                /** @description Terminate live workers immediately instead of draining at idle. */
+                hard?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ControllersFleetStatusResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    resumeFleet: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ControllersFleetStatusResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -2350,15 +2502,16 @@ export interface operations {
             };
         };
     };
-    getRolePrompt: {
+    pauseProject: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Terminate live workers immediately instead of draining at idle. */
+                hard?: boolean;
+            };
             header?: never;
             path: {
                 /** @description Project identifier (registry key). */
                 id: string;
-                /** @description Agent role: worker, orchestrator, or reviewer. */
-                role: "worker" | "orchestrator" | "reviewer";
             };
             cookie?: never;
         };
@@ -2370,16 +2523,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ControllersRolePromptResponse"];
-                };
-            };
-            /** @description Bad Request */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["APIError"];
+                    "application/json": components["schemas"]["ProjectResponse"];
                 };
             };
             /** @description Not Found */
@@ -2391,8 +2535,40 @@ export interface operations {
                     "application/json": components["schemas"]["APIError"];
                 };
             };
-            /** @description Unprocessable Entity */
-            422: {
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    resumeProject: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Project identifier (registry key). */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
