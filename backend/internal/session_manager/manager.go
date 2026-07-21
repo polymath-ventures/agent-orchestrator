@@ -2165,10 +2165,6 @@ func (m *Manager) buildSpawnTexts(ctx context.Context, cfg ports.SpawnConfig) (p
 	return prompt, systemPrompt, nil
 }
 
-// buildSystemPrompt derives the standing instructions for a session of the
-// given kind from current store state. Restore recomputes them through here
-// rather than persisting them, so a restored worker points at the orchestrator
-// that is active now, not the one from its original spawn.
 // RoleSystemPrompt assembles the exact system prompt a worker or orchestrator
 // session receives for a project, for operator inspection. It reuses the same
 // assembly path as spawn (buildSystemPrompt), so what the operator sees matches
@@ -2178,6 +2174,10 @@ func (m *Manager) RoleSystemPrompt(ctx context.Context, kind domain.SessionKind,
 	return m.buildSystemPrompt(ctx, kind, projectID)
 }
 
+// buildSystemPrompt derives the standing instructions for a session of the
+// given kind from current store state. Restore recomputes them through here
+// rather than persisting them, so a restored worker points at the orchestrator
+// that is active now, not the one from its original spawn.
 func (m *Manager) buildSystemPrompt(ctx context.Context, kind domain.SessionKind, projectID domain.ProjectID) (string, error) {
 	project, err := m.loadProject(ctx, projectID)
 	if err != nil {

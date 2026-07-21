@@ -62,7 +62,7 @@ func newRolePromptCommand(ctx *commandContext) *cobra.Command {
 			if asJSON {
 				return writeJSON(cmd.OutOrStdout(), res)
 			}
-			fmt.Fprintln(cmd.OutOrStdout(), res.Prompt)
+			_, _ = fmt.Fprintln(cmd.OutOrStdout(), res.Prompt)
 			return nil
 		},
 	}
