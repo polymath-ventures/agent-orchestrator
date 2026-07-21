@@ -189,6 +189,7 @@ backend/internal/
 │   ├── pr/              # PR observation service
 │   └── review/          # Code review service
 ├── session_manager/     # Internal session command engine
+├── roleprompt/          # Assembles a role's effective prompt for inspection
 ├── lifecycle/           # Durable session fact reducer
 ├── observe/             # Observation loops
 │   ├── scm/             # SCM (GitHub) observer
@@ -276,6 +277,37 @@ flowchart TD
     Trigger2 --> Done([Session running])
 
 ```
+
+### Role Instructions and Prompt Visibility
+
+Every agent role — worker, orchestrator, reviewer — assembles its system prompt
+daemon-side at spawn from a small hardcoded scaffold plus operator-controlled
+sources. The operator surface is per-project config on `domain.ProjectConfig`:
+`agentRules`/`agentRulesFile` (worker), `orchestratorRules`/`orchestratorRulesFile`
+(orchestrator), and `reviewerRules`/`reviewerRulesFile` (reviewer). Inline text and
+a repo-relative file are merged verbatim by the shared loader
+`sessionmanager.LoadRoleRules`, which is **fail-closed**: a configured file that is
+missing, unreadable, empty, or over the size limit fails the spawn loudly rather
+than silently dropping the operator's standing rules.
+
+The effective prompt is inspectable read-only via
+`GET /api/v1/projects/{id}/roles/{role}/prompt` (CLI: `ao role prompt <project>
+<role>`; also surfaced in the supervisor settings UI). The route **recomputes**
+the prompt from current config using the same assembly used at spawn — worker and
+orchestrator through `sessionmanager.Manager.RoleSystemPrompt`, reviewer through
+`review.AssembleReviewerSystemPrompt` — composed by the `roleprompt` package. It
+does not read the ephemeral per-session `system.md` artifact, so it answers "what
+would this role get right now" even with no live session. A misconfigured override
+surfaces the same fail-closed error the spawn would raise (HTTP 422) instead of a
+prompt with the override silently omitted.
+
+This visibility is an **operator-facing, out-of-band daemon channel**. It is
+distinct from `systemPromptGuard()`, which instructs the agent to keep its standing
+instructions private in its own output: the guard governs what the *agent* reveals
+to its task surface; the operator owns the daemon and can always inspect the full
+assembled prompt. Runtime-native files (`CLAUDE.md`/`AGENTS.md`) are read by the
+agent runtime directly from the worktree — operator-owned repo files, outside AO's
+assembled prompt and this route by definition.
 
 ### Observation Flow
 
