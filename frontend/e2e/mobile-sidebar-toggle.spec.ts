@@ -22,8 +22,9 @@ test("mobile: titlebar toggle opens the sidebar sheet", async ({ page }, testInf
 	const projectsLabel = page.getByText("Projects", { exact: true });
 	await expect(projectsLabel).toBeHidden();
 
-	// Tap the sidebar toggle (renders in the non-mac chrome now that iOS is
-	// excluded from isMacDesktop).
+	// Tap the sidebar toggle. iOS still matches the titlebar cluster's UA gate
+	// (`/Mac|iPod|iPhone|iPad/`), so the cluster renders and hosts the toggle;
+	// this PR only rewires that toggle to the viewport-aware sidebar context.
 	await page
 		.getByRole("button", { name: /expand sidebar/i })
 		.first()
