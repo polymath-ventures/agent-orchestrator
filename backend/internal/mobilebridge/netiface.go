@@ -75,6 +75,9 @@ func PrivateIPv4Candidates(ifaces []net.Interface, addrsOf func(net.Interface) (
 // first RFC-1918 private IPv4, falling back to the first CGNAT (100.64.0.0/10)
 // IPv4 when the host has no private address — a tailnet-only host is reachable
 // on its CGNAT address and nothing else. Returns "" when no candidate exists.
+// Note skipInterface drops VPN-style interface names (utun*/tun*), so a
+// macOS-style utun tailnet address is never discovered here — such hosts pin
+// the advertised host explicitly (AO_MOBILE_ADVERTISED_HOST) instead.
 func AutopickAdvertiseIP(ifaces []net.Interface, addrsOf func(net.Interface) ([]net.Addr, error)) string {
 	if c := PrivateIPv4Candidates(ifaces, addrsOf); len(c) > 0 {
 		return c[0]
