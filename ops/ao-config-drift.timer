@@ -5,7 +5,6 @@ Description=Periodic committed-config drift check for Agent Orchestrator (fork-o
 OnBootSec=5min
 OnUnitInactiveSec=1h
 AccuracySec=1min
-Persistent=true
 Unit=ao-config-drift.service
 
 [Install]

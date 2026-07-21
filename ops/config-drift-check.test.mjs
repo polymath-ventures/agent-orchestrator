@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 
-import { checkDrift, refreshSnapshot, trackedProjects } from "./config-drift-check.mjs";
+import { checkDrift, isValidProject, parseArgs, refreshSnapshot, trackedProjects } from "./config-drift-check.mjs";
 
 let dir;
 const cleanup = [];
@@ -56,6 +56,41 @@ describe("trackedProjects", () => {
 
 	it("returns empty for a dir with no snapshots (and does not throw on a missing dir)", async () => {
 		assert.deepEqual(await trackedProjects(path.join(dir, "does-not-exist")), []);
+	});
+
+	it("skips flag-like or path-unsafe snapshot names so they can't smuggle a CLI flag", async () => {
+		await seedSnapshot("alpha");
+		await writeFile(path.join(dir, "--help.json"), "{}\n");
+		await writeFile(path.join(dir, "..json"), "{}\n");
+
+		const projects = await trackedProjects(dir);
+		assert.deepEqual(
+			projects.map((p) => p.project),
+			["alpha"],
+		);
+	});
+});
+
+describe("isValidProject / parseArgs", () => {
+	it("rejects flag-like and path-unsafe project ids", () => {
+		assert.equal(isValidProject("alpha"), true);
+		assert.equal(isValidProject("my-project_1.2"), true);
+		assert.equal(isValidProject("--help"), false);
+		assert.equal(isValidProject("-x"), false);
+		assert.equal(isValidProject("a/b"), false);
+		assert.equal(isValidProject(".."), false);
+		assert.equal(isValidProject(""), false);
+	});
+
+	it("accepts only [] or [--refresh, <valid project>] and rejects the rest", () => {
+		assert.deepEqual(parseArgs([]), { mode: "check" });
+		assert.deepEqual(parseArgs(["--refresh", "alpha"]), { mode: "refresh", project: "alpha" });
+		// `=` form, missing project, extra args, and flag-like project all fail closed:
+		assert.equal(parseArgs(["--refresh=alpha"]).mode, "usage");
+		assert.equal(parseArgs(["--refresh"]).mode, "usage");
+		assert.equal(parseArgs(["--refresh", "alpha", "beta"]).mode, "usage");
+		assert.equal(parseArgs(["--refresh", "--help"]).mode, "usage");
+		assert.equal(parseArgs(["bogus"]).mode, "usage");
 	});
 });
 
@@ -124,15 +159,47 @@ describe("checkDrift", () => {
 		);
 	});
 
-	it("reports a setup/usage error (exit 2) distinctly from drift", async () => {
+	it("reports a setup/usage error (exit 2) distinctly from drift, and aggregates to exit 2", async () => {
 		await seedSnapshot("alpha");
 		const run = fakeRun({ alpha: { code: 2, stderr: "usage error\n" } });
 
 		const { exitCode, results } = await checkDrift({ snapshotDir: dir, run });
 
-		assert.notEqual(exitCode, 0);
+		assert.equal(exitCode, 2);
 		assert.equal(results[0].status, "error");
 		assert.notEqual(results[0].status, "drift");
+	});
+
+	it("lets genuine drift (exit 1) win over a setup/infra error (exit 2) in the aggregate", async () => {
+		await seedSnapshot("alpha");
+		await seedSnapshot("beta");
+		const run = fakeRun({
+			alpha: { code: 2, stderr: "usage error\n" },
+			beta: { code: 1, stdout: "drift\n" },
+		});
+
+		const { exitCode } = await checkDrift({ snapshotDir: dir, run });
+
+		assert.equal(exitCode, 1);
+	});
+
+	it("catches a run() rejection (e.g. ao missing) as a per-project error and keeps going", async () => {
+		await seedSnapshot("alpha");
+		await seedSnapshot("beta");
+		const run = fakeRun({
+			alpha: () => Promise.reject(new Error("spawn ao ENOENT")),
+			beta: { code: 0 },
+		});
+
+		const { exitCode, results } = await checkDrift({ snapshotDir: dir, run });
+
+		// alpha errored, but beta was still checked; error-only-vs-clean aggregates to exit 2.
+		assert.equal(run.calls.length, 2);
+		assert.equal(exitCode, 2);
+		const alpha = results.find((r) => r.project === "alpha");
+		assert.equal(alpha.status, "error");
+		assert.match(alpha.detail, /ENOENT/);
+		assert.equal(results.find((r) => r.project === "beta").status, "ok");
 	});
 
 	it("never invokes apply and never mutates a snapshot file", async () => {
@@ -190,5 +257,33 @@ describe("refreshSnapshot", () => {
 
 		await assert.rejects(refreshSnapshot({ snapshotDir: dir, project: "alpha", run }), /export failed/i);
 		assert.equal(await readFile(path.join(dir, "alpha.json"), "utf8"), '{"kept":true}\n');
+	});
+
+	it("writes atomically and leaves no temp file behind (tracked set unchanged)", async () => {
+		await seedSnapshot("alpha", '{"stale":true}\n');
+		const run = fakeRun({ alpha: { code: 0, stdout: '{"fresh":true}\n' } });
+
+		await refreshSnapshot({ snapshotDir: dir, project: "alpha", run });
+
+		// No `.alpha.json.<pid>.tmp` leaked, and enumeration still sees exactly alpha.
+		assert.deepEqual(
+			(await trackedProjects(dir)).map((p) => p.project),
+			["alpha"],
+		);
+	});
+
+	it("flags a non-empty env block as secret-bearing so the caller can warn before commit", async () => {
+		await seedSnapshot("alpha");
+		const withSecret = fakeRun({ alpha: { code: 0, stdout: '{"env":{"TOKEN":"abc"}}\n' } });
+		const withoutSecret = fakeRun({ alpha: { code: 0, stdout: '{"env":{}}\n' } });
+
+		assert.equal((await refreshSnapshot({ snapshotDir: dir, project: "alpha", run: withSecret })).hasSecrets, true);
+		assert.equal((await refreshSnapshot({ snapshotDir: dir, project: "alpha", run: withoutSecret })).hasSecrets, false);
+	});
+
+	it("rejects an invalid project id without invoking the CLI", async () => {
+		const run = fakeRun({});
+		await assert.rejects(refreshSnapshot({ snapshotDir: dir, project: "--help", run }), /invalid project/i);
+		assert.equal(run.calls.length, 0);
 	});
 });

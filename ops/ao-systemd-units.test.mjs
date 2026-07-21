@@ -50,19 +50,24 @@ test("ao-config-drift service is a oneshot that runs the drift-check runner and 
 	const service = await unit("./ao-config-drift.service");
 	const timer = await unit("./ao-config-drift.timer");
 
-	// Oneshot runner: run the check, exit; surfaced via status/journal.
+	// Oneshot runner: run the check against the deployed source tree, exit;
+	// surfaced via status/journal. Pin the exact ExecStart path so a wrong
+	// deployment root is caught.
 	assert.match(service, /^Type=oneshot$/m);
-	assert.match(service, /^ExecStart=\/usr\/bin\/env node .*\/ops\/config-drift-check\.mjs$/m);
+	assert.match(
+		service,
+		/^ExecStart=\/usr\/bin\/env node %h\/\.ao\/deploy\/current\/source\/ops\/config-drift-check\.mjs$/m,
+	);
 	assert.match(service, /^Environment=AO_BIN=%h\/\.local\/bin\/ao$/m);
 	// Drift is surfaced, never self-healed: the unit must not invoke a refresh
-	// or an apply, and a oneshot has no restart storm.
+	// or an apply, and a oneshot must carry NO Restart= directive (no storm).
 	assert.doesNotMatch(service, /--refresh/);
 	assert.doesNotMatch(service, /config apply/);
-	assert.doesNotMatch(service, /^Restart=always$/m);
+	assert.doesNotMatch(service, /^Restart=/m);
 
-	// Timer drives it on a schedule, mirroring the ao-tmux-claim pair.
-	assert.match(timer, /^OnBootSec=/m);
-	assert.match(timer, /^OnUnitInactiveSec=/m);
+	// Timer drives it on a conservative, pinned cadence, mirroring ao-tmux-claim.
+	assert.match(timer, /^OnBootSec=5min$/m);
+	assert.match(timer, /^OnUnitInactiveSec=1h$/m);
 	assert.match(timer, /^Unit=ao-config-drift\.service$/m);
 	assert.match(timer, /^\[Install\]$/m);
 	assert.match(timer, /^WantedBy=timers\.target$/m);

@@ -10,15 +10,36 @@
 // `ao project config diff`; refresh delegates to `ao project config export`.
 
 import { spawn } from "node:child_process";
-import { readdir, readFile, writeFile } from "node:fs/promises";
+import { readdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const DEFAULT_SNAPSHOT_DIR = path.join(HERE, "project-config");
 
-// trackedProjects enumerates the snapshot dir: exactly the `*.json` files,
-// sorted by project id. A missing dir yields no projects rather than throwing.
+// A project id must resolve to a plain `<id>.json` file and be safe to pass to
+// the `ao` CLI as a positional argument. Reject anything that could be read as a
+// flag (leading `-`) or that escapes the snapshot dir (path separators, `..`),
+// so a stray file like `--help.json` can never smuggle a flag into the CLI and
+// produce a false "in sync". Kept deliberately permissive otherwise.
+export function isValidProject(project) {
+	return (
+		typeof project === "string" &&
+		project.length > 0 &&
+		!project.startsWith("-") &&
+		!project.includes("/") &&
+		!project.includes("\\") &&
+		!project.includes("\0") &&
+		project !== "." &&
+		project !== ".."
+	);
+}
+
+// trackedProjects enumerates the snapshot dir: exactly the `*.json` files whose
+// base name is a valid project id, sorted by project id. A missing dir yields no
+// projects rather than throwing. Files whose name is not a valid project id
+// (e.g. `--help.json`) are skipped — they cannot be a real project, since such a
+// name could not be passed to the `ao` CLI.
 export async function trackedProjects(snapshotDir) {
 	let entries;
 	try {
@@ -29,63 +50,101 @@ export async function trackedProjects(snapshotDir) {
 	}
 	return entries
 		.filter((e) => e.isFile() && e.name.endsWith(".json"))
-		.map((e) => ({
-			project: e.name.slice(0, -".json".length),
-			file: path.join(snapshotDir, e.name),
-		}))
-		.sort((a, b) => a.project.localeCompare(b.project));
+		.map((e) => e.name.slice(0, -".json".length))
+		.filter((project) => isValidProject(project))
+		.sort((a, b) => a.localeCompare(b))
+		.map((project) => ({ project, file: path.join(snapshotDir, `${project}.json`) }));
 }
 
-// checkDrift runs `ao project config diff <project> <snapshot>` for every
-// tracked snapshot and aggregates. `run(args)` executes the ao CLI and resolves
-// { code, stdout, stderr }. Exit-code contract (from `config diff`):
+// checkDrift runs `ao project config diff <project> <snapshot>` for every tracked
+// snapshot and aggregates. `run(args)` executes the ao CLI and resolves
+// { code, stdout, stderr }. Per-project exit-code contract (from `config diff`):
 //   0        -> in sync
 //   2        -> setup/usage error (reported distinctly, not as drift)
-//   other    -> drift OR an infra failure (daemon down); both warrant a look, so
-//               they are surfaced together as attention-worthy "drift".
-// Every project is checked before returning (aggregate, never fail-fast), and
-// only `diff` is ever invoked — never `apply`, and no snapshot file is written.
+//   other    -> drift OR an infra failure (daemon down); both warrant a look.
+// A `run()` rejection (e.g. `ao` missing -> spawn ENOENT) is caught and recorded
+// as a per-project error so enumeration still covers every project (aggregate,
+// never fail-fast). Only `diff` is ever invoked — never `apply`, and no snapshot
+// file is written.
+//
+// Aggregate exit code preserves the CLI's exit-code meaning: any genuine drift
+// -> 1; otherwise any setup/infra error -> 2; all in sync -> 0. So a scheduled
+// run distinguishes "config actually drifted" (1) from "the check itself is
+// misconfigured" (2) from "clean" (0).
 export async function checkDrift({ snapshotDir, run }) {
 	const projects = await trackedProjects(snapshotDir);
 	const results = [];
 	for (const { project, file } of projects) {
-		const { code, stdout = "", stderr = "" } = await run(["project", "config", "diff", project, file]);
+		let code;
+		let stdout = "";
+		let stderr = "";
+		try {
+			({ code, stdout = "", stderr = "" } = await run(["project", "config", "diff", project, file]));
+		} catch (err) {
+			results.push({ project, status: "error", code: null, detail: `invocation failed: ${err.message}` });
+			continue;
+		}
 		if (code === 0) {
 			results.push({ project, status: "ok", code });
 		} else if (code === 2) {
 			results.push({ project, status: "error", code, detail: stderr.trim() });
 		} else {
-			results.push({
-				project,
-				status: "drift",
-				code,
-				detail: (stdout || stderr).trim(),
-			});
+			results.push({ project, status: "drift", code, detail: (stdout || stderr).trim() });
 		}
 	}
-	const exitCode = results.some((r) => r.status !== "ok") ? 1 : 0;
+	const hasDrift = results.some((r) => r.status === "drift");
+	const hasError = results.some((r) => r.status === "error");
+	const exitCode = hasDrift ? 1 : hasError ? 2 : 0;
 	return { exitCode, results };
 }
 
 // refreshSnapshot regenerates one project's snapshot from a fresh
 // `ao project config export`. It writes only when the export differs from the
-// current file (no spurious git diff), never invokes `apply`, and never mutates
-// the snapshot when the export fails.
+// current file (no spurious git diff), writes atomically (temp file + rename, so
+// a concurrent drift check never sees a torn snapshot and an existing symlink at
+// the path is replaced rather than followed), never invokes `apply`, and never
+// mutates the snapshot when the export fails. Returns `hasSecrets` when the
+// exported config carries a non-empty `env` block so the caller can warn before
+// the operator commits credentials to git.
 export async function refreshSnapshot({ snapshotDir, project, run }) {
+	if (!isValidProject(project)) {
+		throw new Error(`invalid project id: ${JSON.stringify(project)}`);
+	}
 	const file = path.join(snapshotDir, `${project}.json`);
 	const { code, stdout = "", stderr = "" } = await run(["project", "config", "export", project]);
 	if (code !== 0) {
 		throw new Error(`export failed for project ${project} (exit ${code})${stderr.trim() ? `: ${stderr.trim()}` : ""}`);
 	}
+	const hasSecrets = exportCarriesSecrets(stdout);
 	let current = null;
 	try {
 		current = await readFile(file, "utf8");
 	} catch (err) {
 		if (err.code !== "ENOENT") throw err;
 	}
-	if (current === stdout) return { project, changed: false };
-	await writeFile(file, stdout);
-	return { project, changed: true };
+	if (current === stdout) return { project, changed: false, hasSecrets };
+	const tmp = path.join(snapshotDir, `.${project}.json.${process.pid}.tmp`);
+	try {
+		await writeFile(tmp, stdout, { mode: 0o644, flag: "wx" });
+		await rename(tmp, file);
+	} catch (err) {
+		await unlink(tmp).catch(() => {});
+		throw err;
+	}
+	return { project, changed: true, hasSecrets };
+}
+
+// exportCarriesSecrets reports whether an exported config JSON has a non-empty
+// `env` block — the field the CLI documents as credential-bearing and redacts in
+// diff output. Non-JSON export (unexpected) is treated as "unknown, warn": the
+// snapshot is going into git either way.
+function exportCarriesSecrets(exported) {
+	try {
+		const parsed = JSON.parse(exported);
+		return Boolean(parsed && typeof parsed.env === "object" && parsed.env && Object.keys(parsed.env).length > 0);
+	} catch {
+		return false;
+	}
 }
 
 // defaultRun spawns the real `ao` CLI, buffering stdout/stderr and resolving the
@@ -107,6 +166,19 @@ export function defaultRun(aoBin) {
 		});
 }
 
+// parseArgs enforces the runner's tiny, strict CLI grammar: exactly `[]` (check
+// all snapshots) or `["--refresh", <valid-project>]`. Everything else — an `=`
+// form like `--refresh=alpha`, a missing/invalid project, or any stray argument
+// — is a usage error, so a malformed invocation can never be silently
+// misinterpreted as a clean check.
+export function parseArgs(argv) {
+	if (argv.length === 0) return { mode: "check" };
+	if (argv[0] === "--refresh" && argv.length === 2 && isValidProject(argv[1])) {
+		return { mode: "refresh", project: argv[1] };
+	}
+	return { mode: "usage" };
+}
+
 function formatReport(results) {
 	const lines = [];
 	for (const r of results) {
@@ -118,7 +190,7 @@ function formatReport(results) {
 				lines.push(`          ${line}`);
 			}
 		} else {
-			lines.push(`  ERROR ${r.project} (exit ${r.code})`);
+			lines.push(`  ERROR ${r.project}${r.code != null ? ` (exit ${r.code})` : ""}`);
 			for (const line of (r.detail || "").split("\n").filter(Boolean)) {
 				lines.push(`          ${line}`);
 			}
@@ -129,19 +201,27 @@ function formatReport(results) {
 
 async function main(argv) {
 	const aoBin = process.env.AO_BIN || "ao";
-	const snapshotDir = process.env.AO_CONFIG_SNAPSHOT_DIR || DEFAULT_SNAPSHOT_DIR;
+	const snapshotDir = DEFAULT_SNAPSHOT_DIR;
 	const run = defaultRun(aoBin);
 
-	const refreshIdx = argv.indexOf("--refresh");
-	if (refreshIdx !== -1) {
-		const project = argv[refreshIdx + 1];
-		if (!project) {
-			process.stderr.write("usage: config-drift-check.mjs --refresh <project>\n");
-			return 2;
+	const parsed = parseArgs(argv);
+	if (parsed.mode === "usage") {
+		process.stderr.write("usage: config-drift-check.mjs [--refresh <project>]\n");
+		return 2;
+	}
+
+	if (parsed.mode === "refresh") {
+		const { changed, hasSecrets } = await refreshSnapshot({ snapshotDir, project: parsed.project, run });
+		if (hasSecrets) {
+			process.stderr.write(
+				`warning: snapshot for ${parsed.project} contains a non-empty 'env' block that may hold credentials; ` +
+					`review before committing it to git (see ops/project-config/README.md)\n`,
+			);
 		}
-		const { changed } = await refreshSnapshot({ snapshotDir, project, run });
 		process.stdout.write(
-			changed ? `refreshed snapshot for ${project}\n` : `snapshot for ${project} already in sync (unchanged)\n`,
+			changed
+				? `refreshed snapshot for ${parsed.project}\n`
+				: `snapshot for ${parsed.project} already in sync (unchanged)\n`,
 		);
 		return 0;
 	}
