@@ -18,7 +18,9 @@ type capturingHandler struct {
 func (h capturingHandler) Enabled(context.Context, slog.Level) bool { return true }
 
 func (h capturingHandler) Handle(_ context.Context, r slog.Record) error {
-	*h.records = append(*h.records, r)
+	// slog.Record shares backing storage; clone before retaining it so later
+	// assertions (level, and any future attr checks) never read reused state.
+	*h.records = append(*h.records, r.Clone())
 	return nil
 }
 
