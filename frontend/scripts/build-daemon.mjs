@@ -10,19 +10,25 @@ const backendRoot = join(repoRoot, "backend");
 const outDir = join(frontendRoot, "daemon");
 const outPath = join(outDir, process.platform === "win32" ? "ao.exe" : "ao");
 
-rmSync(outDir, { recursive: true, force: true });
-mkdirSync(outDir, { recursive: true });
+export function buildDaemon() {
+	rmSync(outDir, { recursive: true, force: true });
+	mkdirSync(outDir, { recursive: true });
 
-const result = spawnSync("go", ["build", "-o", outPath, "./cmd/ao"], {
-	cwd: backendRoot,
-	stdio: "inherit",
-});
+	const result = spawnSync("go", ["build", "-o", outPath, "./cmd/ao"], {
+		cwd: backendRoot,
+		stdio: "inherit",
+	});
 
-if (result.error) {
-	console.error(`failed to start go build: ${result.error.message}`);
-	process.exit(1);
+	if (result.error) {
+		console.error(`failed to start go build: ${result.error.message}`);
+		process.exit(1);
+	}
+
+	if (result.status !== 0) {
+		process.exit(result.status ?? 1);
+	}
 }
 
-if (result.status !== 0) {
-	process.exit(result.status ?? 1);
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+	buildDaemon();
 }
