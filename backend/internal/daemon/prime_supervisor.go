@@ -288,7 +288,7 @@ func notifyPrimeRestartCapped(ctx context.Context, notifier notificationSink, se
 	if notifier == nil {
 		return
 	}
-	_ = notifier.Notify(ctx, ports.NotificationIntent{
+	err := notifier.Notify(ctx, ports.NotificationIntent{
 		Type:               domain.NotificationPrimeRestartCapped,
 		SessionID:          sess.ID,
 		ProjectID:          sess.ProjectID,
@@ -297,6 +297,11 @@ func notifyPrimeRestartCapped(ctx context.Context, notifier notificationSink, se
 		SessionDisplayName: sess.DisplayName,
 		Message:            "AO tried to replace the unhealthy prime three times in the last hour and paused automatic replacement. Inspect the active prime before restarting it.",
 	})
+	if err != nil {
+		// The cap alert is the last line of defense against a silently dead
+		// prime; a dropped delivery must at least be visible in the journal.
+		slog.Default().Warn("prime supervisor: cap notification failed", "err", err)
+	}
 }
 
 const primeIdleWakeMessage = "Prime status check: if you are at an idle prompt, summarize current fleet health and continue supervising. Do not claim, dispatch, merge, or command worker sessions directly."
