@@ -211,6 +211,19 @@ func TestParseSpecObject_RejectsNullValuedField(t *testing.T) {
 	if _, err := parseSpecObject([]byte(`{"sessionPrefix":"demo"}`)); err != nil {
 		t.Fatalf("parseSpecObject rejected a valid object: %v", err)
 	}
+
+	// Nested nulls (e.g. inside the env map or a nested object) are rejected too —
+	// they decode to an empty value the daemon can't distinguish from unset.
+	nested := []string{
+		`{"env":{"TOKEN":null}}`,
+		`{"worker":{"agentConfig":{"model":null}}}`,
+		`{"symlinks":["a",null]}`,
+	}
+	for _, in := range nested {
+		if _, err := parseSpecObject([]byte(in)); err == nil {
+			t.Errorf("parseSpecObject(%s) = nil error, want nested-null rejected", in)
+		}
+	}
 }
 
 // mustNumber builds a json.Number the way UseNumber-decoded config carries them,

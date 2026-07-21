@@ -74,16 +74,49 @@ func parseSpecObject(raw []byte) (map[string]any, error) {
 	if err := dec.Decode(&trailing); err != io.EOF {
 		return nil, errors.New("spec has trailing content after the JSON object")
 	}
-	// The config model has no nullable fields (every field is omitempty and a
-	// JSON null decodes to the zero value, which the daemon then omits). An
-	// explicit null in a spec can therefore never converge (apply/diff would
-	// forever see null-in-spec vs absent-in-live), so reject it at the door.
-	for k, v := range obj {
-		if v == nil {
-			return nil, fmt.Errorf("spec field %q is null: omit the field instead of setting it to null", k)
-		}
+	// The config model has no nullable values at any depth: a JSON null decodes to
+	// the zero value (an omitted field, or an empty string inside a string map),
+	// which can never converge — apply/diff would forever see null-in-spec vs
+	// absent-or-empty-in-live. Reject a null anywhere in the spec at the door.
+	if err := rejectSpecNulls("", obj); err != nil {
+		return nil, err
 	}
 	return obj, nil
+}
+
+// rejectSpecNulls returns an error naming the first null value found anywhere in
+// a parsed spec (walking objects and arrays), so an operator gets a clear "omit
+// the field" message instead of a silently non-converging apply/diff.
+func rejectSpecNulls(path string, v any) error {
+	switch val := v.(type) {
+	case nil:
+		if path == "" {
+			return errors.New("spec value is null: omit the field instead of setting it to null")
+		}
+		return fmt.Errorf("spec field %q is null: omit the field instead of setting it to null", path)
+	case map[string]any:
+		keys := make([]string, 0, len(val))
+		for k := range val {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			child := k
+			if path != "" {
+				child = path + "." + k
+			}
+			if err := rejectSpecNulls(child, val[k]); err != nil {
+				return err
+			}
+		}
+	case []any:
+		for i, item := range val {
+			if err := rejectSpecNulls(fmt.Sprintf("%s[%d]", path, i), item); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // canonicalizeConfig returns config JSON in a canonical form: keys sorted at
