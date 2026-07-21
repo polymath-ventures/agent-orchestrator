@@ -213,7 +213,7 @@ func (r *Runtime) IsAlive(ctx context.Context, handle ports.RuntimeHandle) (bool
 // AO starts panes through a shell wrapper that execs a keep-alive shell after
 // the agent exits, so tmux's session liveness alone cannot prove the agent is
 // still running.
-func (r *Runtime) IsRunningCommand(ctx context.Context, handle ports.RuntimeHandle, _ string) (bool, error) {
+func (r *Runtime) IsRunningCommand(ctx context.Context, handle ports.RuntimeHandle, command string) (bool, error) {
 	id, err := handleID(handle)
 	if err != nil {
 		return false, err
@@ -226,7 +226,11 @@ func (r *Runtime) IsRunningCommand(ctx context.Context, handle ports.RuntimeHand
 	if err != nil || pid <= 0 {
 		return false, fmt.Errorf("tmux runtime: invalid pane pid %q", strings.TrimSpace(string(out)))
 	}
-	childOut, err := r.runner.Run(ctx, nil, "pgrep", "-P", strconv.Itoa(pid))
+	args := []string{"-P", strconv.Itoa(pid)}
+	if strings.TrimSpace(command) != "" {
+		args = append(args, "-f", regexp.QuoteMeta(command))
+	}
+	childOut, err := r.runner.Run(ctx, nil, "pgrep", args...)
 	if err != nil {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) && strings.TrimSpace(string(childOut)) == "" {
