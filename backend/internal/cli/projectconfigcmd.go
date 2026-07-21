@@ -31,6 +31,7 @@ func newProjectConfigCommand(ctx *commandContext) *cobra.Command {
 	}
 	cmd.AddCommand(newProjectConfigExportCommand(ctx))
 	cmd.AddCommand(newProjectConfigApplyCommand(ctx))
+	cmd.AddCommand(newProjectConfigDiffCommand(ctx))
 	return cmd
 }
 
@@ -132,4 +133,51 @@ func newProjectConfigApplyCommand(ctx *commandContext) *cobra.Command {
 			return err
 		},
 	}
+}
+
+func newProjectConfigDiffCommand(ctx *commandContext) *cobra.Command {
+	return &cobra.Command{
+		Use:   "diff <project> <file>",
+		Short: "Report drift between a spec file and a project's live config",
+		Long: "Compare a JSON config spec against live config. Only fields named in " +
+			"<file> are compared. Prints each drifted field (spec vs live) and exits " +
+			"nonzero when they disagree, so it can gate CI or a scheduled drift check.",
+		Args: projectAndSpecArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			id := strings.TrimSpace(args[0])
+			spec, err := readSpecFile(args[1])
+			if err != nil {
+				return err
+			}
+			live, err := ctx.fetchProjectConfig(cmd, id)
+			if err != nil {
+				return err
+			}
+			drift := diffConfig(live, spec)
+			if len(drift) == 0 {
+				_, err = fmt.Fprintf(cmd.OutOrStdout(), "no drift: project %s config matches spec\n", id)
+				return err
+			}
+			out := cmd.OutOrStdout()
+			fmt.Fprintf(out, "drift in project %s config (%d field(s)):\n", id, len(drift))
+			for _, d := range drift {
+				fmt.Fprintf(out, "  %s: spec=%s live=%s\n", d.Field, jsonScalar(d.Spec), jsonScalar(d.Live))
+			}
+			// Non-usage error → nonzero exit; SilenceErrors keeps it off stderr.
+			return fmt.Errorf("config drift: %d field(s) differ", len(drift))
+		},
+	}
+}
+
+// jsonScalar renders a decoded JSON value compactly for drift output. A missing
+// live value (field absent from live config) renders as (absent).
+func jsonScalar(v any) string {
+	if v == nil {
+		return "(absent)"
+	}
+	b, err := json.Marshal(v)
+	if err != nil {
+		return fmt.Sprintf("%v", v)
+	}
+	return string(b)
 }

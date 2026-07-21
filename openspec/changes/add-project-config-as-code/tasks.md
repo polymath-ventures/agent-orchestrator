@@ -19,8 +19,8 @@
 
 ## 4. `ao project config diff` (TDD)
 
-- [ ] 4.1 Write a failing CLI test: `diff <project> <file>` exits zero and prints no drift when named fields match; exits nonzero and names each drifted field (spec vs live) when they disagree; ignores fields not named in the spec; never issues a PUT.
-- [ ] 4.2 Implement `diff` using the helper from group 1 and the read path from group 2.
+- [x] 4.1 Write a failing CLI test: `diff <project> <file>` exits zero and prints no drift when named fields match; exits nonzero and names each drifted field (spec vs live) when they disagree; ignores fields not named in the spec; never issues a PUT.
+- [x] 4.2 Implement `diff` using the helper from group 1 and the read path from group 2.
 
 ## 5. Integration, docs, and gates
 
