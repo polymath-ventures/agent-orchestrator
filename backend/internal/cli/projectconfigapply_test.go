@@ -24,18 +24,18 @@ type configRoundTripCapture struct {
 // config field and captures PUT /projects/{id}/config, returning putStatus.
 func startConfigRoundTripServer(t *testing.T, liveConfig string, putStatus int) (*httptest.Server, *configRoundTripCapture) {
 	t.Helper()
-	cap := &configRoundTripCapture{}
+	capture := &configRoundTripCapture{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/projects/demo":
-			cap.getCalled = true
+			capture.getCalled = true
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(`{"status":"ok","project":{"id":"demo","path":"/repo/demo","config":` + liveConfig + `}}`))
 		case r.Method == http.MethodPut && r.URL.Path == "/api/v1/projects/demo/config":
-			cap.putCalled = true
+			capture.putCalled = true
 			body, _ := io.ReadAll(r.Body)
-			cap.putBody = body
+			capture.putBody = body
 			w.WriteHeader(putStatus)
 			if putStatus >= 400 {
 				_, _ = w.Write([]byte(`{"message":"json: unknown field \"bogus\"","code":"bad_request"}`))
@@ -47,7 +47,7 @@ func startConfigRoundTripServer(t *testing.T, liveConfig string, putStatus int) 
 		}
 	}))
 	t.Cleanup(srv.Close)
-	return srv, cap
+	return srv, capture
 }
 
 func writeSpecFile(t *testing.T, contents string) string {
@@ -64,7 +64,7 @@ const applyLiveConfig = `{"defaultBranch":"main","sessionPrefix":"demo","maxLive
 
 func TestProjectConfigApply_TwoFieldsChangesExactlyThose(t *testing.T) {
 	cfg := setConfigEnv(t)
-	srv, cap := startConfigRoundTripServer(t, applyLiveConfig, http.StatusOK)
+	srv, capture := startConfigRoundTripServer(t, applyLiveConfig, http.StatusOK)
 	writeRunFileFor(t, cfg, srv)
 
 	spec := writeSpecFile(t, `{"sessionPrefix":"prod","maxLiveWorkers":5}`)
@@ -75,13 +75,13 @@ func TestProjectConfigApply_TwoFieldsChangesExactlyThose(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v\nstderr=%s", err, errOut)
 	}
-	if !cap.getCalled || !cap.putCalled {
-		t.Fatalf("expected GET then PUT; getCalled=%v putCalled=%v", cap.getCalled, cap.putCalled)
+	if !capture.getCalled || !capture.putCalled {
+		t.Fatalf("expected GET then PUT; getCalled=%v putCalled=%v", capture.getCalled, capture.putCalled)
 	}
 	// PUT body must be live-config-plus-the-two-named-fields.
 	var req map[string]any
-	if err := json.Unmarshal(cap.putBody, &req); err != nil {
-		t.Fatalf("decode PUT body: %v\nbody=%s", err, cap.putBody)
+	if err := json.Unmarshal(capture.putBody, &req); err != nil {
+		t.Fatalf("decode PUT body: %v\nbody=%s", err, capture.putBody)
 	}
 	config, _ := req["config"].(map[string]any)
 	want := map[string]any{
@@ -103,7 +103,7 @@ func TestProjectConfigApply_TwoFieldsChangesExactlyThose(t *testing.T) {
 
 func TestProjectConfigApply_NoOpSkipsPut(t *testing.T) {
 	cfg := setConfigEnv(t)
-	srv, cap := startConfigRoundTripServer(t, applyLiveConfig, http.StatusOK)
+	srv, capture := startConfigRoundTripServer(t, applyLiveConfig, http.StatusOK)
 	writeRunFileFor(t, cfg, srv)
 
 	// Spec equals live config exactly → no change.
@@ -115,7 +115,7 @@ func TestProjectConfigApply_NoOpSkipsPut(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v\nstderr=%s", err, errOut)
 	}
-	if cap.putCalled {
+	if capture.putCalled {
 		t.Fatal("no-op apply must not PUT")
 	}
 	if !strings.Contains(strings.ToLower(out), "no change") && !strings.Contains(out, "0") {
@@ -125,7 +125,7 @@ func TestProjectConfigApply_NoOpSkipsPut(t *testing.T) {
 
 func TestProjectConfigApply_MissingFileIsUsageError(t *testing.T) {
 	cfg := setConfigEnv(t)
-	srv, cap := startConfigRoundTripServer(t, applyLiveConfig, http.StatusOK)
+	srv, capture := startConfigRoundTripServer(t, applyLiveConfig, http.StatusOK)
 	writeRunFileFor(t, cfg, srv)
 
 	_, _, err := executeCLI(t, Deps{
@@ -137,14 +137,14 @@ func TestProjectConfigApply_MissingFileIsUsageError(t *testing.T) {
 	if got := ExitCode(err); got != 2 {
 		t.Fatalf("exit code = %d, want 2 (usage error)", got)
 	}
-	if cap.putCalled {
+	if capture.putCalled {
 		t.Fatal("must not PUT on a missing spec file")
 	}
 }
 
 func TestProjectConfigApply_InvalidJSONIsUsageError(t *testing.T) {
 	cfg := setConfigEnv(t)
-	srv, cap := startConfigRoundTripServer(t, applyLiveConfig, http.StatusOK)
+	srv, capture := startConfigRoundTripServer(t, applyLiveConfig, http.StatusOK)
 	writeRunFileFor(t, cfg, srv)
 
 	spec := writeSpecFile(t, `{not valid json`)
@@ -158,7 +158,7 @@ func TestProjectConfigApply_InvalidJSONIsUsageError(t *testing.T) {
 	if got := ExitCode(err); got != 2 {
 		t.Fatalf("exit code = %d, want 2 (usage error)", got)
 	}
-	if cap.putCalled {
+	if capture.putCalled {
 		t.Fatal("must not PUT on an invalid spec file")
 	}
 }
@@ -166,7 +166,7 @@ func TestProjectConfigApply_InvalidJSONIsUsageError(t *testing.T) {
 func TestProjectConfigApply_UnknownFieldRejectedByDaemon(t *testing.T) {
 	cfg := setConfigEnv(t)
 	// Daemon 400s the PUT (simulating DisallowUnknownFields).
-	srv, cap := startConfigRoundTripServer(t, applyLiveConfig, http.StatusBadRequest)
+	srv, capture := startConfigRoundTripServer(t, applyLiveConfig, http.StatusBadRequest)
 	writeRunFileFor(t, cfg, srv)
 
 	spec := writeSpecFile(t, `{"bogus":"x"}`)
@@ -180,7 +180,7 @@ func TestProjectConfigApply_UnknownFieldRejectedByDaemon(t *testing.T) {
 	if got := ExitCode(err); got != 1 {
 		t.Fatalf("exit code = %d, want 1 (daemon failure)", got)
 	}
-	if !cap.putCalled {
+	if !capture.putCalled {
 		t.Fatal("apply should attempt the PUT (daemon is the key validator)")
 	}
 	if !strings.Contains(err.Error(), "unknown field") {

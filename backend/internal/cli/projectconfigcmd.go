@@ -159,9 +159,13 @@ func newProjectConfigDiffCommand(ctx *commandContext) *cobra.Command {
 				return err
 			}
 			out := cmd.OutOrStdout()
-			fmt.Fprintf(out, "drift in project %s config (%d field(s)):\n", id, len(drift))
+			var b strings.Builder
+			fmt.Fprintf(&b, "drift in project %s config (%d field(s)):\n", id, len(drift))
 			for _, d := range drift {
-				fmt.Fprintf(out, "  %s: spec=%s live=%s\n", d.Field, jsonScalar(d.Spec), jsonScalar(d.Live))
+				fmt.Fprintf(&b, "  %s: spec=%s live=%s\n", d.Field, jsonScalar(d.Spec), jsonScalar(d.Live))
+			}
+			if _, err := fmt.Fprint(out, b.String()); err != nil {
+				return err
 			}
 			// Non-usage error → nonzero exit; SilenceErrors keeps it off stderr.
 			return fmt.Errorf("config drift: %d field(s) differ", len(drift))

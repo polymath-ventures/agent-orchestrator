@@ -32,11 +32,13 @@ follow-up commit once the export format has settled.
 ## Capabilities
 
 ### New Capabilities
+
 - `project-config-as-code`: exporting a project's effective config as canonical
   JSON, applying a partial spec surgically (only named fields change), and
   diffing a spec against live config with a drift-signalling exit code.
 
 ### Modified Capabilities
+
 <!-- None — no existing capability's requirements change. This builds on the existing project config get/set surfaces without altering their contracts. -->
 
 ## Impact

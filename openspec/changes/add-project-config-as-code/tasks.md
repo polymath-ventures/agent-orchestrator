@@ -24,6 +24,6 @@
 
 ## 5. Integration, docs, and gates
 
-- [ ] 5.1 Add/extend a real-router round-trip test (mirror `dto_drift_e2e_test.go`) covering export→apply round-trip byte-stability against the actual controller + fake project manager, guarding against CLI-mirror/domain-DTO drift.
-- [ ] 5.2 Update CLI help text and any `docs/` CLI reference to document `export|apply|diff`, the surgical (top-level-key) apply semantics, and the diff exit-code contract.
-- [ ] 5.3 Run the full local gate: `cd backend && go build ./... && go test ./... && go vet ./...`, plus `npm run lint` and format check at repo root; fix any drift/parity test failures introduced by the new subcommands.
+- [x] 5.1 Add/extend a real-router round-trip test (mirror `dto_drift_e2e_test.go`) covering export→apply round-trip byte-stability against the actual controller + fake project manager, guarding against CLI-mirror/domain-DTO drift.
+- [x] 5.2 Update CLI help text and any `docs/` CLI reference to document `export|apply|diff`, the surgical (top-level-key) apply semantics, and the diff exit-code contract.
+- [x] 5.3 Run the full local gate: `cd backend && go build ./... && go test ./... && go vet ./...`, plus `npm run lint` and format check at repo root; fix any drift/parity test failures introduced by the new subcommands.

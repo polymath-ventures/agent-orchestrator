@@ -17,6 +17,7 @@ surface, with no daemon or storage changes.
 ## Goals / Non-Goals
 
 **Goals:**
+
 - Lossless export of a project's full effective config as canonical, byte-stable
   JSON — independent of the CLI's (incomplete) typed mirror.
 - Surgical apply: a spec naming a subset of fields changes exactly those fields
@@ -26,6 +27,7 @@ surface, with no daemon or storage changes.
   helpers; no new endpoint unless forced.
 
 **Non-Goals:**
+
 - The fork-only convenience layer (committed per-project JSON + scheduled drift
   check) — deferred to a separate follow-up commit.
 - A daemon-side merge/PATCH endpoint or any storage migration.
@@ -51,7 +53,7 @@ struct. Rationale:
 - **`UseNumber()`** keeps integers (e.g. `maxLiveWorkers`) exact through the
   decode/re-encode round-trip, preserving byte-stability.
 
-*Alternative rejected:* widen the CLI mirror to the full domain type and go
+_Alternative rejected:_ widen the CLI mirror to the full domain type and go
 typed. Larger change, reintroduces the absent-vs-zero ambiguity for surgical
 apply, and keeps a second copy of the config shape in sync forever (violates
 "keep each fact in one place"). The raw-JSON path needs no mirror at all.
@@ -91,7 +93,7 @@ top-level key is the natural unit of "a field," and deep-merge would add real
 complexity for a semantics the ticket doesn't ask for. Recorded as a decision so
 apply/diff agree on the same unit.
 
-*Alternative rejected:* add a daemon PATCH/merge endpoint. More surface, an API
+_Alternative rejected:_ add a daemon PATCH/merge endpoint. More surface, an API
 contract change, and a spec/parity update — unjustified when a client-side
 overlay against the existing PUT is a few lines and keeps the change
 upstream-lean (Merit rule).
@@ -113,7 +115,7 @@ The write path already decodes with `DisallowUnknownFields()`, so a spec naming
 a key that isn't a real config field yields a 400 on the `apply` PUT — with no
 mutation, since the daemon rejects the whole body before persisting. `apply`
 does **not** re-validate keys client-side: the only client-side key set
-available is the *live* config's keys, which omit currently-unset fields
+available is the _live_ config's keys, which omit currently-unset fields
 (`omitempty`), so validating against them would falsely reject a spec that
 legitimately sets a currently-zero field (e.g. `maxLiveWorkers` when it is
 unset). The daemon's decoder is the single authoritative key validator (design

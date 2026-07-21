@@ -10,7 +10,7 @@ const diffLiveConfig = `{"defaultBranch":"main","sessionPrefix":"demo","maxLiveW
 
 func TestProjectConfigDiff_MatchingExitsZero(t *testing.T) {
 	cfg := setConfigEnv(t)
-	srv, cap := startConfigRoundTripServer(t, diffLiveConfig, http.StatusOK)
+	srv, capture := startConfigRoundTripServer(t, diffLiveConfig, http.StatusOK)
 	writeRunFileFor(t, cfg, srv)
 
 	spec := writeSpecFile(t, `{"defaultBranch":"main"}`)
@@ -21,14 +21,14 @@ func TestProjectConfigDiff_MatchingExitsZero(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error on matching diff: %v\nstderr=%s", err, errOut)
 	}
-	if cap.putCalled {
+	if capture.putCalled {
 		t.Fatal("diff must never PUT")
 	}
 }
 
 func TestProjectConfigDiff_DriftExitsNonzeroAndNamesFields(t *testing.T) {
 	cfg := setConfigEnv(t)
-	srv, cap := startConfigRoundTripServer(t, diffLiveConfig, http.StatusOK)
+	srv, capture := startConfigRoundTripServer(t, diffLiveConfig, http.StatusOK)
 	writeRunFileFor(t, cfg, srv)
 
 	spec := writeSpecFile(t, `{"defaultBranch":"release","maxLiveWorkers":5}`)
@@ -42,7 +42,7 @@ func TestProjectConfigDiff_DriftExitsNonzeroAndNamesFields(t *testing.T) {
 	if got := ExitCode(err); got == 0 {
 		t.Fatalf("exit code = %d, want nonzero", got)
 	}
-	if cap.putCalled {
+	if capture.putCalled {
 		t.Fatal("diff must never PUT")
 	}
 	// Each drifted field named with spec vs live values.
@@ -60,7 +60,7 @@ func TestProjectConfigDiff_DriftExitsNonzeroAndNamesFields(t *testing.T) {
 func TestProjectConfigDiff_IgnoresUnnamedFields(t *testing.T) {
 	cfg := setConfigEnv(t)
 	// Live sessionPrefix differs from nothing in spec — spec only names defaultBranch.
-	srv, cap := startConfigRoundTripServer(t, diffLiveConfig, http.StatusOK)
+	srv, capture := startConfigRoundTripServer(t, diffLiveConfig, http.StatusOK)
 	writeRunFileFor(t, cfg, srv)
 
 	spec := writeSpecFile(t, `{"defaultBranch":"main"}`)
@@ -71,7 +71,7 @@ func TestProjectConfigDiff_IgnoresUnnamedFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected drift: %v", err)
 	}
-	if cap.putCalled {
+	if capture.putCalled {
 		t.Fatal("diff must never PUT")
 	}
 }
