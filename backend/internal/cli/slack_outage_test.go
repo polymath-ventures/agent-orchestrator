@@ -11,10 +11,9 @@ import (
 	"time"
 )
 
-// After at least one successful connect, three consecutive reconnect failures
-// must produce exactly one daemon-unreachable alert, mentioning the configured
-// member, and the alert must not repeat while the outage persists.
-func TestSlackNotifyLatchesDaemonUnreachableAlert(t *testing.T) {
+// A successful reconnect re-arms the outage latch, while each continuous
+// outage still produces exactly one alert.
+func TestSlackNotifyLatchesAndRearmsDaemonUnreachableAlert(t *testing.T) {
 	fastReconnect(t)
 	cfg := setConfigEnv(t)
 	t.Setenv(slackMemberEnv, "UOPS")
@@ -28,9 +27,9 @@ func TestSlackNotifyLatchesDaemonUnreachableAlert(t *testing.T) {
 		case "/api/v1/notifications/stream":
 			mu.Lock()
 			streamConnections++
-			first := streamConnections == 1
+			success := streamConnections == 1 || streamConnections == 5
 			mu.Unlock()
-			if first {
+			if success {
 				w.Header().Set("Content-Type", "text/event-stream")
 				w.WriteHeader(http.StatusOK)
 				w.(http.Flusher).Flush() // connect, then end the stream to force reconnects
@@ -53,33 +52,35 @@ func TestSlackNotifyLatchesDaemonUnreachableAlert(t *testing.T) {
 	go func() { errCh <- ctx.runSlackNotify(runCtx, slackNotifyOptions{webhookURL: sink.srv.URL}) }()
 
 	deadline := time.After(5 * time.Second)
-	var alert string
-	for alert == "" {
+	var alerts []string
+	for len(alerts) < 2 {
 		select {
 		case msg := <-sink.ch:
 			if strings.Contains(msg, "daemon_unreachable") {
-				alert = msg
+				alerts = append(alerts, msg)
 			}
 		case <-deadline:
 			t.Fatal("no daemon-unreachable alert after repeated post-connect failures")
 		}
 	}
-	if !strings.HasPrefix(alert, "<@UOPS> ") {
-		t.Fatalf("outage alert must mention the configured member, got %q", alert)
+	for _, alert := range alerts {
+		if !strings.HasPrefix(alert, "<@UOPS> ") {
+			t.Fatalf("outage alert must mention the configured member, got %q", alert)
+		}
 	}
 
 	// Give the loop time to keep failing; the latch must suppress repeats.
 	time.Sleep(200 * time.Millisecond)
 	sink.mu.Lock()
-	alerts := 0
+	alertCount := 0
 	for _, m := range sink.got {
 		if strings.Contains(m, "daemon_unreachable") {
-			alerts++
+			alertCount++
 		}
 	}
 	sink.mu.Unlock()
-	if alerts != 1 {
-		t.Fatalf("expected exactly one latched outage alert, got %d", alerts)
+	if alertCount != 2 {
+		t.Fatalf("expected one alert per outage, got %d", alertCount)
 	}
 	expectCleanShutdown(t, cancel, errCh)
 }

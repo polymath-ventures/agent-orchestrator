@@ -162,6 +162,33 @@ func TestSlackPosterSendsTextPayload(t *testing.T) {
 	}
 }
 
+func TestSlackPosterCancelsInFlightPost(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+		close(started)
+		<-release
+	}))
+	defer srv.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- (slackPoster{client: srv.Client(), webhookURL: srv.URL}).post(ctx, "hello")
+	}()
+	<-started
+	cancel()
+	select {
+	case err := <-errCh:
+		close(release)
+		if err == nil {
+			t.Fatal("post returned nil after cancellation")
+		}
+	case <-time.After(time.Second):
+		close(release)
+		t.Fatal("in-flight Slack post did not unblock on cancellation")
+	}
+}
+
 func TestSlackPosterErrorsOnNonSuccess(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
