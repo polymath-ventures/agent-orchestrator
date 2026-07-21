@@ -2169,6 +2169,15 @@ func (m *Manager) buildSpawnTexts(ctx context.Context, cfg ports.SpawnConfig) (p
 // given kind from current store state. Restore recomputes them through here
 // rather than persisting them, so a restored worker points at the orchestrator
 // that is active now, not the one from its original spawn.
+// RoleSystemPrompt assembles the exact system prompt a worker or orchestrator
+// session receives for a project, for operator inspection. It reuses the same
+// assembly path as spawn (buildSystemPrompt), so what the operator sees matches
+// what an agent would get if spawned right now — including any operator rules
+// override, and the same fail-closed error when that override is misconfigured.
+func (m *Manager) RoleSystemPrompt(ctx context.Context, kind domain.SessionKind, projectID domain.ProjectID) (string, error) {
+	return m.buildSystemPrompt(ctx, kind, projectID)
+}
+
 func (m *Manager) buildSystemPrompt(ctx context.Context, kind domain.SessionKind, projectID domain.ProjectID) (string, error) {
 	project, err := m.loadProject(ctx, projectID)
 	if err != nil {

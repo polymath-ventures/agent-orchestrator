@@ -22,6 +22,7 @@ import (
 type APIDeps struct {
 	Agents             controllers.AgentCatalog
 	Projects           projectsvc.Manager
+	RolePrompt         controllers.RolePromptService
 	Sessions           controllers.SessionService
 	Activity           controllers.ActivityRecorder
 	PRs                prsvc.ActionManager
@@ -43,6 +44,7 @@ type API struct {
 	cfg           config.Config
 	agents        *controllers.AgentsController
 	projects      *controllers.ProjectsController
+	rolePrompts   *controllers.RolePromptController
 	sessions      *controllers.SessionsController
 	prs           *controllers.PRsController
 	reviews       *controllers.ReviewsController
@@ -63,6 +65,9 @@ func NewAPI(cfg config.Config, deps APIDeps) *API {
 		},
 		projects: &controllers.ProjectsController{
 			Mgr: deps.Projects,
+		},
+		rolePrompts: &controllers.RolePromptController{
+			Svc: deps.RolePrompt,
 		},
 		sessions: &controllers.SessionsController{
 			Svc:      deps.Sessions,
@@ -93,6 +98,7 @@ func (a *API) Register(root chi.Router) {
 			r.Use(middleware.Timeout(timeout))
 			a.agents.Register(r)
 			a.projects.Register(r)
+			a.rolePrompts.Register(r)
 			a.sessions.Register(r)
 			a.prs.Register(r)
 			a.reviews.Register(r)
