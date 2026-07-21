@@ -14,7 +14,7 @@ ExecStartPre=/bin/sh -c 'if ! command -v tmux >/dev/null 2>&1; then echo "ao.ser
 ExecStart=%h/.local/bin/ao daemon
 Restart=always
 RestartSec=5s
-Environment=AO_DATA_DIR=%h/.ao
+Environment=AO_DATA_DIR=%h/.ao/data
 Environment=AO_RUN_FILE=%h/.ao/running.json
 Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
 
