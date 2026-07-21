@@ -336,7 +336,7 @@ func (s *Service) SpawnOrchestrator(ctx context.Context, projectID domain.Projec
 		// Same rollback contract as SpawnPrime: never leave an unverified
 		// singleton live for the next ensure pass to adopt.
 		if retireErr := s.manager.RetireForReplacement(ctx, sess.ID); retireErr != nil {
-			return domain.Session{}, fmt.Errorf("%w (and retiring the unverified orchestrator failed: %v)", err, retireErr)
+			return domain.Session{}, errors.Join(err, fmt.Errorf("retiring the unverified orchestrator failed: %w", retireErr))
 		}
 		return domain.Session{}, err
 	}
@@ -379,7 +379,7 @@ func (s *Service) SpawnPrime(ctx context.Context, projectID domain.ProjectID, cl
 		// next supervisor tick would see an active prime and silently adopt
 		// it. Retire so the fleet is primeless and replacement re-enters.
 		if retireErr := s.manager.RetireForReplacement(ctx, sess.ID); retireErr != nil {
-			return domain.Session{}, fmt.Errorf("%w (and retiring the unverified prime failed: %v)", err, retireErr)
+			return domain.Session{}, errors.Join(err, fmt.Errorf("retiring the unverified prime failed: %w", retireErr))
 		}
 		return domain.Session{}, err
 	}
@@ -519,8 +519,13 @@ func (s *Service) lockOrchestratorProject(projectID domain.ProjectID) func() {
 func (s *Service) Restore(ctx context.Context, id domain.SessionID) (RestoreOutcome, error) {
 	// The manual-spawn ban extends to restore: relaunching a leftover
 	// terminated prime through the public restore endpoint would create an
-	// unsupervised prime even with the env gate unset.
-	if rec, ok, err := s.store.GetSession(ctx, id); err == nil && ok && rec.Kind == domain.KindPrime {
+	// unsupervised prime even with the env gate unset. Fail closed: a store
+	// error here must not let the kind check be skipped.
+	rec, ok, err := s.store.GetSession(ctx, id)
+	if err != nil {
+		return RestoreOutcome{}, fmt.Errorf("restore %s: %w", id, err)
+	}
+	if ok && rec.Kind == domain.KindPrime {
 		return RestoreOutcome{}, apierr.Forbidden("PRIME_MANUAL_RESTORE_FORBIDDEN", "Prime sessions are managed only by the env-gated supervisor and cannot be restored manually", nil)
 	}
 	res, err := s.manager.RestoreWithMode(ctx, id)

@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -279,7 +280,16 @@ func TestEnsurePrimeCapAlertsWhenPrimeNeverSpawned(t *testing.T) {
 		t.Fatalf("notifications = %d, want one cap alert even with no lastPrime", len(notifier.intents))
 	}
 	got := notifier.intents[0]
-	if got.Type != domain.NotificationPrimeRestartCapped || got.ProjectID != testPrimeConfig(base).ProjectID {
-		t.Fatalf("notification = %+v, want project-scoped prime cap alert", got)
+	if got.Type != domain.NotificationPrimeRestartCapped {
+		t.Fatalf("notification type = %q, want prime restart cap", got.Type)
+	}
+	// No session/project references: the configured project may not exist and
+	// a dangling id would be rejected by the notifications project FK. The
+	// configured value travels in the message and dedupe key.
+	if got.SessionID != "" || got.ProjectID != "" {
+		t.Fatalf("notification refs = session %q project %q, want both empty", got.SessionID, got.ProjectID)
+	}
+	if !strings.Contains(got.Message, string(testPrimeConfig(base).ProjectID)) || !strings.Contains(got.DedupeKey, string(testPrimeConfig(base).ProjectID)) {
+		t.Fatalf("message/dedupe must name the configured project: %+v", got)
 	}
 }

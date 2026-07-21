@@ -1484,3 +1484,29 @@ func TestRestoreRejectsPrimeSession(t *testing.T) {
 		t.Fatalf("restore reached the manager %d times, want 0", fc.restoreCalls)
 	}
 }
+
+// The orchestrator path shares SpawnPrime's rollback contract: a spawned
+// orchestrator that fails replacement verification must be retired.
+func TestSpawnOrchestratorRetiresUnverifiedReplacement(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{
+		ID:     "mer",
+		Config: domain.ProjectConfig{Orchestrator: domain.RoleOverride{Harness: domain.HarnessCodex}},
+	}
+	fc := &fakeCommander{spawnRecord: domain.SessionRecord{
+		ID:        "mer-orc",
+		ProjectID: "mer",
+		Kind:      domain.KindOrchestrator,
+		Harness:   domain.HarnessClaudeCode, // mismatch → verification failure
+		Metadata:  domain.SessionMetadata{Branch: "ao/mer-orchestrator"},
+	}}
+	svc := &Service{manager: fc, store: st}
+
+	_, err := svc.SpawnOrchestrator(context.Background(), "mer", true)
+	if err == nil {
+		t.Fatal("want verification failure")
+	}
+	if len(fc.retired) != 1 || fc.retired[0] != "mer-orc" {
+		t.Fatalf("retired = %v, want the unverified orchestrator retired", fc.retired)
+	}
+}

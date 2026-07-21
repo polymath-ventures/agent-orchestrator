@@ -101,7 +101,6 @@ func TestHubProjectFilter(t *testing.T) {
 func TestEnrichPrimeRestartCappedWithoutSession(t *testing.T) {
 	rec, err := enrich(Intent{
 		Type:      domain.NotificationPrimeRestartCapped,
-		ProjectID: "mistyped-project",
 		DedupeKey: "prime:restart-capped:mistyped-project:",
 		CreatedAt: time.Date(2026, 7, 21, 10, 0, 0, 0, time.UTC),
 		Message:   "cap",
@@ -112,7 +111,7 @@ func TestEnrichPrimeRestartCappedWithoutSession(t *testing.T) {
 	if err := rec.Validate(); err != nil {
 		t.Fatalf("Validate: %v", err)
 	}
-	if rec.SessionID != "" {
-		t.Fatalf("SessionID = %q, want empty preserved", rec.SessionID)
+	if rec.SessionID != "" || rec.ProjectID != "" {
+		t.Fatalf("refs = session %q project %q, want both empty preserved", rec.SessionID, rec.ProjectID)
 	}
 }

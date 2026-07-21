@@ -156,14 +156,17 @@ func ensurePrime(ctx context.Context, cfg primeSupervisorConfig, state *primeSup
 			// A prime that has NEVER spawned still deserves the cap alert —
 			// a permanently failing SpawnPrime (e.g. a mistyped
 			// AO_PRIME_PROJECT_ID) would otherwise cap in total silence.
-			// Fall back to a project-scoped identity when no prime was
-			// ever observed.
+			// The fallback intent carries NO session or project reference:
+			// the configured project may not exist (that misconfig is what
+			// the alert surfaces), and a dangling id would be rejected by
+			// the notifications table's project FK. The configured value
+			// travels in the message and dedupe key instead.
 			capSubject := state.lastPrime
 			if capSubject.ID == "" {
-				capSubject.ProjectID = cfg.ProjectID
+				capSubject = domain.Session{}
 				capSubject.DisplayName = "Prime (never spawned)"
 			}
-			notifyPrimeRestartCapped(ctx, notifier, capSubject, now)
+			notifyPrimeRestartCapped(ctx, notifier, capSubject, cfg.ProjectID, now)
 		}
 		if !allowed {
 			return
@@ -178,7 +181,7 @@ func ensurePrime(ctx context.Context, cfg primeSupervisorConfig, state *primeSup
 	if primeNeedsReplacement(active, now, cfg.UnhealthyAfter) {
 		allowed, capped := state.reserveRestart(now, cfg)
 		if capped {
-			notifyPrimeRestartCapped(ctx, notifier, active, now)
+			notifyPrimeRestartCapped(ctx, notifier, active, cfg.ProjectID, now)
 		}
 		if !allowed {
 			return
@@ -284,18 +287,22 @@ func (s *primeSupervisorState) resetRestart() {
 	s.restartBackoff = 0
 }
 
-func notifyPrimeRestartCapped(ctx context.Context, notifier notificationSink, sess domain.Session, now time.Time) {
+func notifyPrimeRestartCapped(ctx context.Context, notifier notificationSink, sess domain.Session, configuredProject domain.ProjectID, now time.Time) {
 	if notifier == nil {
 		return
+	}
+	message := "AO tried to replace the unhealthy prime three times in the last hour and paused automatic replacement. Inspect the active prime before restarting it."
+	if sess.ID == "" {
+		message = fmt.Sprintf("AO could not start the fleet prime for configured project %q after three attempts in the last hour and paused automatic retries. Check AO_PRIME_PROJECT_ID and the project's prime configuration.", configuredProject)
 	}
 	err := notifier.Notify(ctx, ports.NotificationIntent{
 		Type:               domain.NotificationPrimeRestartCapped,
 		SessionID:          sess.ID,
 		ProjectID:          sess.ProjectID,
-		DedupeKey:          fmt.Sprintf("prime:restart-capped:%s:%s", sess.ProjectID, sess.ID),
+		DedupeKey:          fmt.Sprintf("prime:restart-capped:%s:%s", configuredProject, sess.ID),
 		CreatedAt:          now,
 		SessionDisplayName: sess.DisplayName,
-		Message:            "AO tried to replace the unhealthy prime three times in the last hour and paused automatic replacement. Inspect the active prime before restarting it.",
+		Message:            message,
 	})
 	if err != nil {
 		// The cap alert is the last line of defense against a silently dead
