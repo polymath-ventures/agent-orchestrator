@@ -2241,7 +2241,7 @@ func TestSpawnOrchestrator_ProjectRulesInSystemPrompt(t *testing.T) {
 	}
 }
 
-func TestSpawnOrchestrator_RulesFileMergedVerbatim(t *testing.T) {
+func TestSpawnOrchestrator_RulesFileMergedContent(t *testing.T) {
 	projectDir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(projectDir, "docs"), 0o755); err != nil {
 		t.Fatal(err)

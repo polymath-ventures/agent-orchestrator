@@ -10,9 +10,10 @@ import (
 )
 
 // TestLoadRoleRules_FifoFailsClosedWithoutBlocking guards the regression where a
-// rules-file path points at a FIFO: opening a FIFO for read blocks until a
-// writer appears, so the loader must reject it via a non-blocking Stat before
-// any read, rather than hanging the spawn/inspection goroutine.
+// rules-file path points at a FIFO: a blocking open for read waits until a
+// writer appears, so the loader must open non-blocking and reject the file via
+// an f.Stat() on that handle before any read, rather than hanging the
+// spawn/inspection goroutine.
 func TestLoadRoleRules_FifoFailsClosedWithoutBlocking(t *testing.T) {
 	dir := t.TempDir()
 	fifo := filepath.Join(dir, "rules.md")
