@@ -15,7 +15,7 @@ the operator, never self-healing.
   JSON produced by `ao project config export <project>`, stored at a known,
   stable path so it diffs cleanly under git.
 - Add a scheduled drift check that runs `ao project config diff <project>
-  <snapshot>` for every tracked project, reusing the existing diff exit-code
+<snapshot>` for every tracked project, reusing the existing diff exit-code
   contract (zero = in sync, nonzero = drift). Drift is **surfaced** (nonzero
   exit + operator-visible report/log); it is never auto-applied.
 - Add a refresh helper that regenerates a project's committed snapshot
@@ -54,7 +54,7 @@ it does not alter any export/apply/diff requirement. -->
 - **New committed snapshot location**: a known per-project path (e.g.
   `ops/project-config/<project>.json`) tracked in git.
 - **Depends on** the merged `project-config-as-code` CLI (`ao project config
-  export|diff`, #14/#42); consumes its exit-code contract, adds no new flags to
+export|diff`, #14/#42); consumes its exit-code contract, adds no new flags to
   it.
 - **Tests**: extends `ops/ao-systemd-units.test.mjs` and adds unit coverage for
   the drift-check runner's project enumeration and exit-code aggregation.

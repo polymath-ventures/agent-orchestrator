@@ -40,25 +40,25 @@ The repo already has the two building blocks this needs:
 **D1 — Snapshot location: `ops/project-config/<project>.json`, one file per
 project.** Keeps fork-only operational state under the existing `ops/` home,
 gives each project an independent git diff, and makes the tracked set explicit
-and reviewable. *Alternative:* a single combined file for all projects — rejected
+and reviewable. _Alternative:_ a single combined file for all projects — rejected
 because it couples unrelated projects into one diff and one merge surface.
 
 **D2 — The committed snapshot files ARE the tracked-project registry.** A project
 is checked iff `ops/project-config/<project>.json` exists; there is no second
-list of "projects to track." *Alternative:* a separate manifest enumerating
+list of "projects to track." _Alternative:_ a separate manifest enumerating
 tracked projects — rejected per Merit (two sources that must agree will
 eventually disagree); the files on disk are the single source of truth.
 
 **D3 — Drift detection delegates entirely to `ao project config diff`; the runner
 never re-implements diffing.** The runner shells out per snapshot and aggregates
-exit codes. *Alternative:* export live config in the runner and JSON-diff it
+exit codes. _Alternative:_ export live config in the runner and JSON-diff it
 against the snapshot — rejected because it forks the drift contract into a second
 place; keeping one drift definition (the CLI's) is the whole point of reuse.
 
 **D4 — The runner is a small, unit-testable Node script
 (`ops/config-drift-check.mjs`), not inline shell in `ExecStart`.** The repo
 already tests ops Node helpers, TDD needs the enumeration + aggregation logic to
-be exercised directly, and a script keeps the systemd unit trivial. *Alternative:*
+be exercised directly, and a script keeps the systemd unit trivial. _Alternative:_
 a POSIX shell loop in the unit's `ExecStart` — rejected because it is not
 unit-testable and hides the aggregation logic in a unit file.
 
@@ -66,7 +66,7 @@ unit-testable and hides the aggregation logic in a unit file.
 <project>` = rewrite that project's snapshot from a fresh export.** Fewer assets
 than a separate refresh script, and both modes share project/path resolution.
 The refresh mode only writes the snapshot file; committing it stays a manual,
-reviewable step. *Alternative:* a separate `refresh.mjs` — rejected to hold the
+reviewable step. _Alternative:_ a separate `refresh.mjs` — rejected to hold the
 asset count down.
 
 **D6 — Scheduling via a systemd `.service` (`Type=oneshot`) + `.timer` pair under
@@ -82,7 +82,7 @@ agnostic and testable (tests inject a stub `ao`).
 
 ## Risks / Trade-offs
 
-- **A nonzero `config diff` exit can mean genuine drift *or* an infra failure
+- **A nonzero `config diff` exit can mean genuine drift _or_ an infra failure
   (daemon down, `ao` missing).** → The check treats any per-project nonzero exit
   as "needs operator attention" and includes the command's output in the report,
   rather than building error-class heuristics the operator does not need. Both
