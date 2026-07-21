@@ -873,6 +873,62 @@ paths:
       summary: Resume a paused project
       tags:
       - projects
+  /api/v1/projects/{id}/roles/{role}/prompt:
+    get:
+      operationId: getRolePrompt
+      parameters:
+      - description: Project identifier (registry key).
+        in: path
+        name: id
+        required: true
+        schema:
+          description: Project identifier (registry key).
+          type: string
+      - description: 'Agent role: worker, orchestrator, or reviewer.'
+        in: path
+        name: role
+        required: true
+        schema:
+          description: 'Agent role: worker, orchestrator, or reviewer.'
+          enum:
+          - worker
+          - orchestrator
+          - reviewer
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ControllersRolePromptResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+      summary: Render the exact assembled system prompt a role receives for a project
+      tags:
+      - projects
   /api/v1/projects/initialize:
     post:
       operationId: initializeProjectRepository
@@ -2096,6 +2152,16 @@ components:
       required:
       - paused
       type: object
+    ControllersRolePromptResponse:
+      properties:
+        prompt:
+          type: string
+        role:
+          type: string
+      required:
+      - role
+      - prompt
+      type: object
     ControllersSessionView:
       properties:
         activity:
@@ -2727,10 +2793,16 @@ components:
           $ref: '#/components/schemas/RoleOverride'
         orchestratorRules:
           type: string
+        orchestratorRulesFile:
+          type: string
         postCreate:
           items:
             type: string
           type: array
+        reviewerRules:
+          type: string
+        reviewerRulesFile:
+          type: string
         reviewers:
           items:
             $ref: '#/components/schemas/DomainReviewerConfig'
@@ -3303,6 +3375,10 @@ components:
         harness:
           description: Agent harness reporting the activity, used for usage telemetry
             attribution when the session row has no harness.
+          type: string
+        runtimeToken:
+          description: Runtime generation token exported to this session's hooks;
+            stale tokens are ignored.
           type: string
         state:
           description: Agent activity state reported by an agent hook. Optional for
