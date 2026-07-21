@@ -1,4 +1,4 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams, useRouterState } from "@tanstack/react-router";
 import {
 	ChevronRight,
@@ -7,7 +7,9 @@ import {
 	MessageSquare,
 	Moon,
 	MoreVertical,
+	Pause,
 	Pencil,
+	Play,
 	Plus,
 	RefreshCw,
 	Search,
@@ -33,7 +35,9 @@ import { renameSession } from "../lib/rename-session";
 import { useEventsConnection } from "../hooks/useEventsConnection";
 import { useResizable } from "../hooks/useResizable";
 import { useUpdateStatus } from "../hooks/useUpdateStatus";
+import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { ConnectMobileModal } from "./ConnectMobileModal";
+import { Badge } from "./ui/badge";
 import {
 	DropdownMenu,
 	DropdownMenuContent,
@@ -519,6 +523,31 @@ function ProjectItem({
 	// button: navigate to it when present, otherwise spawn one first.
 	const orchestrator = newestActiveOrchestrator(workspace.sessions);
 
+	// Per-project pause lifecycle. `draining` means a soft pause is in flight and
+	// live workers are finishing; `paused` (or draining) both mean new work is
+	// held, so the kebab offers Resume and the row shows a badge.
+	const paused = workspace.paused ?? false;
+	const draining = workspace.pauseState === "draining";
+	const pauseProject = useMutation({
+		mutationFn: async () => {
+			const { error } = await apiClient.POST("/api/v1/projects/{id}/pause", {
+				params: { path: { id: workspace.id } },
+			});
+			if (error) throw new Error(apiErrorMessage(error));
+		},
+		onSettled: () => void queryClient.invalidateQueries({ queryKey: workspaceQueryKey }),
+	});
+	const resumeProject = useMutation({
+		mutationFn: async () => {
+			const { error } = await apiClient.POST("/api/v1/projects/{id}/resume", {
+				params: { path: { id: workspace.id } },
+			});
+			if (error) throw new Error(apiErrorMessage(error));
+		},
+		onSettled: () => void queryClient.invalidateQueries({ queryKey: workspaceQueryKey }),
+	});
+	const pauseBusy = pauseProject.isPending || resumeProject.isPending;
+
 	// Mirrors ShellTopbar's launcher: attach to the running orchestrator, or
 	// spawn one via the daemon and follow it once the workspace refetches.
 	const openOrchestrator = async () => {
@@ -603,6 +632,14 @@ function ProjectItem({
 				<span className="sidebar-expanded-chrome min-w-0 flex-1 truncate group-data-[collapsible=icon]:hidden">
 					{workspace.name}
 				</span>
+				{paused && (
+					<Badge
+						variant={draining ? "warning" : "neutral"}
+						className="sidebar-expanded-chrome h-4 shrink-0 px-1.5 text-micro font-medium group-data-[collapsible=icon]:hidden"
+					>
+						{draining ? `Draining(${workspace.drainingWorkers ?? 0})` : "Paused"}
+					</Badge>
+				)}
 				<span className="hidden h-4 min-w-4 shrink-0 place-items-center rounded bg-interactive-hover px-1 font-mono text-[10px] leading-none text-passive">
 					{sessions.length}
 				</span>
@@ -662,6 +699,18 @@ function ProjectItem({
 							<Plus aria-hidden="true" />
 							New session
 						</DropdownMenuItem>
+						<DropdownMenuSeparator />
+						{paused ? (
+							<DropdownMenuItem disabled={pauseBusy} onSelect={() => void resumeProject.mutate()}>
+								<Play aria-hidden="true" />
+								Resume
+							</DropdownMenuItem>
+						) : (
+							<DropdownMenuItem disabled={pauseBusy} onSelect={() => void pauseProject.mutate()}>
+								<Pause aria-hidden="true" />
+								Pause
+							</DropdownMenuItem>
+						)}
 						<DropdownMenuSeparator />
 						<DropdownMenuItem onSelect={() => selection.goSettings(workspace.id)}>
 							<Settings aria-hidden="true" />

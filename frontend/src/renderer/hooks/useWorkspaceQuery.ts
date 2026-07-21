@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import type { components } from "../../api/schema";
 import { apiClient, hasTrustedApiBaseUrl } from "../lib/api-client";
 import {
+	type PauseState,
 	type PRState,
 	type PullRequestFacts,
 	toAgentProvider,
@@ -9,6 +10,10 @@ import {
 	toSessionStatus,
 	type WorkspaceSummary,
 } from "../types/workspace";
+
+function toPauseState(state?: string): PauseState | undefined {
+	return state === "running" || state === "draining" || state === "paused" ? state : undefined;
+}
 
 function toPullRequestFacts(pr: components["schemas"]["SessionPRFacts"]): PullRequestFacts {
 	return {
@@ -41,6 +46,9 @@ async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
 		kind: project.kind === "workspace" ? "workspace" : "single_repo",
 		path: project.path,
 		orchestratorAgent: project.orchestratorAgent ? toAgentProvider(project.orchestratorAgent) : undefined,
+		paused: project.paused,
+		pauseState: toPauseState(project.pauseState),
+		drainingWorkers: project.drainingWorkers,
 		sessions: (sessionsData?.sessions ?? [])
 			.filter((session) => session.projectId === project.id)
 			.map((session) => ({
