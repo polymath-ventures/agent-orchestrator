@@ -15,6 +15,7 @@ func pauseManager() (*Manager, *fakeStore) {
 	return capManager(domain.ProjectConfig{
 		Worker:       domain.RoleOverride{Harness: domain.HarnessClaudeCode},
 		Orchestrator: domain.RoleOverride{Harness: domain.HarnessClaudeCode},
+		Prime:        domain.RoleOverride{Harness: domain.HarnessClaudeCode},
 	})
 }
 
@@ -58,6 +59,19 @@ func TestSpawn_PausedAllowsOrchestrator(t *testing.T) {
 
 	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindOrchestrator}); err != nil {
 		t.Fatalf("orchestrator spawn under pause = %v, want nil", err)
+	}
+}
+
+// Prime is the fleet's meta tier and must stay spawnable during pauses, just
+// like project orchestrators.
+func TestSpawn_PausedAllowsPrime(t *testing.T) {
+	m, st := pauseManager()
+	p := st.projects["mer"]
+	p.Paused = true
+	st.projects["mer"] = p
+
+	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindPrime}); err != nil {
+		t.Fatalf("prime spawn under pause = %v, want nil", err)
 	}
 }
 

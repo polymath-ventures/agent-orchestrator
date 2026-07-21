@@ -108,6 +108,7 @@ type Service struct {
 	tracker             ports.Tracker
 	clock               func() time.Time
 	telemetry           ports.EventSink
+	primeDisplayName    string
 	orchestratorLocksMu sync.Mutex
 	orchestratorLocks   map[domain.ProjectID]*sync.Mutex
 	// signalCapable reports whether a harness has a hook pipeline that can
@@ -133,6 +134,9 @@ type Deps struct {
 	Tracker   ports.Tracker
 	Clock     func() time.Time
 	Telemetry ports.EventSink
+	// PrimeDisplayName is the optional fleet-scoped name for fresh prime
+	// sessions. The daemon resolves it from AO_PRIME_DISPLAY_NAME.
+	PrimeDisplayName string
 	// SignalCapable gates the no_signal status downgrade per harness; daemon
 	// wiring passes activitydispatch.SupportsHarness. Left nil, no session is
 	// ever downgraded to no_signal.
@@ -141,7 +145,7 @@ type Deps struct {
 
 // NewWithDeps wires a session service with optional PR-claim dependencies.
 func NewWithDeps(d Deps) *Service {
-	s := &Service{manager: d.Manager, store: d.Store, prClaimer: d.PRClaimer, scm: d.SCM, tracker: d.Tracker, clock: d.Clock, signalCapable: d.SignalCapable, telemetry: d.Telemetry}
+	s := &Service{manager: d.Manager, store: d.Store, prClaimer: d.PRClaimer, scm: d.SCM, tracker: d.Tracker, clock: d.Clock, signalCapable: d.SignalCapable, telemetry: d.Telemetry, primeDisplayName: strings.TrimSpace(d.PrimeDisplayName)}
 	if s.prClaimer == nil {
 		if w, ok := d.Store.(ports.PRClaimer); ok {
 			s.prClaimer = w
@@ -155,6 +159,13 @@ func NewWithDeps(d Deps) *Service {
 
 // Spawn creates a session and returns the API-facing read model.
 func (s *Service) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Session, error) {
+	return s.spawn(ctx, cfg, false)
+}
+
+func (s *Service) spawn(ctx context.Context, cfg ports.SpawnConfig, allowPrime bool) (domain.Session, error) {
+	if cfg.Kind == domain.KindPrime && !allowPrime {
+		return domain.Session{}, apierr.Forbidden("PRIME_MANUAL_SPAWN_FORBIDDEN", "Prime sessions are started only by the env-gated supervisor", nil)
+	}
 	project, err := s.requireProject(ctx, cfg.ProjectID)
 	if err != nil {
 		return domain.Session{}, err
@@ -327,11 +338,62 @@ func (s *Service) SpawnOrchestrator(ctx context.Context, projectID domain.Projec
 	return sess, nil
 }
 
+// SpawnPrime spawns or returns the optional global prime supervisor. The host
+// project supplies the workspace/config, but singleton semantics are fleet-wide.
+func (s *Service) SpawnPrime(ctx context.Context, projectID domain.ProjectID, clean bool) (domain.Session, error) {
+	project, err := s.requireProject(ctx, projectID)
+	if err != nil {
+		return domain.Session{}, err
+	}
+	existing, err := s.activePrimeSessions(ctx)
+	if err != nil {
+		return domain.Session{}, err
+	}
+	if clean {
+		for _, prime := range existing {
+			_ = s.sendPrimeRetireNotice(ctx, prime.ID)
+			if err := s.manager.RetireForReplacement(ctx, prime.ID); err != nil {
+				return domain.Session{}, toAPIError(err)
+			}
+		}
+	} else if len(existing) > 0 {
+		return newestSession(existing), nil
+	}
+	sess, err := s.spawn(ctx, ports.SpawnConfig{ProjectID: projectID, Kind: domain.KindPrime, DisplayName: s.primeDisplayName}, true)
+	if err != nil {
+		return domain.Session{}, err
+	}
+	if err := verifyPrimeReplacement(project, sess); err != nil {
+		return domain.Session{}, err
+	}
+	return sess, nil
+}
+
+// ActivePrime returns the newest active fleet prime without spawning one.
+func (s *Service) ActivePrime(ctx context.Context) (domain.Session, bool, error) {
+	existing, err := s.activePrimeSessions(ctx)
+	if err != nil {
+		return domain.Session{}, false, err
+	}
+	if len(existing) == 0 {
+		return domain.Session{}, false, nil
+	}
+	return newestSession(existing), true, nil
+}
+
 const orchestratorRetireNotice = "AO is replacing this project orchestrator. Stop coordinating new work now; a fresh orchestrator will take over on the canonical branch."
+const primeRetireNotice = "AO is replacing the fleet prime supervisor. Stop coordinating new fleet work now; a fresh prime will take over on the canonical branch."
 
 func (s *Service) sendRetireNotice(ctx context.Context, id domain.SessionID) error {
 	if err := s.manager.Send(ctx, id, orchestratorRetireNotice); err != nil {
 		return fmt.Errorf("send retire notice to %s: %w", id, err)
+	}
+	return nil
+}
+
+func (s *Service) sendPrimeRetireNotice(ctx context.Context, id domain.SessionID) error {
+	if err := s.manager.Send(ctx, id, primeRetireNotice); err != nil {
+		return fmt.Errorf("send prime retire notice to %s: %w", id, err)
 	}
 	return nil
 }
@@ -351,6 +413,42 @@ func verifyOrchestratorReplacement(project domain.ProjectRecord, sess domain.Ses
 		return fmt.Errorf("orchestrator replacement verification failed: new session %s uses branch %q, want %q", sess.ID, sess.Metadata.Branch, expectedBranch)
 	}
 	return nil
+}
+
+func verifyPrimeReplacement(project domain.ProjectRecord, sess domain.Session) error {
+	if sess.IsTerminated {
+		return fmt.Errorf("prime replacement verification failed: new session %s is terminated", sess.ID)
+	}
+	if sess.Kind != domain.KindPrime {
+		return fmt.Errorf("prime replacement verification failed: new session %s has kind %q", sess.ID, sess.Kind)
+	}
+	if expected := project.Config.Prime.Harness; expected != "" && sess.Harness != expected {
+		return fmt.Errorf("prime replacement verification failed: new session %s uses harness %q, want %q", sess.ID, sess.Harness, expected)
+	}
+	expectedBranch := "ao/" + serviceSessionPrefix(project) + "-prime"
+	if sess.Metadata.Branch != "" && sess.Metadata.Branch != expectedBranch {
+		return fmt.Errorf("prime replacement verification failed: new session %s uses branch %q, want %q", sess.ID, sess.Metadata.Branch, expectedBranch)
+	}
+	return nil
+}
+
+func (s *Service) activePrimeSessions(ctx context.Context) ([]domain.Session, error) {
+	recs, err := s.listRecords(ctx, "")
+	if err != nil {
+		return nil, err
+	}
+	out := make([]domain.Session, 0, len(recs))
+	for _, rec := range recs {
+		if rec.Kind != domain.KindPrime || rec.IsTerminated {
+			continue
+		}
+		sess, err := s.toSession(ctx, rec)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, sess)
+	}
+	return out, nil
 }
 
 func serviceSessionPrefix(project domain.ProjectRecord) string {

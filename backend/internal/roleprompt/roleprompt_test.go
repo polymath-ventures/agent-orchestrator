@@ -33,14 +33,15 @@ func (f fakeProjects) GetProject(_ context.Context, _ string) (domain.ProjectRec
 	return f.rec, f.ok, f.err
 }
 
-func TestRolePrompt_WorkerAndOrchestrator(t *testing.T) {
+func TestRolePrompt_WorkerOrchestratorAndPrime(t *testing.T) {
 	sessions := fakeSessions{prompts: map[domain.SessionKind]string{
 		domain.KindWorker:       "WORKER PROMPT",
 		domain.KindOrchestrator: "ORCH PROMPT",
+		domain.KindPrime:        "PRIME PROMPT",
 	}}
 	a := New(sessions, fakeProjects{rec: domain.ProjectRecord{ID: "mer"}, ok: true})
 
-	for role, want := range map[string]string{RoleWorker: "WORKER PROMPT", RoleOrchestrator: "ORCH PROMPT"} {
+	for role, want := range map[string]string{RoleWorker: "WORKER PROMPT", RoleOrchestrator: "ORCH PROMPT", RolePrime: "PRIME PROMPT"} {
 		got, err := a.RolePrompt(context.Background(), "mer", role)
 		if err != nil {
 			t.Fatalf("%s: %v", role, err)
@@ -86,7 +87,7 @@ func TestRolePrompt_ReviewerFailsClosedOnMissingFile(t *testing.T) {
 
 func TestRolePrompt_UnknownRole(t *testing.T) {
 	a := New(fakeSessions{}, fakeProjects{rec: domain.ProjectRecord{ID: "mer"}, ok: true})
-	_, err := a.RolePrompt(context.Background(), "mer", "prime")
+	_, err := a.RolePrompt(context.Background(), "mer", "unknown")
 	if !errors.Is(err, ErrUnknownRole) {
 		t.Fatalf("err = %v, want ErrUnknownRole", err)
 	}

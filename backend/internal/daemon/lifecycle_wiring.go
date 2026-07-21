@@ -153,12 +153,13 @@ func startSession(cfg config.Config, runtime runtimeselect.Runtime, store *sqlit
 		tracker = t
 	}
 	sessionSvc := sessionsvc.NewWithDeps(sessionsvc.Deps{
-		Manager:   mgr,
-		Store:     store,
-		PRClaimer: store,
-		SCM:       scmProvider,
-		Tracker:   tracker,
-		Telemetry: telemetry,
+		Manager:          mgr,
+		Store:            store,
+		PRClaimer:        store,
+		SCM:              scmProvider,
+		Tracker:          tracker,
+		Telemetry:        telemetry,
+		PrimeDisplayName: cfg.PrimeDisplayName,
 		// no_signal only makes sense for harnesses whose adapters install
 		// activity hooks; the deriver registry is the source of truth for that.
 		SignalCapable: activitydispatch.SupportsHarness,

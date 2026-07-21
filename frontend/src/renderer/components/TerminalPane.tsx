@@ -2,7 +2,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { RotateCcw } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { TerminalTarget } from "../types/terminal";
-import type { WorkspaceSession } from "../types/workspace";
+import { isPrimeSession, type WorkspaceSession } from "../types/workspace";
 import type { Theme } from "../stores/ui-store";
 import { useTerminalSession, type AttachableTerminal, type TerminalSessionState } from "../hooks/useTerminalSession";
 import { apiClient } from "../lib/api-client";
@@ -160,9 +160,11 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 	const showEndedState = state === "exited" || canRestoreSession;
 	const emptyStateTitle = session ? "Starting session" : "Agent Orchestrator";
 	const emptyStateMessage = session
-		? session.kind === "orchestrator"
-			? "Preparing the orchestrator terminal. This can take a moment while AO creates the worktree and starts the agent."
-			: "Preparing the worker terminal. This can take a moment while AO creates the worktree and starts the agent."
+		? isPrimeSession(session)
+			? "Preparing the prime terminal. This can take a moment while AO creates the worktree and starts the agent."
+			: session.kind === "orchestrator"
+				? "Preparing the orchestrator terminal. This can take a moment while AO creates the worktree and starts the agent."
+				: "Preparing the worker terminal. This can take a moment while AO creates the worktree and starts the agent."
 		: "No session selected. Pick a worker to attach its terminal.";
 
 	return (

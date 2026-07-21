@@ -89,6 +89,15 @@ describe("useWorkspaceQuery", () => {
 							isTerminated: false,
 							updatedAt: "2026-06-10T16:15:04Z",
 						},
+						{
+							id: "sess-prime",
+							projectId: "proj-1",
+							kind: "prime",
+							displayName: "AO Prime",
+							status: "working",
+							isTerminated: false,
+							updatedAt: "2026-06-10T16:15:04Z",
+						},
 						// Belongs to another project; must not leak into proj-1.
 						{ id: "sess-3", projectId: "proj-2", isTerminated: false, updatedAt: "2026-06-10T16:15:04Z" },
 					],
@@ -107,7 +116,7 @@ describe("useWorkspaceQuery", () => {
 			path: "/home/me/my-app",
 			orchestratorAgent: "codex",
 		});
-		expect(workspace.sessions).toHaveLength(2);
+		expect(workspace.sessions).toHaveLength(3);
 		expect(workspace.sessions[0]).toMatchObject({
 			id: "sess-1",
 			terminalHandleId: "term-1",
@@ -124,6 +133,11 @@ describe("useWorkspaceQuery", () => {
 			provider: "codex",
 			status: "unknown",
 			branch: "session/sess-2",
+		});
+		expect(workspace.sessions[2]).toMatchObject({
+			id: "sess-prime",
+			title: "AO Prime",
+			kind: "prime",
 		});
 	});
 

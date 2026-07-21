@@ -884,15 +884,16 @@ paths:
         schema:
           description: Project identifier (registry key).
           type: string
-      - description: 'Agent role: worker, orchestrator, or reviewer.'
+      - description: 'Agent role: worker, orchestrator, prime, or reviewer.'
         in: path
         name: role
         required: true
         schema:
-          description: 'Agent role: worker, orchestrator, or reviewer.'
+          description: 'Agent role: worker, orchestrator, prime, or reviewer.'
           enum:
           - worker
           - orchestrator
+          - prime
           - reviewer
           type: string
       responses:
@@ -2880,6 +2881,12 @@ components:
           items:
             type: string
           type: array
+        prime:
+          $ref: '#/components/schemas/RoleOverride'
+        primeRules:
+          type: string
+        primeRulesFile:
+          type: string
         reviewerRules:
           type: string
         reviewerRulesFile:

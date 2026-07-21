@@ -74,8 +74,12 @@ func EffectiveFromConfigs(base, override domain.AgentConfig, spawnModel string, 
 }
 
 func roleOverride(kind domain.SessionKind, cfg domain.ProjectConfig) domain.RoleOverride {
-	if kind == domain.KindOrchestrator {
+	switch kind {
+	case domain.KindOrchestrator:
 		return cfg.Orchestrator
+	case domain.KindPrime:
+		return cfg.Prime
+	default:
+		return cfg.Worker
 	}
-	return cfg.Worker
 }

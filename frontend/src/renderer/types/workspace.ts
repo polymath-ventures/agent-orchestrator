@@ -93,7 +93,7 @@ export type ChangedFile = {
 	staged?: boolean;
 };
 
-export type SessionKind = "worker" | "orchestrator";
+export type SessionKind = "worker" | "orchestrator" | "prime";
 
 /** Lifecycle state of a single pull request, mirrors the daemon's enum. */
 export type PRState = "open" | "draft" | "merged" | "closed";
@@ -242,6 +242,14 @@ export function isOrchestratorSession(session: WorkspaceSession): boolean {
 	return session.kind === "orchestrator" || session.id.endsWith("-orchestrator");
 }
 
+export function isPrimeSession(session: WorkspaceSession): boolean {
+	return session.kind === "prime" || session.id.endsWith("-prime");
+}
+
+export function isTerminalOnlySession(session: WorkspaceSession): boolean {
+	return isOrchestratorSession(session) || isPrimeSession(session);
+}
+
 /**
  * The project's LIVE orchestrator, if any. Terminated orchestrator rows stay in
  * the session list (the daemon returns all sessions, ordered by spawn number),
@@ -283,7 +291,7 @@ function timestamp(value?: string): number {
 }
 
 export function workerSessions(sessions: WorkspaceSession[]): WorkspaceSession[] {
-	return sessions.filter((s) => !isOrchestratorSession(s));
+	return sessions.filter((s) => !isTerminalOnlySession(s));
 }
 
 export function sessionIsActive(session: WorkspaceSession): boolean {

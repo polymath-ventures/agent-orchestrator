@@ -13,13 +13,14 @@ type (
 	IssueID string
 )
 
-// SessionKind distinguishes a worker session from an orchestrator session.
+// SessionKind distinguishes a worker session from daemon coordination roles.
 type SessionKind string
 
 // Session kinds.
 const (
 	KindWorker       SessionKind = "worker"
 	KindOrchestrator SessionKind = "orchestrator"
+	KindPrime        SessionKind = "prime"
 )
 
 // SessionMetadata is the typed, off-status metadata for a session: operational

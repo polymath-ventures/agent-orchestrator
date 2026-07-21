@@ -24,12 +24,14 @@ const (
 	NotificationModelUnreachable NotificationType = "model_unreachable"
 	// NotificationModelRecovered means a previously unreachable configured model pin validated again.
 	NotificationModelRecovered NotificationType = "model_recovered"
+	// NotificationPrimeRestartCapped means the prime supervisor restart budget was exhausted.
+	NotificationPrimeRestartCapped NotificationType = "prime_restart_capped"
 )
 
 // Valid reports whether t is one of the v1 notification kinds.
 func (t NotificationType) Valid() bool {
 	switch t {
-	case NotificationNeedsInput, NotificationReadyToMerge, NotificationPRMerged, NotificationPRClosedUnmerged, NotificationLowQuota, NotificationModelUnreachable, NotificationModelRecovered:
+	case NotificationNeedsInput, NotificationReadyToMerge, NotificationPRMerged, NotificationPRClosedUnmerged, NotificationLowQuota, NotificationModelUnreachable, NotificationModelRecovered, NotificationPrimeRestartCapped:
 		return true
 	default:
 		return false

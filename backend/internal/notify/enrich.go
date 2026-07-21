@@ -27,6 +27,7 @@ func enrich(intent Intent) (domain.NotificationRecord, error) {
 		intent.Type != domain.NotificationLowQuota &&
 		intent.Type != domain.NotificationModelUnreachable &&
 		intent.Type != domain.NotificationModelRecovered &&
+		intent.Type != domain.NotificationPrimeRestartCapped &&
 		rec.PRURL == "" {
 		return domain.NotificationRecord{}, domain.ErrInvalidNotificationRecord
 	}
@@ -54,6 +55,8 @@ func titleForIntent(intent Intent) string {
 		return "Configured model is unreachable"
 	case domain.NotificationModelRecovered:
 		return "Configured model recovered"
+	case domain.NotificationPrimeRestartCapped:
+		return "Prime restart budget exhausted"
 	default:
 		return "Notification"
 	}
@@ -93,6 +96,11 @@ func bodyForIntent(intent Intent) string {
 			return message
 		}
 		return "A previously unreachable configured model pin validated again."
+	case domain.NotificationPrimeRestartCapped:
+		if message := strings.TrimSpace(intent.Message); message != "" {
+			return message
+		}
+		return "AO paused automatic prime replacement after repeated unhealthy restarts. Inspect the active prime before restarting it manually."
 	default:
 		return ""
 	}

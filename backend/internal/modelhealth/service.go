@@ -291,7 +291,7 @@ func configuredPins(cfg domain.ProjectConfig, defaultHarness domain.AgentHarness
 		seen[modelPin{Harness: h, Model: model}] = struct{}{}
 	}
 	roleHarnesses := []domain.AgentHarness{defaultHarness}
-	for _, h := range []domain.AgentHarness{cfg.Worker.Harness, cfg.Orchestrator.Harness} {
+	for _, h := range []domain.AgentHarness{cfg.Worker.Harness, cfg.Orchestrator.Harness, cfg.Prime.Harness} {
 		if h != "" {
 			roleHarnesses = append(roleHarnesses, h)
 		}
@@ -302,6 +302,7 @@ func configuredPins(cfg domain.ProjectConfig, defaultHarness domain.AgentHarness
 	addFromHarnessMap(seen, cfg.AgentConfig.ModelByHarness)
 	addRolePins(seen, cfg.Worker, defaultHarness)
 	addRolePins(seen, cfg.Orchestrator, defaultHarness)
+	addRolePins(seen, cfg.Prime, defaultHarness)
 	for _, bucket := range cfg.WorkerMix {
 		add(bucket.Harness, bucket.Model)
 	}

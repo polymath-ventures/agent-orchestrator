@@ -35,7 +35,7 @@ type AgentIDParam struct {
 // RolePromptRoleParam is the {role} path parameter for the effective-prompt
 // visibility route.
 type RolePromptRoleParam struct {
-	Role string `path:"role" description:"Agent role: worker, orchestrator, or reviewer." enum:"worker,orchestrator,reviewer"`
+	Role string `path:"role" description:"Agent role: worker, orchestrator, prime, or reviewer." enum:"worker,orchestrator,prime,reviewer"`
 }
 
 // RolePromptResponse is the body of GET /projects/{id}/roles/{role}/prompt: the

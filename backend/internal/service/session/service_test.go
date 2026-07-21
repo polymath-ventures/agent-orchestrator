@@ -989,6 +989,121 @@ func TestSpawnOrchestratorVerifiesReplacementHarness(t *testing.T) {
 	}
 }
 
+func TestSpawnRejectsManualPrimeKind(t *testing.T) {
+	st := newFakeStore()
+	st.projects["ao"] = domain.ProjectRecord{ID: "ao"}
+	fc := &fakeCommander{}
+	svc := &Service{manager: fc, store: st}
+
+	_, err := svc.Spawn(context.Background(), ports.SpawnConfig{ProjectID: "ao", Kind: domain.KindPrime})
+	var e *apierr.Error
+	if !errors.As(err, &e) || e.Kind != apierr.KindForbidden || e.Code != "PRIME_MANUAL_SPAWN_FORBIDDEN" {
+		t.Fatalf("err = %v, want apierr forbidden PRIME_MANUAL_SPAWN_FORBIDDEN", err)
+	}
+	if fc.spawned {
+		t.Fatal("manager.Spawn must NOT be invoked for manual prime spawn")
+	}
+}
+
+func TestSpawnPrimeNoCleanReturnsNewestActivePrimeGlobally(t *testing.T) {
+	st := newFakeStore()
+	st.projects["ao"] = domain.ProjectRecord{ID: "ao"}
+	older := time.Date(2026, 7, 20, 10, 0, 0, 0, time.UTC)
+	newer := older.Add(time.Hour)
+	st.sessions["mer-prime-old"] = domain.SessionRecord{ID: "mer-prime-old", ProjectID: "mer", Kind: domain.KindPrime, CreatedAt: older}
+	st.sessions["ao-prime-new"] = domain.SessionRecord{ID: "ao-prime-new", ProjectID: "ao", Kind: domain.KindPrime, CreatedAt: newer}
+	st.sessions["dead-prime"] = domain.SessionRecord{ID: "dead-prime", ProjectID: "ao", Kind: domain.KindPrime, IsTerminated: true, CreatedAt: newer.Add(time.Hour)}
+
+	fc := &fakeCommander{}
+	svc := &Service{manager: fc, store: st}
+
+	got, err := svc.SpawnPrime(context.Background(), "ao", false)
+	if err != nil {
+		t.Fatalf("SpawnPrime: %v", err)
+	}
+	if got.ID != "ao-prime-new" {
+		t.Fatalf("prime id = %q, want newest active ao-prime-new", got.ID)
+	}
+	if fc.spawned {
+		t.Fatal("SpawnPrime clean=false must return the active prime without spawning")
+	}
+}
+
+func TestSpawnPrimeCleanRetiresAllActivePrimesBeforeSpawn(t *testing.T) {
+	st := newFakeStore()
+	st.projects["ao"] = domain.ProjectRecord{ID: "ao"}
+	st.sessions["ao-prime"] = domain.SessionRecord{ID: "ao-prime", ProjectID: "ao", Kind: domain.KindPrime}
+	st.sessions["mer-prime"] = domain.SessionRecord{ID: "mer-prime", ProjectID: "mer", Kind: domain.KindPrime}
+	st.sessions["dead-prime"] = domain.SessionRecord{ID: "dead-prime", ProjectID: "ao", Kind: domain.KindPrime, IsTerminated: true}
+
+	fc := &fakeCommander{spawnRecord: domain.SessionRecord{
+		ID:        "ao-prime-new",
+		ProjectID: "ao",
+		Kind:      domain.KindPrime,
+		Metadata:  domain.SessionMetadata{Branch: "ao/ao-prime"},
+	}}
+	svc := &Service{manager: fc, store: st}
+
+	got, err := svc.SpawnPrime(context.Background(), "ao", true)
+	if err != nil {
+		t.Fatalf("SpawnPrime: %v", err)
+	}
+	if got.Kind != domain.KindPrime || got.ProjectID != "ao" {
+		t.Fatalf("spawned prime = %#v, want ao prime", got.SessionRecord)
+	}
+	if len(fc.retired) != 2 {
+		t.Fatalf("retired = %v, want two active primes", fc.retired)
+	}
+	if !fc.spawned || fc.killsAtSpawn != 2 {
+		t.Fatalf("spawn must run after both retirements: spawned=%v retirementsAtSpawn=%d", fc.spawned, fc.killsAtSpawn)
+	}
+	if fc.spawnedCfg.Kind != domain.KindPrime {
+		t.Fatalf("spawn kind = %q, want prime", fc.spawnedCfg.Kind)
+	}
+}
+
+func TestSpawnPrimePassesConfiguredDisplayName(t *testing.T) {
+	st := newFakeStore()
+	st.projects["ao"] = domain.ProjectRecord{ID: "ao"}
+	fc := &fakeCommander{spawnRecord: domain.SessionRecord{ID: "ao-prime", ProjectID: "ao", Kind: domain.KindPrime}}
+	svc := NewWithDeps(Deps{Manager: fc, Store: st, PrimeDisplayName: "AO Prime"})
+
+	if _, err := svc.SpawnPrime(context.Background(), "ao", true); err != nil {
+		t.Fatalf("SpawnPrime: %v", err)
+	}
+	if fc.spawnedCfg.DisplayName != "AO Prime" {
+		t.Fatalf("prime display name = %q, want AO Prime", fc.spawnedCfg.DisplayName)
+	}
+}
+
+func TestSpawnPrimeVerifiesReplacementHarnessAndBranch(t *testing.T) {
+	st := newFakeStore()
+	st.projects["ao"] = domain.ProjectRecord{
+		ID:     "ao",
+		Config: domain.ProjectConfig{Prime: domain.RoleOverride{Harness: domain.HarnessCodex}},
+	}
+	fc := &fakeCommander{spawnRecord: domain.SessionRecord{
+		ID:        "ao-prime",
+		ProjectID: "ao",
+		Kind:      domain.KindPrime,
+		Harness:   domain.HarnessClaudeCode,
+		Metadata:  domain.SessionMetadata{Branch: "ao/ao-prime"},
+	}}
+	svc := &Service{manager: fc, store: st}
+
+	_, err := svc.SpawnPrime(context.Background(), "ao", true)
+	if err == nil || !strings.Contains(err.Error(), `uses harness "claude-code", want "codex"`) {
+		t.Fatalf("SpawnPrime err = %v, want harness verification failure", err)
+	}
+
+	fc.spawnRecord.Harness = domain.HarnessCodex
+	fc.spawnRecord.Metadata.Branch = "ao/wrong-prime"
+	_, err = svc.SpawnPrime(context.Background(), "ao", true)
+	if err == nil || !strings.Contains(err.Error(), `uses branch "ao/wrong-prime", want "ao/ao-prime"`) {
+		t.Fatalf("SpawnPrime err = %v, want branch verification failure", err)
+	}
+}
+
 type fakePRClaimer struct {
 	out errorFreeClaimOutcome
 	err error
@@ -1029,6 +1144,17 @@ func (f fakeSCM) FetchPullRequests(context.Context, []ports.SCMPRRef) ([]ports.S
 
 func (f fakeSCM) FetchReviewThreads(context.Context, ports.SCMPRRef) (ports.SCMReviewObservation, error) {
 	return f.review, f.reviewErr
+}
+
+func TestClaimPRRejectsPrimeSession(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["ao-prime"] = domain.SessionRecord{ID: "ao-prime", ProjectID: "ao", Kind: domain.KindPrime}
+	svc := NewWithDeps(Deps{Store: st})
+
+	_, err := svc.ClaimPR(context.Background(), "ao-prime", "7", ClaimPROptions{})
+	if !errors.Is(err, ErrSessionNotClaimable) {
+		t.Fatalf("ClaimPR prime err = %v, want ErrSessionNotClaimable", err)
+	}
 }
 
 func TestClaimPRMapsObserverAndStoreErrors(t *testing.T) {

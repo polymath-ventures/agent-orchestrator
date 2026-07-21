@@ -127,13 +127,23 @@ func TestConfiguredPinsIgnoreScalarCrossProviderModels(t *testing.T) {
 		Orchestrator: domain.RoleOverride{
 			Harness: domain.HarnessClaudeCode,
 		},
+		Prime: domain.RoleOverride{
+			Harness:     domain.HarnessCodex,
+			AgentConfig: domain.AgentConfig{Model: "gpt-5-codex"},
+		},
 	}, domain.HarnessCodex)
 
-	if len(pins) != 1 {
-		t.Fatalf("pins = %+v, want only the compatible claude-code scalar pin", pins)
+	if len(pins) != 2 {
+		t.Fatalf("pins = %+v, want claude-code scalar pin and prime role pin", pins)
 	}
-	if pins[0] != (modelPin{Harness: domain.HarnessClaudeCode, Model: "claude-opus-4-5"}) {
-		t.Fatalf("pin = %+v, want claude-code scalar pin only", pins[0])
+	want := map[modelPin]bool{
+		{Harness: domain.HarnessClaudeCode, Model: "claude-opus-4-5"}: true,
+		{Harness: domain.HarnessCodex, Model: "gpt-5-codex"}:          true,
+	}
+	for _, pin := range pins {
+		if !want[pin] {
+			t.Fatalf("unexpected pin %+v from %+v", pin, pins)
+		}
 	}
 }
 

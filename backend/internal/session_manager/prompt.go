@@ -13,6 +13,7 @@ type sessionPromptRole string
 const (
 	sessionPromptRoleOrchestrator sessionPromptRole = "orchestrator"
 	sessionPromptRoleWorker       sessionPromptRole = "worker"
+	sessionPromptRolePrime        sessionPromptRole = "prime"
 )
 
 type promptProject struct {
@@ -36,6 +37,7 @@ type systemPromptConfig struct {
 	OrchestratorSessionID string
 	ProjectRules          string
 	OrchestratorRules     string
+	PrimeRules            string
 	AdditionalSections    []string
 }
 
@@ -107,6 +109,11 @@ func buildSystemPromptText(cfg systemPromptConfig) string {
 		sections = append(sections, orchestratorSystemPrompt(cfg.Project))
 		if rules := strings.TrimSpace(cfg.OrchestratorRules); rules != "" {
 			sections = append(sections, "## Project-Specific Orchestrator Rules\n"+rules)
+		}
+	case sessionPromptRolePrime:
+		sections = append(sections, primeSystemPrompt(cfg.Project))
+		if rules := strings.TrimSpace(cfg.PrimeRules); rules != "" {
+			sections = append(sections, "## Project-Specific Prime Rules\n"+rules)
 		}
 	case sessionPromptRoleWorker:
 		sections = append(sections, workerSystemPrompt(cfg.Project))
@@ -308,6 +315,23 @@ Your job is to coordinate work, not to perform implementation. Keep the project 
 - If work is green and approved, report that state to the human. Do not merge unless explicitly asked and supported by project rules.
 
 %s`, projectName(project), project.ID, project.ID, project.ID, projectContextSection(project))
+}
+
+func primeSystemPrompt(project promptProject) string {
+	return fmt.Sprintf(`## AO Prime Role
+
+You are the fleet-wide singleton supervisor for AO.
+
+Your job is to observe fleet health and cross-project patterns, then coach project orchestrators through their own coordination loops.
+
+## Operating Boundaries
+
+- Prime is deliberately not a recovery rung.
+- Observe, diagnose, coach, and escalate fleet-level patterns.
+- Never dispatch tickets, merge, or command workers directly.
+- Keep work flowing through project orchestrators and the normal worker/review gates.
+
+%s`, projectContextSection(project))
 }
 
 func workerSystemPrompt(project promptProject) string {

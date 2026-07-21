@@ -2620,6 +2620,7 @@ func TestSystemPrompt_AppendsConfidentialityGuard(t *testing.T) {
 		prep func(st *fakeStore)
 	}{
 		{name: "orchestrator", kind: domain.KindOrchestrator},
+		{name: "prime", kind: domain.KindPrime},
 		{name: "worker_with_orchestrator", kind: domain.KindWorker, prep: func(st *fakeStore) {
 			st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindOrchestrator}
 		}},
@@ -2654,6 +2655,13 @@ func TestSystemPrompt_AppendsConfidentialityGuard(t *testing.T) {
 				t.Fatalf("%s: system prompt missing using-ao skill pointer:\n%s", tc.name, sp)
 			}
 		})
+	}
+}
+
+func TestDefaultSessionBranch_PrimeUsesStableProjectPrefix(t *testing.T) {
+	got := defaultSessionBranch("ao-99", domain.KindPrime, "ao")
+	if got != "ao/ao-prime" {
+		t.Fatalf("prime branch = %q, want ao/ao-prime", got)
 	}
 }
 
@@ -3133,6 +3141,28 @@ func TestRestore_PromptlessUnresumableRelaunchesFresh(t *testing.T) {
 	}
 	if st.sessions["mer-1"].IsTerminated {
 		t.Error("session must be live after fresh relaunch")
+	}
+}
+
+func TestRestore_PromptlessUnresumablePrimeRelaunchesFresh(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["ao-prime"] = domain.SessionRecord{
+		ID: "ao-prime", ProjectID: "ao", Kind: domain.KindPrime, IsTerminated: true,
+		Metadata: domain.SessionMetadata{WorkspacePath: "/ws/ao-prime", Branch: "ao/ao-prime"},
+		Activity: domain.Activity{State: domain.ActivityExited},
+	}
+	rt := &fakeRuntime{}
+	lookPath := func(string) (string, error) { return "/bin/true", nil }
+	m := New(Deps{Runtime: rt, Agents: fakeAgents{}, Workspace: &fakeWorkspace{}, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
+
+	if _, err := m.RestoreWithMode(ctx, "ao-prime"); err != nil {
+		t.Fatalf("promptless unresumable prime must relaunch fresh, got err = %v", err)
+	}
+	if rt.created != 1 {
+		t.Fatalf("runtime.Create = %d, want 1 (fresh launch)", rt.created)
+	}
+	if st.sessions["ao-prime"].IsTerminated {
+		t.Error("prime must be live after fresh relaunch")
 	}
 }
 
