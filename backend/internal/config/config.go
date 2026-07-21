@@ -104,6 +104,11 @@ type Config struct {
 	// AllowedOrigins are the browser origins granted CORS read access (see
 	// DefaultAllowedOrigins). Overridden by AO_ALLOWED_ORIGINS.
 	AllowedOrigins []string
+	// MobileAdvertisedHost, when set (AO_MOBILE_ADVERTISED_HOST), is the host —
+	// IP or DNS name — advertised to pairing phones in the Connect Mobile
+	// status/QR instead of the autopicked interface address. It does not change
+	// what the LAN listener binds; it only changes what is advertised.
+	MobileAdvertisedHost string
 	// Telemetry controls local/remote telemetry sinks.
 	Telemetry TelemetryConfig
 	// Metrics controls the usage and quota metrics observer.
@@ -185,6 +190,10 @@ func Load() (Config, error) {
 
 	if raw := os.Getenv("AO_AGENT"); raw != "" {
 		cfg.Agent = raw
+	}
+
+	if raw := strings.TrimSpace(os.Getenv("AO_MOBILE_ADVERTISED_HOST")); raw != "" {
+		cfg.MobileAdvertisedHost = raw
 	}
 
 	if raw, ok := os.LookupEnv("AO_ALLOWED_ORIGINS"); ok && raw != "" {

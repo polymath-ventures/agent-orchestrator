@@ -3,6 +3,7 @@ package controllers
 import (
 	"context"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/envelope"
@@ -83,9 +84,19 @@ type BridgeService struct {
 	LAN         LANController
 	ConfigPath  string
 	DefaultPort int
+	// AdvertisedHost, when set, is surfaced verbatim as the pairing host
+	// (status response and QR) instead of the autopicked interface address.
+	// Needed when the phone reaches the daemon on an address the autopick
+	// cannot see, e.g. a tailnet MagicDNS name in front of a LAN-attached host.
+	AdvertisedHost string
 }
 
-func (b *BridgeService) currentHost() string { return mobilebridge.AutopickLANIP() }
+func (b *BridgeService) currentHost() string {
+	if h := strings.TrimSpace(b.AdvertisedHost); h != "" {
+		return h
+	}
+	return mobilebridge.AutopickLANIP()
+}
 
 // Status reports the current bridge state, host, and port. The plaintext
 // password is included only while the bridge is enabled (loopback route only).
