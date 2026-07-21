@@ -64,8 +64,8 @@ func runPauseResume(ctx *commandContext, cmd *cobra.Command, args []string, all,
 		if err := ctx.postJSON(cmd.Context(), "fleet/"+verb+hardQuery(hard), nil, &res); err != nil {
 			return err
 		}
-		fmt.Fprintf(cmd.OutOrStdout(), "Fleet %sd (paused=%v)\n", verb, res.Paused)
-		return nil
+		_, err := fmt.Fprintf(cmd.OutOrStdout(), "Fleet %sd (paused=%v)\n", verb, res.Paused)
+		return err
 	}
 	if len(args) == 0 {
 		return usageError{errors.New("expected a project id, or --all for the whole fleet")}
@@ -75,8 +75,8 @@ func runPauseResume(ctx *commandContext, cmd *cobra.Command, args []string, all,
 	if err := ctx.postJSON(cmd.Context(), "projects/"+url.PathEscape(id)+"/"+verb+hardQuery(hard), nil, &res); err != nil {
 		return err
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "Project %s %sd (state=%s)\n", id, verb, formatPauseState(res.Project.PauseState, res.Project.DrainingWorkers))
-	return nil
+	_, err := fmt.Fprintf(cmd.OutOrStdout(), "Project %s %sd (state=%s)\n", id, verb, formatPauseState(res.Project.PauseState, res.Project.DrainingWorkers))
+	return err
 }
 
 // hardQuery renders the ?hard flag only when set, so a soft request carries no
