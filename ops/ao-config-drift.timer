@@ -1,0 +1,11 @@
+[Unit]
+Description=Periodic committed-config drift check for Agent Orchestrator (fork-only)
+
+[Timer]
+OnBootSec=5min
+OnUnitInactiveSec=1h
+AccuracySec=1min
+Unit=ao-config-drift.service
+
+[Install]
+WantedBy=timers.target
