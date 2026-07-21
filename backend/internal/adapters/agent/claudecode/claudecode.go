@@ -77,6 +77,7 @@ func (p *Plugin) EmitsBlockedActivity() bool { return true }
 var _ adapters.Adapter = (*Plugin)(nil)
 var _ ports.Agent = (*Plugin)(nil)
 var _ ports.AgentAuthChecker = (*Plugin)(nil)
+var _ ports.AgentModelValidator = (*Plugin)(nil)
 
 // Manifest returns the adapter's static self-description.
 func (p *Plugin) Manifest() adapters.Manifest {
@@ -246,6 +247,9 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 	cmd = make([]string, 0, 7)
 	cmd = append(cmd, binary)
 	appendPermissionFlags(&cmd, cfg.Permissions)
+	if model := strings.TrimSpace(cfg.Config.Model); model != "" {
+		cmd = append(cmd, "--model", model)
+	}
 	systemPrompt, err := resolveRestoreSystemPrompt(cfg)
 	if err != nil {
 		return nil, false, err
@@ -300,6 +304,51 @@ func (p *Plugin) AuthStatus(ctx context.Context) (ports.AgentAuthStatus, error) 
 		return ports.AgentAuthStatusUnauthorized, nil
 	}
 	return ports.AgentAuthStatusUnknown, nil
+}
+
+// ValidateModel performs a bounded advisory model probe. It is used only by
+// background model-health refresh; session spawn never calls it.
+func (p *Plugin) ValidateModel(ctx context.Context, model string) (ports.ModelValidationResult, error) {
+	binary, err := p.claudeBinary(ctx)
+	if err != nil {
+		return ports.ModelValidationResult{}, err
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	out, cmdErr := exec.CommandContext(probeCtx, binary, "--model", strings.TrimSpace(model), "-p", "Respond with OK.").CombinedOutput()
+	if probeCtx.Err() != nil {
+		return ports.ModelValidationResult{Status: ports.ModelValidationProbeUnavailable, Message: probeCtx.Err().Error()}, nil
+	}
+	return claudeModelProbeResultFromOutput(out, cmdErr), nil
+}
+
+func claudeModelProbeResultFromOutput(out []byte, cmdErr error) ports.ModelValidationResult {
+	text := strings.TrimSpace(string(out))
+	if cmdErr == nil {
+		return ports.ModelValidationResult{Status: ports.ModelValidationReachable, Message: text}
+	}
+	if claudeOutputLooksLikeUnsupportedModel(text) {
+		return ports.ModelValidationResult{Status: ports.ModelValidationUnreachable, Message: text}
+	}
+	return ports.ModelValidationResult{Status: ports.ModelValidationProbeUnavailable, Message: text}
+}
+
+func claudeOutputLooksLikeUnsupportedModel(text string) bool {
+	lower := strings.ToLower(text)
+	for _, needle := range []string{
+		"unknown model",
+		"invalid model",
+		"unsupported model",
+		"model not found",
+		"model does not exist",
+		"not available for model",
+		"model unavailable",
+	} {
+		if strings.Contains(lower, needle) {
+			return true
+		}
+	}
+	return false
 }
 
 func claudeAuthStatusFromOutput(out []byte) (ports.AgentAuthStatus, bool) {

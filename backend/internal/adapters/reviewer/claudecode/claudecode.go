@@ -71,6 +71,7 @@ func (r *Reviewer) ReviewCommand(ctx context.Context, inv ports.ReviewInvocation
 	argv, err := r.agent.GetLaunchCommand(ctx, ports.LaunchConfig{
 		SessionID:     inv.ReviewerID,
 		WorkspacePath: inv.WorkspacePath,
+		Config:        inv.AgentConfig,
 		Prompt:        inv.Prompt,
 		SystemPrompt:  inv.SystemPrompt,
 		// Launch off bypassPermissions so the allow/deny lists are enforced.
@@ -98,6 +99,7 @@ func (r *Reviewer) PreLaunch(ctx context.Context, inv ports.ReviewInvocation) er
 	return pl.PreLaunch(ctx, ports.LaunchConfig{
 		SessionID:     inv.ReviewerID,
 		WorkspacePath: inv.WorkspacePath,
+		Config:        inv.AgentConfig,
 	})
 }
 

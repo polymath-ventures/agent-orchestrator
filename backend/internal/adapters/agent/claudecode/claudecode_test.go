@@ -3,6 +3,7 @@ package claudecode
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -413,6 +414,23 @@ func TestGetRestoreCommandReappendsSystemPrompt(t *testing.T) {
 	}
 }
 
+func TestGetRestoreCommandReappliesModel(t *testing.T) {
+	cmd, ok, err := (&Plugin{resolvedBinary: "claude"}).GetRestoreCommand(context.Background(), ports.RestoreConfig{
+		Config: ports.AgentConfig{Model: "claude-opus-4-5"},
+		Session: ports.SessionRef{
+			ID:       "sess-r",
+			Metadata: map[string]string{ports.MetadataKeyAgentSessionID: "claude-native-1"},
+		},
+	})
+	if err != nil || !ok {
+		t.Fatalf("restore = (ok=%v, err=%v), want ok", ok, err)
+	}
+	want := []string{"claude", "--model", "claude-opus-4-5", "--resume", "claude-native-1"}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("restore cmd\nwant: %#v\n got: %#v", want, cmd)
+	}
+}
+
 func TestGetRestoreCommandReappendsSystemPromptFromFile(t *testing.T) {
 	promptFile := filepath.Join(t.TempDir(), "system.md")
 	if err := os.WriteFile(promptFile, []byte("file instructions\n"), 0600); err != nil {
@@ -731,6 +749,23 @@ func TestGetLaunchCommandOmitsToolFlagsWhenUnset(t *testing.T) {
 	}
 	if contains(cmd, "--allowedTools") || contains(cmd, "--disallowedTools") {
 		t.Fatalf("unrestricted launch should emit no tool flags; got %#v", cmd)
+	}
+}
+
+func TestClaudeModelProbeResultClassifiesUnsupportedModel(t *testing.T) {
+	got := claudeModelProbeResultFromOutput([]byte("error: invalid model claude-404"), errors.New("exit 1"))
+	if got.Status != ports.ModelValidationUnreachable {
+		t.Fatalf("status = %q, want unreachable", got.Status)
+	}
+
+	got = claudeModelProbeResultFromOutput([]byte("authentication required"), errors.New("exit 1"))
+	if got.Status != ports.ModelValidationProbeUnavailable {
+		t.Fatalf("status = %q, want probe-unavailable", got.Status)
+	}
+
+	got = claudeModelProbeResultFromOutput([]byte("OK"), nil)
+	if got.Status != ports.ModelValidationReachable {
+		t.Fatalf("status = %q, want reachable", got.Status)
 	}
 }
 

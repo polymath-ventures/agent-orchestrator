@@ -611,6 +611,8 @@ func toAPIError(err error) error {
 		// operator state, not a server fault: 409 lets a client resume (or pass
 		// Force) rather than read it as a crash.
 		return apierr.Conflict("PROJECT_PAUSED", err.Error(), nil)
+	case errors.Is(err, sessionmanager.ErrModelHarnessMismatch):
+		return apierr.Invalid("MODEL_HARNESS_MISMATCH", err.Error(), nil)
 	case errors.Is(err, sessionmanager.ErrWorkerConcurrencyCap):
 		// Capacity is a transient state, not a server fault: the project is at
 		// its live-worker ceiling. 409 lets a client retry once a worker frees.

@@ -849,6 +849,7 @@ func TestToAPIErrorMapsWorkspaceBranchSentinels(t *testing.T) {
 		{"runtime prerequisite missing", fmt.Errorf("spawn: %w: tmux required on macOS/Linux but not in PATH", ports.ErrRuntimePrerequisite), apierr.KindInvalid, "RUNTIME_PREREQUISITE_MISSING"},
 		{"unknown harness", fmt.Errorf("spawn: %w: %q", sessionmanager.ErrUnknownHarness, "bogus"), apierr.KindInvalid, "UNKNOWN_HARNESS"},
 		{"missing harness", fmt.Errorf("spawn: %w: configure project worker.agent or pass --harness", sessionmanager.ErrMissingHarness), apierr.KindInvalid, "AGENT_REQUIRED"},
+		{"model harness mismatch", fmt.Errorf("spawn: %w: %q is not an OpenAI model", sessionmanager.ErrModelHarnessMismatch, "claude-opus-4-5"), apierr.KindInvalid, "MODEL_HARNESS_MISMATCH"},
 		{"awaiting decision", fmt.Errorf("send mer-1: %w", sessionmanager.ErrAwaitingDecision), apierr.KindConflict, "SESSION_AWAITING_DECISION"},
 		{"worker concurrency cap", fmt.Errorf("spawn: %w: project mer at 4 of 4 live worker(s)", sessionmanager.ErrWorkerConcurrencyCap), apierr.KindConflict, "WORKER_CONCURRENCY_CAP"},
 		{"project paused", fmt.Errorf("spawn: %w: project scope; resume it or pass Force to override", sessionmanager.ErrProjectPaused), apierr.KindConflict, "PROJECT_PAUSED"},

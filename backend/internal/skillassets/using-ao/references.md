@@ -23,4 +23,5 @@ Natural-language-to-command mappings for common AO tasks.
 | Claim an existing PR for a session | `ao session claim-pr <id> <pr-ref>` |
 | Submit a code review verdict | `ao review submit <session-id> --run <run-id> --verdict approved` |
 | Configure a project's default branch or model | `ao project set-config <id> --default-branch <branch> --model <model>` |
+| Configure per-harness or reviewer model pins | `ao project set-config <id> --config-json '{"agentConfig":{"modelByHarness":{"codex":{"model":"gpt-5-codex"}}}}'` |
 | Import projects from a legacy AO install | `ao import --dry-run` (preview), then `ao import -y` |

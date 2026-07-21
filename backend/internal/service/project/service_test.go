@@ -105,6 +105,14 @@ type fakeProjectTeardowner struct {
 	err      error
 }
 
+type fakeModelAvailabilityReader struct {
+	rows []domain.ModelAvailability
+}
+
+func (f fakeModelAvailabilityReader) ListProject(_ context.Context, _ domain.ProjectID) ([]domain.ModelAvailability, error) {
+	return f.rows, nil
+}
+
 type captureSink struct {
 	events []ports.TelemetryEvent
 }
@@ -169,6 +177,36 @@ func TestManager_AddListGetRemove(t *testing.T) {
 
 	_, err = m.Remove(ctx, "ao")
 	wantCode(t, err, "PROJECT_NOT_FOUND")
+}
+
+func TestManager_GetIncludesModelAvailability(t *testing.T) {
+	ctx := context.Background()
+	store, err := sqlite.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	m := project.NewWithDeps(project.Deps{
+		Store: store,
+		ModelHealth: fakeModelAvailabilityReader{rows: []domain.ModelAvailability{{
+			ProjectID: "ao",
+			Harness:   domain.HarnessCodex,
+			Model:     "gpt-5-codex",
+			Status:    domain.ModelAvailabilityUnknown,
+			Reason:    domain.ModelAvailabilityReasonNotProbed,
+		}}},
+	})
+	if _, err := m.Add(ctx, project.AddInput{Path: gitRepo(t), ProjectID: ptr("ao")}); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+
+	got, err := m.Get(ctx, "ao")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if len(got.Project.ModelAvailability) != 1 || got.Project.ModelAvailability[0].Reason != domain.ModelAvailabilityReasonNotProbed {
+		t.Fatalf("model availability = %+v", got.Project.ModelAvailability)
+	}
 }
 
 func TestManager_AddEmitsProjectAndFirstProjectTelemetry(t *testing.T) {

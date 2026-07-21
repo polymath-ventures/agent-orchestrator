@@ -2048,8 +2048,14 @@ components:
       type: object
     AgentConfig:
       properties:
+        effort:
+          type: string
         model:
           type: string
+        modelByHarness:
+          additionalProperties:
+            $ref: '#/components/schemas/DomainHarnessModel'
+          type: object
         permissions:
           type: string
       type: object
@@ -2258,8 +2264,79 @@ components:
       - state
       - lastActivityAt
       type: object
+    DomainHarnessModel:
+      properties:
+        effort:
+          type: string
+        model:
+          type: string
+      type: object
+    DomainModelAvailability:
+      properties:
+        harness:
+          enum:
+          - claude-code
+          - codex
+          - codex-fugu
+          - aider
+          - opencode
+          - grok
+          - droid
+          - amp
+          - agy
+          - crush
+          - cursor
+          - qwen
+          - copilot
+          - goose
+          - auggie
+          - continue
+          - devin
+          - cline
+          - kimi
+          - kiro
+          - kilocode
+          - vibe
+          - pi
+          - autohand
+          type: string
+        message:
+          type: string
+        model:
+          type: string
+        observedAt:
+          format: date-time
+          type: string
+        projectId:
+          type: string
+        reason:
+          enum:
+          - not-probed
+          - no-capability
+          - probe-unavailable
+          - reachable
+          - unreachable
+          - recovered
+          type: string
+        status:
+          enum:
+          - unknown
+          - reachable
+          - unreachable
+          type: string
+        updatedAt:
+          format: date-time
+          type: string
+      required:
+      - harness
+      - model
+      - status
+      - reason
+      type: object
     DomainReviewerConfig:
       properties:
+        agentConfig:
+          $ref: '#/components/schemas/AgentConfig'
         harness:
           type: string
       required:
@@ -2750,6 +2827,10 @@ components:
           type: string
         kind:
           type: string
+        modelAvailability:
+          items:
+            $ref: '#/components/schemas/DomainModelAvailability'
+          type: array
         name:
           type: string
         path:

@@ -16,6 +16,7 @@ ao spawn [flags]
 | `--claim-pr string` | Immediately claim an existing PR for the spawned session | - |
 | `--harness string` | Agent harness to use (see list below) | Project `worker.agent`; required if the project has none |
 | `--issue string` | Issue id to associate with the session | - |
+| `--model string` | Model pin for this one session | Project/role/harness model config |
 | `--name string` | Display name shown in the sidebar (max 20 characters) | Required |
 | `--no-takeover` | Refuse if another active session owns the claimed PR (requires `--claim-pr`) | - |
 | `--project string` | Project id to spawn the session in | Required |
@@ -35,4 +36,9 @@ ao spawn --project agent-orchestrator --issue 142 --name "fix-session-leak" --pr
 ```bash
 # Spawn a worker and immediately claim an open PR
 ao spawn --project agent-orchestrator --name "review-pr-88" --claim-pr 88 --harness claude-code
+```
+
+```bash
+# Spawn one Codex worker on a specific model without changing project defaults
+ao spawn --project agent-orchestrator --name "codex-fast" --harness codex --model gpt-5-codex
 ```

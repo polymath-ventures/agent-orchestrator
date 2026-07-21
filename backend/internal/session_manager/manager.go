@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/agentconfig"
 	"github.com/aoagents/agent-orchestrator/backend/internal/candidatehealth"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
@@ -74,6 +75,9 @@ var (
 	// would answer it on the user's behalf. The API maps it to a 409; the
 	// caller retries once the user has answered in the terminal.
 	ErrAwaitingDecision = errors.New("session: awaiting a user decision")
+	// ErrModelHarnessMismatch means a requested model is known to belong to a
+	// different provider than the resolved harness.
+	ErrModelHarnessMismatch = agentconfig.ErrModelHarnessMismatch
 )
 
 // Env vars a spawned process reads to learn who it is.
@@ -329,6 +333,8 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	if err := m.guardPaused(ctx, project, cfg); err != nil {
 		return domain.SessionRecord{}, err
 	}
+	requestedHarness := cfg.Harness
+	requestedModel := strings.TrimSpace(cfg.Model)
 	// Enforce the per-project live-worker cap before anything else: no durable
 	// row, no workspace, no mix or candidate-health consultation. Placed ahead
 	// of resolveSpawnTarget so a refusal at capacity leaves nothing to roll back
@@ -409,8 +415,13 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		m.rollbackSpawnSeedRow(ctx, id)
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: no agent adapter for harness %q", id, cfg.Harness)
 	}
-	agentConfig := effectiveAgentConfig(cfg.Kind, project.Config)
-	agentConfig.Model = cfg.Model
+	agentConfig, err := agentconfig.Effective(cfg.Kind, project.Config, "", cfg.Harness)
+	if err != nil {
+		m.destroySpawnWorkspace(ctx, ws, workspaceProject)
+		m.rollbackSpawnSeedRow(ctx, id)
+		return domain.SessionRecord{}, fmt.Errorf("spawn %s: agent config: %w", id, err)
+	}
+	agentConfig.Model = launchModelForBucket(cfg.Harness, cfg.Model, mixSelected)
 	runtimeToken, err := newRuntimeToken()
 	if err != nil {
 		m.rollbackSpawnSeedRow(ctx, id)
@@ -520,6 +531,8 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	// MarkRecovered is a no-op when the bucket was healthy.
 	if mixHasBucket(project.Config.WorkerMix, cfg.Harness, cfg.Model) {
 		m.health.MarkRecovered(workerMixCandidate(cfg.Harness, cfg.Model))
+	} else if requestedHarness != "" && mixHasBucket(project.Config.WorkerMix, cfg.Harness, requestedModel) {
+		m.health.MarkRecovered(workerMixCandidate(cfg.Harness, requestedModel))
 	}
 	return m.getRecord(ctx, id)
 }
@@ -672,7 +685,11 @@ func (m *Manager) resolveSpawnTarget(ctx context.Context, cfg ports.SpawnConfig,
 	if harness == "" {
 		return "", "", false, fmt.Errorf("%w: configure project %s.agent or pass --harness", ErrMissingHarness, roleConfigName(cfg.Kind))
 	}
-	return harness, effectiveModel(cfg.Model, cfg.Kind, project.Config), false, nil
+	resolved, err := agentconfig.Effective(cfg.Kind, project.Config, cfg.Model, harness)
+	if err != nil {
+		return "", "", false, err
+	}
+	return harness, strings.TrimSpace(resolved.Model), false, nil
 }
 
 // selectMixBucket picks the bucket the next unpinned worker spawn launches on.
@@ -813,17 +830,6 @@ func effectiveHarness(explicit domain.AgentHarness, kind domain.SessionKind, cfg
 	return ""
 }
 
-// effectiveModel resolves the model a spawn launches with: an explicit request
-// model wins over the role/project agent config, and either way the result is
-// trimmed so the value recorded on the session row is the bucket identity the
-// worker mix keys on.
-func effectiveModel(explicit string, kind domain.SessionKind, cfg domain.ProjectConfig) string {
-	if m := strings.TrimSpace(explicit); m != "" {
-		return m
-	}
-	return strings.TrimSpace(effectiveAgentConfig(kind, cfg).Model)
-}
-
 func roleConfigName(kind domain.SessionKind) string {
 	if kind == domain.KindOrchestrator {
 		return "orchestrator"
@@ -831,25 +837,22 @@ func roleConfigName(kind domain.SessionKind) string {
 	return "worker"
 }
 
-// effectiveAgentConfig merges the role override's agent config over the
-// project's base agent config; set override fields win.
-func effectiveAgentConfig(kind domain.SessionKind, cfg domain.ProjectConfig) ports.AgentConfig {
-	merged := cfg.AgentConfig
-	override := roleOverride(kind, cfg).AgentConfig
-	if override.Model != "" {
-		merged.Model = override.Model
-	}
-	if override.Permissions != "" {
-		merged.Permissions = override.Permissions
-	}
-	return merged
-}
-
 func roleOverride(kind domain.SessionKind, cfg domain.ProjectConfig) domain.RoleOverride {
 	if kind == domain.KindOrchestrator {
 		return cfg.Orchestrator
 	}
 	return cfg.Worker
+}
+
+func launchModelForBucket(harness domain.AgentHarness, model string, mixSelected bool) string {
+	model = strings.TrimSpace(model)
+	if model != "" {
+		return model
+	}
+	if mixSelected {
+		return domain.DefaultModelForHarness(harness)
+	}
+	return ""
 }
 
 // sessionPrefix returns the display prefix for a project: the explicit
@@ -1182,14 +1185,16 @@ func (m *Manager) relaunchRestoredSession(ctx context.Context, rec domain.Sessio
 	// comes from the row rather than config: the session is already counted in
 	// its (harness, model) bucket, so relaunching it on a different model would
 	// put the census and the running agent out of step.
-	agentConfig := effectiveAgentConfig(rec.Kind, project.Config)
-	// A mix-selected session carries its bucket's model authoritatively, including
-	// the empty string (the bucket's "harness default" identity). Applying it
-	// unconditionally for mix-selected rows keeps the relaunched model in step
-	// with the (harness, model) bucket the census counts it in, even when project
-	// config changed after the session launched. Legacy non-mix rows keep the
-	// old "only override when non-empty" fallback.
-	if rec.MixSelected || rec.Model != "" {
+	agentConfig, err := agentconfig.Effective(rec.Kind, project.Config, "", rec.Harness)
+	if err != nil {
+		return RestoreResult{}, fmt.Errorf("restore %s: agent config: %w", rec.ID, err)
+	}
+	// A mix-selected session carries its bucket's model authoritatively. The
+	// empty string remains the persisted bucket identity, but the adapter still
+	// receives that harness's default model rather than a later project scalar.
+	if rec.MixSelected {
+		agentConfig.Model = launchModelForBucket(rec.Harness, rec.Model, true)
+	} else if rec.Model != "" {
 		agentConfig.Model = rec.Model
 	}
 	runtimeToken, err := newRuntimeToken()

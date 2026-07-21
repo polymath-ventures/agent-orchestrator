@@ -115,6 +115,7 @@ func (p *Plugin) EmitsBlockedActivity() bool { return false }
 var _ adapters.Adapter = (*Plugin)(nil)
 var _ ports.Agent = (*Plugin)(nil)
 var _ ports.AgentAuthChecker = (*Plugin)(nil)
+var _ ports.AgentModelValidator = (*Plugin)(nil)
 
 // Manifest returns the adapter's static self-description.
 func (p *Plugin) Manifest() adapters.Manifest {
@@ -149,6 +150,8 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 	appendSessionHookFlagsFor(&cmd, p.hookToken())
 	appendTerminalCompatibilityFlags(&cmd)
 	appendWorkspaceTrustFlag(&cmd, cfg.WorkspacePath)
+	appendModelFlag(&cmd, cfg.Config.Model)
+	appendReasoningEffortFlag(&cmd, string(cfg.Config.Effort))
 
 	if cfg.SystemPrompt != "" {
 		cmd = append(cmd, "-c", "developer_instructions="+codexTOMLConfigString(cfg.SystemPrompt))
@@ -194,6 +197,8 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 	appendSessionHookFlagsFor(&cmd, p.hookToken())
 	appendTerminalCompatibilityFlags(&cmd)
 	appendWorkspaceTrustFlag(&cmd, cfg.Session.WorkspacePath)
+	appendModelFlag(&cmd, cfg.Config.Model)
+	appendReasoningEffortFlag(&cmd, string(cfg.Config.Effort))
 	if cfg.SystemPrompt != "" {
 		cmd = append(cmd, "-c", "developer_instructions="+codexTOMLConfigString(cfg.SystemPrompt))
 	} else if cfg.SystemPromptFile != "" {
@@ -254,6 +259,52 @@ func (p *Plugin) AuthStatus(ctx context.Context) (ports.AgentAuthStatus, error) 
 		return ports.AgentAuthStatusUnauthorized, nil
 	}
 	return ports.AgentAuthStatusUnknown, nil
+}
+
+// ValidateModel performs a bounded advisory model probe. It is used only by
+// background model-health refresh; session spawn never calls it.
+func (p *Plugin) ValidateModel(ctx context.Context, model string) (ports.ModelValidationResult, error) {
+	binary, err := p.agentBinary(ctx)
+	if err != nil {
+		return ports.ModelValidationResult{}, err
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	args := make([]string, 0, 7)
+	p.appendWrapperFlags(&args)
+	args = append(args, "exec", "--model", strings.TrimSpace(model), "-c", "model_reasoning_effort=\"minimal\"", "--", "Respond with OK.")
+	out, cmdErr := exec.CommandContext(probeCtx, binary, args...).CombinedOutput()
+	if probeCtx.Err() != nil {
+		return ports.ModelValidationResult{Status: ports.ModelValidationProbeUnavailable, Message: probeCtx.Err().Error()}, nil
+	}
+	return modelProbeResultFromOutput(out, cmdErr), nil
+}
+
+func modelProbeResultFromOutput(out []byte, cmdErr error) ports.ModelValidationResult {
+	text := strings.TrimSpace(string(out))
+	if cmdErr == nil {
+		return ports.ModelValidationResult{Status: ports.ModelValidationReachable, Message: text}
+	}
+	if outputLooksLikeUnsupportedModel(text) {
+		return ports.ModelValidationResult{Status: ports.ModelValidationUnreachable, Message: text}
+	}
+	return ports.ModelValidationResult{Status: ports.ModelValidationProbeUnavailable, Message: text}
+}
+
+func outputLooksLikeUnsupportedModel(text string) bool {
+	lower := strings.ToLower(text)
+	for _, needle := range []string{
+		"unknown model",
+		"invalid model",
+		"unsupported model",
+		"model not found",
+		"model does not exist",
+	} {
+		if strings.Contains(lower, needle) {
+			return true
+		}
+	}
+	return false
 }
 
 // sharedCodexAuthStatus answers the fugu auth question by probing the plain
@@ -514,6 +565,32 @@ func appendHookTrustBypassFlag(cmd *[]string) {
 	// `[hooks.state]`. Without this flag Codex would hold them for an
 	// interactive hooks review, leaving AO without activity signals.
 	*cmd = append(*cmd, "--dangerously-bypass-hook-trust")
+}
+
+func appendModelFlag(cmd *[]string, model string) {
+	if m := strings.TrimSpace(model); m != "" {
+		*cmd = append(*cmd, "--model", m)
+	}
+}
+
+// appendReasoningEffortFlag maps AO's effort level onto Codex's
+// model_reasoning_effort config override. Empty means unset; xhigh/max clamp to
+// high because Codex only accepts minimal|low|medium|high.
+func appendReasoningEffortFlag(cmd *[]string, effort string) {
+	if e := normalizeCodexEffort(effort); e != "" {
+		*cmd = append(*cmd, "-c", fmt.Sprintf("model_reasoning_effort=%q", e))
+	}
+}
+
+func normalizeCodexEffort(effort string) string {
+	switch e := strings.ToLower(strings.TrimSpace(effort)); e {
+	case "minimal", "low", "medium", "high":
+		return e
+	case "xhigh", "max":
+		return "high"
+	default:
+		return ""
+	}
 }
 
 func appendTerminalCompatibilityFlags(cmd *[]string) {

@@ -63,10 +63,17 @@ type SessionTeardowner interface {
 	Kill(ctx context.Context, id domain.SessionID) (bool, error)
 }
 
+// ModelAvailabilityReader supplies cached model availability for project detail
+// responses. Implementations must not run live provider probes.
+type ModelAvailabilityReader interface {
+	ListProject(ctx context.Context, projectID domain.ProjectID) ([]domain.ModelAvailability, error)
+}
+
 // Service implements project registration and lookup use-cases for controllers.
 type Service struct {
 	store          Store
 	sessions       SessionTeardowner
+	modelHealth    ModelAvailabilityReader
 	clock          func() time.Time
 	telemetry      ports.EventSink
 	defaultHarness domain.AgentHarness
@@ -86,6 +93,7 @@ type Deps struct {
 	DefaultHarness domain.AgentHarness
 	Store          Store
 	Sessions       SessionTeardowner
+	ModelHealth    ModelAvailabilityReader
 	Clock          func() time.Time
 	Telemetry      ports.EventSink
 }
@@ -104,6 +112,7 @@ func NewWithDeps(d Deps) *Service {
 	s := &Service{
 		store:          d.Store,
 		sessions:       d.Sessions,
+		modelHealth:    d.ModelHealth,
 		clock:          d.Clock,
 		telemetry:      d.Telemetry,
 		defaultHarness: defaultHarness,
@@ -162,6 +171,13 @@ func (m *Service) Get(ctx context.Context, id domain.ProjectID) (GetResult, erro
 	}
 	p := m.projectFromRow(row)
 	p.PauseState, p.DrainingWorkers = m.pauseState(ctx, row.ID, row.Paused)
+	if m.modelHealth != nil {
+		availability, err := m.modelHealth.ListProject(ctx, id)
+		if err != nil {
+			return GetResult{}, apierr.Internal("MODEL_AVAILABILITY_LOAD_FAILED", "Failed to load model availability")
+		}
+		p.ModelAvailability = availability
+	}
 	if row.Kind.WithDefault() == domain.ProjectKindWorkspace {
 		repos, err := m.store.ListWorkspaceRepos(ctx, row.ID)
 		if err != nil {

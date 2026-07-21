@@ -1980,6 +1980,122 @@ func TestSpawn_OmittedModelFallsBackToConfigResolution(t *testing.T) {
 	}
 }
 
+func TestSpawn_PerHarnessModelWinsForResolvedHarness(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{
+		AgentConfig: domain.AgentConfig{
+			Model: "claude-opus-4-5",
+			ModelByHarness: map[domain.AgentHarness]domain.HarnessModel{
+				domain.HarnessCodex: {Model: "gpt-5-codex", Effort: domain.EffortHigh},
+			},
+		},
+		Worker: domain.RoleOverride{Harness: domain.HarnessCodex},
+	}}
+	agent := &recordingAgent{}
+	m := modelManager(st, agent)
+
+	rec, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Model != "gpt-5-codex" {
+		t.Fatalf("record model = %q, want per-harness gpt-5-codex", rec.Model)
+	}
+	if agent.lastConfig.Model != "gpt-5-codex" || agent.lastConfig.Effort != domain.EffortHigh {
+		t.Fatalf("launch config = %#v, want per-harness model+effort", agent.lastConfig)
+	}
+}
+
+func TestSpawn_ScalarCrossProviderModelDoesNotLeak(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{
+		AgentConfig: domain.AgentConfig{Model: "claude-opus-4-5"},
+		Worker:      domain.RoleOverride{Harness: domain.HarnessCodex},
+	}}
+	agent := &recordingAgent{}
+	m := modelManager(st, agent)
+
+	rec, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Model != "" {
+		t.Fatalf("record model = %q, want scalar Anthropic model ignored for codex", rec.Model)
+	}
+	if agent.lastConfig.Model != "" {
+		t.Fatalf("launch model = %q, want empty", agent.lastConfig.Model)
+	}
+}
+
+func TestSpawn_UnpinnedClaudeCodeUsesDefaultModel(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{
+		Worker: domain.RoleOverride{Harness: domain.HarnessClaudeCode},
+	}}
+	agent := &recordingAgent{}
+	m := modelManager(st, agent)
+
+	rec, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Model != domain.DefaultModelForHarness(domain.HarnessClaudeCode) {
+		t.Fatalf("record model = %q, want claude-code default", rec.Model)
+	}
+	if agent.lastConfig.Model != rec.Model {
+		t.Fatalf("launch model = %q, want %q", agent.lastConfig.Model, rec.Model)
+	}
+}
+
+func TestSpawn_EmptyMixBucketLaunchesHarnessDefault(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{
+		AgentConfig: domain.AgentConfig{Model: "claude-opus-4-5"},
+		WorkerMix:   domain.WorkerMix{{Harness: domain.HarnessClaudeCode, Weight: 100}},
+	}}
+	agent := &recordingAgent{}
+	m := modelManager(st, agent)
+
+	rec, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Model != "" {
+		t.Fatalf("record model = %q, want empty mix-bucket identity", rec.Model)
+	}
+	if agent.lastConfig.Model != domain.DefaultModelForHarness(domain.HarnessClaudeCode) {
+		t.Fatalf("launch model = %q, want harness default", agent.lastConfig.Model)
+	}
+}
+
+func TestSpawn_ExplicitCrossProviderModelRejectedBeforeState(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{
+		Worker: domain.RoleOverride{Harness: domain.HarnessCodex},
+	}}
+	runtime := &fakeRuntime{}
+	workspace := &fakeWorkspace{}
+	m := New(Deps{
+		Runtime: runtime, Agents: singleAgent{agent: &recordingAgent{}}, Workspace: workspace, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st},
+		LookPath: func(string) (string, error) { return "/bin/true", nil },
+	})
+
+	_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Model: "claude-opus-4-5"})
+	if !errors.Is(err, ErrModelHarnessMismatch) {
+		t.Fatalf("Spawn err = %v, want ErrModelHarnessMismatch", err)
+	}
+	if len(st.sessions) != 0 {
+		t.Fatalf("sessions created before mismatch rejection: %#v", st.sessions)
+	}
+	if runtime.created != 0 {
+		t.Fatalf("runtime created = %d, want 0", runtime.created)
+	}
+	if workspace.lastCfg.SessionID != "" {
+		t.Fatalf("workspace created with cfg %#v; want no workspace", workspace.lastCfg)
+	}
+}
+
 // A padded model must be trimmed before it is persisted: the worker mix buckets
 // on (harness, model), so an untrimmed row would be counted against a different
 // bucket than the one that selected it.
@@ -2029,6 +2145,33 @@ func TestRestore_UsesPersistedModel(t *testing.T) {
 	}
 	if agent.lastRestore.Config.Model != "launched-model" {
 		t.Fatalf("restore model = %q, want the persisted launched-model", agent.lastRestore.Config.Model)
+	}
+}
+
+func TestRestore_EmptyMixBucketLaunchesHarnessDefault(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{
+		AgentConfig: domain.AgentConfig{Model: "claude-opus-4-5"},
+		WorkerMix:   domain.WorkerMix{{Harness: domain.HarnessClaudeCode, Weight: 100}},
+	}}
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID:           "mer-1",
+		ProjectID:    "mer",
+		Kind:         domain.KindWorker,
+		Harness:      domain.HarnessClaudeCode,
+		Model:        "",
+		MixSelected:  true,
+		IsTerminated: true,
+		Metadata:     domain.SessionMetadata{Branch: "ao/mer-1", WorkspacePath: "/tmp/ws", AgentSessionID: "native-1"},
+	}
+	agent := &recordingAgent{}
+	m := modelManager(st, agent)
+
+	if _, err := m.RestoreWithMode(ctx, "mer-1"); err != nil {
+		t.Fatal(err)
+	}
+	if agent.lastRestore.Config.Model != domain.DefaultModelForHarness(domain.HarnessClaudeCode) {
+		t.Fatalf("restore model = %q, want harness default", agent.lastRestore.Config.Model)
 	}
 }
 

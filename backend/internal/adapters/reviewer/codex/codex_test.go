@@ -42,6 +42,7 @@ func TestReviewCommandUsesReadOnlySandbox(t *testing.T) {
 		WorkspacePath: "/ws/w1",
 		Prompt:        "review it",
 		SystemPrompt:  "review only",
+		AgentConfig:   ports.AgentConfig{Model: "gpt-5-codex"},
 	})
 	if err != nil {
 		t.Fatalf("ReviewCommand: %v", err)
@@ -63,6 +64,9 @@ func TestReviewCommandUsesReadOnlySandbox(t *testing.T) {
 	}
 	if agent.got.SystemPrompt != "review only" {
 		t.Fatalf("system prompt = %q", agent.got.SystemPrompt)
+	}
+	if agent.got.Config.Model != "gpt-5-codex" {
+		t.Fatalf("agent config = %#v, want reviewer model", agent.got.Config)
 	}
 }
 

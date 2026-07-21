@@ -41,6 +41,7 @@ func TestReviewCommandUsesReadOnlyPermissionPolicy(t *testing.T) {
 		WorkspacePath: "/ws/w1",
 		Prompt:        "review it",
 		SystemPrompt:  "review only",
+		AgentConfig:   ports.AgentConfig{Model: "some-opencode-model"},
 	})
 	if err != nil {
 		t.Fatalf("ReviewCommand: %v", err)
@@ -51,6 +52,9 @@ func TestReviewCommandUsesReadOnlyPermissionPolicy(t *testing.T) {
 	}
 	if agent.got.Permissions != ports.PermissionModeAuto {
 		t.Fatalf("permissions = %q, want auto", agent.got.Permissions)
+	}
+	if agent.got.Config.Model != "some-opencode-model" {
+		t.Fatalf("agent config = %#v, want reviewer model", agent.got.Config)
 	}
 	config := map[string]any{}
 	if err := json.Unmarshal([]byte(got.Env["OPENCODE_CONFIG_CONTENT"]), &config); err != nil {

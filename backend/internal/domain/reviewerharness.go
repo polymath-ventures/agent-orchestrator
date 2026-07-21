@@ -32,3 +32,18 @@ func (h ReviewerHarness) IsKnown() bool {
 	}
 	return false
 }
+
+// AgentHarness returns the worker-agent harness that backs this reviewer when
+// the same CLI can launch both workers and reviewers.
+func (h ReviewerHarness) AgentHarness() AgentHarness {
+	switch h {
+	case ReviewerClaudeCode:
+		return HarnessClaudeCode
+	case ReviewerCodex:
+		return HarnessCodex
+	case ReviewerOpenCode:
+		return HarnessOpenCode
+	default:
+		return ""
+	}
+}

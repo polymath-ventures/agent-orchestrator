@@ -3,6 +3,7 @@ package codex
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -10,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -87,6 +89,58 @@ func TestGetLaunchCommandWithoutWorkspaceOmitsTrustFlag(t *testing.T) {
 	}
 	if !containsSubsequence(cmd, sessionHookFlags()) {
 		t.Fatalf("command %#v missing session hook flags", cmd)
+	}
+}
+
+func TestGetLaunchCommandAppliesModelAndReasoningEffort(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "codex"}
+
+	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		Config: ports.AgentConfig{Model: "gpt-5-codex", Effort: domain.EffortHigh},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsSubsequence(cmd, []string{"--model", "gpt-5-codex"}) {
+		t.Fatalf("command %#v missing --model flag", cmd)
+	}
+	if !containsSubsequence(cmd, []string{"-c", `model_reasoning_effort="high"`}) {
+		t.Fatalf("command %#v missing model_reasoning_effort override", cmd)
+	}
+}
+
+func TestGetLaunchCommandClampsUnsupportedReasoningEffort(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "codex"}
+
+	for _, effort := range []domain.Effort{domain.EffortXHigh, domain.EffortMax} {
+		cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+			Config: ports.AgentConfig{Effort: effort},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !containsSubsequence(cmd, []string{"-c", `model_reasoning_effort="high"`}) {
+			t.Fatalf("effort %q: command %#v did not clamp to high", effort, cmd)
+		}
+	}
+}
+
+func TestGetLaunchCommandOmitsBlankModelAndEffort(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "codex"}
+
+	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		Config: ports.AgentConfig{Model: "   "},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if contains(cmd, "--model") {
+		t.Fatalf("command %#v contains blank --model flag", cmd)
+	}
+	for _, arg := range cmd {
+		if strings.HasPrefix(arg, "model_reasoning_effort=") {
+			t.Fatalf("command %#v contains blank effort override", cmd)
+		}
 	}
 }
 
@@ -505,6 +559,29 @@ func TestGetRestoreCommandReadsAgentSessionID(t *testing.T) {
 	}
 }
 
+func TestGetRestoreCommandAppliesModelAndReasoningEffort(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "codex"}
+
+	cmd, ok, err := plugin.GetRestoreCommand(context.Background(), ports.RestoreConfig{
+		Config: ports.AgentConfig{Model: "gpt-5-codex", Effort: domain.EffortHigh},
+		Session: ports.SessionRef{
+			Metadata: map[string]string{ports.MetadataKeyAgentSessionID: "thread-123"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("ok = false, want true")
+	}
+	if !containsSubsequence(cmd, []string{"--model", "gpt-5-codex"}) {
+		t.Fatalf("restore command %#v missing --model flag", cmd)
+	}
+	if !containsSubsequence(cmd, []string{"-c", `model_reasoning_effort="high"`}) {
+		t.Fatalf("restore command %#v missing model_reasoning_effort override", cmd)
+	}
+}
+
 func TestGetRestoreCommandFalseWithoutAgentSessionID(t *testing.T) {
 	plugin := &Plugin{resolvedBinary: "codex"}
 
@@ -629,6 +706,28 @@ func countCodexHookCommand(entries []codexMatcherGroup, command string) int {
 		}
 	}
 	return count
+}
+
+func TestModelProbeResultClassifiesUnsupportedModel(t *testing.T) {
+	got := modelProbeResultFromOutput([]byte("error: unknown model gpt-404"), errors.New("exit 1"))
+	if got.Status != ports.ModelValidationUnreachable {
+		t.Fatalf("status = %q, want unreachable", got.Status)
+	}
+
+	got = modelProbeResultFromOutput([]byte("rate limit exceeded"), errors.New("exit 1"))
+	if got.Status != ports.ModelValidationProbeUnavailable {
+		t.Fatalf("status = %q, want probe-unavailable", got.Status)
+	}
+
+	got = modelProbeResultFromOutput([]byte("model unavailable due to capacity"), errors.New("exit 1"))
+	if got.Status != ports.ModelValidationProbeUnavailable {
+		t.Fatalf("capacity status = %q, want probe-unavailable", got.Status)
+	}
+
+	got = modelProbeResultFromOutput([]byte("OK"), nil)
+	if got.Status != ports.ModelValidationReachable {
+		t.Fatalf("status = %q, want reachable", got.Status)
+	}
 }
 
 func TestDoctorLaunchProbesMirrorLaunchFlags(t *testing.T) {

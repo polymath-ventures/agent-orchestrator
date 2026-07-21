@@ -126,7 +126,7 @@ ao project rm agent-orchestrator -y
 
 ### ao project set-config
 
-Replace a project's per-project config (branch, session prefix, env, symlinks, post-create, agent model/permissions, role overrides, worker rules, and orchestrator rules). The config is resolved when a session spawns. Set fields via flags, pass the whole object with `--config-json`, or `--clear` to remove all config.
+Replace a project's per-project config (branch, session prefix, env, symlinks, post-create, agent model/permissions, per-harness model pins, reviewer pins, role overrides, worker rules, and orchestrator rules). The config is resolved when a session spawns. Set common fields via flags, pass the whole object with `--config-json`, or `--clear` to remove all config.
 
 **Syntax:**
 ```
@@ -159,6 +159,15 @@ ao project set-config <id> [flags]
 # Set default branch and model for a project
 ao project set-config agent-orchestrator --default-branch main --model claude-opus-4-5
 ```
+
+```bash
+# Set a per-harness model pin and a reviewer model pin
+ao project set-config agent-orchestrator --config-json '{"agentConfig":{"modelByHarness":{"codex":{"model":"gpt-5-codex","effort":"high"}}},"reviewers":[{"harness":"codex","agentConfig":{"model":"gpt-5-codex"}}]}'
+```
+
+Model availability refresh is advisory and cached. It never probes during
+spawn, but background refresh does invoke the configured provider CLI for each
+pinned model and can consume provider quota or billable usage.
 
 ```bash
 # Set an env var and a post-create command

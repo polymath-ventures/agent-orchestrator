@@ -815,7 +815,11 @@ export interface components {
             projectId?: null | string;
         };
         AgentConfig: {
+            effort?: string;
             model?: string;
+            modelByHarness?: {
+                [key: string]: components["schemas"]["DomainHarnessModel"];
+            };
             permissions?: string;
         };
         AgentInfo: {
@@ -893,7 +897,27 @@ export interface components {
             lastActivityAt: string;
             state: string;
         };
+        DomainHarnessModel: {
+            effort?: string;
+            model?: string;
+        };
+        DomainModelAvailability: {
+            /** @enum {string} */
+            harness: "claude-code" | "codex" | "codex-fugu" | "aider" | "opencode" | "grok" | "droid" | "amp" | "agy" | "crush" | "cursor" | "qwen" | "copilot" | "goose" | "auggie" | "continue" | "devin" | "cline" | "kimi" | "kiro" | "kilocode" | "vibe" | "pi" | "autohand";
+            message?: string;
+            model: string;
+            /** Format: date-time */
+            observedAt?: string;
+            projectId?: string;
+            /** @enum {string} */
+            reason: "not-probed" | "no-capability" | "probe-unavailable" | "reachable" | "unreachable" | "recovered";
+            /** @enum {string} */
+            status: "unknown" | "reachable" | "unreachable";
+            /** Format: date-time */
+            updatedAt?: string;
+        };
         DomainReviewerConfig: {
+            agentConfig?: components["schemas"]["AgentConfig"];
             harness: string;
         };
         ImportReport: {
@@ -1086,6 +1110,7 @@ export interface components {
             drainingWorkers?: number;
             id: string;
             kind: string;
+            modelAvailability?: components["schemas"]["DomainModelAvailability"][];
             name: string;
             path: string;
             pauseState?: string;

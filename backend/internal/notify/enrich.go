@@ -23,7 +23,11 @@ func enrich(intent Intent) (domain.NotificationRecord, error) {
 	if rec.DedupeKey == "" {
 		rec.DedupeKey = dedupeKeyForIntent(intent, rec.PRURL)
 	}
-	if intent.Type != domain.NotificationNeedsInput && intent.Type != domain.NotificationLowQuota && rec.PRURL == "" {
+	if intent.Type != domain.NotificationNeedsInput &&
+		intent.Type != domain.NotificationLowQuota &&
+		intent.Type != domain.NotificationModelUnreachable &&
+		intent.Type != domain.NotificationModelRecovered &&
+		rec.PRURL == "" {
 		return domain.NotificationRecord{}, domain.ErrInvalidNotificationRecord
 	}
 	rec.Title = titleForIntent(intent)
@@ -46,6 +50,10 @@ func titleForIntent(intent Intent) string {
 		return fmt.Sprintf("%s was closed without merging", prLabel(intent))
 	case domain.NotificationLowQuota:
 		return "Subscription quota is low"
+	case domain.NotificationModelUnreachable:
+		return "Configured model is unreachable"
+	case domain.NotificationModelRecovered:
+		return "Configured model recovered"
 	default:
 		return "Notification"
 	}
@@ -75,6 +83,16 @@ func bodyForIntent(intent Intent) string {
 			return message
 		}
 		return "A subscription harness is near the configured quota threshold. Adjust the worker mix."
+	case domain.NotificationModelUnreachable:
+		if message := strings.TrimSpace(intent.Message); message != "" {
+			return message
+		}
+		return "A configured model pin failed background validation."
+	case domain.NotificationModelRecovered:
+		if message := strings.TrimSpace(intent.Message); message != "" {
+			return message
+		}
+		return "A previously unreachable configured model pin validated again."
 	default:
 		return ""
 	}

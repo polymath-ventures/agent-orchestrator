@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	agentregistry "github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/registry"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/runtimeselect"
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/daemon/supervisor"
@@ -20,6 +21,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/controllers"
 	"github.com/aoagents/agent-orchestrator/backend/internal/mobilebridge"
+	"github.com/aoagents/agent-orchestrator/backend/internal/modelhealth"
 	"github.com/aoagents/agent-orchestrator/backend/internal/notify"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	"github.com/aoagents/agent-orchestrator/backend/internal/preview"
@@ -114,6 +116,14 @@ func Run() error {
 	notifier := notificationsvc.New(notificationsvc.Deps{Store: store})
 	notificationWriter := notify.New(notify.Deps{Store: store, Publisher: notificationHub})
 	metricsObserver, metricsDone := startMetricsObserver(ctx, cfg, store, telemetrySink, notificationWriter, log)
+	modelHealthSvc := modelhealth.New(modelhealth.Deps{
+		Store:          store,
+		Agents:         modelHealthAgents(),
+		Notifier:       notificationWriter,
+		DefaultHarness: domain.AgentHarness(cfg.Agent),
+		Logger:         log,
+	})
+	modelHealthDone := modelHealthSvc.Start(ctx, modelhealth.DefaultRefreshInterval)
 
 	// Bring up the Lifecycle Manager and the reaper first: it makes the session
 	// lifecycle write path live (reducer write -> store -> DB trigger ->
@@ -156,7 +166,7 @@ func Run() error {
 	mc := &controllers.MobileController{Bridge: bs}
 
 	srv, err := httpd.NewWithDeps(cfg, log, termMgr, httpd.APIDeps{
-		Projects:           projectsvc.NewWithDeps(projectsvc.Deps{Store: store, Sessions: sessionSvc, DefaultHarness: domain.AgentHarness(cfg.Agent), Telemetry: telemetrySink}),
+		Projects:           projectsvc.NewWithDeps(projectsvc.Deps{Store: store, Sessions: sessionSvc, ModelHealth: modelHealthSvc, DefaultHarness: domain.AgentHarness(cfg.Agent), Telemetry: telemetrySink}),
 		RolePrompt:         roleprompt.New(sessMgr, store),
 		Agents:             agentSvc,
 		Sessions:           sessionSvc,
@@ -240,6 +250,7 @@ func Run() error {
 	stop()
 	<-previewDone
 	<-metricsDone
+	<-modelHealthDone
 	lcStack.Stop()
 	lanStopCtx, lanCancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 	defer lanCancel()
@@ -256,4 +267,13 @@ func Run() error {
 // can capture it separately from any structured stdout protocol added later.
 func newLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug}))
+}
+
+func modelHealthAgents() []modelhealth.AgentEntry {
+	items := agentregistry.Harnessed()
+	out := make([]modelhealth.AgentEntry, 0, len(items))
+	for _, item := range items {
+		out = append(out, modelhealth.AgentEntry{Harness: item.Harness, Agent: item.Agent})
+	}
+	return out
 }

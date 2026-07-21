@@ -66,6 +66,9 @@ type ReviewInvocation struct {
 	ReviewIndex int
 	// WorkspacePath is the worker's checkout the reviewer reads.
 	WorkspacePath string
+	// AgentConfig carries the resolved reviewer agent configuration, including
+	// model pins selected by project reviewer config.
+	AgentConfig AgentConfig
 	// Prompt and SystemPrompt are the review instructions AO authored centrally,
 	// mirroring the worker's LaunchConfig.Prompt / SystemPrompt split: SystemPrompt
 	// carries the standing reviewer role, Prompt the per-pass task. A prompt-driven

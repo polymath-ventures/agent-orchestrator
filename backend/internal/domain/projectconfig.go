@@ -82,7 +82,8 @@ type ProjectConfig struct {
 // the reviewer vocabulary (ReviewerHarness), which is distinct from the worker
 // AgentHarness set.
 type ReviewerConfig struct {
-	Harness ReviewerHarness `json:"harness"`
+	Harness     ReviewerHarness `json:"harness"`
+	AgentConfig AgentConfig     `json:"agentConfig,omitempty"`
 }
 
 // FallbackReviewerHarness is the reviewer used when a project configures none
@@ -175,6 +176,14 @@ func (c ProjectConfig) Validate() error {
 	for i, rv := range c.Reviewers {
 		if !rv.Harness.IsKnown() {
 			return fmt.Errorf("reviewers[%d].harness: unknown harness %q", i, rv.Harness)
+		}
+		if err := rv.AgentConfig.Validate(); err != nil {
+			return fmt.Errorf("reviewers[%d]: %w", i, err)
+		}
+		if model := rv.AgentConfig.Model; model != "" {
+			if hp := rv.Harness.AgentHarness().ModelProvider(); !ClassifyModelProvider(model).CompatibleWith(hp) {
+				return fmt.Errorf("reviewers[%d].agentConfig.model: %q is not a %s model", i, model, hp)
+			}
 		}
 	}
 	if err := c.TrackerIntake.Validate(); err != nil {
