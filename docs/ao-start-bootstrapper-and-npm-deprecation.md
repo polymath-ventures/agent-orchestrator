@@ -65,9 +65,14 @@ Setup.exe` (per-user installer); Linux `maker-deb`/`maker-rpm` →
 
 ### 1.3 Versioning
 
-- Frontend `frontend/package.json` `version: "0.0.0"`; daemon
-  `backend/internal/cli/version.go:12` `Version = "dev"`; `build-daemon.mjs` runs
-  `go build ./cmd/ao` with **no `-ldflags`**. No real semver anywhere.
+- `frontend/package.json` is the desktop release version authority. Stable builds
+  use its committed version; nightly/feature workflows stamp it before Forge runs
+  `build-daemon.mjs`.
+- The Go daemon keeps `backend/internal/cli/version.go` `Version = "dev"` as the
+  fallback for direct, unstamped `go build`. The bundled-daemon script injects
+  that package version with `-ldflags -X …cli.Version=<version>`, so the packaged
+  app and its daemon report the same semver. Commit/date metadata remains
+  unstamped.
 
 ### 1.4 Signing / notarization / auto-update
 
@@ -168,9 +173,9 @@ waits for ready) and runs a first-boot legacy import (`maybeFirstBootImport`,
 
 **Out of scope:**
 
-- Track B: real version stamping, making the wired `update-electron-app` updater
-  live, configuring signing/notarization CI secrets, any copy promising
-  auto-update.
+- Track B beyond package/daemon version stamping: making the wired
+  `update-electron-app` updater live, configuring signing/notarization CI
+  secrets, and any copy promising auto-update.
 - Renaming the Go module path off `aoagents` (separate, large, not needed here).
 - The other CLI subcommands (already wired; untouched).
 
@@ -353,10 +358,9 @@ pin (`main.ts:64`) are in place. Do not re-implement.
 
 ## 9. Track B prerequisites (NOT this effort; keeps v1 copy honest)
 
-The `update-electron-app` updater is wired (§1.4) but inert until **both**: real
-version stamping (bump `package.json`; inject daemon version via `-ldflags -X
-…cli.Version=<tag>` in `build-daemon.mjs`) **and** signed+notarized macOS builds
-(`CSC_LINK` + `APPLE_*` in CI). Until then, v1 copy must **not** promise
+Package/daemon version stamping is now live (§1.3), but the
+`update-electron-app` updater remains inert until macOS builds are signed and
+notarized (`CSC_LINK` + `APPLE_*` in CI). Until then, v1 copy must **not** promise
 auto-update; users self-update by re-running `ao start` or downloading from the
 website.
 
