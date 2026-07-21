@@ -50,6 +50,12 @@ func canonicalizeConfig(raw []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	return canonicalizeConfigMap(obj)
+}
+
+// canonicalizeConfigMap renders an already-parsed config map in canonical form
+// (sorted keys, two-space indent, trailing newline).
+func canonicalizeConfigMap(obj map[string]any) ([]byte, error) {
 	out, err := json.MarshalIndent(obj, "", "  ")
 	if err != nil {
 		return nil, err
