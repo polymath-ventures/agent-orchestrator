@@ -1,6 +1,7 @@
 package sessionmanager
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -114,15 +115,16 @@ func TestBuildSystemPrompt_WorkerHandlesTaskSourcesAndProviderPRRules(t *testing
 	}
 }
 
-func TestBuildProjectRules_ReadsInlineAndFileRules(t *testing.T) {
+func TestLoadRoleRules_MergesInlineAndFileContent(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "rules.md"), []byte("File rule.\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	got, err := buildProjectRules(projectRulesConfig{
-		ProjectPath:    dir,
-		AgentRules:     "Inline rule.",
-		AgentRulesFile: "rules.md",
+	got, err := LoadRoleRules(RoleRulesConfig{
+		Role:        "worker",
+		ProjectPath: dir,
+		InlineRules: "Inline rule.",
+		RulesFile:   "rules.md",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -131,6 +133,114 @@ func TestBuildProjectRules_ReadsInlineAndFileRules(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Fatalf("rules missing %q:\n%s", want, got)
 		}
+	}
+}
+
+func TestLoadRoleRules_NoOverrideIsInert(t *testing.T) {
+	got, err := LoadRoleRules(RoleRulesConfig{Role: "orchestrator", ProjectPath: t.TempDir()})
+	if err != nil {
+		t.Fatalf("no override should not error: %v", err)
+	}
+	if got != "" {
+		t.Fatalf("expected empty rules, got %q", got)
+	}
+}
+
+func TestLoadRoleRules_MissingFileFailsClosed(t *testing.T) {
+	_, err := LoadRoleRules(RoleRulesConfig{
+		Role:        "reviewer",
+		ProjectPath: t.TempDir(),
+		RulesFile:   "does-not-exist.md",
+	})
+	if err == nil {
+		t.Fatal("expected missing rules file to fail closed")
+	}
+	if !strings.Contains(err.Error(), "reviewer") || !strings.Contains(err.Error(), "does-not-exist.md") {
+		t.Fatalf("error should name role and file: %v", err)
+	}
+}
+
+func TestLoadRoleRules_EmptyFileFailsClosed(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "empty.md"), []byte("   \n\t\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := LoadRoleRules(RoleRulesConfig{
+		Role:        "worker",
+		ProjectPath: dir,
+		RulesFile:   "empty.md",
+	})
+	if err == nil {
+		t.Fatal("expected empty rules file to fail closed")
+	}
+}
+
+func TestLoadRoleRules_OversizedFileFailsClosed(t *testing.T) {
+	dir := t.TempDir()
+	big := make([]byte, maxRoleRulesFileBytes+1)
+	for i := range big {
+		big[i] = 'a'
+	}
+	if err := os.WriteFile(filepath.Join(dir, "big.md"), big, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := LoadRoleRules(RoleRulesConfig{
+		Role:        "orchestrator",
+		ProjectPath: dir,
+		RulesFile:   "big.md",
+	})
+	if err == nil {
+		t.Fatal("expected oversized rules file to fail closed")
+	}
+	// The error names both the actual size and the limit (spec requirement).
+	if !strings.Contains(err.Error(), "limit") || !strings.Contains(err.Error(), "262145") {
+		t.Fatalf("error should mention actual size and the limit: %v", err)
+	}
+}
+
+func TestLoadRoleRules_SymlinkEscapeFailsClosed(t *testing.T) {
+	// A rules-file path that is lexically repo-relative but symlinks outside the
+	// project root must not be followed — it would inject an external secret into
+	// the prompt (and the visibility API).
+	dir := t.TempDir()
+	secret := filepath.Join(t.TempDir(), "secret.txt")
+	if err := os.WriteFile(secret, []byte("TOP SECRET"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "rules.md")
+	if err := os.Symlink(secret, link); err != nil {
+		t.Skipf("symlinks unsupported: %v", err)
+	}
+	got, err := LoadRoleRules(RoleRulesConfig{
+		Role:        "worker",
+		ProjectID:   "mer",
+		ProjectPath: dir,
+		RulesFile:   "rules.md",
+	})
+	if err == nil {
+		t.Fatalf("expected escaping symlink to fail closed, got prompt: %q", got)
+	}
+	if strings.Contains(got, "TOP SECRET") {
+		t.Fatal("external secret leaked through a symlink")
+	}
+}
+
+func TestLoadRoleRules_ErrorNamesProject(t *testing.T) {
+	_, err := LoadRoleRules(RoleRulesConfig{
+		Role:        "reviewer",
+		ProjectID:   "mercury",
+		ProjectPath: t.TempDir(),
+		RulesFile:   "missing.md",
+	})
+	if err == nil {
+		t.Fatal("expected missing file to fail closed")
+	}
+	if !strings.Contains(err.Error(), "mercury") {
+		t.Fatalf("error should name the project: %v", err)
+	}
+	var rle *RulesLoadError
+	if !errors.As(err, &rle) {
+		t.Fatalf("expected a RulesLoadError, got %T", err)
 	}
 }
 

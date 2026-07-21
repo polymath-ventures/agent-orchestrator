@@ -2241,6 +2241,49 @@ func TestSpawnOrchestrator_ProjectRulesInSystemPrompt(t *testing.T) {
 	}
 }
 
+func TestSpawnOrchestrator_RulesFileMergedContent(t *testing.T) {
+	projectDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(projectDir, "docs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(projectDir, "docs", "orch.md"), []byte("Orchestrator file rule.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := testRoleAgents()
+	cfg.OrchestratorRules = "Inline orchestrator rule."
+	cfg.OrchestratorRulesFile = "docs/orch.md"
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Path: projectDir, Config: cfg}
+	agent := &recordingAgent{}
+	lookPath := func(string) (string, error) { return "/bin/true", nil }
+	m := New(Deps{Runtime: &fakeRuntime{}, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
+
+	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindOrchestrator}); err != nil {
+		t.Fatal(err)
+	}
+
+	systemPrompt := agent.lastLaunch.SystemPrompt
+	for _, want := range []string{"## Project-Specific Orchestrator Rules", "Inline orchestrator rule.", "Orchestrator file rule."} {
+		if !strings.Contains(systemPrompt, want) {
+			t.Fatalf("orchestrator system prompt missing %q:\n%s", want, systemPrompt)
+		}
+	}
+}
+
+func TestSpawnOrchestrator_MissingRulesFileFailsClosed(t *testing.T) {
+	cfg := testRoleAgents()
+	cfg.OrchestratorRulesFile = "docs/missing.md"
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Path: t.TempDir(), Config: cfg}
+	agent := &recordingAgent{}
+	lookPath := func(string) (string, error) { return "/bin/true", nil }
+	m := New(Deps{Runtime: &fakeRuntime{}, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
+
+	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindOrchestrator}); err == nil {
+		t.Fatal("expected spawn to fail closed on missing orchestrator rules file")
+	}
+}
+
 func TestSpawnOrchestrator_WorkspaceProjectPromptListsRepos(t *testing.T) {
 	st := newFakeStore()
 	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Kind: domain.ProjectKindWorkspace, Config: testRoleAgents()}

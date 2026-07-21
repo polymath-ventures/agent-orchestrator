@@ -36,7 +36,11 @@ const PERMISSION_MODE_OPTIONS = [
 
 const REVIEWER_OPTIONS = ["claude-code", "codex", "opencode"] as const;
 
+const ROLE_PROMPT_OPTIONS = ["worker", "orchestrator", "reviewer"] as const;
+type RolePromptRole = (typeof ROLE_PROMPT_OPTIONS)[number];
+
 const projectQueryKey = (id: string) => ["project", id] as const;
+const rolePromptQueryKey = (id: string, role: string) => ["project", id, "role-prompt", role] as const;
 
 export function ProjectSettingsForm({ projectId }: { projectId: string }) {
 	const queryClient = useQueryClient();
@@ -92,6 +96,12 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 		model: config.agentConfig?.model ?? "",
 		permissions: config.agentConfig?.permissions ?? "",
 		reviewerHarness: config.reviewers?.[0]?.harness ?? "",
+		agentRules: config.agentRules ?? "",
+		agentRulesFile: config.agentRulesFile ?? "",
+		orchestratorRules: config.orchestratorRules ?? "",
+		orchestratorRulesFile: config.orchestratorRulesFile ?? "",
+		reviewerRules: config.reviewerRules ?? "",
+		reviewerRulesFile: config.reviewerRulesFile ?? "",
 		intakeEnabled: intake.enabled ?? false,
 		intakeRepo: intake.repo ?? "",
 		intakeAssignee: intake.assignee ?? "",
@@ -146,6 +156,12 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 					permissions: form.permissions || undefined,
 				}),
 				reviewers: form.reviewerHarness ? [{ harness: form.reviewerHarness }] : undefined,
+				agentRules: form.agentRules.trim() || undefined,
+				agentRulesFile: form.agentRulesFile.trim() || undefined,
+				orchestratorRules: form.orchestratorRules.trim() || undefined,
+				orchestratorRulesFile: form.orchestratorRulesFile.trim() || undefined,
+				reviewerRules: form.reviewerRules.trim() || undefined,
+				reviewerRulesFile: form.reviewerRulesFile.trim() || undefined,
 				trackerIntake: buildIntake(intakeForm),
 				workerMix: buildWorkerMix(form.workerMix),
 				maxLiveWorkers: parseMaxLiveWorkers(form.maxLiveWorkers),
@@ -355,6 +371,60 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 
 			<Card>
 				<CardHeader>
+					<CardTitle className="text-control">Role instructions</CardTitle>
+				</CardHeader>
+				<CardContent className="flex flex-col gap-4">
+					<p className="text-xs leading-row text-muted-foreground">
+						Operator-controlled standing instructions injected into each role's prompt on the next spawn,
+						content-preserving (only surrounding whitespace is normalized). A rules file is a repo-relative path; a
+						configured-but-missing, empty, or oversized file fails the spawn loudly rather than silently dropping the
+						instructions.
+					</p>
+					<RulesField
+						label="Worker rules"
+						fileLabel="Worker rules file (repo-relative)"
+						idPrefix="agentRules"
+						rules={form.agentRules}
+						file={form.agentRulesFile}
+						onRules={(v) => setForm((f) => ({ ...f, agentRules: v }))}
+						onFile={(v) => setForm((f) => ({ ...f, agentRulesFile: v }))}
+					/>
+					<RulesField
+						label="Orchestrator rules"
+						fileLabel="Orchestrator rules file (repo-relative)"
+						idPrefix="orchestratorRules"
+						rules={form.orchestratorRules}
+						file={form.orchestratorRulesFile}
+						onRules={(v) => setForm((f) => ({ ...f, orchestratorRules: v }))}
+						onFile={(v) => setForm((f) => ({ ...f, orchestratorRulesFile: v }))}
+					/>
+					<RulesField
+						label="Reviewer rules"
+						fileLabel="Reviewer rules file (repo-relative)"
+						idPrefix="reviewerRules"
+						rules={form.reviewerRules}
+						file={form.reviewerRulesFile}
+						onRules={(v) => setForm((f) => ({ ...f, reviewerRules: v }))}
+						onFile={(v) => setForm((f) => ({ ...f, reviewerRulesFile: v }))}
+					/>
+				</CardContent>
+			</Card>
+
+			<Card>
+				<CardHeader>
+					<CardTitle className="text-control">Prompt inspector</CardTitle>
+				</CardHeader>
+				<CardContent className="flex flex-col gap-3">
+					<p className="text-xs leading-row text-muted-foreground">
+						The exact, fully-assembled system prompt a role receives for this project — base scaffold plus every
+						injected instruction source. Reflects saved config; save your changes above to see them here.
+					</p>
+					<RolePromptInspector projectId={projectId} />
+				</CardContent>
+			</Card>
+
+			<Card>
+				<CardHeader>
 					<CardTitle className="text-control">Worker mix</CardTitle>
 				</CardHeader>
 				<CardContent className="flex flex-col gap-4">
@@ -446,6 +516,93 @@ function ReviewerSelect({ id, value, onChange }: { id: string; value: string; on
 				))}
 			</SelectContent>
 		</Select>
+	);
+}
+
+const controlInputClass =
+	"h-control-form w-full rounded-md border border-input bg-transparent px-2.5 text-control text-foreground placeholder:text-passive focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-weak";
+
+function RulesField({
+	label,
+	fileLabel,
+	idPrefix,
+	rules,
+	file,
+	onRules,
+	onFile,
+}: {
+	label: string;
+	fileLabel: string;
+	idPrefix: string;
+	rules: string;
+	file: string;
+	onRules: (value: string) => void;
+	onFile: (value: string) => void;
+}) {
+	return (
+		<div className="flex flex-col gap-2 rounded-md border border-border p-3">
+			<Field label={label} htmlFor={`${idPrefix}Inline`}>
+				<textarea
+					id={`${idPrefix}Inline`}
+					className="min-h-[64px] w-full resize-y rounded-md border border-input bg-transparent px-2.5 py-1.5 font-mono text-control text-foreground placeholder:text-passive focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-weak"
+					value={rules}
+					onChange={(e) => onRules(e.target.value)}
+					placeholder="(none)"
+				/>
+			</Field>
+			<Field label={fileLabel} htmlFor={`${idPrefix}File`}>
+				<input
+					id={`${idPrefix}File`}
+					className={controlInputClass}
+					value={file}
+					onChange={(e) => onFile(e.target.value)}
+					placeholder="docs/role-rules.md"
+				/>
+			</Field>
+		</div>
+	);
+}
+
+function RolePromptInspector({ projectId }: { projectId: string }) {
+	const [role, setRole] = useState<RolePromptRole>("worker");
+	const query = useQuery({
+		queryKey: rolePromptQueryKey(projectId, role),
+		queryFn: async () => {
+			const { data, error } = await apiClient.GET("/api/v1/projects/{id}/roles/{role}/prompt", {
+				params: { path: { id: projectId, role } },
+			});
+			if (error) throw new Error(apiErrorMessage(error, "Could not load the assembled prompt."));
+			return data.prompt;
+		},
+	});
+	return (
+		<div className="flex flex-col gap-2">
+			<Field label="Role" htmlFor="rolePromptRole">
+				<Select value={role} onValueChange={(v) => setRole(v as RolePromptRole)}>
+					<SelectTrigger id="rolePromptRole" className="h-control-form w-full text-control">
+						<SelectValue />
+					</SelectTrigger>
+					<SelectContent>
+						{ROLE_PROMPT_OPTIONS.map((opt) => (
+							<SelectItem key={opt} value={opt}>
+								{opt}
+							</SelectItem>
+						))}
+					</SelectContent>
+				</Select>
+			</Field>
+			{query.isPending ? (
+				<p className="text-xs text-muted-foreground">Loading…</p>
+			) : query.isError ? (
+				<p className="text-xs text-error">
+					{query.error instanceof Error ? query.error.message : "Could not load the assembled prompt."}
+				</p>
+			) : (
+				<pre className="max-h-96 overflow-auto whitespace-pre-wrap break-words rounded-md bg-terminal px-3 py-3 font-mono text-xs leading-row text-terminal-foreground">
+					{query.data}
+				</pre>
+			)}
+		</div>
 	);
 }
 

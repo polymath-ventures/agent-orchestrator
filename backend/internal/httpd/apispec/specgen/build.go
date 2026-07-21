@@ -633,6 +633,18 @@ func projectOperations() []operation {
 				{http.StatusInternalServerError, envelope.APIError{}},
 			},
 		},
+		{
+			method: http.MethodGet, path: "/api/v1/projects/{id}/roles/{role}/prompt", id: "getRolePrompt", tag: "projects",
+			summary:    "Render the exact assembled system prompt a role receives for a project",
+			pathParams: []any{controllers.ProjectIDParam{}, controllers.RolePromptRoleParam{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.RolePromptResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusUnprocessableEntity, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+			},
+		},
 	}
 }
 

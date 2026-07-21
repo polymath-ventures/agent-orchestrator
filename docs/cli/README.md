@@ -43,6 +43,7 @@ Every product command resolves to a daemon HTTP route. Run `ao <command>
 | `ao project get <id>`               | `GET /api/v1/projects/{id}`                                        |
 | `ao project set-config <id>`        | `PUT /api/v1/projects/{id}/config`                                 |
 | `ao project rm <id>`                | `DELETE /api/v1/projects/{id}`                                     |
+| `ao role prompt <project> <role>`   | `GET /api/v1/projects/{id}/roles/{role}/prompt`                    |
 | `ao agent ls`                       | `GET /api/v1/agents`                                               |
 | `ao agent ls --refresh`             | `POST /api/v1/agents/refresh`                                      |
 | `ao spawn`                          | `POST /api/v1/sessions`                                            |

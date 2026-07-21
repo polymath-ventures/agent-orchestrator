@@ -2165,6 +2165,15 @@ func (m *Manager) buildSpawnTexts(ctx context.Context, cfg ports.SpawnConfig) (p
 	return prompt, systemPrompt, nil
 }
 
+// RoleSystemPrompt assembles the exact system prompt a worker or orchestrator
+// session receives for a project, for operator inspection. It reuses the same
+// assembly path as spawn (buildSystemPrompt), so what the operator sees matches
+// what an agent would get if spawned right now — including any operator rules
+// override, and the same fail-closed error when that override is misconfigured.
+func (m *Manager) RoleSystemPrompt(ctx context.Context, kind domain.SessionKind, projectID domain.ProjectID) (string, error) {
+	return m.buildSystemPrompt(ctx, kind, projectID)
+}
+
 // buildSystemPrompt derives the standing instructions for a session of the
 // given kind from current store state. Restore recomputes them through here
 // rather than persisting them, so a restored worker points at the orchestrator
@@ -2181,7 +2190,17 @@ func (m *Manager) buildSystemPrompt(ctx context.Context, kind domain.SessionKind
 
 	switch kind {
 	case domain.KindOrchestrator:
-		cfg.OrchestratorRules = project.Config.OrchestratorRules
+		rules, err := LoadRoleRules(RoleRulesConfig{
+			Role:        "orchestrator",
+			ProjectID:   string(projectID),
+			ProjectPath: project.Path,
+			InlineRules: project.Config.OrchestratorRules,
+			RulesFile:   project.Config.OrchestratorRulesFile,
+		})
+		if err != nil {
+			return "", err
+		}
+		cfg.OrchestratorRules = rules
 	case domain.KindWorker:
 		orchestratorID, ok, err := m.activeOrchestratorSessionID(ctx, projectID)
 		if err != nil {
@@ -2190,10 +2209,12 @@ func (m *Manager) buildSystemPrompt(ctx context.Context, kind domain.SessionKind
 		if ok {
 			cfg.OrchestratorSessionID = string(orchestratorID)
 		}
-		rules, err := buildProjectRules(projectRulesConfig{
-			ProjectPath:    project.Path,
-			AgentRules:     project.Config.AgentRules,
-			AgentRulesFile: project.Config.AgentRulesFile,
+		rules, err := LoadRoleRules(RoleRulesConfig{
+			Role:        "worker",
+			ProjectID:   string(projectID),
+			ProjectPath: project.Path,
+			InlineRules: project.Config.AgentRules,
+			RulesFile:   project.Config.AgentRulesFile,
 		})
 		if err != nil {
 			return "", err

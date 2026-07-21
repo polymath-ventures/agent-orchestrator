@@ -32,6 +32,19 @@ type AgentIDParam struct {
 	Agent string `path:"agent" description:"Agent adapter identifier."`
 }
 
+// RolePromptRoleParam is the {role} path parameter for the effective-prompt
+// visibility route.
+type RolePromptRoleParam struct {
+	Role string `path:"role" description:"Agent role: worker, orchestrator, or reviewer." enum:"worker,orchestrator,reviewer"`
+}
+
+// RolePromptResponse is the body of GET /projects/{id}/roles/{role}/prompt: the
+// exact, fully-assembled system prompt that role receives for the project.
+type RolePromptResponse struct {
+	Role   string `json:"role"`
+	Prompt string `json:"prompt"`
+}
+
 // ListProjectsResponse is the body of GET /api/v1/projects.
 type ListProjectsResponse struct {
 	Projects []projectsvc.Summary `json:"projects"`

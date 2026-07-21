@@ -188,6 +188,92 @@ describe("ProjectSettingsForm", () => {
 		expect(await screen.findByText("Saved.")).toBeInTheDocument();
 	}, 20_000);
 
+	it("loads and saves per-role instruction overrides", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "git@github.com:acme/project-one.git",
+			defaultBranch: "main",
+			config: {
+				worker: { agent: "codex" },
+				orchestrator: { agent: "claude-code" },
+				reviewerRulesFile: "docs/review-rules.md",
+			},
+		});
+
+		renderSettings();
+
+		const reviewerFile = await screen.findByLabelText("Reviewer rules file (repo-relative)");
+		expect(reviewerFile).toHaveValue("docs/review-rules.md");
+
+		await userEvent.type(screen.getByLabelText("Orchestrator rules"), "Coordinate through workers.");
+
+		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
+		const body = putMock.mock.calls[0][1].body.config;
+		expect(body.reviewerRulesFile).toBe("docs/review-rules.md");
+		expect(body.orchestratorRules).toBe("Coordinate through workers.");
+	}, 20_000);
+
+	it("renders the assembled prompt in the inspector", async () => {
+		getMock.mockImplementation(async (path: string) => {
+			if (path === "/api/v1/agents") return agentCatalogResponse;
+			if (path === "/api/v1/projects/{id}/roles/{role}/prompt") {
+				return { data: { role: "worker", prompt: "ASSEMBLED WORKER PROMPT" }, error: undefined };
+			}
+			return {
+				data: {
+					status: "ok",
+					project: {
+						id: "proj-1",
+						name: "Project One",
+						kind: "single_repo",
+						path: "/repo/project-one",
+						repo: "git@github.com:acme/project-one.git",
+						defaultBranch: "main",
+						config: { worker: { agent: "codex" }, orchestrator: { agent: "claude-code" } },
+					},
+				},
+				error: undefined,
+			};
+		});
+
+		renderSettings();
+
+		expect(await screen.findByText("ASSEMBLED WORKER PROMPT")).toBeInTheDocument();
+	}, 20_000);
+
+	it("surfaces a fail-closed inspector error instead of a prompt", async () => {
+		getMock.mockImplementation(async (path: string) => {
+			if (path === "/api/v1/agents") return agentCatalogResponse;
+			if (path === "/api/v1/projects/{id}/roles/{role}/prompt") {
+				return { data: undefined, error: { message: "reviewer rules file docs/x.md: file is empty" } };
+			}
+			return {
+				data: {
+					status: "ok",
+					project: {
+						id: "proj-1",
+						name: "Project One",
+						kind: "single_repo",
+						path: "/repo/project-one",
+						repo: "",
+						defaultBranch: "main",
+						config: { worker: { agent: "codex" }, orchestrator: { agent: "claude-code" } },
+					},
+				},
+				error: undefined,
+			};
+		});
+
+		renderSettings();
+
+		expect(await screen.findByText(/file is empty/)).toBeInTheDocument();
+	}, 20_000);
+
 	it("shows the daemon validation message when save fails", async () => {
 		mockProject({
 			id: "proj-1",
