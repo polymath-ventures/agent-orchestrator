@@ -43,6 +43,7 @@ const (
 type setActivityAPIRequest struct {
 	State          string           `json:"state,omitempty"`
 	Harness        string           `json:"harness,omitempty"`
+	RuntimeToken   string           `json:"runtimeToken,omitempty"`
 	Event          string           `json:"event,omitempty"`
 	ToolName       string           `json:"toolName,omitempty"`
 	ToolUseID      string           `json:"toolUseId,omitempty"`
@@ -171,6 +172,7 @@ func (c *commandContext) runHook(ctx context.Context, agent, event string) error
 	toolName, toolUseID := activityMeta(payload)
 	path := "sessions/" + url.PathEscape(sessionID) + "/activity"
 	req := setActivityAPIRequest{
+		RuntimeToken:   strings.TrimSpace(os.Getenv("AO_RUNTIME_TOKEN")),
 		Event:          event,
 		ToolName:       toolName,
 		ToolUseID:      toolUseID,

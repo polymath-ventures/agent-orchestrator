@@ -528,6 +528,32 @@ func TestDoctorHooksLogStates(t *testing.T) {
 		}
 	})
 
+	t.Run("restart-window misses pass", func(t *testing.T) {
+		cfg := setConfigEnv(t)
+		writeHooksLogLines(t, cfg.dataDir,
+			time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)+" session=mer-1 ao hooks codex stop: AO daemon is not running — start it with `ao start`",
+			time.Now().Add(-30*time.Minute).UTC().Format(time.RFC3339)+" session=mer-2 ao hooks claude-code stop: AO daemon is not running (stale run-file at /tmp/ao.json) — start it with `ao start`",
+		)
+		c := doctorContext(t, map[string]string{"git": "/bin/git"}, gitOnly)
+		check := findDoctorCheck(t, c.runDoctor(context.Background()), "hooks-log")
+		if check.Level != doctorPass || !strings.Contains(check.Message, "ignored 2 daemon restart-window miss") {
+			t.Fatalf("hooks-log = %+v, want PASS with ignored restart-window count", check)
+		}
+	})
+
+	t.Run("mixed restart-window and real failures warn", func(t *testing.T) {
+		cfg := setConfigEnv(t)
+		writeHooksLogLines(t, cfg.dataDir,
+			time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)+" session=mer-1 ao hooks codex stop: AO daemon is not running — start it with `ao start`",
+			time.Now().Add(-30*time.Minute).UTC().Format(time.RFC3339)+" session=mer-2 ao hooks codex stop: connection refused",
+		)
+		c := doctorContext(t, map[string]string{"git": "/bin/git"}, gitOnly)
+		check := findDoctorCheck(t, c.runDoctor(context.Background()), "hooks-log")
+		if check.Level != doctorWarn || !strings.Contains(check.Message, "1 hook delivery failure") || !strings.Contains(check.Message, "ignored 1 daemon restart-window miss") {
+			t.Fatalf("hooks-log = %+v, want WARN with real failure and ignored restart-window count", check)
+		}
+	})
+
 	t.Run("only stale failures pass", func(t *testing.T) {
 		cfg := setConfigEnv(t)
 		writeHooksLogLines(t, cfg.dataDir,

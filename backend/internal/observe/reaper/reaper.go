@@ -47,6 +47,10 @@ type runtimeProber interface {
 	IsAlive(context.Context, ports.RuntimeHandle) (bool, error)
 }
 
+type runtimeProcessProber interface {
+	IsRunningCommand(context.Context, ports.RuntimeHandle, string) (bool, error)
+}
+
 // Reaper is the polling timer. Construct it with New; start the background
 // goroutine with Start, or drive a single cycle synchronously with Tick.
 type Reaper struct {
@@ -159,7 +163,21 @@ func (r *Reaper) probeOne(ctx context.Context, sess domain.SessionRecord, now ti
 		r.logger.Debug("reaper: probe error reported as failed fact",
 			"session", sess.ID, "err", probeErr)
 	case alive:
-		facts.Probe = ports.ProbeAlive
+		if sess.Harness.RequiresLaunchProcessLivenessSweep() {
+			running, err := r.launchProcessRunning(ctx, handle)
+			switch {
+			case err != nil:
+				facts.Probe = ports.ProbeFailed
+				r.logger.Debug("reaper: launch-process probe error reported as failed fact",
+					"session", sess.ID, "err", err)
+			case running:
+				facts.Probe = ports.ProbeAlive
+			default:
+				facts.Probe = ports.ProbeAgentExited
+			}
+		} else {
+			facts.Probe = ports.ProbeAlive
+		}
 	default:
 		facts.Probe = ports.ProbeDead
 	}
@@ -168,6 +186,14 @@ func (r *Reaper) probeOne(ctx context.Context, sess domain.SessionRecord, now ti
 		r.logger.Error("reaper: ApplyRuntimeObservation failed",
 			"session", sess.ID, "err", err)
 	}
+}
+
+func (r *Reaper) launchProcessRunning(ctx context.Context, handle ports.RuntimeHandle) (bool, error) {
+	prober, ok := r.runtime.(runtimeProcessProber)
+	if !ok {
+		return true, nil
+	}
+	return prober.IsRunningCommand(ctx, handle, "")
 }
 
 // handleFromRecord reconstructs the RuntimeHandle stored on the session by

@@ -147,6 +147,10 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 		return fmt.Errorf("%w: %s", ports.ErrSessionNotFound, id)
 	}
 	now := m.clock()
+	if staleRuntimeTokenSignal(rec, s) {
+		m.mu.Unlock()
+		return nil
+	}
 	usageEvent, hasUsageEvent := usageTelemetryEvent(rec, s, now)
 	if rec.IsTerminated {
 		delete(m.flights, id)
@@ -565,7 +569,17 @@ func mergeMetadata(base, in domain.SessionMetadata) domain.SessionMetadata {
 	set(&base.Branch, in.Branch)
 	set(&base.WorkspacePath, in.WorkspacePath)
 	set(&base.RuntimeHandleID, in.RuntimeHandleID)
+	set(&base.RuntimeToken, in.RuntimeToken)
 	set(&base.AgentSessionID, in.AgentSessionID)
 	set(&base.Prompt, in.Prompt)
 	return base
+}
+
+func staleRuntimeTokenSignal(rec domain.SessionRecord, s ports.ActivitySignal) bool {
+	currentToken := strings.TrimSpace(rec.Metadata.RuntimeToken)
+	if currentToken == "" {
+		return false
+	}
+	signalToken := strings.TrimSpace(s.RuntimeToken)
+	return signalToken == "" || signalToken != currentToken
 }

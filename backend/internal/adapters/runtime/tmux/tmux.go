@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -206,6 +207,38 @@ func (r *Runtime) IsAlive(ctx context.Context, handle ports.RuntimeHandle) (bool
 		return false, fmt.Errorf("tmux runtime: probe session %s: %w", id, err)
 	}
 	return true, nil
+}
+
+// IsRunningCommand reports whether the pane still has a launched child process.
+// AO starts panes through a shell wrapper that execs a keep-alive shell after
+// the agent exits, so tmux's session liveness alone cannot prove the agent is
+// still running.
+func (r *Runtime) IsRunningCommand(ctx context.Context, handle ports.RuntimeHandle, command string) (bool, error) {
+	id, err := handleID(handle)
+	if err != nil {
+		return false, err
+	}
+	out, err := r.run(ctx, paneProcessArgs(id)...)
+	if err != nil {
+		return false, fmt.Errorf("tmux runtime: inspect pane process %s: %w", id, err)
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(out)))
+	if err != nil || pid <= 0 {
+		return false, fmt.Errorf("tmux runtime: invalid pane pid %q", strings.TrimSpace(string(out)))
+	}
+	args := []string{"-P", strconv.Itoa(pid)}
+	if strings.TrimSpace(command) != "" {
+		args = append(args, "-f", regexp.QuoteMeta(command))
+	}
+	childOut, err := r.runner.Run(ctx, nil, "pgrep", args...)
+	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 && strings.TrimSpace(string(childOut)) == "" {
+			return false, nil
+		}
+		return false, fmt.Errorf("tmux runtime: inspect child process %d: %w", pid, err)
+	}
+	return strings.TrimSpace(string(childOut)) != "", nil
 }
 
 // SendMessage sends literal text to the session (chunked via send-keys -l) then

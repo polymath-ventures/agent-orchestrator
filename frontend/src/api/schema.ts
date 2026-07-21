@@ -1229,6 +1229,8 @@ export interface components {
             event?: string;
             /** @description Agent harness reporting the activity, used for usage telemetry attribution when the session row has no harness. */
             harness?: string;
+            /** @description Runtime generation token exported to this session's hooks; stale tokens are ignored. */
+            runtimeToken?: string;
             /**
              * @description Agent activity state reported by an agent hook. Optional for metadata-only hooks.
              * @enum {string}

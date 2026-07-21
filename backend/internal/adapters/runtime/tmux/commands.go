@@ -89,3 +89,7 @@ func sendInterruptArgs(id string) []string {
 func capturePaneArgs(id string, lines int) []string {
 	return []string{"capture-pane", "-t", id, "-p", "-S", fmt.Sprintf("-%d", lines)}
 }
+
+func paneProcessArgs(id string) []string {
+	return []string{"display-message", "-p", "-t", id, "#{pane_pid}"}
+}

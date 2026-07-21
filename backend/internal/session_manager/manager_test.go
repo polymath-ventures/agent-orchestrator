@@ -170,7 +170,13 @@ type fakeRuntime struct {
 	// aliveByHandle maps a RuntimeHandle.ID to its liveness; missing = false.
 	aliveByHandle map[string]bool
 	aliveErr      error
-	destroyedIDs  []string
+	// processAliveByHandle maps a RuntimeHandle.ID to whether the pane still
+	// appears to be running the launched agent command; missing = true.
+	processAliveByHandle map[string]bool
+	processAliveSeq      []bool
+	processAliveErr      error
+	processCommands      []string
+	destroyedIDs         []string
 }
 
 func (r *fakeRuntime) Create(_ context.Context, cfg ports.RuntimeConfig) (ports.RuntimeHandle, error) {
@@ -191,6 +197,25 @@ func (r *fakeRuntime) IsAlive(_ context.Context, handle ports.RuntimeHandle) (bo
 		return false, r.aliveErr
 	}
 	return r.aliveByHandle[handle.ID], nil
+}
+func (r *fakeRuntime) IsRunningCommand(_ context.Context, handle ports.RuntimeHandle, command string) (bool, error) {
+	r.processCommands = append(r.processCommands, command)
+	if r.processAliveErr != nil {
+		return false, r.processAliveErr
+	}
+	if len(r.processAliveSeq) > 0 {
+		alive := r.processAliveSeq[0]
+		r.processAliveSeq = r.processAliveSeq[1:]
+		return alive, nil
+	}
+	if r.processAliveByHandle == nil {
+		return true, nil
+	}
+	alive, ok := r.processAliveByHandle[handle.ID]
+	if !ok {
+		return true, nil
+	}
+	return alive, nil
 }
 func (r *fakeRuntime) GetOutput(_ context.Context, _ ports.RuntimeHandle, _ int) (string, error) {
 	r.outputCalls++
@@ -994,6 +1019,93 @@ func TestSpawn_AfterStartPromptSuppressedTerminationFailsSpawn(t *testing.T) {
 	// prompt was never delivered.
 	if len(msg.msgs) != 0 {
 		t.Fatalf("delivered prompts = %#v, want none (delivery was suppressed)", msg.msgs)
+	}
+}
+
+func TestSpawn_RollsBackWhenAgentProcessAlreadyExited(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{
+		WorkerMix: domain.WorkerMix{{Harness: domain.HarnessClaudeCode, Model: "opus", Weight: 100}},
+	}}
+	rt := &fakeRuntime{
+		aliveByHandle:        map[string]bool{"h1": true},
+		processAliveByHandle: map[string]bool{"h1": false},
+	}
+	lcm := &fakeLCM{store: st}
+	m := New(Deps{
+		Runtime: rt, Agents: singleAgent{agent: &recordingAgent{}}, Workspace: &fakeWorkspace{}, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: lcm,
+		LookPath: func(string) (string, error) { return "/bin/true", nil },
+	})
+
+	if _, err := m.Spawn(ctx, ports.SpawnConfig{
+		ProjectID: "mer", Kind: domain.KindWorker, Prompt: "task",
+	}); err == nil {
+		t.Fatal("spawn must fail when the agent process has already been replaced by the keep-alive shell")
+	}
+	if rt.destroyed != 1 {
+		t.Fatalf("runtime destroyed %d times, want 1 rollback", rt.destroyed)
+	}
+	if lcm.completed != 0 {
+		t.Fatalf("MarkSpawned called %d times, want 0", lcm.completed)
+	}
+	if _, ok := st.sessions["mer-1"]; ok {
+		t.Fatal("seed row survived a rolled-back spawn")
+	}
+}
+
+func TestSpawn_AfterStartPromptNotDeliveredWhenLaunchProcessAlreadyExited(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+	rt := &fakeRuntime{
+		aliveByHandle:        map[string]bool{"h1": true},
+		processAliveByHandle: map[string]bool{"h1": false},
+	}
+	msg := &fakeMessenger{}
+	lcm := &fakeLCM{store: st}
+	m := New(Deps{
+		Runtime: rt, Agents: singleAgent{agent: afterStartAgent{recordingAgent: &recordingAgent{}}}, Workspace: &fakeWorkspace{}, Store: st,
+		Messenger: msg, Lifecycle: lcm,
+		LookPath: func(string) (string, error) { return "/bin/true", nil },
+	})
+
+	if _, err := m.Spawn(ctx, ports.SpawnConfig{
+		ProjectID: "mer", Kind: domain.KindWorker, Prompt: "task",
+	}); err == nil {
+		t.Fatal("spawn must fail before after-start prompt delivery when the agent process has exited")
+	}
+	if len(msg.msgs) != 0 {
+		t.Fatalf("delivered prompts = %#v, want none", msg.msgs)
+	}
+}
+
+func TestSpawn_LateExitAfterProbeRollsBack(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+	rt := &fakeRuntime{aliveByHandle: map[string]bool{"h1": true}, processAliveSeq: []bool{true, false}}
+	lcm := &fakeLCM{store: st}
+	m := New(Deps{
+		Runtime: rt, Agents: singleAgent{agent: afterStartAgent{recordingAgent: &recordingAgent{}}}, Workspace: &fakeWorkspace{}, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: lcm,
+		LookPath: func(string) (string, error) { return "/bin/true", nil },
+	})
+
+	if _, err := m.Spawn(ctx, ports.SpawnConfig{
+		ProjectID: "mer", Kind: domain.KindWorker, Prompt: "task",
+	}); err == nil {
+		t.Fatal("spawn must roll back when the agent exits after the early probe but before completion")
+	}
+	if lcm.completed != 1 {
+		t.Fatalf("MarkSpawned called %d times, want 1 before post-write liveness rollback", lcm.completed)
+	}
+	if rt.destroyed != 1 {
+		t.Fatalf("runtime destroyed %d times, want 1 rollback", rt.destroyed)
+	}
+	if got := st.sessions["mer-1"]; !got.IsTerminated || got.Metadata.RuntimeHandleID != "" {
+		t.Fatalf("late-exit spawn left session live or with runtime metadata: %+v", got)
+	}
+	if len(rt.processAliveSeq) != 0 {
+		t.Fatalf("processAliveSeq has %d entries left, want 0 (early + post-write probe both run)", len(rt.processAliveSeq))
 	}
 }
 
@@ -3068,6 +3180,9 @@ func TestSpawn_ValidatesBinaryAfterEnvPrefix(t *testing.T) {
 	}
 	if !reflect.DeepEqual(rt.lastCfg.Argv, agent.argv) {
 		t.Fatalf("runtime argv = %#v, want original argv %#v", rt.lastCfg.Argv, agent.argv)
+	}
+	if !reflect.DeepEqual(rt.processCommands, []string{"opencode", "opencode"}) {
+		t.Fatalf("process liveness commands = %#v, want resolved env-prefixed binary", rt.processCommands)
 	}
 }
 

@@ -119,6 +119,17 @@ func TestRuntimeObservation_FailedProbeDoesNotMutate(t *testing.T) {
 	}
 }
 
+func TestRuntimeObservation_AgentExitedTerminatesDespiteRecentActivity(t *testing.T) {
+	m, st, _ := newManager()
+	st.sessions["mer-1"] = working("mer-1")
+	if err := m.ApplyRuntimeObservation(ctx, "mer-1", ports.RuntimeFacts{Probe: ports.ProbeAgentExited}); err != nil {
+		t.Fatal(err)
+	}
+	if got := st.sessions["mer-1"]; !got.IsTerminated || got.Activity.State != domain.ActivityExited {
+		t.Fatalf("agent_exited probe should terminate despite recent activity, got %+v", got)
+	}
+}
+
 func TestActivity_InvalidIsIgnored(t *testing.T) {
 	m, st, _ := newManager()
 	st.sessions["mer-1"] = working("mer-1")
@@ -189,6 +200,54 @@ func TestActivity_BlankAgentSessionIDDoesNotOverwriteMetadata(t *testing.T) {
 	}
 	if got := st.sessions["mer-1"].Metadata.AgentSessionID; got != "existing-native-1" {
 		t.Fatalf("AgentSessionID = %q, want existing-native-1", got)
+	}
+}
+
+func TestActivity_StaleRuntimeTokenSignalIsIgnored(t *testing.T) {
+	m, st, _ := newManager()
+	rec := working("mer-1")
+	rec.Metadata.RuntimeToken = "current-token"
+	rec.Activity = domain.Activity{State: domain.ActivityIdle, LastActivityAt: time.Now().Add(-time.Minute)}
+	st.sessions["mer-1"] = rec
+
+	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{
+		Valid:        true,
+		State:        domain.ActivityExited,
+		RuntimeToken: "old-token",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got := st.sessions["mer-1"]; got.IsTerminated || got.Activity.State != domain.ActivityIdle {
+		t.Fatalf("stale runtime-token hook mutated session: %+v", got)
+	}
+
+	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{
+		Valid:        true,
+		State:        domain.ActivityExited,
+		RuntimeToken: "current-token",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got := st.sessions["mer-1"]; !got.IsTerminated || got.Activity.State != domain.ActivityExited {
+		t.Fatalf("current runtime-token hook was ignored: %+v", got)
+	}
+}
+
+func TestActivity_MissingRuntimeTokenSignalIsIgnoredWhenSessionHasToken(t *testing.T) {
+	m, st, _ := newManager()
+	rec := working("mer-1")
+	rec.Metadata.RuntimeToken = "current-token"
+	rec.Activity = domain.Activity{State: domain.ActivityActive, LastActivityAt: time.Now().Add(-time.Minute)}
+	st.sessions["mer-1"] = rec
+
+	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{
+		Valid: true,
+		State: domain.ActivityExited,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got := st.sessions["mer-1"]; got.IsTerminated || got.Activity.State != domain.ActivityActive {
+		t.Fatalf("missing runtime-token hook mutated token-protected session: %+v", got)
 	}
 }
 

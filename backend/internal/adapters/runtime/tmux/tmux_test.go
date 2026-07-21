@@ -19,6 +19,7 @@ type fakeRunner struct {
 	calls   []runnerCall
 	outputs [][]byte
 	err     error
+	errs    []error
 }
 
 type runnerCall struct {
@@ -34,8 +35,13 @@ func (f *fakeRunner) Run(_ context.Context, env []string, name string, args ...s
 		out = f.outputs[0]
 		f.outputs = f.outputs[1:]
 	}
-	if f.err != nil {
-		return out, f.err
+	err := f.err
+	if len(f.errs) > 0 {
+		err = f.errs[0]
+		f.errs = f.errs[1:]
+	}
+	if err != nil {
+		return out, err
 	}
 	return out, nil
 }
@@ -48,6 +54,16 @@ func newTestRuntime(chunkSize int) (*Runtime, *fakeRunner) {
 	r.runner = fr
 	r.enterDelay = 0 // tests must not pay the real 300ms pre-Enter pause
 	return r, fr
+}
+
+func commandExitError(t *testing.T, code string) *exec.ExitError {
+	t.Helper()
+	err := exec.Command("sh", "-c", "exit "+code).Run()
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) {
+		t.Fatalf("exit %s produced %T, want *exec.ExitError", code, err)
+	}
+	return exitErr
 }
 
 // -- Options / New tests --
@@ -472,6 +488,59 @@ func TestIsAliveReportsOtherExitFailuresAsProbeErrors(t *testing.T) {
 	}
 	if alive {
 		t.Fatal("alive = true on probe failure")
+	}
+}
+
+func TestIsRunningCommandMatchesExpectedChildCommand(t *testing.T) {
+	r, fr := newTestRuntime(0)
+	fr.outputs = [][]byte{[]byte("123\n"), []byte("456\n")}
+
+	running, err := r.IsRunningCommand(context.Background(), ports.RuntimeHandle{ID: "sess-1"}, "/usr/local/bin/codex")
+	if err != nil {
+		t.Fatalf("IsRunningCommand: %v", err)
+	}
+	if !running {
+		t.Fatal("running = false, want true when expected command child is present")
+	}
+	if got, want := fr.calls[0].args, paneProcessArgs("sess-1"); !reflect.DeepEqual(got, want) {
+		t.Fatalf("pane process args = %#v, want %#v", got, want)
+	}
+	if got, want := fr.calls[1].name, "pgrep"; got != want {
+		t.Fatalf("process probe command = %q, want %q", got, want)
+	}
+	if got, want := fr.calls[1].args, []string{"-P", "123", "-f", "/usr/local/bin/codex"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("process probe args = %#v, want %#v", got, want)
+	}
+}
+
+func TestIsRunningCommandReturnsFalseWhenExpectedChildMissing(t *testing.T) {
+	r, fr := newTestRuntime(0)
+	fr.outputs = [][]byte{[]byte("123\n"), nil}
+	fr.errs = []error{nil, commandExitError(t, "1")}
+
+	running, err := r.IsRunningCommand(context.Background(), ports.RuntimeHandle{ID: "sess-1"}, "codex")
+	if err != nil {
+		t.Fatalf("IsRunningCommand: %v", err)
+	}
+	if running {
+		t.Fatal("running = true, want false when pane has no expected command child")
+	}
+	if got, want := fr.calls[1].args, []string{"-P", "123", "-f", "codex"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("process probe args = %#v, want %#v", got, want)
+	}
+}
+
+func TestIsRunningCommandReportsPgrepErrors(t *testing.T) {
+	r, fr := newTestRuntime(0)
+	fr.outputs = [][]byte{[]byte("123\n"), nil}
+	fr.errs = []error{nil, commandExitError(t, "2")}
+
+	running, err := r.IsRunningCommand(context.Background(), ports.RuntimeHandle{ID: "sess-1"}, "codex")
+	if err == nil {
+		t.Fatal("IsRunningCommand err = nil, want probe error for pgrep failure")
+	}
+	if running {
+		t.Fatal("running = true on probe failure")
 	}
 }
 

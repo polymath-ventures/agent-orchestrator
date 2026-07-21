@@ -68,3 +68,15 @@ func (h AgentHarness) ModelProvider() ModelProvider {
 		return ProviderUnknown
 	}
 }
+
+// RequiresLaunchProcessLivenessSweep reports whether a live runtime pane is
+// insufficient proof that the launched agent is still alive. These harnesses
+// run under a keep-alive shell, so the pane can survive after the CLI exits.
+func (h AgentHarness) RequiresLaunchProcessLivenessSweep() bool {
+	switch h {
+	case HarnessClaudeCode, HarnessCodex, HarnessCodexFugu:
+		return true
+	default:
+		return false
+	}
+}

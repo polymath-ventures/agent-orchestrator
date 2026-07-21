@@ -598,6 +598,7 @@ func (c *SessionsController) activity(w http.ResponseWriter, r *http.Request) {
 		Valid:          state != "",
 		State:          state,
 		Harness:        domain.AgentHarness(capActivityMeta(domain.SanitizeControlChars(in.Harness))),
+		RuntimeToken:   strings.TrimSpace(in.RuntimeToken),
 		Event:          capActivityMeta(domain.SanitizeControlChars(in.Event)),
 		ToolName:       capActivityMeta(domain.SanitizeControlChars(in.ToolName)),
 		ToolUseID:      capActivityMeta(domain.SanitizeControlChars(in.ToolUseID)),
