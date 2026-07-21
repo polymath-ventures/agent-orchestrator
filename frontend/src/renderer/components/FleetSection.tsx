@@ -137,9 +137,11 @@ export function FleetSection() {
 				}
 				confirmLabel={pauseHard.isPending ? "Pausing…" : "Pause now"}
 				destructive
-				busy={pauseHard.isPending}
+				busy={pauseHard.isPending || !statusKnown}
 				error={pauseHard.error instanceof Error ? pauseHard.error.message : null}
-				onConfirm={() => pauseHard.mutate()}
+				onConfirm={() => {
+					if (statusKnown) pauseHard.mutate();
+				}}
 				onOpenChange={(open) => {
 					if (!pauseHard.isPending) setConfirmHardOpen(open);
 				}}

@@ -24,7 +24,7 @@ func newPauseCommand(ctx *commandContext) *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&all, "all", false, "Pause the whole fleet (daemon-global)")
-	cmd.Flags().BoolVar(&hard, "hard", false, "Terminate live workers now instead of draining at idle (with --all, orchestrators too)")
+	cmd.Flags().BoolVar(&hard, "hard", false, "Terminate live workers now instead of draining at idle (orchestrators stay alive)")
 	return cmd
 }
 

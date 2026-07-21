@@ -29,6 +29,10 @@ type fakeSessions struct {
 	// killErr marks ids whose Kill returns an error (transient failure), so they
 	// stay live and retry next tick.
 	killErr map[domain.SessionID]bool
+	// killDirty marks ids whose Kill returns (false, nil): the session is
+	// terminated but its dirty worktree is preserved (bool = reclamation, not
+	// termination). These must still count as drained.
+	killDirty map[domain.SessionID]bool
 }
 
 func (f *fakeSessions) List(_ context.Context, filter sessionsvc.ListFilter) ([]domain.Session, error) {
@@ -40,6 +44,14 @@ func (f *fakeSessions) Kill(_ context.Context, id domain.SessionID) (bool, error
 		return false, errTestKill
 	}
 	f.killed = append(f.killed, id)
+	f.markTerminated(id)
+	if f.killDirty[id] {
+		return false, nil // terminated, but dirty worktree preserved
+	}
+	return true, nil
+}
+
+func (f *fakeSessions) markTerminated(id domain.SessionID) {
 	// Model the clean teardown: the session becomes terminated, so a later tick
 	// no longer sees it as live.
 	for pid, list := range f.byProject {
@@ -50,7 +62,6 @@ func (f *fakeSessions) Kill(_ context.Context, id domain.SessionID) (bool, error
 			}
 		}
 	}
-	return true, nil
 }
 
 func worker(id domain.ProjectID, n string, status domain.SessionStatus) domain.Session {
@@ -167,6 +178,30 @@ func TestTick_KillErrorKeepsWorkerLive(t *testing.T) {
 		if ev.Name == "ao.fleet.drain_complete" {
 			t.Fatalf("drain_complete fired while a worker is still live (kill errored)")
 		}
+	}
+}
+
+// A worker whose Kill reports (false, nil) — terminated, but a dirty worktree
+// was preserved — still counts as drained, so drain-complete fires.
+func TestTick_DirtyPreservedKillCountsDrained(t *testing.T) {
+	store := &fakeStore{projects: []domain.ProjectRecord{{ID: "p", Paused: true}}}
+	sessions := &fakeSessions{
+		byProject: map[domain.ProjectID][]domain.Session{"p": {worker("p", "1", domain.StatusIdle)}},
+		killDirty: map[domain.SessionID]bool{"p-1": true},
+	}
+	sink := &captureSink{}
+	sw := New(store, sessions, Config{Clock: fixedClock(), Telemetry: sink})
+	if err := sw.Tick(context.Background()); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	drainEvents := 0
+	for _, ev := range sink.events {
+		if ev.Name == "ao.fleet.drain_complete" {
+			drainEvents++
+		}
+	}
+	if drainEvents != 1 {
+		t.Fatalf("drain_complete fired %d times, want 1 (dirty-preserved kill still drains)", drainEvents)
 	}
 }
 

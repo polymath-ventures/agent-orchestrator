@@ -75,8 +75,9 @@ func (m *Service) FleetPaused(ctx context.Context) (bool, error) {
 }
 
 // SetFleetPaused sets or clears the daemon-global fleet pause flag. When pausing
-// hard, it fans out an immediate worker+orchestrator termination across every
-// project (best-effort; reports failure if any project's drain errored).
+// hard, it fans out an immediate worker termination across every project
+// (orchestrators stay alive; best-effort — reports failure if any project's
+// drain errored).
 func (m *Service) SetFleetPaused(ctx context.Context, paused, hard bool) error {
 	if err := m.store.SetFleetPaused(ctx, paused); err != nil {
 		return apierr.Internal("FLEET_PAUSE_FAILED", "Failed to update fleet pause state")

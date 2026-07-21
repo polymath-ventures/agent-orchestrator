@@ -190,9 +190,10 @@ pause fields and endpoints.
 - **Force/prime exemptions could let work through during pause** → intentional
   (supervision + manual override). The guard fails open when the store is
   unavailable so a storage blip cannot wedge the orchestrator.
-- **Drain drives Kill through the session teardown path** → if that path no-ops
-  (e.g. preserved dirty worktree) the worker is counted live and retried next tick,
-  never force-killed under soft pause; correct and matches the reference.
+- **Drain drives Kill through the session teardown path** → a preserved dirty
+  worktree still marks the session terminated (Kill's bool reports reclamation,
+  not termination), so a nil error counts the worker drained; only a real Kill
+  error leaves it live to retry next tick. Never force-killed under soft pause.
 
 ## Migration Plan
 
