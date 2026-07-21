@@ -46,7 +46,7 @@ func TestFleetPauseResumeHTTP(t *testing.T) {
 		t.Fatalf("after fleet pause: paused = false, want true")
 	}
 
-	body, status, _ = doRequest(t, srv, "GET", "/api/v1/fleet", "")
+	body, _, _ = doRequest(t, srv, "GET", "/api/v1/fleet", "")
 	mustJSON(t, body, &st)
 	if !st.Paused {
 		t.Fatalf("GET /fleet after pause = false, want true")

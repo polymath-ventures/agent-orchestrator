@@ -18,11 +18,11 @@ type pauseCapture struct {
 // records the last request line.
 func pauseServer(t *testing.T) (*httptest.Server, *pauseCapture) {
 	t.Helper()
-	cap := &pauseCapture{}
+	capture := &pauseCapture{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		cap.method = r.Method
-		cap.path = r.URL.Path
-		cap.query = r.URL.RawQuery
+		capture.method = r.Method
+		capture.path = r.URL.Path
+		capture.query = r.URL.RawQuery
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		if strings.HasPrefix(r.URL.Path, "/api/v1/fleet") {
@@ -37,23 +37,23 @@ func pauseServer(t *testing.T) (*httptest.Server, *pauseCapture) {
 		_, _ = io.WriteString(w, `{"project":{"id":"demo","paused":true,"pauseState":"draining","drainingWorkers":2}}`)
 	}))
 	t.Cleanup(srv.Close)
-	return srv, cap
+	return srv, capture
 }
 
 func TestPause_Project(t *testing.T) {
 	cfg := setConfigEnv(t)
-	srv, cap := pauseServer(t)
+	srv, capture := pauseServer(t)
 	writeRunFileFor(t, cfg, srv)
 
 	out, errOut, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "pause", "demo")
 	if err != nil {
 		t.Fatalf("unexpected error: %v\nstderr=%s", err, errOut)
 	}
-	if cap.method != http.MethodPost || cap.path != "/api/v1/projects/demo/pause" {
-		t.Fatalf("request = %s %s, want POST /api/v1/projects/demo/pause", cap.method, cap.path)
+	if capture.method != http.MethodPost || capture.path != "/api/v1/projects/demo/pause" {
+		t.Fatalf("request = %s %s, want POST /api/v1/projects/demo/pause", capture.method, capture.path)
 	}
-	if cap.query != "" {
-		t.Fatalf("soft pause query = %q, want empty", cap.query)
+	if capture.query != "" {
+		t.Fatalf("soft pause query = %q, want empty", capture.query)
 	}
 	if !strings.Contains(out, "demo") || !strings.Contains(out, "draining") {
 		t.Fatalf("output = %q, want mention of demo + draining state", out)
@@ -62,40 +62,40 @@ func TestPause_Project(t *testing.T) {
 
 func TestPause_ProjectHard(t *testing.T) {
 	cfg := setConfigEnv(t)
-	srv, cap := pauseServer(t)
+	srv, capture := pauseServer(t)
 	writeRunFileFor(t, cfg, srv)
 
 	if _, errOut, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "pause", "demo", "--hard"); err != nil {
 		t.Fatalf("unexpected error: %v\nstderr=%s", err, errOut)
 	}
-	if cap.path != "/api/v1/projects/demo/pause" || cap.query != "hard=true" {
-		t.Fatalf("request = %s?%s, want /api/v1/projects/demo/pause?hard=true", cap.path, cap.query)
+	if capture.path != "/api/v1/projects/demo/pause" || capture.query != "hard=true" {
+		t.Fatalf("request = %s?%s, want /api/v1/projects/demo/pause?hard=true", capture.path, capture.query)
 	}
 }
 
 func TestPause_FleetAll(t *testing.T) {
 	cfg := setConfigEnv(t)
-	srv, cap := pauseServer(t)
+	srv, capture := pauseServer(t)
 	writeRunFileFor(t, cfg, srv)
 
 	if _, errOut, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "pause", "--all"); err != nil {
 		t.Fatalf("unexpected error: %v\nstderr=%s", err, errOut)
 	}
-	if cap.method != http.MethodPost || cap.path != "/api/v1/fleet/pause" {
-		t.Fatalf("request = %s %s, want POST /api/v1/fleet/pause", cap.method, cap.path)
+	if capture.method != http.MethodPost || capture.path != "/api/v1/fleet/pause" {
+		t.Fatalf("request = %s %s, want POST /api/v1/fleet/pause", capture.method, capture.path)
 	}
 }
 
 func TestResume_FleetAll(t *testing.T) {
 	cfg := setConfigEnv(t)
-	srv, cap := pauseServer(t)
+	srv, capture := pauseServer(t)
 	writeRunFileFor(t, cfg, srv)
 
 	if _, errOut, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "resume", "--all"); err != nil {
 		t.Fatalf("unexpected error: %v\nstderr=%s", err, errOut)
 	}
-	if cap.path != "/api/v1/fleet/resume" {
-		t.Fatalf("path = %s, want /api/v1/fleet/resume", cap.path)
+	if capture.path != "/api/v1/fleet/resume" {
+		t.Fatalf("path = %s, want /api/v1/fleet/resume", capture.path)
 	}
 }
 
