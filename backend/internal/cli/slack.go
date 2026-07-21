@@ -430,9 +430,7 @@ func (c *commandContext) runSlackNotify(ctx context.Context, opts slackNotifyOpt
 }
 
 // slackSeedIDs turns the daemon's newest-first unread listing into oldest-first
-// insertion order. The bounded ledger then retains the newest IDs if a backlog
-// exceeds its cap, matching steady-state delivery order and preventing a
-// first-reconcile flood.
+// insertion order, matching steady-state delivery order in the persisted file.
 func slackSeedIDs(unread []slackNotification) []string {
 	ids := make([]string, 0, len(unread))
 	for i := len(unread) - 1; i >= 0; i-- {
@@ -592,6 +590,9 @@ func (c *commandContext) listUnreadSlack(ctx context.Context) ([]slackNotificati
 			return nil, errors.New("could not advance unread notification cursor")
 		}
 		before, beforeID = last.CreatedAt, last.ID
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	return all, nil
 }

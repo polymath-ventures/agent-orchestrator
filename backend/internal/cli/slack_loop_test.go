@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -259,6 +260,16 @@ func TestSlackNotifyFirstRunSeedsBacklogWithoutPosting(t *testing.T) {
 	state, err := loadSlackDeliveryState()
 	if err != nil || !state.Initialized || !state.contains("ntf_old") || !state.contains("ntf_new") {
 		t.Fatalf("state=%+v err=%v", state, err)
+	}
+}
+
+func TestListUnreadSlackReturnsCancellationInsteadOfPartialSeed(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	command := &commandContext{deps: Deps{}.withDefaults()}
+	got, err := command.listUnreadSlack(ctx)
+	if !errors.Is(err, context.Canceled) || got != nil {
+		t.Fatalf("got=%v err=%v, want nil context.Canceled", got, err)
 	}
 }
 
