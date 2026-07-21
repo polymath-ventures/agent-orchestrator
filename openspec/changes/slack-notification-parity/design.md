@@ -52,7 +52,7 @@ atomically (temp file + rename, parent dir created on write), mirroring the refe
 (`ao-slack-notifier.mjs:610-646`, `STATE_FILE` `:74`). The ledger stores the set of delivered
 notification IDs plus a bootstrap-`initialized` flag (`:622-626`).
 
-- **Path:** default under AO's configured data dir (`AO_DATA_DIR`, else `~/.ao`), e.g.
+- **Path:** default under AO's configured data dir (`AO_DATA_DIR`, else `~/.ao/data`), e.g.
   `<dataDir>/slack-notifier-state.json`, overridable by an env var. This honors the repo rule that
   all app state lives under `~/.ao` unless `AO_DATA_DIR`/`AO_RUN_FILE` overrides it — the code
   guarantees the path (`mkdir -p`), not the systemd unit (reference gap 6/history item 6:
@@ -111,7 +111,8 @@ adds a keyset cursor to the existing endpoint and pages from the sidecar:
   `beforeId` query params on `GET /api/v1/notifications`. Regenerate sqlc, OpenAPI, and the TS
   client. This is a bounded, upstreamable read-only addition; existing callers that omit the cursor
   are unaffected.
-- **Sidecar:** during reconcile, page newest-first using the last row's `(createdAt, id)` as the
+- **Sidecar:** add `CreatedAt` to the CLI's local notification DTO, then during reconcile page
+  newest-first using the last row's `(createdAt, id)` as the
   next cursor until a short page is returned, deduping by the ledger as today. Deliver oldest-first
   within the drained set so Slack ordering matches creation order (ref `:780`).
 - **Cursor stability:** `created_at` alone is not unique; the `(created_at, id)` keyset is the
