@@ -27,8 +27,10 @@ values in its _output_, but that does not protect a committed snapshot file.
 Rules:
 
 - Do **not** commit a snapshot whose `env` (or any field) carries a real
-  secret. Keep credentials out of project config, or scrub the snapshot before
-  committing it.
+  secret. Keep credentials **out of live project config** (so the export has no
+  secret to begin with) — do not hand-edit/scrub the snapshot file, since a
+  snapshot that no longer matches the byte-exact export would then read as
+  permanent drift.
 - The refresh helper prints a warning when the export it writes carries a
   non-empty `env` block — treat that warning as a prompt to review the file
   before `git add`.
@@ -41,10 +43,13 @@ Rules:
 for every snapshot and aggregates the result:
 
 - **exit 0** — every project's live config matches its committed snapshot.
-- **exit 1** — at least one project genuinely drifted; each drifted project and
-  its drifted fields are printed.
-- **exit 2** — no drift, but the check itself hit a setup/infra error for at
-  least one project (for example the daemon is down or `ao` is missing).
+- **exit 1** — at least one project needs attention: `ao project config diff`
+  reported a nonzero result for it. That is genuine drift in the normal case, but
+  the CLI also returns a nonzero result on a per-project runtime failure (e.g.
+  the daemon is unreachable), so read the printed per-project detail rather than
+  assuming every exit-1 project drifted.
+- **exit 2** — no drift, but the check itself hit a setup/usage error for at
+  least one project (for example `ao` is missing, or an invalid invocation).
 
 Drift is **surfaced to the operator, never self-healed** — the check only ever
 runs `diff`, never `apply`. Acting on drift (investigate, then either fix live

@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
@@ -72,13 +72,19 @@ describe("trackedProjects", () => {
 });
 
 describe("isValidProject / parseArgs", () => {
-	it("rejects flag-like and path-unsafe project ids", () => {
+	it("mirrors the daemon project-id grammar (rejects flag-like, path-unsafe, whitespace)", () => {
 		assert.equal(isValidProject("alpha"), true);
 		assert.equal(isValidProject("my-project_1.2"), true);
 		assert.equal(isValidProject("--help"), false);
 		assert.equal(isValidProject("-x"), false);
 		assert.equal(isValidProject("a/b"), false);
+		assert.equal(isValidProject("a\\b"), false);
 		assert.equal(isValidProject(".."), false);
+		assert.equal(isValidProject("."), false);
+		assert.equal(isValidProject("a..b"), false);
+		assert.equal(isValidProject(".hidden"), false);
+		assert.equal(isValidProject("a b"), false);
+		assert.equal(isValidProject("a\tb"), false);
 		assert.equal(isValidProject(""), false);
 	});
 
@@ -272,13 +278,44 @@ describe("refreshSnapshot", () => {
 		);
 	});
 
-	it("flags a non-empty env block as secret-bearing so the caller can warn before commit", async () => {
+	it("flags a non-empty env block (or an unparseable export) as secret-bearing to warn before commit", async () => {
 		await seedSnapshot("alpha");
 		const withSecret = fakeRun({ alpha: { code: 0, stdout: '{"env":{"TOKEN":"abc"}}\n' } });
 		const withoutSecret = fakeRun({ alpha: { code: 0, stdout: '{"env":{}}\n' } });
+		const notJson = fakeRun({ alpha: { code: 0, stdout: "not json at all\n" } });
 
 		assert.equal((await refreshSnapshot({ snapshotDir: dir, project: "alpha", run: withSecret })).hasSecrets, true);
 		assert.equal((await refreshSnapshot({ snapshotDir: dir, project: "alpha", run: withoutSecret })).hasSecrets, false);
+		// Fail safe: if the export is not JSON we cannot rule out a secret, so warn.
+		assert.equal((await refreshSnapshot({ snapshotDir: dir, project: "alpha", run: notJson })).hasSecrets, true);
+	});
+
+	it("normalizes a symlink snapshot into a regular file so it can't become an unchecked false-green", async () => {
+		// A snapshot that is a symlink to matching content would be silently skipped
+		// by trackedProjects (regular-files-only). Refresh must replace it.
+		const body = '{"name":"alpha"}\n';
+		const target = path.join(dir, "elsewhere.json.data");
+		await writeFile(target, body);
+		await symlink(target, path.join(dir, "alpha.json"));
+		// Before refresh: the symlinked snapshot is not tracked.
+		assert.deepEqual(
+			(await trackedProjects(dir)).map((p) => p.project),
+			[],
+		);
+
+		const run = fakeRun({ alpha: { code: 0, stdout: body } });
+		const result = await refreshSnapshot({ snapshotDir: dir, project: "alpha", run });
+
+		assert.equal(result.changed, true);
+		const st = await lstat(path.join(dir, "alpha.json"));
+		assert.equal(st.isSymbolicLink(), false);
+		assert.equal(st.isFile(), true);
+		// Now it is a tracked regular-file snapshot with the right content.
+		assert.deepEqual(
+			(await trackedProjects(dir)).map((p) => p.project),
+			["alpha"],
+		);
+		assert.equal(await readFile(path.join(dir, "alpha.json"), "utf8"), body);
 	});
 
 	it("rejects an invalid project id without invoking the CLI", async () => {

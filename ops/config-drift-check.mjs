@@ -10,28 +10,30 @@
 // `ao project config diff`; refresh delegates to `ao project config export`.
 
 import { spawn } from "node:child_process";
-import { readdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
+import { lstat, readdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const DEFAULT_SNAPSHOT_DIR = path.join(HERE, "project-config");
 
-// A project id must resolve to a plain `<id>.json` file and be safe to pass to
-// the `ao` CLI as a positional argument. Reject anything that could be read as a
-// flag (leading `-`) or that escapes the snapshot dir (path separators, `..`),
-// so a stray file like `--help.json` can never smuggle a flag into the CLI and
-// produce a false "in sync". Kept deliberately permissive otherwise.
+// Mirror the daemon's authoritative project-id grammar
+// (backend/internal/service/project/service.go: projectIDPattern + the "." /
+// ".." / separator rejections). Keeping the same grammar means a name that the
+// daemon would accept is the only name treated as a project here, and a stray
+// file like `--help.json` (leading `-`), a name with whitespace/control chars,
+// or a path-traversal name can never smuggle a flag into the CLI or escape the
+// snapshot dir and produce a false "in sync".
+const PROJECT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 export function isValidProject(project) {
 	return (
 		typeof project === "string" &&
-		project.length > 0 &&
-		!project.startsWith("-") &&
+		project !== "" &&
+		project !== "." &&
+		!project.includes("..") &&
 		!project.includes("/") &&
 		!project.includes("\\") &&
-		!project.includes("\0") &&
-		project !== "." &&
-		project !== ".."
+		PROJECT_ID_PATTERN.test(project)
 	);
 }
 
@@ -117,12 +119,19 @@ export async function refreshSnapshot({ snapshotDir, project, run }) {
 	}
 	const hasSecrets = exportCarriesSecrets(stdout);
 	let current = null;
+	let isRegularFile = false;
 	try {
-		current = await readFile(file, "utf8");
+		const st = await lstat(file);
+		isRegularFile = st.isFile();
+		if (isRegularFile) current = await readFile(file, "utf8");
 	} catch (err) {
 		if (err.code !== "ENOENT") throw err;
 	}
-	if (current === stdout) return { project, changed: false, hasSecrets };
+	// Only skip the write when the existing entry is a regular file that already
+	// matches. A symlink (or any non-regular entry) is normalized to a regular
+	// file via the rename below — otherwise it would linger and be silently
+	// skipped by trackedProjects (which only counts regular files), a false-green.
+	if (isRegularFile && current === stdout) return { project, changed: false, hasSecrets };
 	const tmp = path.join(snapshotDir, `.${project}.json.${process.pid}.tmp`);
 	try {
 		await writeFile(tmp, stdout, { mode: 0o644, flag: "wx" });
@@ -136,14 +145,14 @@ export async function refreshSnapshot({ snapshotDir, project, run }) {
 
 // exportCarriesSecrets reports whether an exported config JSON has a non-empty
 // `env` block — the field the CLI documents as credential-bearing and redacts in
-// diff output. Non-JSON export (unexpected) is treated as "unknown, warn": the
-// snapshot is going into git either way.
+// diff output. A non-JSON export is unexpected, so fail safe and warn: the
+// snapshot is going into git either way and we cannot rule out a secret.
 function exportCarriesSecrets(exported) {
 	try {
 		const parsed = JSON.parse(exported);
 		return Boolean(parsed && typeof parsed.env === "object" && parsed.env && Object.keys(parsed.env).length > 0);
 	} catch {
-		return false;
+		return true;
 	}
 }
 
