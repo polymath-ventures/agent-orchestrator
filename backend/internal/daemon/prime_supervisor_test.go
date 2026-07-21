@@ -33,6 +33,32 @@ func TestEnsurePrimeSpawnsWhenMissing(t *testing.T) {
 	}
 }
 
+func TestEnsurePrimeCapsMissingPrimeRespawnAttempts(t *testing.T) {
+	base := time.Date(2026, 7, 21, 10, 0, 0, 0, time.UTC)
+	sessions := &fakePrimeSessions{}
+	state := &primeSupervisorState{
+		lastPrime: primeSession("ao-prime", domain.StatusTerminated, domain.ActivityExited, base.Add(-10*time.Minute)),
+		restartAttempts: []time.Time{
+			base.Add(-50 * time.Minute),
+			base.Add(-30 * time.Minute),
+			base.Add(-10 * time.Minute),
+		},
+	}
+	notifier := &fakePrimeNotifier{}
+
+	ensurePrime(context.Background(), testPrimeConfig(base), state, sessions, notifier)
+
+	if sessions.spawnCalls != 0 {
+		t.Fatalf("SpawnPrime calls = %d, want capped at zero", sessions.spawnCalls)
+	}
+	if len(notifier.intents) != 1 {
+		t.Fatalf("notifications = %d, want one cap alert", len(notifier.intents))
+	}
+	if notifier.intents[0].Type != domain.NotificationPrimeRestartCapped || notifier.intents[0].SessionID != "ao-prime" {
+		t.Fatalf("notification = %+v, want prime restart cap for last prime", notifier.intents[0])
+	}
+}
+
 func TestEnsurePrimeReplacesUnhealthyWithBudget(t *testing.T) {
 	now := time.Date(2026, 7, 21, 10, 0, 0, 0, time.UTC)
 	sessions := &fakePrimeSessions{

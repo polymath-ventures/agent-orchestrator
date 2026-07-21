@@ -48,6 +48,7 @@ type primeSupervisorState struct {
 	restartAttempts []time.Time
 	nextRestartAt   time.Time
 	restartBackoff  time.Duration
+	lastPrime       domain.Session
 
 	nextIdleWakeAt  time.Time
 	idleWakeBackoff time.Duration
@@ -150,12 +151,20 @@ func ensurePrime(ctx context.Context, cfg primeSupervisorConfig, state *primeSup
 		return
 	}
 	if !ok {
+		allowed, capped := state.reserveRestart(now, cfg)
+		if capped && state.lastPrime.ID != "" {
+			notifyPrimeRestartCapped(ctx, notifier, state.lastPrime, now)
+		}
+		if !allowed {
+			return
+		}
 		if _, err := sessions.SpawnPrime(ctx, cfg.ProjectID, false); err != nil {
 			cfg.Logger.Warn("prime supervisor: spawn failed", "err", err)
 		}
 		state.resetIdleWake()
 		return
 	}
+	state.lastPrime = active
 	if primeNeedsReplacement(active, now, cfg.UnhealthyAfter) {
 		allowed, capped := state.reserveRestart(now, cfg)
 		if capped {
