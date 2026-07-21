@@ -77,7 +77,7 @@ There is no daemon-global table today. Options: (a) reuse "all projects paused"
 as a proxy for fleet pause; (b) a new singleton table.
 
 **Rejected (a)** — "all projects paused" is not the same as "fleet paused": a
-project registered *while the fleet is paused* would not be gated, breaking the
+project registered _while the fleet is paused_ would not be gated, breaking the
 acceptance criterion "a project registered during a fleet pause is gated from its
 first moment." Deriving a global flag from per-project rows also duplicates a fact
 across N rows that must agree (Rule 9: keep each fact in one place).
@@ -137,7 +137,7 @@ guard); the orchestrator/prime exemption keys on `SpawnConfig.Kind`.
 tick: read the fleet flag + project list; for each gated project, list its
 `KindWorker` sessions, skip terminated, and for each remaining worker terminate it
 through the **clean session-teardown path** (the same Kill/terminate path the
-reaper/LCM uses — not a raw process kill) iff it is *drainable*; otherwise leave
+reaper/LCM uses — not a raw process kill) iff it is _drainable_; otherwise leave
 it (it is still working) to retry next tick. Track a `hadLive` set per project so
 the `ao.fleet.drain_complete` telemetry event fires exactly once on the
 transition to zero live workers.
@@ -157,8 +157,8 @@ This is a deliberately conservative predicate that preserves mid-flight work.
 ### D8: API and CLI mirror the reference surface
 
 - **HTTP** (add to the projects controller + `Register`): `POST
-  /projects/{id}/pause`, `POST /projects/{id}/resume`, `GET /fleet`, `POST
-  /fleet/pause`, `POST /fleet/resume`; a `?hard=true` query param (`strconv.ParseBool`,
+/projects/{id}/pause`, `POST /projects/{id}/resume`, `GET /fleet`, `POST
+/fleet/pause`, `POST /fleet/resume`; a `?hard=true` query param (`strconv.ParseBool`,
   absent → soft). Responses: `FleetStatusResponse{paused}` for fleet routes; the
   existing project response envelope (now carrying `paused`/`pauseState`/
   `drainingWorkers`) for project routes. Regenerate OpenAPI + TS client

@@ -14,10 +14,10 @@ destroying work already underway, at both fleet-wide and per-project scope.
   lives in daemon-owned storage, not in the user-authored config.
 - Add **two pause scopes**: a single global **fleet** flag and a per-**project**
   flag. Either being set gates a project. The fleet flag is independent of
-  project rows, so a project registered *while the fleet is paused* is gated
+  project rows, so a project registered _while the fleet is paused_ is gated
   from its first moment.
 - Add **two pause modes**:
-  - **Soft pause** — stop *new* work only: gate tracker intake and guard the
+  - **Soft pause** — stop _new_ work only: gate tracker intake and guard the
     spawn path, then let a **drain sweeper** terminate each worker as it reaches
     an idle/terminal state. Mid-flight work is preserved and finishes normally.
   - **Hard pause** — terminate live workers immediately (UI confirms first).
@@ -41,12 +41,14 @@ destroying work already underway, at both fleet-wide and per-project scope.
 ## Capabilities
 
 ### New Capabilities
+
 - `fleet-pause`: Reversible fleet-wide and per-project pause/resume with soft
   (drain-at-idle) and hard (immediate-terminate) modes; out-of-config pause
   storage; intake + spawn enforcement; a drain sweeper; and pause/draining state
   surfaced through the API, CLI, and UI.
 
 ### Modified Capabilities
+
 <!-- No existing spec's requirements change; enforcement is wired into intake/spawn code paths that are not spec-governed. -->
 
 ## Impact
