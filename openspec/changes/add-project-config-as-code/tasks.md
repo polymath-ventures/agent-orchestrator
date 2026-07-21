@@ -13,9 +13,9 @@
 
 ## 3. `ao project config apply` (TDD)
 
-- [ ] 3.1 Write a failing CLI test: `apply <project> <file>` with a spec equal to the exported config performs the read-modify-write and reports zero changed fields; a two-field spec results in a `PUT /api/v1/projects/{id}/config` whose body equals live-config-plus-those-two-fields, and reports exactly those two as changed.
-- [ ] 3.2 Write a failing test: missing/unreadable/invalid-JSON spec exits 2 and issues no PUT; a spec naming an unknown config key is rejected client-side with a clear error before any PUT.
-- [ ] 3.3 Implement `apply`: read spec file, `GET` current config, overlay named top-level keys, validate named keys against the live key set, `PUT` the merged object, print the changed-keys report.
+- [x] 3.1 Write a failing CLI test: `apply <project> <file>` with a spec equal to the exported config performs the read-modify-write and reports zero changed fields; a two-field spec results in a `PUT /api/v1/projects/{id}/config` whose body equals live-config-plus-those-two-fields, and reports exactly those two as changed.
+- [x] 3.2 Write a failing test: missing/unreadable/invalid-JSON spec exits 2 and issues no PUT; a no-op apply (spec equals live) issues no PUT and reports zero changes; a spec naming an unknown config key is rejected by the daemon's strict decoder (surfaced as a daemon error, no mutation).
+- [x] 3.3 Implement `apply`: read spec file, `GET` current config, overlay named top-level keys, skip the `PUT` when nothing changed, otherwise `PUT` the merged object, print the changed-keys report.
 
 ## 4. `ao project config diff` (TDD)
 

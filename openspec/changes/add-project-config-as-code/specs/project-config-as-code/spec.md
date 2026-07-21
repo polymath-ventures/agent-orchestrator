@@ -47,10 +47,12 @@ every field not named in the spec unchanged. Apply SHALL do this by reading the
 project's current config, overlaying the named fields, and writing the merged
 result back through the existing config write path. Applying a spec that equals
 the current exported config SHALL change nothing (round-trip stability). The
-command SHALL report which fields it changed. A missing, unreadable, or
-non-JSON spec file SHALL exit as a usage error (exit code 2) without mutating
-live config; a spec naming a field that is not a known config key SHALL be
-rejected with a clear error before any write.
+command SHALL report which fields it changed and SHALL skip the write entirely
+when the spec introduces no change. A missing, unreadable, or non-JSON spec file
+SHALL exit as a usage error (exit code 2) without mutating live config; a spec
+naming a field that is not a known config key SHALL be rejected by the daemon's
+strict decoder, leaving live config unmutated, and the command SHALL surface
+that error and exit nonzero.
 
 #### Scenario: Export then apply round-trips with no change
 
@@ -74,12 +76,12 @@ rejected with a clear error before any write.
 - **THEN** the command exits with a usage error (exit code 2), prints an error
   describing the problem, and makes no config write call
 
-#### Scenario: A spec naming an unknown field is rejected before writing
+#### Scenario: A spec naming an unknown field is rejected by the daemon
 
 - **WHEN** an operator applies a spec whose top-level keys include a name that is
   not a known config field
-- **THEN** the command reports the unknown field and exits nonzero without
-  writing config
+- **THEN** the daemon's strict decoder rejects the write, live config is not
+  mutated, and the command surfaces the error and exits nonzero
 
 ### Requirement: Diff a config spec against live config with a drift exit code
 

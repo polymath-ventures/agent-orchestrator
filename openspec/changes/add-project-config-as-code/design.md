@@ -99,21 +99,26 @@ upstream-lean (Merit rule).
 ### D4 — Reporting and exit codes
 
 - `apply` reports the set of top-level keys it changed (comparing overlaid value
-  to prior live value); reports zero changes when the spec equals live config.
+  to prior live value); reports zero changes when the spec equals live config,
+  and in that case skips the write entirely (a no-op apply performs no PUT).
 - `diff` prints each drifted named field with spec value and live value; exits
   zero on no drift, nonzero on drift.
 - Bad input (missing project, unreadable/invalid JSON spec) exits `2` as a
   `usageError` per repo convention; daemon/runtime failures exit `1`. `apply`
   and `diff` never mutate on a validation failure.
 
-### D5 — Unknown keys fail loud
+### D5 — Unknown keys are rejected by the daemon, not re-validated client-side
 
-The write path already uses `decodeJSONStrict` with `DisallowUnknownFields()`,
-so a spec naming a key that isn't a real config field yields a 400 on `apply`.
-`apply`/`diff` additionally validate spec top-level keys against the key set of
-the freshly exported live config and emit a clear client-side error before any
-PUT, so a typo'd field name is reported as such rather than surfacing only as a
-raw daemon 400.
+The write path already decodes with `DisallowUnknownFields()`, so a spec naming
+a key that isn't a real config field yields a 400 on the `apply` PUT — with no
+mutation, since the daemon rejects the whole body before persisting. `apply`
+does **not** re-validate keys client-side: the only client-side key set
+available is the *live* config's keys, which omit currently-unset fields
+(`omitempty`), so validating against them would falsely reject a spec that
+legitimately sets a currently-zero field (e.g. `maxLiveWorkers` when it is
+unset). The daemon's decoder is the single authoritative key validator (design
+D1's "keep each fact in one place"); the CLI surfaces its error envelope. A
+no-op apply never PUTs, so it can never 400.
 
 ## Risks / Trade-offs
 
