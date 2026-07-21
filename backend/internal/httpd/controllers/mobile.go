@@ -84,10 +84,11 @@ type BridgeService struct {
 	LAN         LANController
 	ConfigPath  string
 	DefaultPort int
-	// AdvertisedHost, when set, is surfaced verbatim as the pairing host
-	// (status response and QR) instead of the autopicked interface address.
-	// Needed when the phone reaches the daemon on an address the autopick
-	// cannot see, e.g. a tailnet MagicDNS name in front of a LAN-attached host.
+	// AdvertisedHost, when set, is surfaced (trimmed of surrounding whitespace)
+	// as the pairing host in the status response and QR instead of the
+	// autopicked interface address. Needed when the phone reaches the daemon on
+	// an address the autopick cannot see, e.g. a tailnet MagicDNS name in front
+	// of a LAN-attached host.
 	AdvertisedHost string
 }
 

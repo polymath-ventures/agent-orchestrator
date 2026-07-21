@@ -134,6 +134,7 @@ func (c Config) Addr() string {
 //	AO_DATA_DIR          durable state dir   (default ~/.ao/data)
 //	AO_AGENT             compatibility agent id (default claude-code)
 //	AO_ALLOWED_ORIGINS   CORS origins, comma-separated (default DefaultAllowedOrigins)
+//	AO_MOBILE_ADVERTISED_HOST  host advertised in the Connect Mobile pairing status/QR (default: interface autopick)
 //	AO_TELEMETRY_EVENTS  local event capture off|on (default off)
 //	AO_TELEMETRY_METRICS local metric capture off|on (default off)
 //	AO_TELEMETRY_REMOTE  remote exporter off|posthog (default off)
