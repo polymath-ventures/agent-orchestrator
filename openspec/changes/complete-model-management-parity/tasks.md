@@ -13,11 +13,11 @@
 
 ## 3. Restore harness-native discovery and safe probes
 
-- [ ] 3.1 Add a plain Codex app-server `initialize` → `initialized` → `model/list` catalog capability with parser/handshake tests and preserve native reasoning efforts.
-- [ ] 3.2 Port the reference Codex validation probe flags, HTTP-verdict classification, per-probe 45-second timeout, `WaitDelay`, and process-group descendant cleanup with regression tests for TUI-only flag rejection and leaked child processes.
-- [ ] 3.3 Implement Claude maintained aliases and per-process effort, ensure save/catalog paths issue no paid prompts, and port the hermetic JSON-envelope probe contract for explicit validation/runtime paths.
-- [ ] 3.4 Implement OpenCode `models --refresh --verbose` discovery, provider/model variant parsing, visible cached fallback, and explicit `--model`/`--variant` launch and restore flags.
-- [ ] 3.5 Implement Codex-Fugu catalog loading from `~/.codex/fugu.json`, supported reasoning levels, `max`→`xhigh` normalization, visible known fallback rows, and long-running execution semantics.
+- [x] 3.1 Add a plain Codex app-server `initialize` → `initialized` → `model/list` catalog capability with parser/handshake tests and preserve native reasoning efforts.
+- [x] 3.2 Port the reference Codex validation probe flags, HTTP-verdict classification, per-probe 45-second timeout, `WaitDelay`, and process-group descendant cleanup with regression tests for TUI-only flag rejection and leaked child processes.
+- [x] 3.3 Implement Claude maintained aliases and per-process effort, ensure save/catalog paths issue no paid prompts, and port the hermetic JSON-envelope probe contract for explicit validation/runtime paths.
+- [x] 3.4 Implement OpenCode `models --refresh --verbose` discovery, provider/model variant parsing, visible cached fallback, and explicit `--model`/`--variant` launch and restore flags.
+- [x] 3.5 Implement Codex-Fugu catalog loading from `~/.codex/fugu.json`, supported reasoning levels, `max`→`xhigh` normalization, visible known fallback rows, and long-running execution semantics.
 - [x] 3.6 Restore Fugu-first provider classification and add cross-provider compatibility regression coverage without moving fork-only harness construction into the upstream-candidate portion of the change.
 
 ## 4. Fit enforcement, revalidation, and health into current seams

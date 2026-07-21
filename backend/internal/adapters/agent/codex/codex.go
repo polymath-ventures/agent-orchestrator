@@ -12,14 +12,17 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/agentbase"
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -151,7 +154,7 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 	appendTerminalCompatibilityFlags(&cmd)
 	appendWorkspaceTrustFlag(&cmd, cfg.WorkspacePath)
 	appendModelFlag(&cmd, cfg.Config.Model)
-	appendReasoningEffortFlag(&cmd, string(cfg.Config.Effort))
+	p.appendReasoningEffortFlag(&cmd, cfg.Config.Effort)
 
 	if cfg.SystemPrompt != "" {
 		cmd = append(cmd, "-c", "developer_instructions="+codexTOMLConfigString(cfg.SystemPrompt))
@@ -198,7 +201,7 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 	appendTerminalCompatibilityFlags(&cmd)
 	appendWorkspaceTrustFlag(&cmd, cfg.Session.WorkspacePath)
 	appendModelFlag(&cmd, cfg.Config.Model)
-	appendReasoningEffortFlag(&cmd, string(cfg.Config.Effort))
+	p.appendReasoningEffortFlag(&cmd, cfg.Config.Effort)
 	if cfg.SystemPrompt != "" {
 		cmd = append(cmd, "-c", "developer_instructions="+codexTOMLConfigString(cfg.SystemPrompt))
 	} else if cfg.SystemPromptFile != "" {
@@ -261,19 +264,47 @@ func (p *Plugin) AuthStatus(ctx context.Context) (ports.AgentAuthStatus, error) 
 	return ports.AgentAuthStatusUnknown, nil
 }
 
+const (
+	probeTimeout   = 45 * time.Second
+	probeWaitDelay = 2 * time.Second
+)
+
+// probeArgs builds the non-interactive, read-only, ephemeral Codex invocation.
+// Interactive TUI flags (notably --ask-for-approval) are invalid on `exec` and
+// must never be added here.
+func (p *Plugin) probeArgs(model string) []string {
+	args := make([]string, 0, 14)
+	p.appendWrapperFlags(&args)
+	return append(args,
+		"exec",
+		"--model", model,
+		"--sandbox", "read-only",
+		"--skip-git-repo-check",
+		"--ephemeral",
+		"--ignore-user-config",
+		"--ignore-rules",
+		"--color", "never",
+		"Reply exactly OK. Do not use tools.",
+	)
+}
+
 // ValidateModel performs a bounded advisory model probe. It is used only by
-// background model-health refresh; session spawn never calls it.
+// explicit/background validation paths; session spawn never calls it.
 func (p *Plugin) ValidateModel(ctx context.Context, model string) (ports.ModelValidationResult, error) {
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return ports.ModelValidationResult{Status: ports.ModelValidationProbeUnavailable, Message: "model is blank"}, nil
+	}
 	binary, err := p.agentBinary(ctx)
 	if err != nil {
-		return ports.ModelValidationResult{}, err
+		return ports.ModelValidationResult{Status: ports.ModelValidationProbeUnavailable, Message: err.Error()}, nil
 	}
-	probeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	probeCtx, cancel := context.WithTimeout(ctx, probeTimeout)
 	defer cancel()
-	args := make([]string, 0, 7)
-	p.appendWrapperFlags(&args)
-	args = append(args, "exec", "--model", strings.TrimSpace(model), "-c", "model_reasoning_effort=\"minimal\"", "--", "Respond with OK.")
-	out, cmdErr := exec.CommandContext(probeCtx, binary, args...).CombinedOutput()
+	cmd := exec.CommandContext(probeCtx, binary, p.probeArgs(model)...)
+	cmd.WaitDelay = probeWaitDelay
+	configureProbeProcessGroup(cmd)
+	out, cmdErr := cmd.CombinedOutput()
 	if probeCtx.Err() != nil {
 		return ports.ModelValidationResult{Status: ports.ModelValidationProbeUnavailable, Message: probeCtx.Err().Error()}, nil
 	}
@@ -285,26 +316,47 @@ func modelProbeResultFromOutput(out []byte, cmdErr error) ports.ModelValidationR
 	if cmdErr == nil {
 		return ports.ModelValidationResult{Status: ports.ModelValidationReachable, Message: text}
 	}
-	if outputLooksLikeUnsupportedModel(text) {
+	if probeSawModelRejection(out) {
 		return ports.ModelValidationResult{Status: ports.ModelValidationUnreachable, Message: text}
 	}
 	return ports.ModelValidationResult{Status: ports.ModelValidationProbeUnavailable, Message: text}
 }
 
-func outputLooksLikeUnsupportedModel(text string) bool {
-	lower := strings.ToLower(text)
-	for _, needle := range []string{
-		"unknown model",
-		"invalid model",
-		"unsupported model",
-		"model not found",
-		"model does not exist",
-	} {
-		if strings.Contains(lower, needle) {
-			return true
+var (
+	probeStatusJSONRe  = regexp.MustCompile(`"status"\s*:\s*(\d{3})`)
+	probeStatusPlainRe = regexp.MustCompile(`(?m)^\s*(?:ERROR:\s*)?(\d{3})\s+\S`)
+)
+
+func probeSawModelRejection(out []byte) bool {
+	statuses := make([]int, 0, 4)
+	for _, re := range []*regexp.Regexp{probeStatusJSONRe, probeStatusPlainRe} {
+		for _, match := range re.FindAllStringSubmatch(string(out), -1) {
+			if code, err := strconv.Atoi(match[1]); err == nil {
+				statuses = append(statuses, code)
+			}
 		}
 	}
-	return false
+	rejected := false
+	for _, status := range statuses {
+		switch {
+		case status >= 500, status == 429, status == 408, status == 401, status == 403:
+			return false
+		case status == 400, status == 404, status == 422:
+			rejected = true
+		}
+	}
+	return rejected
+}
+
+func formatProbeOutput(out []byte) string {
+	text := strings.TrimSpace(string(out))
+	if text == "" {
+		return ""
+	}
+	if len(text) > 500 {
+		text = text[:500] + "...[truncated]"
+	}
+	return ": " + text
 }
 
 // sharedCodexAuthStatus answers the fugu auth question by probing the plain
@@ -573,21 +625,20 @@ func appendModelFlag(cmd *[]string, model string) {
 	}
 }
 
-// appendReasoningEffortFlag maps AO's effort level onto Codex's
-// model_reasoning_effort config override. Empty means unset; xhigh/max clamp to
-// high because Codex only accepts minimal|low|medium|high.
-func appendReasoningEffortFlag(cmd *[]string, effort string) {
-	if e := normalizeCodexEffort(effort); e != "" {
+// appendReasoningEffortFlag maps AO's typed effort onto the harness-native
+// model_reasoning_effort override. Fugu's max compatibility alias becomes
+// xhigh; plain Codex preserves every effort its catalog can advertise.
+func (p *Plugin) appendReasoningEffortFlag(cmd *[]string, effort domain.Effort) {
+	native := domain.NormalizeEffortForHarness(domain.AgentHarness(p.adapterID()), effort)
+	if e := normalizeCodexEffort(string(native)); e != "" {
 		*cmd = append(*cmd, "-c", fmt.Sprintf("model_reasoning_effort=%q", e))
 	}
 }
 
 func normalizeCodexEffort(effort string) string {
 	switch e := strings.ToLower(strings.TrimSpace(effort)); e {
-	case "minimal", "low", "medium", "high":
+	case "minimal", "low", "medium", "high", "xhigh", "max":
 		return e
-	case "xhigh", "max":
-		return "high"
 	default:
 		return ""
 	}

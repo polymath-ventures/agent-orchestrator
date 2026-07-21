@@ -7,13 +7,102 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/hooksjson"
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
+
+func TestAvailableModelsReturnsMaintainedAliasesWithoutRunningClaude(t *testing.T) {
+	p := &Plugin{resolvedBinary: filepath.Join(t.TempDir(), "must-not-run")}
+
+	models, err := p.AvailableModels(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []ports.ModelCatalogEntry{
+		{ID: "fable", Label: "Fable", Efforts: []domain.Effort{domain.EffortLow, domain.EffortMedium, domain.EffortHigh, domain.EffortXHigh, domain.EffortMax}, DefaultEffort: domain.EffortHigh, Dynamic: true},
+		{ID: "opus", Label: "Opus", Efforts: []domain.Effort{domain.EffortLow, domain.EffortMedium, domain.EffortHigh, domain.EffortXHigh, domain.EffortMax}, DefaultEffort: domain.EffortHigh, Dynamic: true},
+		{ID: "sonnet", Label: "Sonnet", Efforts: []domain.Effort{domain.EffortLow, domain.EffortMedium, domain.EffortHigh, domain.EffortXHigh, domain.EffortMax}, DefaultEffort: domain.EffortHigh, Dynamic: true},
+		{ID: "haiku", Label: "Haiku", Dynamic: true},
+	}
+	if !reflect.DeepEqual(models, want) {
+		t.Fatalf("models\nwant: %#v\n got: %#v", want, models)
+	}
+}
+
+func TestGetLaunchCommandPassesEffortPerProcessAndUsesSupportedFlag(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell-script fake is Unix-specific")
+	}
+	bin := writeFakeClaudeScript(t, `#!/bin/sh
+if [ "$1" = "--help" ]; then
+  echo 'Usage: claude [--effort <level>]'
+  exit 0
+fi
+exit 99
+`)
+
+	cmd, err := (&Plugin{resolvedBinary: bin}).GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		Config: ports.AgentConfig{Model: "opus", Effort: domain.EffortHigh},
+		Prompt: "go",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"env", "CLAUDE_CODE_EFFORT_LEVEL=high", bin, "--model", "opus", "--effort", "high", "--", "go"}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("command\nwant: %#v\n got: %#v", want, cmd)
+	}
+}
+
+func TestGetLaunchCommandUsesEffortEnvironmentWhenFlagUnsupported(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell-script fake is Unix-specific")
+	}
+	bin := writeFakeClaudeScript(t, `#!/bin/sh
+echo 'Usage: claude [options]'
+`)
+
+	cmd, err := (&Plugin{resolvedBinary: bin}).GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		Config: ports.AgentConfig{Effort: domain.EffortMax},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"env", "CLAUDE_CODE_EFFORT_LEVEL=max", bin}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("command\nwant: %#v\n got: %#v", want, cmd)
+	}
+}
+
+func TestGetRestoreCommandPassesEffortPerProcess(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell-script fake is Unix-specific")
+	}
+	bin := writeFakeClaudeScript(t, `#!/bin/sh
+echo 'Usage: claude [--effort <level>]'
+`)
+	cmd, ok, err := (&Plugin{resolvedBinary: bin}).GetRestoreCommand(context.Background(), ports.RestoreConfig{
+		Config: ports.AgentConfig{Model: "sonnet", Effort: domain.EffortMedium},
+		Session: ports.SessionRef{Metadata: map[string]string{
+			ports.MetadataKeyAgentSessionID: "claude-native-1",
+		}},
+	})
+	if err != nil || !ok {
+		t.Fatalf("restore = (ok=%v, err=%v), want ok", ok, err)
+	}
+	want := []string{"env", "CLAUDE_CODE_EFFORT_LEVEL=medium", bin, "--model", "sonnet", "--effort", "medium", "--resume", "claude-native-1"}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("command\nwant: %#v\n got: %#v", want, cmd)
+	}
+}
 
 func TestGetLaunchCommandBypassWithPrompt(t *testing.T) {
 	p := &Plugin{resolvedBinary: "claude"}
@@ -767,6 +856,136 @@ func TestClaudeModelProbeResultClassifiesUnsupportedModel(t *testing.T) {
 	if got.Status != ports.ModelValidationReachable {
 		t.Fatalf("status = %q, want reachable", got.Status)
 	}
+}
+
+func TestValidateModelUsesHermeticJSONEnvelopeProbe(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell-script fake is Unix-specific")
+	}
+	dir := t.TempDir()
+	argsFile := filepath.Join(dir, "args.txt")
+	stdinFile := filepath.Join(dir, "stdin.txt")
+	t.Setenv("AO_CLAUDE_ARGS_FILE", argsFile)
+	t.Setenv("AO_CLAUDE_STDIN_FILE", stdinFile)
+	bin := writeFakeClaudeScript(t, `#!/bin/sh
+printf '%s\n' "$@" > "$AO_CLAUDE_ARGS_FILE"
+cat > "$AO_CLAUDE_STDIN_FILE"
+printf '%s\n' '{"type":"result","is_error":false,"result":"OK"}'
+`)
+
+	got, err := (&Plugin{resolvedBinary: bin}).ValidateModel(context.Background(), " opus ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != ports.ModelValidationReachable {
+		t.Fatalf("status = %q, want reachable (%s)", got.Status, got.Message)
+	}
+	data, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	args := strings.Split(strings.TrimSpace(string(data)), "\n")
+	for _, want := range [][]string{
+		{"--print"},
+		{"--model", "opus"},
+		{"--output-format", "json"},
+		{"--permission-mode", "dontAsk"},
+		{"--setting-sources", ""},
+		{"--no-session-persistence"},
+		{"--strict-mcp-config"},
+		{"--mcp-config", `{"mcpServers":{}}`},
+		{"--disallowedTools"},
+	} {
+		if !containsSubsequence(args, want) {
+			t.Fatalf("probe args %#v missing %#v", args, want)
+		}
+	}
+	for _, forbidden := range []string{"{}", "MultiEdit", claudeProbePrompt} {
+		if contains(args, forbidden) {
+			t.Fatalf("probe args %#v must not contain %q", args, forbidden)
+		}
+	}
+	stdin, err := os.ReadFile(stdinFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(string(stdin)) == "" {
+		t.Fatal("probe prompt must be delivered over stdin")
+	}
+}
+
+func TestValidateModelClassifiesJSONEnvelopeVerdicts(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell-script fake is Unix-specific")
+	}
+	tests := []struct {
+		name   string
+		body   string
+		exit   string
+		status ports.ModelValidationStatus
+	}{
+		{name: "reachable", body: `{"type":"result","is_error":false,"result":"OK"}`, exit: "0", status: ports.ModelValidationReachable},
+		{name: "system prelude ignored", body: "{}\n{\"type\":\"system\"}\n{\"type\":\"result\",\"is_error\":false,\"result\":\"OK\"}", exit: "0", status: ports.ModelValidationReachable},
+		{name: "model rejected", body: `{"type":"result","is_error":true,"api_error_status":404,"result":"model not found"}`, exit: "1", status: ports.ModelValidationUnreachable},
+		{name: "bad request rejected", body: `{"type":"result","is_error":true,"api_error_status":400,"result":"bad request"}`, exit: "0", status: ports.ModelValidationUnreachable},
+		{name: "unprocessable rejected", body: `{"type":"result","is_error":true,"api_error_status":422,"result":"unprocessable"}`, exit: "0", status: ports.ModelValidationUnreachable},
+		{name: "rate limited", body: `{"type":"result","is_error":true,"api_error_status":429,"result":"rate limited"}`, exit: "1", status: ports.ModelValidationProbeUnavailable},
+		{name: "server unavailable", body: `{"type":"result","is_error":true,"api_error_status":503,"result":"unavailable"}`, exit: "1", status: ports.ModelValidationProbeUnavailable},
+		{name: "authentication failure", body: `{"type":"result","is_error":true,"api_error_status":401,"result":"unauthorized"}`, exit: "0", status: ports.ModelValidationProbeUnavailable},
+		{name: "no provider verdict", body: `{"type":"result","is_error":true,"result":"authentication required"}`, exit: "1", status: ports.ModelValidationProbeUnavailable},
+		{name: "bare object is no verdict", body: `{}`, exit: "0", status: ports.ModelValidationProbeUnavailable},
+		{name: "malformed envelope", body: `not json`, exit: "1", status: ports.ModelValidationProbeUnavailable},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("AO_CLAUDE_BODY", tt.body)
+			t.Setenv("AO_CLAUDE_EXIT", tt.exit)
+			bin := writeFakeClaudeScript(t, `#!/bin/sh
+cat >/dev/null
+printf '%s\n' "$AO_CLAUDE_BODY"
+exit "$AO_CLAUDE_EXIT"
+`)
+			got, err := (&Plugin{resolvedBinary: bin}).ValidateModel(context.Background(), "opus")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.Status != tt.status {
+				t.Fatalf("status = %q, want %q (%s)", got.Status, tt.status, got.Message)
+			}
+		})
+	}
+}
+
+func TestValidateModelTimeoutIsProbeUnavailable(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell-script fake is Unix-specific")
+	}
+	bin := writeFakeClaudeScript(t, `#!/bin/sh
+sleep 5
+`)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+
+	started := time.Now()
+	got, err := (&Plugin{resolvedBinary: bin}).ValidateModel(ctx, "opus")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != ports.ModelValidationProbeUnavailable {
+		t.Fatalf("status = %q, want probe-unavailable", got.Status)
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("probe cleanup took %s, want under 1s", elapsed)
+	}
+}
+
+func writeFakeClaudeScript(t *testing.T, script string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "claude")
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil { //nolint:gosec // executable test fixture
+		t.Fatal(err)
+	}
+	return path
 }
 
 func contains(values []string, needle string) bool {

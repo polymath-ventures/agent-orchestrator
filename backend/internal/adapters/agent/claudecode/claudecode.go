@@ -33,6 +33,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/agentbase"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/binaryutil"
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -53,8 +54,11 @@ var claudeSessionNamespace = uuid.MustParse("a1f0c3d2-7b54-4e96-8a2b-0d9e1f2a3b4
 // binary path is resolved once and cached under binaryMu.
 type Plugin struct {
 	agentbase.Base
-	binaryMu       sync.Mutex
-	resolvedBinary string
+	binaryMu              sync.Mutex
+	resolvedBinary        string
+	effortFlagMu          sync.Mutex
+	effortFlagChecked     bool
+	effortFlagIsSupported bool
 }
 
 // New returns a ready-to-register Claude Code adapter.
@@ -77,6 +81,7 @@ func (p *Plugin) EmitsBlockedActivity() bool { return true }
 var _ adapters.Adapter = (*Plugin)(nil)
 var _ ports.Agent = (*Plugin)(nil)
 var _ ports.AgentAuthChecker = (*Plugin)(nil)
+var _ ports.AgentModelCatalog = (*Plugin)(nil)
 var _ ports.AgentModelValidator = (*Plugin)(nil)
 
 // Manifest returns the adapter's static self-description.
@@ -114,6 +119,12 @@ func (p *Plugin) GetConfigSpec(ctx context.Context) (ports.ConfigSpec, error) {
 				Key:         "model",
 				Type:        ports.ConfigFieldString,
 				Description: "Model override passed to `claude --model` (e.g. claude-opus-4-5).",
+			},
+			{
+				Key:         "effort",
+				Type:        ports.ConfigFieldEnum,
+				Description: "Per-process Claude reasoning-effort level.",
+				Enum:        []string{"low", "medium", "high", "xhigh", "max"},
 			},
 			{
 				Key:         "permissions",
@@ -156,7 +167,8 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 		return nil, err
 	}
 
-	cmd = []string{binary}
+	effort := normalizeClaudeEffort(string(cfg.Config.Effort))
+	cmd = claudeCommandPrefix(binary, effort)
 	if cfg.SessionID != "" {
 		cmd = append(cmd, "--session-id", claudeSessionUUID(cfg.SessionID))
 	}
@@ -172,6 +184,9 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 
 	if model := strings.TrimSpace(cfg.Config.Model); model != "" {
 		cmd = append(cmd, "--model", model)
+	}
+	if effort != "" && p.supportsEffortFlag(ctx, binary) {
+		cmd = append(cmd, "--effort", effort)
 	}
 
 	systemPrompt, err := resolveSystemPrompt(cfg)
@@ -244,11 +259,14 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 	if err != nil {
 		return nil, false, err
 	}
-	cmd = make([]string, 0, 7)
-	cmd = append(cmd, binary)
+	effort := normalizeClaudeEffort(string(cfg.Config.Effort))
+	cmd = claudeCommandPrefix(binary, effort)
 	appendPermissionFlags(&cmd, cfg.Permissions)
 	if model := strings.TrimSpace(cfg.Config.Model); model != "" {
 		cmd = append(cmd, "--model", model)
+	}
+	if effort != "" && p.supportsEffortFlag(ctx, binary) {
+		cmd = append(cmd, "--effort", effort)
 	}
 	systemPrompt, err := resolveRestoreSystemPrompt(cfg)
 	if err != nil {
@@ -262,6 +280,46 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 	}
 	cmd = append(cmd, "--resume", sessionID)
 	return cmd, true, nil
+}
+
+var claudeMaintainedModels = []ports.ModelCatalogEntry{
+	{
+		ID:            "fable",
+		Label:         "Fable",
+		Efforts:       []domain.Effort{domain.EffortLow, domain.EffortMedium, domain.EffortHigh, domain.EffortXHigh, domain.EffortMax},
+		DefaultEffort: domain.EffortHigh,
+		Dynamic:       true,
+	},
+	{
+		ID:            "opus",
+		Label:         "Opus",
+		Efforts:       []domain.Effort{domain.EffortLow, domain.EffortMedium, domain.EffortHigh, domain.EffortXHigh, domain.EffortMax},
+		DefaultEffort: domain.EffortHigh,
+		Dynamic:       true,
+	},
+	{
+		ID:            "sonnet",
+		Label:         "Sonnet",
+		Efforts:       []domain.Effort{domain.EffortLow, domain.EffortMedium, domain.EffortHigh, domain.EffortXHigh, domain.EffortMax},
+		DefaultEffort: domain.EffortHigh,
+		Dynamic:       true,
+	},
+	{ID: "haiku", Label: "Haiku", Dynamic: true},
+}
+
+// AvailableModels returns AO's maintained semantic Claude aliases. Discovery
+// is deliberately local and static: Claude Code exposes no supported catalog
+// command, and listing choices must never consume a paid model request.
+func (p *Plugin) AvailableModels(ctx context.Context) ([]ports.ModelCatalogEntry, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	models := make([]ports.ModelCatalogEntry, len(claudeMaintainedModels))
+	for i, model := range claudeMaintainedModels {
+		models[i] = model
+		models[i].Efforts = append([]domain.Effort(nil), model.Efforts...)
+	}
+	return models, nil
 }
 
 // SessionInfo surfaces the normalized session metadata that the Claude Code
@@ -306,20 +364,144 @@ func (p *Plugin) AuthStatus(ctx context.Context) (ports.AgentAuthStatus, error) 
 	return ports.AgentAuthStatusUnknown, nil
 }
 
-// ValidateModel performs a bounded advisory model probe. It is used only by
-// background model-health refresh; session spawn never calls it.
+const (
+	claudeProbeTimeout   = 45 * time.Second
+	claudeProbeWaitDelay = 2 * time.Second
+	claudeProbePrompt    = "Reply exactly OK. Do not use tools."
+)
+
+const claudeProbeDisallowedTools = "Task,Bash,Edit,Write,Read,Glob,Grep,WebFetch,WebSearch,TodoWrite,NotebookEdit"
+
+// probeArgs builds the hermetic non-interactive invocation. The empty MCP
+// record must include mcpServers: plain {} is rejected by Claude Code before
+// it reaches the provider. MultiEdit is intentionally absent because older
+// supported Claude releases reject that unknown tool name.
+func (p *Plugin) probeArgs(model string) []string {
+	return []string{
+		"--print",
+		"--output-format", "json",
+		"--model", model,
+		"--permission-mode", "dontAsk",
+		"--no-session-persistence",
+		"--setting-sources", "",
+		"--strict-mcp-config",
+		"--mcp-config", `{"mcpServers":{}}`,
+		"--disallowedTools", claudeProbeDisallowedTools,
+	}
+}
+
+// ValidateModel performs an explicit, bounded advisory model probe. Catalog
+// discovery and config persistence never call this method. The probe disables
+// operator settings, hooks, MCP servers, tools, and session persistence, then
+// derives its verdict only from Claude Code's JSON result envelope.
 func (p *Plugin) ValidateModel(ctx context.Context, model string) (ports.ModelValidationResult, error) {
 	binary, err := p.claudeBinary(ctx)
 	if err != nil {
 		return ports.ModelValidationResult{}, err
 	}
-	probeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	probeCtx, cancel := context.WithTimeout(ctx, claudeProbeTimeout)
 	defer cancel()
-	out, cmdErr := exec.CommandContext(probeCtx, binary, "--model", strings.TrimSpace(model), "-p", "Respond with OK.").CombinedOutput()
+	cmd := exec.CommandContext(probeCtx, binary, p.probeArgs(strings.TrimSpace(model))...)
+	cmd.Stdin = strings.NewReader(claudeProbePrompt)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	cmd.WaitDelay = claudeProbeWaitDelay
+	configureProbeProcessGroup(cmd)
+	cmdErr := cmd.Run()
 	if probeCtx.Err() != nil {
 		return ports.ModelValidationResult{Status: ports.ModelValidationProbeUnavailable, Message: probeCtx.Err().Error()}, nil
 	}
-	return claudeModelProbeResultFromOutput(out, cmdErr), nil
+	if envelope, ok := parseClaudeProbeEnvelope(stdout.Bytes()); ok {
+		return claudeProbeVerdict(envelope), nil
+	}
+	diag := stderr.Bytes()
+	if len(bytes.TrimSpace(diag)) == 0 {
+		diag = stdout.Bytes()
+	}
+	message := formatClaudeProbeOutput(diag)
+	if message == "" && cmdErr != nil {
+		message = cmdErr.Error()
+	}
+	return ports.ModelValidationResult{Status: ports.ModelValidationProbeUnavailable, Message: message}, nil
+}
+
+type claudeProbeEnvelope struct {
+	Type           string `json:"type"`
+	IsError        bool   `json:"is_error"`
+	APIErrorStatus *int   `json:"api_error_status"`
+	Result         string `json:"result"`
+}
+
+// parseClaudeProbeEnvelope scans all top-level stdout objects and selects the
+// last result envelope. A system prelude or bare {} must never become a false
+// reachable verdict.
+func parseClaudeProbeEnvelope(out []byte) (claudeProbeEnvelope, bool) {
+	start := bytes.IndexByte(out, '{')
+	if start < 0 {
+		return claudeProbeEnvelope{}, false
+	}
+	decoder := json.NewDecoder(bytes.NewReader(out[start:]))
+	var found claudeProbeEnvelope
+	var ok bool
+	for {
+		var raw map[string]json.RawMessage
+		if err := decoder.Decode(&raw); err != nil {
+			break
+		}
+		if !isClaudeResultObject(raw) {
+			continue
+		}
+		encoded, err := json.Marshal(raw)
+		if err != nil {
+			continue
+		}
+		var envelope claudeProbeEnvelope
+		if json.Unmarshal(encoded, &envelope) == nil {
+			found, ok = envelope, true
+		}
+	}
+	return found, ok
+}
+
+func isClaudeResultObject(raw map[string]json.RawMessage) bool {
+	if encodedType, present := raw["type"]; present {
+		var objectType string
+		if json.Unmarshal(encodedType, &objectType) == nil && objectType == "result" {
+			return true
+		}
+	}
+	_, hasIsError := raw["is_error"]
+	return hasIsError
+}
+
+func claudeProbeVerdict(envelope claudeProbeEnvelope) ports.ModelValidationResult {
+	message := strings.TrimSpace(envelope.Result)
+	if !envelope.IsError {
+		return ports.ModelValidationResult{Status: ports.ModelValidationReachable, Message: message}
+	}
+	if envelope.APIErrorStatus != nil {
+		switch status := *envelope.APIErrorStatus; {
+		case status == 400, status == 404, status == 422:
+			return ports.ModelValidationResult{Status: ports.ModelValidationUnreachable, Message: message}
+		case status >= 500, status == 429, status == 408:
+			return ports.ModelValidationResult{Status: ports.ModelValidationProbeUnavailable, Message: message}
+		}
+	}
+	return ports.ModelValidationResult{Status: ports.ModelValidationProbeUnavailable, Message: message}
+}
+
+func formatClaudeProbeOutput(out []byte) string {
+	text := strings.TrimSpace(string(out))
+	if text == "" {
+		return ""
+	}
+	const maxProbeOutputRunes = 500
+	runes := []rune(text)
+	if len(runes) > maxProbeOutputRunes {
+		text = string(runes[:maxProbeOutputRunes]) + "...[truncated]"
+	}
+	return text
 }
 
 func claudeModelProbeResultFromOutput(out []byte, cmdErr error) ports.ModelValidationResult {
@@ -501,6 +683,50 @@ func appendToolFlags(cmd *[]string, allowed, disallowed []string) {
 	if len(disallowed) > 0 {
 		*cmd = append(*cmd, "--disallowedTools", strings.Join(disallowed, ","))
 	}
+}
+
+const claudeEffortEnvVar = "CLAUDE_CODE_EFFORT_LEVEL"
+
+func claudeCommandPrefix(binary, effort string) []string {
+	if effort == "" {
+		return []string{binary}
+	}
+	return []string{"env", claudeEffortEnvVar + "=" + effort, binary}
+}
+
+// normalizeClaudeEffort maps AO's union effort vocabulary onto Claude Code's
+// supported effort levels. Minimal is a Codex-only tier and clamps to low.
+func normalizeClaudeEffort(effort string) string {
+	switch normalized := strings.ToLower(strings.TrimSpace(effort)); normalized {
+	case "low", "medium", "high", "xhigh", "max":
+		return normalized
+	case "minimal":
+		return "low"
+	default:
+		return ""
+	}
+}
+
+// supportsEffortFlag performs one cheap local capability check per plugin.
+// The environment variable remains authoritative across Claude releases; the
+// direct flag is emitted only when this installed CLI advertises it.
+func (p *Plugin) supportsEffortFlag(ctx context.Context, binary string) bool {
+	p.effortFlagMu.Lock()
+	defer p.effortFlagMu.Unlock()
+	if p.effortFlagChecked {
+		return p.effortFlagIsSupported
+	}
+	p.effortFlagChecked = true
+	helpCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(helpCtx, binary, "--help")
+	cmd.WaitDelay = claudeProbeWaitDelay
+	configureProbeProcessGroup(cmd)
+	out, err := cmd.CombinedOutput()
+	if err == nil && helpCtx.Err() == nil {
+		p.effortFlagIsSupported = strings.Contains(string(out), "--effort")
+	}
+	return p.effortFlagIsSupported
 }
 
 // claudeBinarySpec locates the claude binary: PATH first, then the native
