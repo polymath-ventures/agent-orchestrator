@@ -18,7 +18,10 @@ test("ao.service is a persistent headless daemon that does not kill the tmux fle
 	assert.doesNotMatch(text, /^Delegate=yes$/m);
 	assert.match(text, /^ExecStartPre=.*command -v tmux/m);
 	assert.match(text, /^ExecStartPre=.*tmux list-sessions/m);
-	assert.match(text, /^Environment=AO_DATA_DIR=%h\/\.ao$/m);
+	// Data dir must be ~/.ao/data — NEVER the ~/.ao root: the root is the
+	// legacy layout, and pointing the daemon there resurrects a decommissioned
+	// deployment's database wholesale (the 2026-07-21 incident).
+	assert.match(text, /^Environment=AO_DATA_DIR=%h\/\.ao\/data$/m);
 });
 
 test("ao-tmux.service owns the default tmux socket and refuses stop-job fleet kills", async () => {
