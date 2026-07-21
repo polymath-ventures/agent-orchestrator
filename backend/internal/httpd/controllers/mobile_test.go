@@ -73,6 +73,21 @@ func TestMobileEnableRollsBackListenerWhenSaveFails(t *testing.T) {
 	}
 }
 
+// A configured advertised host must win over interface autopick: when the
+// daemon is reached over a tailnet, the autopicked LAN IP in the pairing
+// QR/status is unreachable from the phone, so the operator pins the host.
+func TestMobileStatusUsesAdvertisedHostOverride(t *testing.T) {
+	b := &BridgeService{
+		LAN:            &fakeLAN{},
+		ConfigPath:     filepath.Join(t.TempDir(), "mobile", "config.json"),
+		DefaultPort:    3011,
+		AdvertisedHost: "ao-server.example.ts.net",
+	}
+	if got := b.Status().Host; got != "ao-server.example.ts.net" {
+		t.Fatalf("Status().Host = %q, want configured advertised host", got)
+	}
+}
+
 func TestMobileEnableReturnsPassword(t *testing.T) {
 	c := &MobileController{Bridge: &fakeBridge{}}
 	w := httptest.NewRecorder()

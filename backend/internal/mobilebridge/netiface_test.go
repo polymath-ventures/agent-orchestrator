@@ -31,3 +31,36 @@ func cidr(s string) net.Addr {
 	ipnet.IP = ip
 	return ipnet
 }
+
+func TestAutopickAdvertiseIP(t *testing.T) {
+	tailnetOnly := []net.Interface{
+		{Index: 1, Name: "lo", Flags: net.FlagUp | net.FlagLoopback},
+		{Index: 2, Name: "tailscale0", Flags: net.FlagUp},
+	}
+	lanAndTailnet := []net.Interface{
+		{Index: 1, Name: "eth0", Flags: net.FlagUp},
+		{Index: 2, Name: "tailscale0", Flags: net.FlagUp},
+	}
+	addrs := map[string][]net.Addr{
+		"lo":         {cidr("127.0.0.1/8")},
+		"tailscale0": {cidr("100.101.102.103/32")},
+		"eth0":       {cidr("192.168.1.42/24"), cidr("fe80::1/64")},
+	}
+	lookup := func(i net.Interface) ([]net.Addr, error) { return addrs[i.Name], nil }
+
+	// The reported bug: a host whose only route to the phone is a CGNAT
+	// (100.64.0.0/10) address — e.g. reached over a tailnet — advertised no
+	// address at all, so pairing surfaced an empty/unreachable host.
+	if got := AutopickAdvertiseIP(tailnetOnly, lookup); got != "100.101.102.103" {
+		t.Fatalf("tailnet-only advertise = %q, want 100.101.102.103", got)
+	}
+	// A private LAN address still wins over CGNAT when both exist.
+	if got := AutopickAdvertiseIP(lanAndTailnet, lookup); got != "192.168.1.42" {
+		t.Fatalf("lan+tailnet advertise = %q, want 192.168.1.42", got)
+	}
+	// Nothing suitable stays empty — loopback never becomes the advertised host.
+	loopbackOnly := []net.Interface{{Index: 1, Name: "lo", Flags: net.FlagUp | net.FlagLoopback}}
+	if got := AutopickAdvertiseIP(loopbackOnly, lookup); got != "" {
+		t.Fatalf("loopback-only advertise = %q, want empty", got)
+	}
+}
