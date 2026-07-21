@@ -164,7 +164,7 @@ func (r *Reaper) probeOne(ctx context.Context, sess domain.SessionRecord, now ti
 			"session", sess.ID, "err", probeErr)
 	case alive:
 		if sess.Harness.RequiresLaunchProcessLivenessSweep() {
-			running, err := r.launchProcessRunning(ctx, handle)
+			running, err := r.launchProcessRunning(ctx, handle, sess.Metadata.LaunchCommand)
 			switch {
 			case err != nil:
 				facts.Probe = ports.ProbeFailed
@@ -188,12 +188,15 @@ func (r *Reaper) probeOne(ctx context.Context, sess domain.SessionRecord, now ti
 	}
 }
 
-func (r *Reaper) launchProcessRunning(ctx context.Context, handle ports.RuntimeHandle) (bool, error) {
+// launchProcessRunning probes whether the session's launch process is still
+// running. command is the persisted launch argv[0]; empty (legacy rows spawned
+// before it was recorded) degrades to the unfiltered any-child probe.
+func (r *Reaper) launchProcessRunning(ctx context.Context, handle ports.RuntimeHandle, command string) (bool, error) {
 	prober, ok := r.runtime.(runtimeProcessProber)
 	if !ok {
 		return true, nil
 	}
-	return prober.IsRunningCommand(ctx, handle, "")
+	return prober.IsRunningCommand(ctx, handle, command)
 }
 
 // handleFromRecord reconstructs the RuntimeHandle stored on the session by

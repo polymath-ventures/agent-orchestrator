@@ -988,3 +988,41 @@ func TestUpsertSessionWorktreeEmptyStateDefaultsToActive(t *testing.T) {
 		t.Fatalf("State = %q, want %q", got.State, "active")
 	}
 }
+
+// runtime_token and launch_command must survive the SQLite round-trip: the
+// stale-hook guard and the reaper's launch-process probe both read them from
+// rehydrated records, so an unpersisted value silently disarms both exactly
+// when they matter — after a daemon restart.
+func TestSessionRuntimeProbeFieldsRoundTrip(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+
+	rec := sampleRecord("mer")
+	rec.Metadata.RuntimeToken = "tok-abc123"
+	rec.Metadata.LaunchCommand = "claude"
+	created, err := s.CreateSession(ctx, rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, ok, err := s.GetSession(ctx, created.ID)
+	if err != nil || !ok {
+		t.Fatalf("get: ok=%v err=%v", ok, err)
+	}
+	if got.Metadata.RuntimeToken != "tok-abc123" || got.Metadata.LaunchCommand != "claude" {
+		t.Fatalf("insert round-trip: token=%q command=%q", got.Metadata.RuntimeToken, got.Metadata.LaunchCommand)
+	}
+
+	got.Metadata.RuntimeToken = "tok-def456"
+	got.Metadata.LaunchCommand = "codex"
+	if err := s.UpdateSession(ctx, got); err != nil {
+		t.Fatal(err)
+	}
+	again, ok, err := s.GetSession(ctx, created.ID)
+	if err != nil || !ok {
+		t.Fatalf("re-get: ok=%v err=%v", ok, err)
+	}
+	if again.Metadata.RuntimeToken != "tok-def456" || again.Metadata.LaunchCommand != "codex" {
+		t.Fatalf("update round-trip: token=%q command=%q", again.Metadata.RuntimeToken, again.Metadata.LaunchCommand)
+	}
+}

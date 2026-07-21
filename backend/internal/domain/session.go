@@ -29,6 +29,7 @@ type SessionMetadata struct {
 	WorkspacePath   string `json:"workspacePath,omitempty"`
 	RuntimeHandleID string `json:"runtimeHandleId,omitempty"`
 	RuntimeToken    string `json:"runtimeToken,omitempty"`
+	LaunchCommand   string `json:"launchCommand,omitempty"`
 	AgentSessionID  string `json:"agentSessionId,omitempty"`
 	Prompt          string `json:"prompt,omitempty"`
 	// PreviewURL is the browser preview target the desktop app opens for this
