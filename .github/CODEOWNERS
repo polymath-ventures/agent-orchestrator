@@ -1,0 +1,9 @@
+# Code owner: every change requires the operator's approval to merge.
+# Agent accounts have write access but their approvals must not satisfy the
+# review requirement — only the code owner's does (require_code_owner_reviews).
+* @nhod
+
+# OpenSpec bookkeeping is deliberately unowned: archive/spec-sync PRs need a
+# review approval but not the operator specifically (lightweight path per the
+# 2026-07-21 ruling that spec archives must not carry a full human review burden).
+openspec/
