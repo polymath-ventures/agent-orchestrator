@@ -65,6 +65,33 @@ type AgentAuthChecker interface {
 	AuthStatus(ctx context.Context) (AgentAuthStatus, error)
 }
 
+// ModelValidationStatus is the adapter-facing result of a live model probe.
+type ModelValidationStatus string
+
+const (
+	// ModelValidationReachable means the live probe reached the requested model.
+	ModelValidationReachable ModelValidationStatus = "reachable"
+	// ModelValidationUnreachable means the live probe proved the model unavailable.
+	ModelValidationUnreachable ModelValidationStatus = "unreachable"
+	// ModelValidationProbeUnavailable means auth, quota, timeout, or transport prevented validation.
+	ModelValidationProbeUnavailable ModelValidationStatus = "probe-unavailable"
+)
+
+// ModelValidationResult reports whether an adapter could prove a model is
+// usable. Probe-unavailable is intentionally distinct from unreachable:
+// authentication, quota, timeout, or transport failures must not be treated as
+// model denial.
+type ModelValidationResult struct {
+	Status  ModelValidationStatus
+	Message string
+}
+
+// AgentModelValidator is the optional live model probe capability. Callers must
+// use it only from background/advisory paths, never from the spawn hot path.
+type AgentModelValidator interface {
+	ValidateModel(ctx context.Context, model string) (ModelValidationResult, error)
+}
+
 // AgentBinaryResolver is the optional capability adapters expose when their
 // binary can be checked without constructing a real session launch command.
 type AgentBinaryResolver interface {

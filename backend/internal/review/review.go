@@ -17,6 +17,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/agentconfig"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
@@ -202,7 +203,7 @@ func (e *Engine) Trigger(ctx stdctx.Context, workerID domain.SessionID) (Trigger
 		return TriggerResult{}, err
 	}
 
-	harness, err := e.reviewerHarness(ctx, worker)
+	harness, agentConfig, err := e.reviewerLaunchConfig(ctx, worker)
 	if err != nil {
 		return TriggerResult{}, err
 	}
@@ -280,13 +281,13 @@ func (e *Engine) Trigger(ctx stdctx.Context, workerID domain.SessionID) (Trigger
 		}
 	}
 	if handleID == "" {
-		h, err := e.launcher.Spawn(ctx, reviewLaunchSpec(worker, harness, created[0], queue, 0, reviewerRules))
+		h, err := e.launcher.Spawn(ctx, reviewLaunchSpec(worker, harness, agentConfig, created[0], queue, 0, reviewerRules))
 		if err != nil {
 			return TriggerResult{}, failRuns(0, fmt.Errorf("launch reviewer: %w", err))
 		}
 		handleID = h
 	} else {
-		if err := e.launcher.Notify(ctx, handleID, reviewLaunchSpec(worker, harness, created[0], queue, 0, reviewerRules)); err != nil {
+		if err := e.launcher.Notify(ctx, handleID, reviewLaunchSpec(worker, harness, agentConfig, created[0], queue, 0, reviewerRules)); err != nil {
 			return TriggerResult{}, failRuns(0, fmt.Errorf("notify reviewer: %w", err))
 		}
 	}
@@ -300,12 +301,13 @@ func (e *Engine) Trigger(ctx stdctx.Context, workerID domain.SessionID) (Trigger
 	return TriggerResult{Run: created[0], ReviewerHandleID: handleID, Created: true, Reviews: reviews, CreatedRuns: created}, nil
 }
 
-func reviewLaunchSpec(worker domain.SessionRecord, harness domain.ReviewerHarness, run domain.ReviewRun, queue []ports.ReviewTask, index int, reviewerRules string) LaunchSpec {
+func reviewLaunchSpec(worker domain.SessionRecord, harness domain.ReviewerHarness, agentConfig ports.AgentConfig, run domain.ReviewRun, queue []ports.ReviewTask, index int, reviewerRules string) LaunchSpec {
 	return LaunchSpec{
 		RunID:         run.ID,
 		WorkerID:      worker.ID,
 		Harness:       harness,
 		WorkspacePath: worker.Metadata.WorkspacePath,
+		AgentConfig:   agentConfig,
 		PRURL:         run.PRURL,
 		TargetSHA:     run.TargetSHA,
 		ReviewQueue:   queue,
@@ -441,19 +443,34 @@ func (e *Engine) Cancel(ctx stdctx.Context, workerID domain.SessionID) (CancelRe
 	return CancelResult{ReviewerHandleID: review.ReviewerHandleID, Reviews: Plan(prs, runs), CancelledRuns: cancelled}, nil
 }
 
-// reviewerHarness resolves which harness reviews the worker's PR: a configured
-// reviewer wins, otherwise worker's own harness is reused when it is a
-// supported reviewer, otherwise fallback to claude-code.
-func (e *Engine) reviewerHarness(ctx stdctx.Context, worker domain.SessionRecord) (domain.ReviewerHarness, error) {
+// reviewerLaunchConfig resolves which harness reviews the worker's PR and the
+// adapter-facing AgentConfig for that reviewer.
+func (e *Engine) reviewerLaunchConfig(ctx stdctx.Context, worker domain.SessionRecord) (domain.ReviewerHarness, ports.AgentConfig, error) {
 	var cfg domain.ProjectConfig
 	if e.projects != nil {
 		if proj, ok, err := e.projects.GetProject(ctx, string(worker.ProjectID)); err != nil {
-			return "", err
+			return "", ports.AgentConfig{}, err
 		} else if ok {
 			cfg = proj.Config
 		}
 	}
-	return cfg.ResolveReviewerHarness(worker.Harness), nil
+	harness := cfg.ResolveReviewerHarness(worker.Harness)
+	return harness, resolvedReviewerAgentConfig(cfg, harness), nil
+}
+
+func resolvedReviewerAgentConfig(cfg domain.ProjectConfig, harness domain.ReviewerHarness) ports.AgentConfig {
+	var override domain.AgentConfig
+	for _, rv := range cfg.Reviewers {
+		if rv.Harness == harness {
+			override = rv.AgentConfig
+			break
+		}
+	}
+	resolved, err := agentconfig.EffectiveFromConfigs(cfg.AgentConfig, override, "", harness.AgentHarness())
+	if err != nil {
+		return ports.AgentConfig{}
+	}
+	return resolved
 }
 
 func (e *Engine) upsertReview(ctx stdctx.Context, worker domain.SessionRecord, harness domain.ReviewerHarness, handleID string, now time.Time) (domain.Review, error) {

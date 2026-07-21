@@ -42,6 +42,7 @@ func TestReviewCommandLaunchesReadOnlyOffBypass(t *testing.T) {
 		WorkspacePath: "/ws/w1",
 		Prompt:        "review it",
 		SystemPrompt:  "you are a reviewer",
+		AgentConfig:   ports.AgentConfig{Model: "claude-opus-4-5"},
 	}); err != nil {
 		t.Fatalf("ReviewCommand: %v", err)
 	}
@@ -51,6 +52,9 @@ func TestReviewCommandLaunchesReadOnlyOffBypass(t *testing.T) {
 	// entirely, and an empty mode would defer to a user's defaultMode.
 	if agent.got.Permissions != ports.PermissionModeAuto {
 		t.Fatalf("reviewer must launch in auto permission mode; got %q", agent.got.Permissions)
+	}
+	if agent.got.Config.Model != "claude-opus-4-5" {
+		t.Fatalf("agent config = %#v, want reviewer model", agent.got.Config)
 	}
 	if !contains(agent.got.AllowedTools, "Read") || !contains(agent.got.AllowedTools, "Bash(ao review submit:*)") {
 		t.Fatalf("allowlist missing read-only review tools: %#v", agent.got.AllowedTools)

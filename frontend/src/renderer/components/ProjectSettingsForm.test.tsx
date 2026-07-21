@@ -124,10 +124,22 @@ describe("ProjectSettingsForm", () => {
 				orchestrator: { agent: "claude-code" },
 				agentConfig: {
 					model: "claude-opus-4-5",
+					modelByHarness: {
+						"claude-code": { model: "opus" },
+						codex: { model: "gpt-5-codex" },
+					},
 					permissions: "auto",
 				},
-				reviewers: [{ harness: "claude-code" }],
+				reviewers: [{ harness: "claude-code", agentConfig: { model: "claude-review" } }],
 			},
+			modelAvailability: [
+				{
+					harness: "codex",
+					model: "gpt-5-codex",
+					status: "unknown",
+					reason: "not-probed",
+				},
+			],
 		});
 
 		renderSettings();
@@ -136,6 +148,11 @@ describe("ProjectSettingsForm", () => {
 		expect(screen.getByLabelText("Default branch")).toHaveValue("develop");
 		expect(screen.getByLabelText("Session prefix")).toHaveValue("po");
 		expect(screen.getByLabelText("Model override")).toHaveValue("claude-opus-4-5");
+		expect(screen.getByLabelText("claude-code model")).toHaveValue("opus");
+		expect(screen.getByLabelText("codex model")).toHaveValue("gpt-5-codex");
+		expect(screen.getByLabelText("Reviewer model")).toHaveValue("claude-review");
+		expect(screen.getByText("codex/gpt-5-codex")).toBeInTheDocument();
+		expect(screen.getByText("not probed")).toBeInTheDocument();
 
 		const workerAgent = screen.getByRole("combobox", { name: "Default worker agent" });
 		const orchestratorAgent = screen.getByRole("combobox", { name: "Default orchestrator agent" });
@@ -152,6 +169,8 @@ describe("ProjectSettingsForm", () => {
 		await userEvent.type(screen.getByLabelText("Session prefix"), "rel");
 		await userEvent.clear(screen.getByLabelText("Model override"));
 		await userEvent.type(screen.getByLabelText("Model override"), "gpt-5-codex");
+		await userEvent.clear(screen.getByLabelText("codex model"));
+		await userEvent.type(screen.getByLabelText("codex model"), "gpt-5.1-codex");
 		await chooseOption(workerAgent, "OpenCode");
 		await chooseOption(orchestratorAgent, "Goose");
 		await chooseOption(permissionMode, "Bypass permissions");
@@ -175,9 +194,13 @@ describe("ProjectSettingsForm", () => {
 					orchestrator: { agent: "goose" },
 					agentConfig: {
 						model: "gpt-5-codex",
+						modelByHarness: {
+							"claude-code": { model: "opus" },
+							codex: { model: "gpt-5.1-codex" },
+						},
 						permissions: "bypass-permissions",
 					},
-					reviewers: [{ harness: "claude-code" }],
+					reviewers: [{ harness: "claude-code", agentConfig: { model: "claude-review" } }],
 				},
 			},
 		});

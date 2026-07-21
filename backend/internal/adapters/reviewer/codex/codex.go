@@ -37,6 +37,7 @@ func (r *Reviewer) ReviewCommand(ctx context.Context, inv ports.ReviewInvocation
 	argv, err := r.agent.GetLaunchCommand(ctx, ports.LaunchConfig{
 		SessionID:     inv.ReviewerID,
 		WorkspacePath: inv.WorkspacePath,
+		Config:        inv.AgentConfig,
 		Prompt:        inv.Prompt,
 		SystemPrompt:  inv.SystemPrompt,
 		Permissions:   ports.PermissionModeAuto,

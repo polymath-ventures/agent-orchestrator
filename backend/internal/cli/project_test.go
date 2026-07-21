@@ -81,6 +81,30 @@ func TestProjectSetConfig_TrackerIntakeJSON(t *testing.T) {
 	}
 }
 
+func TestProjectSetConfig_ModelManagementJSON(t *testing.T) {
+	cfg := setConfigEnv(t)
+	srv, capture := projectServer(t, http.StatusOK, `{"project":{"id":"demo","path":"/repo/demo"}}`)
+	writeRunFileFor(t, cfg, srv)
+
+	raw := `{"agentConfig":{"modelByHarness":{"codex":{"model":"gpt-5-codex","effort":"high"}}},"reviewers":[{"harness":"codex","agentConfig":{"model":"gpt-5-codex"}}]}`
+	_, errOut, err := executeCLI(t, Deps{
+		ProcessAlive: func(int) bool { return true },
+	}, "project", "set-config", "demo", "--config-json", raw)
+	if err != nil {
+		t.Fatalf("unexpected error: %v\nstderr=%s", err, errOut)
+	}
+	var got setConfigRequest
+	if err := json.Unmarshal(capture.body, &got); err != nil {
+		t.Fatalf("decode request: %v\nbody=%s", err, capture.body)
+	}
+	if got.Config.AgentConfig.ModelByHarness["codex"].Model != "gpt-5-codex" || got.Config.AgentConfig.ModelByHarness["codex"].Effort != "high" {
+		t.Fatalf("agentConfig = %#v", got.Config.AgentConfig)
+	}
+	if len(got.Config.Reviewers) != 1 || got.Config.Reviewers[0].AgentConfig.Model != "gpt-5-codex" {
+		t.Fatalf("reviewers = %#v", got.Config.Reviewers)
+	}
+}
+
 func TestBuildProjectConfigTrackerIntakeFlags(t *testing.T) {
 	got, err := buildProjectConfig(projectSetConfigOptions{
 		trackerIntake:   true,

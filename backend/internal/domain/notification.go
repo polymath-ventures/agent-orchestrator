@@ -20,12 +20,16 @@ const (
 	NotificationPRClosedUnmerged NotificationType = "pr_closed_unmerged"
 	// NotificationLowQuota means a subscription harness is nearing its known quota window.
 	NotificationLowQuota NotificationType = "low_quota"
+	// NotificationModelUnreachable means a configured model pin failed background validation.
+	NotificationModelUnreachable NotificationType = "model_unreachable"
+	// NotificationModelRecovered means a previously unreachable configured model pin validated again.
+	NotificationModelRecovered NotificationType = "model_recovered"
 )
 
 // Valid reports whether t is one of the v1 notification kinds.
 func (t NotificationType) Valid() bool {
 	switch t {
-	case NotificationNeedsInput, NotificationReadyToMerge, NotificationPRMerged, NotificationPRClosedUnmerged, NotificationLowQuota:
+	case NotificationNeedsInput, NotificationReadyToMerge, NotificationPRMerged, NotificationPRClosedUnmerged, NotificationLowQuota, NotificationModelUnreachable, NotificationModelRecovered:
 		return true
 	default:
 		return false
@@ -77,7 +81,7 @@ var (
 
 // Validate checks the required fields and enum values for a stored notification.
 func (r NotificationRecord) Validate() error {
-	if r.Type == NotificationLowQuota {
+	if r.Type == NotificationLowQuota || r.Type == NotificationModelUnreachable || r.Type == NotificationModelRecovered {
 		if r.DedupeKey == "" || r.Title == "" || r.CreatedAt.IsZero() {
 			return ErrInvalidNotificationRecord
 		}

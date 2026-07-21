@@ -81,13 +81,25 @@ type workspaceRepoDetails struct {
 
 // agentConfig mirrors the daemon's typed domain.AgentConfig for the CLI client.
 type agentConfig struct {
-	Model       string `json:"model,omitempty"`
-	Permissions string `json:"permissions,omitempty"`
+	Model          string                  `json:"model,omitempty"`
+	Effort         string                  `json:"effort,omitempty"`
+	Permissions    string                  `json:"permissions,omitempty"`
+	ModelByHarness map[string]harnessModel `json:"modelByHarness,omitempty"`
+}
+
+type harnessModel struct {
+	Model  string `json:"model,omitempty"`
+	Effort string `json:"effort,omitempty"`
 }
 
 // roleOverride mirrors domain.RoleOverride.
 type roleOverride struct {
 	Agent       string      `json:"agent,omitempty"`
+	AgentConfig agentConfig `json:"agentConfig,omitempty"`
+}
+
+type reviewerConfig struct {
+	Harness     string      `json:"harness"`
 	AgentConfig agentConfig `json:"agentConfig,omitempty"`
 }
 
@@ -117,6 +129,7 @@ type projectConfig struct {
 	AgentConfig           agentConfig         `json:"agentConfig,omitempty"`
 	Worker                roleOverride        `json:"worker,omitempty"`
 	Orchestrator          roleOverride        `json:"orchestrator,omitempty"`
+	Reviewers             []reviewerConfig    `json:"reviewers,omitempty"`
 	TrackerIntake         trackerIntakeConfig `json:"trackerIntake,omitempty"`
 }
 

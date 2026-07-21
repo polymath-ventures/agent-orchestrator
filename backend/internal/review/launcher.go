@@ -34,6 +34,7 @@ type LaunchSpec struct {
 	WorkerID      domain.SessionID
 	Harness       domain.ReviewerHarness
 	WorkspacePath string
+	AgentConfig   ports.AgentConfig
 	PRURL         string
 	TargetSHA     string
 	ReviewQueue   []ports.ReviewTask
@@ -88,6 +89,7 @@ func (l *agentLauncher) invocation(spec LaunchSpec) ports.ReviewInvocation {
 		ReviewQueue:     spec.ReviewQueue,
 		ReviewIndex:     spec.ReviewIndex,
 		WorkspacePath:   spec.WorkspacePath,
+		AgentConfig:     spec.AgentConfig,
 		Prompt:          prompt,
 		SystemPrompt:    systemPrompt,
 	}

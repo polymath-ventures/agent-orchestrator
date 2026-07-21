@@ -45,20 +45,27 @@ Agent-specific settings go under `agentConfig`:
 
 ```yaml
 agentConfig:
-  permissions: permissionless
+  permissions: auto
   model: claude-sonnet-4-5
+  modelByHarness:
+    codex:
+      model: gpt-5-codex
+      effort: high
 ```
 
 `permissions` accepts:
 
-| Value            | Behavior                                              |
-| ---------------- | ----------------------------------------------------- |
-| `permissionless` | Let the agent edit and run commands without prompting |
-| `default`        | Use the agent tool's normal permission behavior       |
-| `auto-edit`      | Auto-approve edits, ask for other actions             |
-| `suggest`        | Suggest changes without applying them                 |
+| Value                | Behavior                                                       |
+| -------------------- | -------------------------------------------------------------- |
+| `default`            | Use the agent tool's normal permission behavior                |
+| `accept-edits`       | Auto-approve edits while preserving the agent's other prompts  |
+| `auto`               | Use the adapter's automatic mode when it supports one          |
+| `bypass-permissions` | Let the agent edit and run commands without permission prompts |
 
-The legacy value `skip` is accepted and treated as `permissionless`.
+`modelByHarness` pins a model only when the resolved session harness matches
+that key. AO ignores a scalar `model` from another known provider for the
+selected harness, rejects known cross-provider pins, and reports configured pin
+availability as cached advisory state in project settings.
 
 ## Choose The Runtime
 
@@ -153,10 +160,19 @@ worker:
   agent: codex
   agentConfig:
     model: gpt-5.4
-    permissions: permissionless
+    permissions: auto
 ```
 
 Use this when planning/review needs a stronger model but routine implementation can use a faster or cheaper worker.
+
+Reviewer model pins live on the reviewer entry:
+
+```yaml
+reviewers:
+  - harness: codex
+    agentConfig:
+      model: gpt-5-codex
+```
 
 ## Tracker And SCM
 

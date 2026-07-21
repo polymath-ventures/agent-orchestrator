@@ -94,6 +94,7 @@ func launchSpec() LaunchSpec {
 	return LaunchSpec{
 		RunID: "run-1", WorkerID: "mer-1", Harness: domain.ReviewerClaudeCode,
 		WorkspacePath: "/ws/mer-1", PRURL: "https://github.com/o/r/pull/1", TargetSHA: "sha1",
+		AgentConfig: domain.AgentConfig{Model: "claude-opus-4-5"},
 	}
 }
 
@@ -119,6 +120,9 @@ func TestLauncherSpawnReturnsStableHandle(t *testing.T) {
 	if reviewer.gotInv.RunID != "run-1" || reviewer.gotInv.TargetSHA != "sha1" || reviewer.gotInv.ReviewerID != "review-mer-1" {
 		t.Fatalf("invocation = %+v", reviewer.gotInv)
 	}
+	if reviewer.gotInv.AgentConfig.Model != "claude-opus-4-5" {
+		t.Fatalf("invocation config = %#v, want reviewer model", reviewer.gotInv.AgentConfig)
+	}
 }
 
 func TestLauncherSpawnRunsReviewerPreLaunch(t *testing.T) {
@@ -132,7 +136,7 @@ func TestLauncherSpawnRunsReviewerPreLaunch(t *testing.T) {
 	if !reviewer.prelaunched {
 		t.Fatal("expected reviewer pre-launch to run")
 	}
-	if reviewer.gotPre.ReviewerID != "review-mer-1" || reviewer.gotPre.WorkspacePath != "/ws/mer-1" {
+	if reviewer.gotPre.ReviewerID != "review-mer-1" || reviewer.gotPre.WorkspacePath != "/ws/mer-1" || reviewer.gotPre.AgentConfig.Model != "claude-opus-4-5" {
 		t.Fatalf("prelaunch invocation = %+v", reviewer.gotPre)
 	}
 	if rt.createCfg.WorkspacePath == "" {

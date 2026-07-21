@@ -78,6 +78,22 @@ sql:
             go_type:
               import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"
               type: "NotificationStatus"
+          - column: "model_health.project_id"
+            go_type:
+              import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"
+              type: "ProjectID"
+          - column: "model_health.harness"
+            go_type:
+              import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"
+              type: "AgentHarness"
+          - column: "model_health.status"
+            go_type:
+              import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"
+              type: "ModelAvailabilityStatus"
+          - column: "model_health.reason"
+            go_type:
+              import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"
+              type: "ModelAvailabilityReason"
           - column: "projects.id"
             go_type:
               import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"

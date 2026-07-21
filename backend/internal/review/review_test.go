@@ -736,6 +736,43 @@ func TestTriggerUsesConfiguredReviewerHarness(t *testing.T) {
 	}
 }
 
+func TestTriggerPassesResolvedReviewerAgentConfig(t *testing.T) {
+	store := &fakeStore{}
+	projects := fakeProjects{cfg: domain.ProjectConfig{
+		AgentConfig: domain.AgentConfig{Model: "claude-opus-4-5", Permissions: domain.PermissionModeAcceptEdits},
+		Reviewers: []domain.ReviewerConfig{{
+			Harness:     domain.ReviewerCodex,
+			AgentConfig: domain.AgentConfig{Model: "gpt-5-codex"},
+		}},
+	}}
+	launcher := &fakeLauncher{handle: "review-mer-1"}
+	eng := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), projects, launcher)
+
+	if _, err := eng.Trigger(context.Background(), "mer-1"); err != nil {
+		t.Fatalf("Trigger: %v", err)
+	}
+	if launcher.gotSpec.AgentConfig.Model != "gpt-5-codex" || launcher.gotSpec.AgentConfig.Permissions != domain.PermissionModeAcceptEdits {
+		t.Fatalf("reviewer agent config = %#v, want reviewer model plus base permissions", launcher.gotSpec.AgentConfig)
+	}
+}
+
+func TestTriggerDoesNotLeakCrossProviderBaseModelToReviewer(t *testing.T) {
+	store := &fakeStore{}
+	projects := fakeProjects{cfg: domain.ProjectConfig{
+		AgentConfig: domain.AgentConfig{Model: "claude-opus-4-5"},
+		Reviewers:   []domain.ReviewerConfig{{Harness: domain.ReviewerCodex}},
+	}}
+	launcher := &fakeLauncher{handle: "review-mer-1"}
+	eng := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), projects, launcher)
+
+	if _, err := eng.Trigger(context.Background(), "mer-1"); err != nil {
+		t.Fatalf("Trigger: %v", err)
+	}
+	if launcher.gotSpec.AgentConfig.Model != "" {
+		t.Fatalf("reviewer model = %q, want empty incompatible base model filtered", launcher.gotSpec.AgentConfig.Model)
+	}
+}
+
 func TestTriggerRejectsBadWorkerState(t *testing.T) {
 	t.Run("unknown worker", func(t *testing.T) {
 		eng := newEngineForTest(&fakeStore{}, fakeSessions{ok: false}, prAt("sha1"), fakeProjects{}, &fakeLauncher{})

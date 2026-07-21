@@ -26,6 +26,17 @@ type DaemonSetting struct {
 	FleetPaused bool
 }
 
+type ModelHealth struct {
+	ProjectID  domain.ProjectID
+	Harness    domain.AgentHarness
+	Model      string
+	Status     domain.ModelAvailabilityStatus
+	Reason     domain.ModelAvailabilityReason
+	Message    string
+	ObservedAt time.Time
+	UpdatedAt  time.Time
+}
+
 type Notification struct {
 	ID        string
 	SessionID *domain.SessionID
