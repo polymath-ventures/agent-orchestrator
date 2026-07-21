@@ -52,6 +52,12 @@ var (
 	// candidate down — being busy is not evidence a harness is broken. Tracker
 	// intake matches it with errors.Is to defer an issue rather than fail it.
 	ErrWorkerConcurrencyCap = errors.New("session: worker concurrency cap reached")
+	// ErrProjectPaused means the project — or the fleet — is paused, so a new
+	// worker spawn is refused. Like the concurrency cap it is returned before any
+	// durable state is created, so a refusal leaves nothing to roll back and marks
+	// no candidate down. Orchestrator spawns and forced spawns are exempt. Tracker
+	// intake matches it with errors.Is to skip quietly rather than fail the issue.
+	ErrProjectPaused = errors.New("session: project paused")
 	// ErrNotResumable means a terminated session cannot be relaunched: its adapter
 	// cannot natively resume it AND it has no prompt to fresh-launch from, and it is
 	// not an orchestrator (orchestrators are promptless by design and relaunch fresh
@@ -135,6 +141,9 @@ type Store interface {
 	// GetProject loads a project row so spawn can resolve its per-project agent
 	// config into the launch command. ok=false means the project is unknown.
 	GetProject(ctx context.Context, id string) (domain.ProjectRecord, bool, error)
+	// GetFleetPaused reads the daemon-global fleet pause flag so the spawn guard
+	// can refuse new worker sessions fleet-wide, independent of any project bit.
+	GetFleetPaused(ctx context.Context) (bool, error)
 	ListWorkspaceRepos(ctx context.Context, projectID string) ([]domain.WorkspaceRepoRecord, error)
 	CreateSession(ctx context.Context, rec domain.SessionRecord) (domain.SessionRecord, error)
 	UpdateSession(ctx context.Context, rec domain.SessionRecord) error
@@ -312,6 +321,13 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	project, err := m.loadProject(ctx, cfg.ProjectID)
 	if err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("spawn: %w", err)
+	}
+	// Refuse new work when the project or the fleet is paused, before any durable
+	// state is created. This is the authoritative spawn-side gate that also covers
+	// direct HTTP/CLI spawns bypassing tracker intake. Orchestrators and forced
+	// spawns are exempt.
+	if err := m.guardPaused(ctx, project, cfg); err != nil {
+		return domain.SessionRecord{}, err
 	}
 	// Enforce the per-project live-worker cap before anything else: no durable
 	// row, no workspace, no mix or candidate-health consultation. Placed ahead
@@ -513,6 +529,27 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 // project yields a zero record rather than an error: the project may be
 // unregistered yet still have live sessions, and an empty config simply means
 // every field falls back to its default.
+// guardPaused refuses a worker spawn when the project or the fleet is paused.
+// Orchestrator spawns and forced spawns are exempt so supervision keeps running
+// and an operator retains a manual override. The fleet-flag read fails open: a
+// storage blip must not wedge spawning (the same fail-open posture the read
+// model uses).
+func (m *Manager) guardPaused(ctx context.Context, project domain.ProjectRecord, cfg ports.SpawnConfig) error {
+	if cfg.Force || cfg.Kind == domain.KindOrchestrator {
+		return nil
+	}
+	scope := ""
+	if project.Paused {
+		scope = "project"
+	} else if fleetPaused, err := m.store.GetFleetPaused(ctx); err == nil && fleetPaused {
+		scope = "fleet"
+	}
+	if scope == "" {
+		return nil
+	}
+	return fmt.Errorf("spawn: %w: %s scope; resume it or pass Force to override", ErrProjectPaused, scope)
+}
+
 func (m *Manager) loadProject(ctx context.Context, projectID domain.ProjectID) (domain.ProjectRecord, error) {
 	row, ok, err := m.store.GetProject(ctx, string(projectID))
 	if err != nil {

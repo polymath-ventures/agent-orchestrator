@@ -30,4 +30,9 @@ type SpawnConfig struct {
 	// DisplayName is the user-facing sidebar label. Empty falls back to the
 	// session id in the read model (e.g. orchestrator sessions).
 	DisplayName string
+
+	// Force overrides the pause guard: a forced worker spawn proceeds even while
+	// the project or fleet is paused. It is the manual escape hatch for an
+	// operator who needs work started during a pause.
+	Force bool
 }
