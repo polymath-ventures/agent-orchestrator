@@ -1076,7 +1076,7 @@ export interface components {
             target: components["schemas"]["NotificationTarget"];
             title: string;
             /** @enum {string} */
-            type: "needs_input" | "ready_to_merge" | "pr_merged" | "pr_closed_unmerged" | "low_quota";
+            type: "needs_input" | "ready_to_merge" | "pr_merged" | "pr_closed_unmerged" | "low_quota" | "model_unreachable" | "model_recovered" | "prime_restart_capped";
         };
         NotificationTarget: {
             /** @enum {string} */
@@ -1997,6 +1997,10 @@ export interface operations {
                 status?: "unread";
                 /** @description Maximum notifications to return. Defaults to 50; capped at 100. */
                 limit?: number;
+                /** @description Exclusive RFC3339 createdAt cursor; requires beforeId. */
+                before?: string;
+                /** @description Exclusive notification id cursor tiebreak; requires before. */
+                beforeId?: string;
             };
             header?: never;
             path?: never;

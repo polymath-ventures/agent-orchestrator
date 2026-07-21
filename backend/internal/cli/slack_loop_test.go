@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -214,6 +215,51 @@ func TestSlackNotifyDeliversUnreadBacklogOnStartup(t *testing.T) {
 	waitForPath(t, daemon, "/api/v1/notifications/stream")
 	waitForPath(t, daemon, "/api/v1/notifications")
 	expectCleanShutdown(t, cancel, errCh)
+}
+
+func TestSlackNotifyFirstRunSeedsBacklogWithoutPosting(t *testing.T) {
+	sink := newSlackSink(t)
+	daemon := newFakeDaemon(t, &fakeDaemon{
+		unread: func(int) []slackNotification {
+			return []slackNotification{{ID: "ntf_old", Type: "pr_merged", Title: "historical", CreatedAt: time.Now()}}
+		},
+		stream: func(_ *testing.T, _ int, w http.ResponseWriter, flush func(), ctx context.Context) {
+			n := slackNotification{ID: "ntf_new", Type: "needs_input", Title: "new work"}
+			data, _ := json.Marshal(n)
+			_, _ = fmt.Fprintf(w, "event: notification_created\ndata: %s\n\n", data)
+			flush()
+			<-ctx.Done()
+		},
+	})
+	fastReconnect(t)
+	cfg := setConfigEnv(t)
+	writeRunFileFor(t, cfg, daemon.srv)
+	statePath := filepath.Join(t.TempDir(), "fresh-state.json")
+	t.Setenv(slackStateEnv, statePath)
+	ctx := &commandContext{deps: Deps{HTTPClient: &http.Client{}, ProcessAlive: func(int) bool { return true }}.withDefaults()}
+	runCtx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() { errCh <- ctx.runSlackNotify(runCtx, slackNotifyOptions{webhookURL: sink.srv.URL}) }()
+	got := sink.waitFor(t, 1)
+	if len(got) != 1 || !strings.Contains(got[0], "new work") || strings.Contains(got[0], "historical") {
+		t.Fatalf("deliveries = %v", got)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		state, err := loadSlackDeliveryState()
+		if err == nil && state.contains("ntf_new") {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("new delivery was not persisted: state=%+v err=%v", state, err)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	expectCleanShutdown(t, cancel, errCh)
+	state, err := loadSlackDeliveryState()
+	if err != nil || !state.Initialized || !state.contains("ntf_old") || !state.contains("ntf_new") {
+		t.Fatalf("state=%+v err=%v", state, err)
+	}
 }
 
 func containsPath(paths []string, want string) bool {

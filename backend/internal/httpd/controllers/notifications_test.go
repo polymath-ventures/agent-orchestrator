@@ -127,6 +127,31 @@ func TestNotificationsAPI_DefaultsAndCapsLimit(t *testing.T) {
 	}
 }
 
+func TestNotificationsAPI_ParsesUnreadCursor(t *testing.T) {
+	svc := &fakeNotificationService{}
+	srv := newNotificationTestServer(t, svc)
+	before := "2026-07-21T12:00:00.123Z"
+	_, status, _ := doRequest(t, srv, "GET", "/api/v1/notifications?limit=10&before="+before+"&beforeId=ntf_2", "")
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200", status)
+	}
+	if svc.gotFilter.BeforeID != "ntf_2" || svc.gotFilter.Before.Format(time.RFC3339Nano) != before {
+		t.Fatalf("filter = %+v", svc.gotFilter)
+	}
+}
+
+func TestNotificationsAPI_RejectsPartialOrInvalidCursor(t *testing.T) {
+	srv := newNotificationTestServer(t, &fakeNotificationService{})
+	for _, path := range []string{
+		"/api/v1/notifications?before=2026-07-21T12:00:00Z",
+		"/api/v1/notifications?beforeId=ntf_2",
+		"/api/v1/notifications?before=not-a-time&beforeId=ntf_2",
+	} {
+		body, status, _ := doRequest(t, srv, "GET", path, "")
+		assertErrorCode(t, body, status, http.StatusBadRequest, "INVALID_QUERY")
+	}
+}
+
 func TestNotificationsAPI_RejectsUnsupportedStatus(t *testing.T) {
 	srv := newNotificationTestServer(t, &fakeNotificationService{})
 

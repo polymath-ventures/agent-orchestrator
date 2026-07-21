@@ -32,6 +32,8 @@ const (
 	// uses. It is accepted as a fallback so an operator's existing SLACK_WEBHOOK_URL
 	// works without duplicating it under the AO_ prefix.
 	slackWebhookEnvFallback = "SLACK_WEBHOOK_URL"
+	slackMemberEnv          = "AO_SLACK_MEMBER_ID"
+	slackMemberEnvFallback  = "SLACK_MEMBER_ID"
 
 	// slackUnreadLimit is the page size reconciliation asks for. The daemon caps
 	// unread listings at 100 and defaults to 50, so asking explicitly is the
@@ -130,14 +132,15 @@ func scrubWebhookURL(err error, webhookURL string) string {
 // slackNotification mirrors the daemon's NotificationResponse fields the Slack
 // channel renders. The CLI keeps its own copy so it need not import httpd.
 type slackNotification struct {
-	ID        string `json:"id"`
-	SessionID string `json:"sessionId"`
-	ProjectID string `json:"projectId"`
-	PRURL     string `json:"prUrl"`
-	Type      string `json:"type"`
-	Title     string `json:"title"`
-	Body      string `json:"body"`
-	Status    string `json:"status"`
+	ID        string    `json:"id"`
+	SessionID string    `json:"sessionId"`
+	ProjectID string    `json:"projectId"`
+	PRURL     string    `json:"prUrl"`
+	Type      string    `json:"type"`
+	Title     string    `json:"title"`
+	Body      string    `json:"body"`
+	Status    string    `json:"status"`
+	CreatedAt time.Time `json:"createdAt"`
 }
 
 // listNotificationsAPIResponse mirrors the daemon's ListNotificationsResponse
@@ -160,6 +163,14 @@ func notificationIcon(notificationType string) string {
 		return ":tada:"
 	case "pr_closed_unmerged":
 		return ":wastebasket:"
+	case "low_quota":
+		return ":warning:"
+	case "model_unreachable":
+		return ":brain:"
+	case "model_recovered":
+		return ":green_heart:"
+	case "prime_restart_capped":
+		return ":rotating_light:"
 	default:
 		return ":bell:"
 	}
@@ -179,11 +190,18 @@ func escapeSlackText(s string) string {
 // It is pure: the whole presentation of this feature lives here, so it can be
 // exercised without a daemon or a webhook.
 func renderNotification(n slackNotification) string {
+	return renderNotificationWithMember(n, "")
+}
+
+func renderNotificationWithMember(n slackNotification, memberID string) string {
 	title := strings.TrimSpace(n.Title)
 	if title == "" {
 		title = n.Type
 	}
 	parts := []string{notificationIcon(n.Type), "*" + escapeSlackText(title) + "*"}
+	if memberID != "" && isSlackAttentionType(n.Type) {
+		parts = append([]string{"<@" + escapeSlackText(memberID) + ">"}, parts...)
+	}
 	if body := strings.TrimSpace(n.Body); body != "" {
 		parts = append(parts, "— "+escapeSlackText(body))
 	}
@@ -199,6 +217,15 @@ func renderNotification(n slackNotification) string {
 	}
 	// Collapse newlines so one notification is always one Slack line.
 	return strings.Join(strings.Fields(strings.Join(parts, " ")), " ")
+}
+
+func isSlackAttentionType(notificationType string) bool {
+	switch notificationType {
+	case "needs_input", "prime_restart_capped", "model_unreachable":
+		return true
+	default:
+		return false
+	}
 }
 
 // syncLogger serializes stderr writes. Multiple goroutines (the delivery
@@ -231,13 +258,15 @@ func (l *syncLogger) printf(format string, args ...any) {
 // ones are read in the UI. Eviction therefore reintroduces duplicates. Entries
 // are a notification id apiece, so the ledger stays small in any realistic run.
 type slackDeliverer struct {
-	poster slackPoster
-	log    func(format string, args ...any)
-	queue  chan slackNotification
+	poster   slackPoster
+	log      func(format string, args ...any)
+	queue    chan slackNotification
+	state    *slackDeliveryState
+	memberID string
 }
 
-func newSlackDeliverer(poster slackPoster, log func(string, ...any)) *slackDeliverer {
-	return &slackDeliverer{poster: poster, log: log, queue: make(chan slackNotification, slackQueueBuffer)}
+func newSlackDeliverer(poster slackPoster, state *slackDeliveryState, memberID string, log func(string, ...any)) *slackDeliverer {
+	return &slackDeliverer{poster: poster, state: state, memberID: memberID, log: log, queue: make(chan slackNotification, slackQueueBuffer)}
 }
 
 // enqueue offers a notification for delivery. It drops into the buffered queue,
@@ -258,22 +287,23 @@ func (d *slackDeliverer) enqueue(ctx context.Context, n slackNotification) {
 // Slack accepts it, so a failed post is left unrecorded and re-offered by the
 // next reconcile pass — a Slack hiccup repeats a line at worst, never drops one.
 func (d *slackDeliverer) run(ctx context.Context) {
-	delivered := map[string]struct{}{}
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case n := <-d.queue:
-			if _, seen := delivered[n.ID]; seen {
+			if d.state.contains(n.ID) {
 				continue
 			}
-			if err := d.poster.post(ctx, renderNotification(n)); err != nil {
+			if err := d.poster.post(ctx, renderNotificationWithMember(n, d.memberID)); err != nil {
 				if ctx.Err() == nil {
 					d.log("delivery failed for %s (will retry): %v", n.ID, err)
 				}
 				continue
 			}
-			delivered[n.ID] = struct{}{}
+			if err := d.state.record(n.ID); err != nil {
+				d.log("could not persist delivery for %s (will retry): %v", n.ID, err)
+			}
 		}
 	}
 }
@@ -336,6 +366,10 @@ func (c *commandContext) runSlackNotify(ctx context.Context, opts slackNotifyOpt
 	if webhookURL == "" {
 		webhookURL = strings.TrimSpace(os.Getenv(slackWebhookEnv))
 	}
+	memberID := strings.TrimSpace(os.Getenv(slackMemberEnv))
+	if memberID == "" {
+		memberID = strings.TrimSpace(os.Getenv(slackMemberEnvFallback))
+	}
 	if webhookURL == "" {
 		webhookURL = strings.TrimSpace(os.Getenv(slackWebhookEnvFallback))
 	}
@@ -346,7 +380,24 @@ func (c *commandContext) runSlackNotify(ctx context.Context, opts slackNotifyOpt
 	client := *c.deps.HTTPClient
 	client.Timeout = commandTimeout
 	logger := &syncLogger{w: c.deps.Err}
-	deliverer := newSlackDeliverer(slackPoster{client: &client, webhookURL: webhookURL}, logger.printf)
+	state, err := loadSlackDeliveryState()
+	if err != nil {
+		return err
+	}
+	if !state.Initialized {
+		unread, err := c.listUnreadSlack(ctx)
+		if err != nil {
+			return fmt.Errorf("seed Slack delivery state: %w", err)
+		}
+		ids := make([]string, 0, len(unread))
+		for _, n := range unread {
+			ids = append(ids, n.ID)
+		}
+		if err := state.initialize(ids); err != nil {
+			return err
+		}
+	}
+	deliverer := newSlackDeliverer(slackPoster{client: &client, webhookURL: webhookURL}, state, memberID, logger.printf)
 
 	// A local context so a fatal stream error (never-reachable daemon) tears
 	// down the worker and reconcile loop too.
@@ -372,7 +423,7 @@ func (c *commandContext) runSlackNotify(ctx context.Context, opts slackNotifyOpt
 	// The stream loop runs in the foreground and returns an error only when the
 	// FIRST connection fails — a daemon that was never reachable is an operator
 	// error worth exiting on (exit 1). Once connected, drops are transient.
-	err := c.streamLoop(runCtx, deliverer, logger, reconcileNow)
+	err = c.streamLoop(runCtx, deliverer, logger, reconcileNow)
 	cancel()
 	wg.Wait()
 	return err
@@ -396,11 +447,26 @@ func pokeReconcile(ch chan struct{}) {
 func (c *commandContext) streamLoop(ctx context.Context, deliverer *slackDeliverer, logger *syncLogger, reconcileNow chan struct{}) error {
 	connected := false
 	backoff := slackReconnectDelay
+	consecutiveErrors := 0
+	outageAlerted := false
 	for ctx.Err() == nil {
 		resp, err := c.openNotificationStream(ctx)
 		if err != nil {
 			if !connected && ctx.Err() == nil {
 				return err
+			}
+			consecutiveErrors++
+			if consecutiveErrors >= 3 && !outageAlerted && ctx.Err() == nil {
+				prefix := ""
+				if deliverer.memberID != "" {
+					prefix = "<@" + escapeSlackText(deliverer.memberID) + "> "
+				}
+				text := prefix + ":adhesive_bandage: *daemon_unreachable* Slack notifier cannot reach AO notifications — alerts may be delayed until catch-up succeeds."
+				if postErr := deliverer.poster.post(ctx, text); postErr != nil {
+					logger.printf("daemon-unreachable alert failed: %v", postErr)
+				} else {
+					outageAlerted = true
+				}
 			}
 			logger.printf("reconnecting after stream error: %v", err)
 			waitOrDone(ctx, backoff)
@@ -410,6 +476,8 @@ func (c *commandContext) streamLoop(ctx context.Context, deliverer *slackDeliver
 			continue
 		}
 		connected = true
+		consecutiveErrors = 0
+		outageAlerted = false
 		backoff = slackReconnectDelay
 		pokeReconcile(reconcileNow)
 
@@ -474,19 +542,46 @@ func (c *commandContext) openNotificationStream(ctx context.Context) (*http.Resp
 // with no replay, so the unread listing is the only way to recover anything the
 // stream missed.
 func (c *commandContext) reconcileSlack(ctx context.Context, deliverer *slackDeliverer, logger *syncLogger) {
-	var listed listNotificationsAPIResponse
-	if err := c.getJSON(ctx, "notifications?status=unread&limit="+strconv.Itoa(slackUnreadLimit), &listed); err != nil {
+	all, err := c.listUnreadSlack(ctx)
+	if err != nil {
 		if ctx.Err() == nil {
 			logger.printf("could not reconcile unread notifications: %v", err)
 		}
 		return
 	}
-	for _, n := range listed.Notifications {
+	for i := len(all) - 1; i >= 0; i-- {
 		if ctx.Err() != nil {
 			return
 		}
-		deliverer.enqueue(ctx, n)
+		deliverer.enqueue(ctx, all[i])
 	}
+}
+
+func (c *commandContext) listUnreadSlack(ctx context.Context) ([]slackNotification, error) {
+	var all []slackNotification
+	var before time.Time
+	var beforeID string
+	for ctx.Err() == nil {
+		values := url.Values{"status": {"unread"}, "limit": {strconv.Itoa(slackUnreadLimit)}}
+		if !before.IsZero() {
+			values.Set("before", before.Format(time.RFC3339Nano))
+			values.Set("beforeId", beforeID)
+		}
+		var listed listNotificationsAPIResponse
+		if err := c.getJSON(ctx, "notifications?"+values.Encode(), &listed); err != nil {
+			return nil, err
+		}
+		all = append(all, listed.Notifications...)
+		if len(listed.Notifications) < slackUnreadLimit {
+			break
+		}
+		last := listed.Notifications[len(listed.Notifications)-1]
+		if last.CreatedAt.IsZero() || last.ID == "" || (last.CreatedAt.Equal(before) && last.ID == beforeID) {
+			return nil, errors.New("could not advance unread notification cursor")
+		}
+		before, beforeID = last.CreatedAt, last.ID
+	}
+	return all, nil
 }
 
 // consumeSlackStream reads SSE frames until the stream ends or ctx is done,

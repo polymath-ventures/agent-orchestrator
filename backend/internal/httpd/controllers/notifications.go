@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -34,6 +35,8 @@ type NotificationsController struct {
 	Stream        NotificationStream
 	StreamContext context.Context
 }
+
+var notificationHeartbeatInterval = 20 * time.Second
 
 // Register mounts bounded notification REST routes on the supplied router.
 func (c *NotificationsController) Register(r chi.Router) {
@@ -122,11 +125,18 @@ func (c *NotificationsController) stream(w http.ResponseWriter, r *http.Request)
 	h.Set("X-Accel-Buffering", "no")
 	w.WriteHeader(http.StatusOK)
 	flusher.Flush()
+	heartbeat := time.NewTicker(notificationHeartbeatInterval)
+	defer heartbeat.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-heartbeat.C:
+			if _, err := fmt.Fprint(w, ": keepalive\n\n"); err != nil {
+				return
+			}
+			flusher.Flush()
 		case rec, ok := <-ch:
 			if !ok {
 				return
@@ -174,12 +184,26 @@ func parseNotificationListFilter(r *http.Request) (notificationsvc.ListFilter, e
 	if limit > notificationsvc.MaxListLimit {
 		limit = notificationsvc.MaxListLimit
 	}
-	return notificationsvc.ListFilter{Limit: limit}, nil
+	beforeRaw, beforeID := q.Get("before"), q.Get("beforeId")
+	if (beforeRaw == "") != (beforeID == "") {
+		return notificationsvc.ListFilter{}, errNotificationCursorIncomplete
+	}
+	var before time.Time
+	if beforeRaw != "" {
+		parsed, err := time.Parse(time.RFC3339Nano, beforeRaw)
+		if err != nil {
+			return notificationsvc.ListFilter{}, errNotificationCursorInvalid
+		}
+		before = parsed
+	}
+	return notificationsvc.ListFilter{Limit: limit, Before: before, BeforeID: beforeID}, nil
 }
 
 var (
 	errNotificationStatusUnsupported = notificationQueryError("status must be unread")
 	errNotificationLimitInvalid      = notificationQueryError("limit must be a positive integer")
+	errNotificationCursorIncomplete  = notificationQueryError("before and beforeId must be provided together")
+	errNotificationCursorInvalid     = notificationQueryError("before must be an RFC3339 timestamp")
 )
 
 type notificationQueryError string

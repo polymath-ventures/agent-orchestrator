@@ -1,7 +1,11 @@
 // Package notification exposes read-only notification DTOs for REST controllers.
 package notification
 
-import "github.com/aoagents/agent-orchestrator/backend/internal/domain"
+import (
+	"time"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+)
 
 // TargetKind describes what a dashboard should navigate to for a notification.
 type TargetKind string
@@ -30,5 +34,7 @@ type Notification struct {
 
 // ListFilter controls unread notification listing.
 type ListFilter struct {
-	Limit int
+	Limit    int
+	Before   time.Time
+	BeforeID string
 }

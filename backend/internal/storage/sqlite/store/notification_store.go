@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"time"
 
 	moderncsqlite "modernc.org/sqlite"
 	sqlite3 "modernc.org/sqlite/lib"
@@ -62,6 +63,18 @@ func (s *Store) ListUnreadNotifications(ctx context.Context, limit int) ([]domai
 	rows, err := s.qr.ListUnreadNotifications(ctx, int64(limit))
 	if err != nil {
 		return nil, fmt.Errorf("list unread notifications: %w", err)
+	}
+	return notificationsFromGen(rows), nil
+}
+
+// ListUnreadNotificationsBefore returns unread notifications older than the
+// stable (created_at, id) cursor, newest-first.
+func (s *Store) ListUnreadNotificationsBefore(ctx context.Context, before time.Time, beforeID string, limit int) ([]domain.NotificationRecord, error) {
+	rows, err := s.qr.ListUnreadNotificationsBefore(ctx, gen.ListUnreadNotificationsBeforeParams{
+		CreatedAt: before, CreatedAt_2: before, ID: beforeID, Limit: int64(limit),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list unread notifications before cursor: %w", err)
 	}
 	return notificationsFromGen(rows), nil
 }

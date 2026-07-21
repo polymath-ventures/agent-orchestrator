@@ -36,7 +36,13 @@ func (m *Manager) ListUnread(ctx context.Context, filter ListFilter) ([]Notifica
 		return nil, errors.New("notification: store is required")
 	}
 	limit := normalizeLimit(filter.Limit)
-	rows, err := m.store.ListUnreadNotifications(ctx, limit)
+	var rows []domain.NotificationRecord
+	var err error
+	if filter.Before.IsZero() {
+		rows, err = m.store.ListUnreadNotifications(ctx, limit)
+	} else {
+		rows, err = m.store.ListUnreadNotificationsBefore(ctx, filter.Before, filter.BeforeID, limit)
+	}
 	if err != nil {
 		return nil, err
 	}

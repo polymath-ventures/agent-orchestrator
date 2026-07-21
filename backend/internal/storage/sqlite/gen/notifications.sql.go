@@ -95,12 +95,67 @@ const listUnreadNotifications = `-- name: ListUnreadNotifications :many
 SELECT id, session_id, project_id, pr_url, dedupe_key, type, title, body, status, created_at
 FROM notifications
 WHERE status = 'unread'
-ORDER BY created_at DESC
+ORDER BY created_at DESC, id DESC
 LIMIT ?
 `
 
 func (q *Queries) ListUnreadNotifications(ctx context.Context, limit int64) ([]Notification, error) {
 	rows, err := q.db.QueryContext(ctx, listUnreadNotifications, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Notification{}
+	for rows.Next() {
+		var i Notification
+		if err := rows.Scan(
+			&i.ID,
+			&i.SessionID,
+			&i.ProjectID,
+			&i.PRURL,
+			&i.DedupeKey,
+			&i.Type,
+			&i.Title,
+			&i.Body,
+			&i.Status,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listUnreadNotificationsBefore = `-- name: ListUnreadNotificationsBefore :many
+SELECT id, session_id, project_id, pr_url, dedupe_key, type, title, body, status, created_at
+FROM notifications
+WHERE status = 'unread'
+  AND (created_at < ? OR (created_at = ? AND id < ?))
+ORDER BY created_at DESC, id DESC
+LIMIT ?
+`
+
+type ListUnreadNotificationsBeforeParams struct {
+	CreatedAt   time.Time
+	CreatedAt_2 time.Time
+	ID          string
+	Limit       int64
+}
+
+func (q *Queries) ListUnreadNotificationsBefore(ctx context.Context, arg ListUnreadNotificationsBeforeParams) ([]Notification, error) {
+	rows, err := q.db.QueryContext(ctx, listUnreadNotificationsBefore,
+		arg.CreatedAt,
+		arg.CreatedAt_2,
+		arg.ID,
+		arg.Limit,
+	)
 	if err != nil {
 		return nil, err
 	}
