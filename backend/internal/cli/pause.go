@@ -27,7 +27,7 @@ func newPauseCommand(ctx *commandContext) *cobra.Command {
 			"(a distinct global flag, so a project registered while paused starts paused).\n\n" +
 			"--hard terminates the project's live workers immediately instead of " +
 			"draining at idle; --hard --all also terminates orchestrators (emergency stop).",
-		Args:  pauseTargetArgs,
+		Args: pauseTargetArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runPauseResume(ctx, cmd, args, all, true, hard)
 		},
