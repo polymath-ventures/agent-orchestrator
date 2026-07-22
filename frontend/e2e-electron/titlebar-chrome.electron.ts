@@ -26,6 +26,13 @@ test("macOS Electron titlebar cluster clears the native traffic lights", async (
 	await mkdir(outputDir, { recursive: true });
 	const executablePath = path.join(appPath, "Contents", "MacOS", "agent-orchestrator");
 	const dataDir = path.join(process.env.RUNNER_TEMP || outputDir, `ao-titlebar-smoke-data-${process.pid}`);
+	// main.ts reparents Electron state (including DevToolsActivePort) under
+	// ~/.ao/electron before app.whenReady. A fresh hosted runner has no ~/.ao,
+	// and Chromium cannot complete its remote-debugging handshake if this parent
+	// is missing.
+	await mkdir(path.join(process.env.HOME || process.env.USERPROFILE || outputDir, ".ao", "electron"), {
+		recursive: true,
+	});
 
 	const electronApp = await electron.launch({
 		executablePath,
