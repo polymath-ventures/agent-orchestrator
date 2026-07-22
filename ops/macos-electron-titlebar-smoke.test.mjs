@@ -68,6 +68,16 @@ test("smoke verifies bridge, native buttons, cluster geometry, and screenshots",
 	assert.match(smoke, /geometry\.json/);
 });
 
+test("smoke compares native and renderer geometry in the same window-local frame", () => {
+	assert.match(smoke, /const wins=p\.windows\(\)/);
+	assert.match(smoke, /\.find\(w=>btns\(w\)\.some/);
+	assert.match(smoke, /const wp=win\.position\(\)/);
+	assert.match(smoke, /b\.position\(\)\[0\]-wp\[0\]/);
+	assert.match(smoke, /b\.position\(\)\[1\]-wp\[1\]/);
+	assert.match(smoke, /nativeWindow: nativeMeasurement\.window/);
+	assert.doesNotMatch(smoke, /p\.windows\[0\]\.buttons/);
+});
+
 test("smoke creates Electron userData before the remote-debugging launch", () => {
 	assert.match(workflow, /\$HOME\/\.ao\/electron/);
 });

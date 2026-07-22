@@ -47,18 +47,28 @@ test("macOS Electron titlebar cluster clears the native traffic lights", async (
 		const clusterBox = await cluster.boundingBox();
 		expect(clusterBox, "TitlebarNav must have measurable renderer geometry").not.toBeNull();
 
-		const { stdout: nativeButtonsJson } = await execFileAsync("/usr/bin/osascript", [
+		// System Events AXPosition is in global screen coordinates for every
+		// element, while Playwright boundingBox() is window/viewport-local. Read
+		// the owning window's AX origin and translate the button positions into
+		// window-local space so the two measurements share a frame regardless of
+		// where the compositor placed the window. Pick the window that actually
+		// exposes the traffic-light buttons rather than assuming index 0.
+		const { stdout: nativeMeasurementJson } = await execFileAsync("/usr/bin/osascript", [
 			"-l",
 			"JavaScript",
 			"-e",
-			`const se=Application('System Events');const p=se.processes.whose({unixId:${appPid}})[0];JSON.stringify(p.windows[0].buttons().map(b=>({description:b.description(),position:b.position(),size:b.size()})))`,
+			`const se=Application('System Events');const p=se.processes.whose({unixId:${appPid}})[0];const wins=p.windows();const btns=w=>{try{return w.buttons()}catch(e){return[]}};const win=wins.find(w=>btns(w).some(b=>/close|minimize|zoom|full.?screen/i.test(b.description())))||wins[0];const wp=win.position();JSON.stringify({window:{position:wp,size:win.size()},buttons:btns(win).map(b=>({description:b.description(),position:[b.position()[0]-wp[0],b.position()[1]-wp[1]],size:b.size()}))})`,
 		]);
-		const nativeButtons = JSON.parse(nativeButtonsJson) as Array<{
-			description: string;
-			position: [number, number];
-			size: [number, number];
-		}>;
-		await writeFile(path.join(outputDir, "native-buttons.json"), `${JSON.stringify(nativeButtons, null, 2)}\n`);
+		const nativeMeasurement = JSON.parse(nativeMeasurementJson) as {
+			window: { position: [number, number]; size: [number, number] };
+			buttons: Array<{
+				description: string;
+				position: [number, number];
+				size: [number, number];
+			}>;
+		};
+		const nativeButtons = nativeMeasurement.buttons;
+		await writeFile(path.join(outputDir, "native-buttons.json"), `${JSON.stringify(nativeMeasurement, null, 2)}\n`);
 		const windowButtons = nativeButtons.filter((button) =>
 			/close|minimize|zoom|full.?screen/i.test(button.description),
 		);
@@ -106,6 +116,7 @@ test("macOS Electron titlebar cluster clears the native traffic lights", async (
 					platform: process.platform,
 					arch: process.arch,
 					environment,
+					nativeWindow: nativeMeasurement.window,
 					nativePosition,
 					nativeButtons,
 					nativeButtonLane,
