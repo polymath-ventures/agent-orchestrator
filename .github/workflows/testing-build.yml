@@ -28,7 +28,7 @@ jobs:
         include:
           - os: ubuntu-latest
             target: "@electron-forge/maker-deb"
-          - os: blacksmith-4vcpu-windows-2025
+          - os: windows-2025
             # Our custom NSIS maker's `name` (see makers/maker-nsis.ts); forge
             # `--targets` matches the configured maker instance by this name.
             target: "nsis"
