@@ -72,6 +72,19 @@ const session: WorkspaceSession = {
 	prs: [],
 };
 
+const primeSession: WorkspaceSession = {
+	id: "ao-prime",
+	workspaceId: "proj-1",
+	workspaceName: "Project One",
+	title: "AO Prime",
+	provider: "codex",
+	kind: "prime",
+	branch: "ao/ao-prime",
+	status: "idle",
+	updatedAt: "2026-06-30T00:00:00Z",
+	prs: [],
+};
+
 type CreateProjectInput = {
 	path: string;
 	workerAgent: string;
@@ -88,12 +101,14 @@ function renderSidebar({
 	onCreateProject = vi.fn().mockResolvedValue(undefined) as CreateProjectHandler,
 	onInitializeProject = vi.fn().mockResolvedValue(undefined) as InitializeProjectHandler,
 	onRemoveProject = vi.fn().mockResolvedValue(undefined) as RemoveProjectHandler,
+	primeSession,
 	seedAgents = true,
 	workspaces = [workspace],
 }: {
 	onCreateProject?: CreateProjectHandler;
 	onInitializeProject?: InitializeProjectHandler;
 	onRemoveProject?: RemoveProjectHandler;
+	primeSession?: WorkspaceSession;
 	seedAgents?: boolean;
 	workspaces?: WorkspaceSummary[];
 } = {}) {
@@ -127,6 +142,7 @@ function renderSidebar({
 					onCreateProject={onCreateProject}
 					onInitializeProject={onInitializeProject}
 					onRemoveProject={onRemoveProject}
+					primeSession={primeSession}
 					workspaces={workspaces}
 				/>
 			</SidebarProvider>
@@ -210,6 +226,16 @@ afterEach(() => {
 });
 
 describe("Sidebar", () => {
+	it("renders prime as a top-level global session and not a project child", async () => {
+		const user = userEvent.setup();
+		renderSidebar({ primeSession, workspaces: [{ ...workspace, sessions: [session, primeSession] }] });
+
+		await user.click(screen.getByRole("button", { name: "Open AO Prime" }));
+
+		expect(navigateMock).toHaveBeenCalledWith({ to: "/sessions/$sessionId", params: { sessionId: "ao-prime" } });
+		expect(screen.getAllByRole("button", { name: "Open AO Prime" })).toHaveLength(1);
+	});
+
 	it("shows a ConfirmDialog and calls onRemoveProject when confirmed", async () => {
 		const user = userEvent.setup();
 		const onRemoveProject = renderSidebar();

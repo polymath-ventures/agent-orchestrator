@@ -26,7 +26,7 @@ import { applyDocumentTheme } from "../lib/theme";
 import { aoBridge } from "../lib/bridge";
 import { isLinuxPlatform, isMacPlatform, isWindowsPlatform, usesFramedAppTopbar } from "../lib/platform";
 import { useUiStore } from "../stores/ui-store";
-import type { WorkspaceSummary } from "../types/workspace";
+import { findFleetPrime, type WorkspaceSummary } from "../types/workspace";
 import type { components } from "../../api/schema";
 
 export const Route = createFileRoute("/_shell")({
@@ -82,6 +82,7 @@ function ShellLayout() {
 	const queryClient = useQueryClient();
 	const workspaceQuery = useWorkspaceQuery();
 	const workspaces = workspaceQuery.data ?? [];
+	const primeSession = findFleetPrime(workspaces);
 	const daemonStatus = useDaemonStatus(queryClient);
 	const agentCatalogPortRef = useRef<number | undefined>(undefined);
 	const { themePreference, resolvedTheme, isSidebarOpen, toggleSidebar } = useUiStore();
@@ -359,6 +360,7 @@ function ShellLayout() {
 					{/* Hang the fixed sidebar below shell chrome. macOS keeps room for the traffic-light/titlebar controls; Windows clears only its custom titlebar because the app topbar is inside the framed panel. When the topbar lives inside the framed panel (framedAppTopbar), Linux reserves no offset — otherwise the sidebar would clear a full-width topbar that isn't there. */}
 					<Sidebar
 						hideEdgeBorder={isWelcomeBoard}
+						primeSession={primeSession}
 						underTopbar={
 							isMac || isWindows || (!framedAppTopbar && !hideShellTopbar && (isLinux ? isSessionRoute : true))
 						}

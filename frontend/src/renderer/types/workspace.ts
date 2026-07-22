@@ -274,6 +274,16 @@ export function newestActiveOrchestrator(sessions: WorkspaceSession[]): Workspac
 	);
 }
 
+export function findFleetPrime(workspaces: WorkspaceSummary[]): WorkspaceSession | undefined {
+	const active = workspaces
+		.flatMap((workspace) => workspace.sessions)
+		.filter((session) => isPrimeSession(session) && sessionIsActive(session));
+	return active.reduce<WorkspaceSession | undefined>(
+		(newest, session) => (!newest || sessionNewer(session, newest) ? session : newest),
+		undefined,
+	);
+}
+
 function sessionNewer(a: WorkspaceSession, b: WorkspaceSession): boolean {
 	const aCreated = timestamp(a.createdAt);
 	const bCreated = timestamp(b.createdAt);

@@ -1075,6 +1075,14 @@ export interface components {
             agentConfig?: components["schemas"]["AgentConfig"];
             harness: string;
         };
+        DomainWakeBackoffConfig: {
+            /** @description Positive Go duration for the reset/base wake interval. Empty inherits wakeInterval. */
+            base?: string;
+            /** @description When false, keep fixed-interval wake behavior at the base interval instead of exponential idle backoff. Defaults to true. */
+            enabled?: null | boolean;
+            /** @description Positive Go duration cap for exponential idle wake backoff. Empty uses the daemon default. */
+            max?: string;
+        };
         ImportReport: {
             dryRun: boolean;
             notes?: string[];
@@ -1409,6 +1417,9 @@ export interface components {
         RoleOverride: {
             agent?: string;
             agentConfig?: components["schemas"]["AgentConfig"];
+            wakeBackoff?: components["schemas"]["DomainWakeBackoffConfig"];
+            /** @description Prime role only. Positive Go duration string such as 15m; empty uses the daemon default. */
+            wakeInterval?: string;
         };
         RollbackSessionResponse: {
             deleted?: boolean;

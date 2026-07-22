@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
 	attentionZone,
 	canonicalTrackerIssueId,
+	findFleetPrime,
 	findProjectOrchestrator,
 	newestActiveOrchestrator,
 	orchestratorHealth,
@@ -219,6 +220,37 @@ describe("workerSessions", () => {
 		const prime = sessionWith({ id: "skills-prime", kind: "prime" });
 
 		expect(workerSessions([worker, orchestrator, prime])).toEqual([worker]);
+	});
+});
+
+describe("findFleetPrime", () => {
+	function workspaceWith(id: string, sessions: WorkspaceSession[]): WorkspaceSummary {
+		return { id, name: id, path: `/tmp/${id}`, sessions };
+	}
+
+	it("selects the newest active prime across projects", () => {
+		const older = sessionWith({
+			id: "ao-prime-old",
+			kind: "prime",
+			status: "idle",
+			createdAt: "2026-01-01T00:00:00Z",
+			updatedAt: "2026-01-01T00:00:00Z",
+		});
+		const newer = sessionWith({
+			id: "ao-prime-new",
+			kind: "prime",
+			status: "working",
+			createdAt: "2026-01-02T00:00:00Z",
+			updatedAt: "2026-01-02T00:00:00Z",
+		});
+		const worker = sessionWith({ id: "ao-1", kind: "worker", status: "working" });
+
+		expect(findFleetPrime([workspaceWith("ao", [older, worker]), workspaceWith("meta", [newer])])).toBe(newer);
+	});
+
+	it("ignores terminated prime sessions", () => {
+		const dead = sessionWith({ id: "ao-prime", kind: "prime", status: "terminated" });
+		expect(findFleetPrime([workspaceWith("ao", [dead])])).toBeUndefined();
 	});
 });
 

@@ -1,6 +1,9 @@
 package domain
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestProjectConfigValidate(t *testing.T) {
 	tests := []struct {
@@ -23,6 +26,14 @@ func TestProjectConfigValidate(t *testing.T) {
 		{"good role override", ProjectConfig{Worker: RoleOverride{Harness: HarnessCodex}}, false},
 		{"unknown role harness", ProjectConfig{Orchestrator: RoleOverride{Harness: "nope"}}, true},
 		{"bad role agent config", ProjectConfig{Worker: RoleOverride{AgentConfig: AgentConfig{Permissions: "nope"}}}, true},
+		{"orchestrator wake interval unsupported", ProjectConfig{Orchestrator: RoleOverride{WakeInterval: "15m"}}, true},
+		{"orchestrator wake backoff unsupported", ProjectConfig{Orchestrator: RoleOverride{WakeBackoff: &WakeBackoffConfig{Enabled: boolPtr(true)}}}, true},
+		{"good prime wake interval", ProjectConfig{Prime: RoleOverride{WakeInterval: "30m"}}, false},
+		{"negative prime wake interval", ProjectConfig{Prime: RoleOverride{WakeInterval: "-1m"}}, true},
+		{"good prime wake backoff", ProjectConfig{Prime: RoleOverride{WakeBackoff: &WakeBackoffConfig{Enabled: boolPtr(true), Base: "15m", Max: "1h"}}}, false},
+		{"prime wake backoff max below base", ProjectConfig{Prime: RoleOverride{WakeBackoff: &WakeBackoffConfig{Base: "30m", Max: "15m"}}}, true},
+		{"worker wake interval unsupported", ProjectConfig{Worker: RoleOverride{WakeInterval: "15m"}}, true},
+		{"worker wake backoff unsupported", ProjectConfig{Worker: RoleOverride{WakeBackoff: &WakeBackoffConfig{Enabled: boolPtr(true)}}}, true},
 		{"good symlinks", ProjectConfig{Symlinks: []string{".env", "configs/dev.toml"}}, false},
 		{"symlink absolute path", ProjectConfig{Symlinks: []string{"/etc/passwd"}}, true},
 		{"symlink parent escape", ProjectConfig{Symlinks: []string{"../escape"}}, true},
@@ -134,6 +145,22 @@ func TestProjectConfigWithDefaults(t *testing.T) {
 	if got.WorkerMix != nil {
 		t.Fatalf("WithDefaults populated WorkerMix = %#v, want nil", got.WorkerMix)
 	}
+
+	got = (ProjectConfig{}).WithDefaults()
+	if got.Prime.WakeInterval != "15m" {
+		t.Fatalf("default prime wake interval = %s, want 15m", got.Prime.WakeInterval)
+	}
+	got = (ProjectConfig{Prime: RoleOverride{WakeInterval: "45m"}}).WithDefaults()
+	if got.Prime.WakeInterval != "45m" {
+		t.Fatalf("explicit prime wake interval = %s, want 45m", got.Prime.WakeInterval)
+	}
+	if d, err := got.Prime.WakeIntervalDuration(); err != nil || d != 45*time.Minute {
+		t.Fatalf("parsed prime wake interval = %s, %v; want 45m", d, err)
+	}
+}
+
+func boolPtr(v bool) *bool {
+	return &v
 }
 
 func TestResolveReviewerHarness(t *testing.T) {
