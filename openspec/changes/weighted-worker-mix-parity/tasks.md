@@ -30,10 +30,10 @@
 
 ## 6. Config And UI Validation
 
-- [ ] 6.1 Add/adjust project config tests proving worker-mix buckets use current `ValidateModelSelection` semantics: definitive unreachable rejects, unknown/unavailable warns and stores.
-- [ ] 6.2 Add frontend tests proving empty worker-mix agents and invalid row weights block Save changes before submission.
-- [ ] 6.3 Implement the row-level UI save gate while preserving dynamic agent/model catalog behavior.
-- [ ] 6.4 Add the safe first-class CLI cap flag if it can be done without touching issue #14 reserved paths; otherwise record the exact blocker in the PR.
+- [x] 6.1 Add/adjust project config tests proving worker-mix buckets use current `ValidateModelSelection` semantics: definitive unreachable rejects, unknown/unavailable warns and stores.
+- [x] 6.2 Add frontend tests proving empty worker-mix agents and invalid row weights block Save changes before submission.
+- [x] 6.3 Implement the row-level UI save gate while preserving dynamic agent/model catalog behavior.
+- [x] 6.4 Add the safe first-class CLI cap flag if it can be done without touching issue #14 reserved paths; otherwise record the exact blocker in the PR. Not implemented: the safe CLI path is `backend/internal/cli/projectconfig*`, explicitly reserved to #14 by the reopened issue.
 
 ## 7. Verification And Handoff
 

@@ -27,6 +27,7 @@ import {
 	toWorkerMixForm,
 	WorkerMixFields,
 	workerMixInvalid,
+	workerMixRowError,
 	workerMixTotal,
 } from "./WorkerMixFields";
 
@@ -263,6 +264,7 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 
 	return (
 		<form
+			noValidate
 			className="mx-auto flex max-w-2xl flex-col gap-4"
 			onSubmit={(event) => {
 				event.preventDefault();
@@ -274,6 +276,11 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 				}
 				if (intakeIncomplete) {
 					setValidationError("Enabling intake requires an assignee.");
+					return;
+				}
+				const rowError = workerMixRowError(form.workerMix);
+				if (rowError) {
+					setValidationError(rowError);
 					return;
 				}
 				if (workerMixInvalid(form.workerMix)) {

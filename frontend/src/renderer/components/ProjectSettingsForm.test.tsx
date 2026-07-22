@@ -707,6 +707,58 @@ describe("ProjectSettingsForm", () => {
 		expect(putMock).not.toHaveBeenCalled();
 	}, 20_000);
 
+	it("blocks save when a worker mix bucket has no agent", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "",
+			defaultBranch: "main",
+			config: {
+				worker: { agent: "codex" },
+				orchestrator: { agent: "claude-code" },
+			},
+		});
+
+		renderSettings();
+
+		await userEvent.click(await screen.findByRole("button", { name: "Add bucket" }));
+		await userEvent.type(screen.getAllByLabelText("Weight")[0], "100");
+		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+		expect(await screen.findByText("Worker mix bucket 1 requires an agent.")).toBeInTheDocument();
+		expect(putMock).not.toHaveBeenCalled();
+	}, 20_000);
+
+	it("blocks save when a worker mix bucket weight is out of range", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "",
+			defaultBranch: "main",
+			config: {
+				worker: { agent: "codex" },
+				orchestrator: { agent: "claude-code" },
+			},
+		});
+
+		renderSettings();
+
+		await userEvent.click(await screen.findByRole("button", { name: "Add bucket" }));
+		await chooseOption(screen.getAllByRole("combobox", { name: "Agent" })[0], "Codex");
+		await userEvent.type(screen.getAllByLabelText("Weight")[0], "0");
+		await userEvent.click(screen.getByRole("button", { name: "Add bucket" }));
+		await chooseOption(screen.getAllByRole("combobox", { name: "Agent" })[1], "OpenCode");
+		await userEvent.type(screen.getAllByLabelText("Weight")[1], "100");
+		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+		expect(await screen.findByText("Worker mix bucket 1 weight must be a whole number from 1 to 100.")).toBeInTheDocument();
+		expect(putMock).not.toHaveBeenCalled();
+	}, 20_000);
+
 	it("shows a live weight total that reflects edits", async () => {
 		mockProject({
 			id: "proj-1",
