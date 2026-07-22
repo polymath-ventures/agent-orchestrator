@@ -14,6 +14,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	agentsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/agent"
 	"github.com/aoagents/agent-orchestrator/backend/internal/service/agenthealth"
+	modelhealthsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/modelhealth"
 )
 
 type fakeConfiguredProjects struct {
@@ -54,6 +55,18 @@ func TestConfiguredProjectModelsProjectsPinsOnceAndSortsAcrossProjects(t *testin
 	wantHarnesses := []string{"amp", "codex", "opencode"}
 	if got := models.ConfiguredHarnesses(context.Background()); !reflect.DeepEqual(got, wantHarnesses) {
 		t.Fatalf("harnesses = %#v, want %#v", got, wantHarnesses)
+	}
+	healthPins, err := models.ListModelHealthPins(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantHealthPins := []modelhealthsvc.Pin{
+		{ProjectID: "a", Scope: "agentConfig.modelByHarness[codex]", Harness: domain.HarnessCodex, Model: "gpt-5-codex"},
+		{ProjectID: "b", Scope: "agentConfig.modelByHarness[codex]", Harness: domain.HarnessCodex, Model: "gpt-5-codex"},
+		{ProjectID: "b", Scope: "agentConfig.modelByHarness[opencode]", Harness: domain.HarnessOpenCode, Model: "openai/gpt-5.4"},
+	}
+	if !reflect.DeepEqual(healthPins, wantHealthPins) {
+		t.Fatalf("health pins = %#v, want %#v", healthPins, wantHealthPins)
 	}
 }
 

@@ -11,6 +11,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	agentsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/agent"
 	"github.com/aoagents/agent-orchestrator/backend/internal/service/agenthealth"
+	modelhealthsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/modelhealth"
 )
 
 type configuredProjectSource interface {
@@ -34,25 +35,19 @@ func newConfiguredProjectModels(projects configuredProjectSource, logger *slog.L
 }
 
 func (p *configuredProjectModels) ListModelPins(ctx context.Context) ([]agentsvc.ModelPin, error) {
-	projects, err := p.projects.ListProjects(ctx)
+	healthPins, err := p.ListModelHealthPins(ctx)
 	if err != nil {
 		return nil, err
 	}
 	seen := make(map[string]struct{})
-	pins := make([]agentsvc.ModelPin, 0)
-	for _, project := range projects {
-		for _, configured := range agentconfig.ConfiguredModelPins(project.Config) {
-			model := strings.TrimSpace(configured.Model)
-			if configured.Harness == "" || model == "" {
-				continue
-			}
-			key := string(configured.Harness) + "\x00" + model
-			if _, ok := seen[key]; ok {
-				continue
-			}
-			seen[key] = struct{}{}
-			pins = append(pins, agentsvc.ModelPin{Harness: configured.Harness, Model: model})
+	pins := make([]agentsvc.ModelPin, 0, len(healthPins))
+	for _, configured := range healthPins {
+		key := string(configured.Harness) + "\x00" + configured.Model
+		if _, ok := seen[key]; ok {
+			continue
 		}
+		seen[key] = struct{}{}
+		pins = append(pins, agentsvc.ModelPin{Harness: configured.Harness, Model: configured.Model})
 	}
 	sort.Slice(pins, func(i, j int) bool {
 		if pins[i].Harness != pins[j].Harness {
@@ -60,6 +55,36 @@ func (p *configuredProjectModels) ListModelPins(ctx context.Context) ([]agentsvc
 		}
 		return pins[i].Model < pins[j].Model
 	})
+	return pins, nil
+}
+
+// ListModelHealthPins retains the project and source scope carried by
+// agentconfig.ConfiguredModelPins for transition tracking and project reads.
+func (p *configuredProjectModels) ListModelHealthPins(ctx context.Context) ([]modelhealthsvc.Pin, error) {
+	projects, err := p.projects.ListProjects(ctx)
+	if err != nil {
+		return nil, err
+	}
+	seen := make(map[string]struct{})
+	pins := make([]modelhealthsvc.Pin, 0)
+	for _, project := range projects {
+		for _, configured := range agentconfig.ConfiguredModelPins(project.Config) {
+			model := strings.TrimSpace(configured.Model)
+			if configured.Harness == "" || model == "" {
+				continue
+			}
+			pin := modelhealthsvc.Pin{
+				ProjectID: domain.ProjectID(project.ID), Scope: configured.Scope, Harness: configured.Harness, Model: model,
+			}
+			key := pin.Key()
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+			pins = append(pins, pin)
+		}
+	}
+	sort.Slice(pins, func(i, j int) bool { return pins[i].Key() < pins[j].Key() })
 	return pins, nil
 }
 

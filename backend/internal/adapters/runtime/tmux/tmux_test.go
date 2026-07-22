@@ -527,6 +527,37 @@ func TestIsRunningCommandMatchesExpectedChildCommand(t *testing.T) {
 	}
 }
 
+// tmux reports pane_current_command=sh for AO's wrapper shell even while the
+// real agent remains alive below it. Liveness must therefore ignore that field
+// and inspect the pane PID's process tree for the expected agent executable.
+func TestIsRunningCommandKeepsLiveAgentWhenPaneCurrentCommandIsShell(t *testing.T) {
+	r, fr := newTestRuntime(0)
+	// The correct implementation asks tmux only for pane_pid (123), then pgrep
+	// finds the live codex descendant (456). A pane_current_command value of
+	// "sh" is deliberately not consulted and cannot override this evidence.
+	fr.outputs = [][]byte{[]byte("123\n"), []byte("456\n")}
+
+	running, err := r.IsRunningCommand(context.Background(), ports.RuntimeHandle{ID: "sess-shell"}, "codex")
+	if err != nil {
+		t.Fatalf("IsRunningCommand: %v", err)
+	}
+	if !running {
+		t.Fatal("running = false, want true for live codex descendant under shell pane")
+	}
+	if len(fr.calls) != 2 {
+		t.Fatalf("runner calls = %#v, want tmux pane-pid lookup plus process-tree probe", fr.calls)
+	}
+	if got := strings.Join(fr.calls[0].args, " "); strings.Contains(got, "pane_current_command") {
+		t.Fatalf("tmux probe %q consulted pane_current_command; shell wrapper must not decide liveness", got)
+	}
+	if got, want := fr.calls[0].args, paneProcessArgs("sess-shell"); !reflect.DeepEqual(got, want) {
+		t.Fatalf("pane process args = %#v, want %#v", got, want)
+	}
+	if got, want := fr.calls[1].args, []string{"-P", "123", "-f", "codex"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("process-tree args = %#v, want %#v", got, want)
+	}
+}
+
 func TestIsRunningCommandReturnsFalseWhenExpectedChildMissing(t *testing.T) {
 	r, fr := newTestRuntime(0)
 	fr.outputs = [][]byte{[]byte("123\n"), nil}

@@ -28,18 +28,24 @@ const (
 type ModelStatus string
 
 const (
-	ModelStatusReachable   ModelStatus = "reachable"
+	// ModelStatusReachable means the provider accepted the configured model.
+	ModelStatusReachable ModelStatus = "reachable"
+	// ModelStatusUnreachable means the provider definitively rejected the model.
 	ModelStatusUnreachable ModelStatus = "unreachable"
-	ModelStatusUnknown     ModelStatus = "unknown"
+	// ModelStatusUnknown means no definitive provider verdict is available.
+	ModelStatusUnknown ModelStatus = "unknown"
 )
 
 // ModelReasonCode explains why a row has unknown availability.
 type ModelReasonCode string
 
 const (
-	ModelReasonNotProbed        ModelReasonCode = "not-probed"
+	// ModelReasonNotProbed marks a catalog row that has not been validated.
+	ModelReasonNotProbed ModelReasonCode = "not-probed"
+	// ModelReasonProbeUnavailable marks infrastructure or provider uncertainty.
 	ModelReasonProbeUnavailable ModelReasonCode = "probe-unavailable"
-	ModelReasonNoCapability     ModelReasonCode = "no-capability"
+	// ModelReasonNoCapability marks a harness without a validation capability.
+	ModelReasonNoCapability ModelReasonCode = "no-capability"
 )
 
 const noModelValidationCapabilityReason = "This harness has no model validation capability; configured pins are accepted without live validation."
@@ -48,11 +54,16 @@ const noModelValidationCapabilityReason = "This harness has no model validation 
 type ModelCatalogSource string
 
 const (
-	ModelCatalogAdapter       ModelCatalogSource = "adapter"
+	// ModelCatalogAdapter identifies a fresh native adapter catalog.
+	ModelCatalogAdapter ModelCatalogSource = "adapter"
+	// ModelCatalogCachedAdapter identifies the last successful adapter catalog.
 	ModelCatalogCachedAdapter ModelCatalogSource = "cached-adapter"
-	ModelCatalogKnownSet      ModelCatalogSource = "known-set"
-	ModelCatalogPins          ModelCatalogSource = "configured-pins"
-	ModelCatalogNone          ModelCatalogSource = "none"
+	// ModelCatalogKnownSet identifies a maintained, unverified fallback catalog.
+	ModelCatalogKnownSet ModelCatalogSource = "known-set"
+	// ModelCatalogPins identifies a catalog containing only configured pins.
+	ModelCatalogPins ModelCatalogSource = "configured-pins"
+	// ModelCatalogNone identifies a harness with no visible model rows.
+	ModelCatalogNone ModelCatalogSource = "none"
 )
 
 // ModelPin is a configured model that must remain visible even when discovery
@@ -282,7 +293,6 @@ func (s *Service) classifyPinnedModels(ctx context.Context, out []HarnessModels,
 	sem := make(chan struct{}, maxConcurrentModelProbes)
 	var wg sync.WaitGroup
 	for _, target := range probes {
-		target := target
 		wg.Add(1)
 		go func() {
 			defer wg.Done()

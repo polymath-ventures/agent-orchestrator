@@ -1077,7 +1077,7 @@ func TestSpawn_RollsBackWhenAgentProcessAlreadyExited(t *testing.T) {
 	}
 }
 
-func TestSpawn_AfterStartPromptNotDeliveredWhenLaunchProcessAlreadyExited(t *testing.T) {
+func TestSpawn_PrePromptLivenessDetectsImmediateExitBeforePromptInjection(t *testing.T) {
 	st := newFakeStore()
 	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
 	rt := &fakeRuntime{
@@ -1099,6 +1099,15 @@ func TestSpawn_AfterStartPromptNotDeliveredWhenLaunchProcessAlreadyExited(t *tes
 	}
 	if len(msg.msgs) != 0 {
 		t.Fatalf("delivered prompts = %#v, want none", msg.msgs)
+	}
+	if got, want := rt.processCommands, []string{"launch"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("launch-process probes = %#v, want one pre-prompt probe for %q", got, want)
+	}
+	if lcm.completed != 0 {
+		t.Fatalf("MarkSpawned called %d times, want 0 before immediate-exit rejection", lcm.completed)
+	}
+	if rt.destroyed != 1 {
+		t.Fatalf("runtime destroyed %d times, want immediate rollback", rt.destroyed)
 	}
 }
 

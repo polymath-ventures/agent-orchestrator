@@ -15,8 +15,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
-const verboseModelsFixture = `[92m[1mModels cache refreshed[0m
-anthropic/claude-sonnet-4-5
+const verboseModelsFixture = "\x1b[92m\x1b[1mModels cache refreshed\x1b[0m\n" + `anthropic/claude-sonnet-4-5
 {
   "id": "claude-sonnet-4-5",
   "providerID": "anthropic",

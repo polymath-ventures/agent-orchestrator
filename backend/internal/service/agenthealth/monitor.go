@@ -19,10 +19,14 @@ import (
 type Health string
 
 const (
-	HealthHealthy      Health = "healthy"
-	HealthMissing      Health = "missing"
+	// HealthHealthy means the harness is installed and authorized.
+	HealthHealthy Health = "healthy"
+	// HealthMissing means the harness binary is not available on PATH.
+	HealthMissing Health = "missing"
+	// HealthUnauthorized means the harness requires authentication.
 	HealthUnauthorized Health = "unauthorized"
-	HealthUnknown      Health = "unknown"
+	// HealthUnknown means the local auth probe could not reach a conclusion.
+	HealthUnknown Health = "unknown"
 )
 
 // Actionable reports whether the state warrants operator remediation.

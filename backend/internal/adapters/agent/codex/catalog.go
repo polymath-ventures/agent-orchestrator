@@ -195,16 +195,8 @@ func fuguModels(ctx context.Context) ([]ports.ModelCatalogEntry, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return knownFuguModels(), nil
-	}
-	data, err := os.ReadFile(filepath.Join(home, ".codex", "fugu.json"))
-	if err != nil {
-		return knownFuguModels(), nil
-	}
-	var catalog fuguCatalog
-	if err := json.Unmarshal(data, &catalog); err != nil {
+	catalog, ok := readFuguCatalog()
+	if !ok {
 		return knownFuguModels(), nil
 	}
 	models := make([]ports.ModelCatalogEntry, 0, len(catalog.Models))
@@ -243,6 +235,22 @@ func fuguModels(ctx context.Context) ([]ports.ModelCatalogEntry, error) {
 		return knownFuguModels(), nil
 	}
 	return models, nil
+}
+
+func readFuguCatalog() (fuguCatalog, bool) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return fuguCatalog{}, false
+	}
+	data, err := os.ReadFile(filepath.Join(home, ".codex", "fugu.json"))
+	if err != nil {
+		return fuguCatalog{}, false
+	}
+	var catalog fuguCatalog
+	if err := json.Unmarshal(data, &catalog); err != nil {
+		return fuguCatalog{}, false
+	}
+	return catalog, true
 }
 
 func knownFuguModels() []ports.ModelCatalogEntry {

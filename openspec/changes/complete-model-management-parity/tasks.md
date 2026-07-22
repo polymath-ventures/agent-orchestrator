@@ -24,10 +24,10 @@
 
 - [x] 4.1 Wire the shared three-way validator into project config save without paid Claude prompts and into session creation before any session row, runtime, or worktree is created.
 - [x] 4.2 Wire cache-only `ValidateSpawnModel` into the resolved launch path so only a fresh definitive rejection blocks and missing/stale/unknown verdicts proceed with a loud warning.
-- [ ] 4.3 Port model transition behavior from reference `backend/internal/service/modelhealth/monitor.go:101-164`: preserve prior real state across unknown probes, alert on born-unreachable/recovered transitions, remove unconfigured pins, and use `AO_MODEL_REVALIDATION_INTERVAL` with 24-hour default and zero-disable.
-- [ ] 4.4 Keep model transition data typed with project, harness, model, and scope while emitting intents only; do not change notification-channel delivery owned by issue #9.
+- [x] 4.3 Port model transition behavior from reference `backend/internal/service/modelhealth/monitor.go:101-164`: preserve prior real state across unknown probes, alert on born-unreachable/recovered transitions, remove unconfigured pins, and use `AO_MODEL_REVALIDATION_INTERVAL` with 24-hour default and zero-disable.
+- [x] 4.4 Keep model transition data typed with project, harness, model, and scope while emitting intents only; do not change notification-channel delivery owned by issue #9.
 - [x] 4.5 Port `/agents/health` and the install/auth monitor with `AO_AGENT_HEALTH_INTERVAL`, transition logging/callbacks, actionable `missing`/`unauthorized` remedies, advisory `unknown`, and no session-notification persistence.
-- [ ] 4.6 Preserve process-tree session liveness and the pre-prompt liveness check; add explicit tests for tmux reporting `sh` and for immediate agent exit.
+- [x] 4.6 Preserve process-tree session liveness and the pre-prompt liveness check; add explicit tests for tmux reporting `sh` and for immediate agent exit.
 
 ## 5. Replace static UI model inputs with one live picker
 
