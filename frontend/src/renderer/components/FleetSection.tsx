@@ -79,11 +79,11 @@ export function FleetSection() {
 					<CardTitle className="text-control">Fleet</CardTitle>
 				</CardHeader>
 				<CardContent className="flex flex-col gap-4">
-						<p className="text-xs leading-row text-muted-foreground">
-							Pause the whole fleet to stop new work across every project. A soft pause lets live workers finish and drain
-							at idle; a hard fleet pause terminates workers, orchestrators, and prime sessions immediately and loses
-							mid-flight work.
-						</p>
+					<p className="text-xs leading-row text-muted-foreground">
+						Pause the whole fleet to stop new work across every project. A soft pause lets live workers finish and drain
+						at idle; a hard fleet pause terminates workers, orchestrators, and prime sessions immediately and loses
+						mid-flight work.
+					</p>
 
 					<div className="flex flex-col gap-2 text-xs">
 						<div className="flex items-center gap-3">
@@ -110,39 +110,39 @@ export function FleetSection() {
 						</p>
 					)}
 
-						<div className="flex items-center gap-3">
-							{paused ? (
-								<Button type="button" variant="primary" onClick={() => resume.mutate()} disabled={busy}>
-									{resume.isPending && <Loader2 className="mr-2 size-icon-base animate-spin" />}
-									Resume
-								</Button>
-							) : (
-								<Button type="button" variant="primary" onClick={() => pause.mutate()} disabled={busy}>
-									{pause.isPending && <Loader2 className="mr-2 size-icon-base animate-spin" />}
-									Pause
-								</Button>
-							)}
-							<Button
-								type="button"
-								variant="outline"
-								onClick={() => setConfirmHardOpen(true)}
-								disabled={busy}
-								className="border-destructive text-destructive hover:bg-destructive/10"
-							>
-								Pause now (hard)
+					<div className="flex items-center gap-3">
+						{paused ? (
+							<Button type="button" variant="primary" onClick={() => resume.mutate()} disabled={busy}>
+								{resume.isPending && <Loader2 className="mr-2 size-icon-base animate-spin" />}
+								Resume
 							</Button>
-						</div>
+						) : (
+							<Button type="button" variant="primary" onClick={() => pause.mutate()} disabled={busy}>
+								{pause.isPending && <Loader2 className="mr-2 size-icon-base animate-spin" />}
+								Pause
+							</Button>
+						)}
+						<Button
+							type="button"
+							variant="outline"
+							onClick={() => setConfirmHardOpen(true)}
+							disabled={busy}
+							className="border-destructive text-destructive hover:bg-destructive/10"
+						>
+							Pause now (hard)
+						</Button>
+					</div>
 				</CardContent>
 			</Card>
 			<ConfirmDialog
 				open={confirmHardOpen}
 				title="Hard pause the fleet?"
-					description={
-						<p className="text-sm text-muted-foreground">
-							This immediately terminates every live worker, orchestrator, and prime session across all projects. In-flight,
-							uncommitted work is discarded. Use a normal pause to let workers drain instead.
-						</p>
-					}
+				description={
+					<p className="text-sm text-muted-foreground">
+						This immediately terminates every live worker, orchestrator, and prime session across all projects.
+						In-flight, uncommitted work is discarded. Use a normal pause to let workers drain instead.
+					</p>
+				}
 				confirmLabel={pauseHard.isPending ? "Pausing…" : "Pause now"}
 				destructive
 				busy={pauseHard.isPending || !statusKnown}

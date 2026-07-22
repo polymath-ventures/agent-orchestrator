@@ -1,8 +1,11 @@
 # fleet-pause Specification
 
 ## Purpose
+
 TBD - created by archiving change add-fleet-pause-drain. Update Purpose after archive.
+
 ## Requirements
+
 ### Requirement: Pause state is stored outside project config
 
 The daemon SHALL persist pause state in daemon-owned storage separate from the
@@ -235,4 +238,3 @@ UI; only the enforcement paths are required to fail closed.
 
 - **WHEN** a read-only pause-state display computation cannot read the flag
 - **THEN** it MAY report "not paused" so the UI is not wedged, without affecting the enforcement paths
-

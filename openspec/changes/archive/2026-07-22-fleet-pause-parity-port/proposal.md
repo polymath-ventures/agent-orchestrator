@@ -4,7 +4,7 @@ The fleet pause/drain feature (#5, PR #33) was reimplemented in round 1 without
 studying the accumulated bug-fix corpus in the old fork
 (`~/agent-orchestrator-fscked`). A verified gap analysis — every claim checked
 in code on both sides — found the current tree diverges from the reference's
-refined behavior in ways that matter for an *emergency stop*: a fleet-wide hard
+refined behavior in ways that matter for an _emergency stop_: a fleet-wide hard
 pause cannot actually halt everything, and pause enforcement silently unpauses
 the fleet on a storage error. This change closes those parity gaps so pause is
 trustworthy when an operator most needs it.
@@ -17,7 +17,7 @@ trustworthy when an operator most needs it.
 - **Pause enforcement fails closed**: the spawn guard and the tracker-intake
   observer now abort on a fleet-flag read error instead of proceeding as if the
   fleet were running. A storage blip can no longer silently un-pause the fleet.
-  (Read-only *display* paths still fail open to "not paused" so a blip never
+  (Read-only _display_ paths still fail open to "not paused" so a blip never
   wedges the UI.)
 - **The Fleet card can escalate an in-progress drain to a hard stop**: the
   "Pause now (hard)" control stays available while paused/draining, and the

@@ -18,6 +18,7 @@ the reference" is falsifiable.
 ## Goals / Non-Goals
 
 **Goals:**
+
 - Fleet-wide hard pause is a true emergency stop (workers **and** orchestrators).
 - Pause enforcement fails closed on a storage read error.
 - The Fleet card can escalate an in-progress drain to a hard stop, shows
@@ -26,6 +27,7 @@ the reference" is falsifiable.
 - Every history-mined lesson is demonstrably preserved (verification checklist).
 
 **Non-Goals:**
+
 - No storage/migration changes (0030 stays; no new migration).
 - No API DTO / generated-client changes (draining count is already surfaced on
   the workspace summary).
@@ -35,6 +37,7 @@ the reference" is falsifiable.
 ## Decisions
 
 ### D1 — Thread `includeOrchestrators` through the existing inlined hard-drain (GAP 1, must)
+
 Reference keeps the fan-out in the session service (`service/session/service.go:958`,
 `:973`) and passes `true` on the fleet path (`service/project/pause.go:67-71`) and
 `false` per-project (`:30-33`). The current tree already inlined the drain into
@@ -42,11 +45,12 @@ Reference keeps the fan-out in the session service (`service/session/service.go:
 **smallest** parity fix is to add an `includeOrchestrators bool` parameter to
 that private helper, change the filter to skip orchestrators only when the flag
 is false, and pass `true` from `SetFleetPaused` (`:93-95`) and `false` from
-`SetProjectPaused` (`:122-126`). *Alternative rejected:* re-introducing a
+`SetProjectPaused` (`:122-126`). _Alternative rejected:_ re-introducing a
 separate `HardDrain` verb on the session service — larger surface, an interface
 change, no behavioral benefit over threading the flag.
 
 ### D2 — Enforcement paths fail closed; display paths stay fail-open (GAP 2, should)
+
 Reference errors the spawn on a read failure (`service/session/service.go:417-421`)
 and aborts the intake tick (`observe/trackerintake/observer.go:144-146`). Current
 swallows the error with `err == nil && fleetPaused` at the spawn guard
@@ -57,6 +61,7 @@ fail open for display and are **left unchanged** — a storage blip must not wed
 the UI, and they never gate work.
 
 ### D3 — Fleet card: escalate + Draining(N) + 15s refresh + true confirm copy (GAPS 3/4/5)
+
 The workspace summary already carries `pauseState` and `drainingWorkers`
 (`types/workspace.ts:183,335-337`) and `useWorkspaceQuery` already self-polls at
 15s (`hooks/useWorkspaceQuery.ts:55-56,86`), so no backend/type work is needed.
@@ -71,12 +76,14 @@ fleet-status query and derive the `Draining (N)` aggregate from
 reaches parity.
 
 ### D4 — CLI help + blank-id validation (GAP 6, should)
+
 Port the reference `Long` drain-semantics help (`cli/pause.go:20-31`) and the
 blank-id `usageError` guard + `TrimSpace` on use (`:57-60,87`) into the current
 `cli/pause.go` (help missing at `:18-21`; args validator at `:47-52` checks only
 length). Returning `usageError` yields exit 2 per repo convention.
 
 ### D5 — Reject porting the per-project orchestrator-replacement supervisor (history lesson #5)
+
 The reference skips unhealthy-orchestrator replacement for paused projects
 (`daemon/orchestrator_supervisor.go`). The current tree has **no**
 `orchestrator_supervisor.go` / `startOrchestratorSupervisor` at all — only a
