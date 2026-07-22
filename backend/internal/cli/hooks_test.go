@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -152,7 +153,7 @@ func TestHooks_SessionStartReportsNativeSessionIDWithoutActivity(t *testing.T) {
 		t.Fatalf("decode body: %v\nbody=%s", err, capture.body)
 	}
 	want := setActivityAPIRequest{Event: "session-start", AgentSessionID: "019f6af0-codex-session"}
-	if req != want {
+	if !reflect.DeepEqual(req, want) {
 		t.Fatalf("body = %+v, want %+v", req, want)
 	}
 }
@@ -175,7 +176,7 @@ func TestHooks_ActivityAlsoReportsNativeSessionID(t *testing.T) {
 		t.Fatalf("decode body: %v\nbody=%s", err, capture.body)
 	}
 	want := setActivityAPIRequest{State: "idle", Event: "stop", AgentSessionID: "claude-session-1"}
-	if req != want {
+	if !reflect.DeepEqual(req, want) {
 		t.Fatalf("body = %+v, want %+v", req, want)
 	}
 }
@@ -239,7 +240,7 @@ func TestHooks_PostToolUseCarriesCorrelationFields(t *testing.T) {
 		t.Fatalf("decode body: %v\nbody=%s", err, capture.body)
 	}
 	want := setActivityAPIRequest{State: "active", Event: "post-tool-use", ToolName: "Bash", ToolUseID: "toolu_42"}
-	if req != want {
+	if !reflect.DeepEqual(req, want) {
 		t.Errorf("body = %+v, want %+v", req, want)
 	}
 }
@@ -265,7 +266,7 @@ func TestHooks_EventWithoutToolIdentityOmitsIt(t *testing.T) {
 		t.Fatalf("decode body: %v\nbody=%s", err, capture.body)
 	}
 	want := setActivityAPIRequest{State: "waiting_input", Event: "permission-request", ToolName: "Bash", ToolUseID: ""}
-	if req != want {
+	if !reflect.DeepEqual(req, want) {
 		t.Errorf("body = %+v, want %+v", req, want)
 	}
 }
@@ -309,7 +310,7 @@ func TestHooks_CodexSessionStartReportsAgentSessionID(t *testing.T) {
 		t.Fatalf("decode body: %v\nbody=%s", err, capture.body)
 	}
 	want := setActivityAPIRequest{Event: "session-start", AgentSessionID: "codex-native-1"}
-	if req != want {
+	if !reflect.DeepEqual(req, want) {
 		t.Fatalf("body = %+v, want %+v", req, want)
 	}
 }
@@ -353,7 +354,7 @@ func TestHooks_ClaudeCodeSessionStartReportsAgentSessionID(t *testing.T) {
 		t.Fatalf("decode body: %v\nbody=%s", err, capture.body)
 	}
 	want := setActivityAPIRequest{Event: "session-start", AgentSessionID: "claude-native-1"}
-	if req != want {
+	if !reflect.DeepEqual(req, want) {
 		t.Fatalf("body = %+v, want %+v", req, want)
 	}
 }
@@ -397,7 +398,7 @@ func TestHooks_GrokSessionStartReportsAgentSessionID(t *testing.T) {
 		t.Fatalf("decode body: %v\nbody=%s", err, capture.body)
 	}
 	want := setActivityAPIRequest{Event: "session-start", AgentSessionID: "grok-native-1"}
-	if req != want {
+	if !reflect.DeepEqual(req, want) {
 		t.Fatalf("body = %+v, want %+v", req, want)
 	}
 }
@@ -425,7 +426,7 @@ func TestHooks_RegisteredHarnessSessionStartReportsAgentSessionID(t *testing.T) 
 				t.Fatalf("decode body: %v\nbody=%s", err, capture.body)
 			}
 			want := setActivityAPIRequest{State: "active", Event: "session-start", AgentSessionID: agent + "-native-1"}
-			if req != want {
+			if !reflect.DeepEqual(req, want) {
 				t.Fatalf("body = %+v, want %+v", req, want)
 			}
 		})
@@ -453,7 +454,7 @@ func TestHooks_VibePostAgentReportsSessionIDAndIdle(t *testing.T) {
 		t.Fatalf("decode body: %v\nbody=%s", err, capture.body)
 	}
 	want := setActivityAPIRequest{State: "idle", Event: "post-agent", AgentSessionID: "vibe-native-1"}
-	if req != want {
+	if !reflect.DeepEqual(req, want) {
 		t.Fatalf("body = %+v, want %+v", req, want)
 	}
 }
@@ -489,7 +490,7 @@ func TestHooks_AgySessionStartReportsConversationID(t *testing.T) {
 		t.Fatalf("decode body: %v\nbody=%s", err, capture.body)
 	}
 	want := setActivityAPIRequest{Event: "session-start", AgentSessionID: "agy-native-1"}
-	if req != want {
+	if !reflect.DeepEqual(req, want) {
 		t.Fatalf("body = %+v, want %+v", req, want)
 	}
 }
@@ -515,7 +516,7 @@ func TestHooks_CopilotSessionStartReportsSessionID(t *testing.T) {
 		t.Fatalf("decode body: %v\nbody=%s", err, capture.body)
 	}
 	want := setActivityAPIRequest{State: "active", Event: "session-start", AgentSessionID: "copilot-native-1"}
-	if req != want {
+	if !reflect.DeepEqual(req, want) {
 		t.Fatalf("body = %+v, want %+v", req, want)
 	}
 }

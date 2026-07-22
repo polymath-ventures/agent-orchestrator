@@ -1355,6 +1355,7 @@ export interface components {
             used?: null | number;
             /** Format: date-time */
             windowEnd?: string;
+            windowName?: string;
             /** Format: date-time */
             windowStart?: string;
         };
@@ -1541,6 +1542,8 @@ export interface components {
             event?: string;
             /** @description Agent harness reporting the activity, used for usage telemetry attribution when the session row has no harness. */
             harness?: string;
+            /** @description Optional quota snapshots extracted from harness-local records. */
+            quotas?: components["schemas"]["QuotaSnapshot"][];
             /** @description Runtime generation token exported to this session's hooks; stale tokens are ignored. */
             runtimeToken?: string;
             /**

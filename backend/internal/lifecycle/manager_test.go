@@ -17,10 +17,16 @@ type fakeStore struct {
 	sessions   map[domain.SessionID]domain.SessionRecord
 	prs        map[domain.SessionID][]domain.PullRequest
 	signatures map[string]string
+	quotas     []domain.QuotaSnapshot
 
 	listPRsErr        error
 	signatureWriteErr error
 	signatureWrites   int
+}
+
+func (f *fakeStore) UpsertQuotaSnapshot(_ context.Context, snap domain.QuotaSnapshot) (domain.QuotaSnapshot, error) {
+	f.quotas = append(f.quotas, snap)
+	return snap, nil
 }
 
 func newFakeStore() *fakeStore {
@@ -374,6 +380,78 @@ func TestActivity_TerminatedSessionUsageStillEmitsTelemetry(t *testing.T) {
 	}
 	if got.Payload["harness"] != "codex" || got.Payload["input_tokens"] != 10.0 || got.Payload["total_tokens"] != 10.0 {
 		t.Fatalf("usage payload = %#v", got.Payload)
+	}
+}
+
+func TestActivity_AcceptedSignalPersistsQuotaSnapshots(t *testing.T) {
+	st := newFakeStore()
+	m := New(st, nil)
+	now := time.Unix(200, 0).UTC()
+	m.clock = func() time.Time { return now }
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID:        "mer-1",
+		ProjectID: "mer",
+		Harness:   domain.HarnessCodex,
+		Activity:  domain.Activity{State: domain.ActivityActive},
+	}
+	used, remaining, limit := 92.0, 8.0, 100.0
+
+	err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{
+		Valid: true,
+		State: domain.ActivityIdle,
+		Quotas: []domain.QuotaSnapshot{{
+			WindowName:    "primary",
+			Used:          &used,
+			Remaining:     &remaining,
+			Limit:         &limit,
+			SignalQuality: domain.QuotaSignalExact,
+			Source:        "codex rollout token_count.rate_limits",
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(st.quotas) != 1 {
+		t.Fatalf("quotas = %+v, want one persisted snapshot", st.quotas)
+	}
+	got := st.quotas[0]
+	if got.Harness != domain.HarnessCodex || got.AccountID != "unknown" || got.WindowName != "primary" || !got.ObservedAt.Equal(now) {
+		t.Fatalf("quota snapshot was not normalized/persisted correctly: %+v", got)
+	}
+}
+
+func TestActivity_StaleRuntimeTokenDoesNotPersistQuotaSnapshots(t *testing.T) {
+	st := newFakeStore()
+	m := New(st, nil)
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID:        "mer-1",
+		ProjectID: "mer",
+		Harness:   domain.HarnessCodex,
+		Activity:  domain.Activity{State: domain.ActivityIdle},
+		Metadata:  domain.SessionMetadata{RuntimeToken: "current"},
+	}
+	used, remaining, limit := 92.0, 8.0, 100.0
+
+	err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{
+		Valid:        true,
+		State:        domain.ActivityIdle,
+		RuntimeToken: "stale",
+		Quotas: []domain.QuotaSnapshot{{
+			Harness:       domain.HarnessCodex,
+			AccountID:     "unknown",
+			WindowName:    "primary",
+			Used:          &used,
+			Remaining:     &remaining,
+			Limit:         &limit,
+			SignalQuality: domain.QuotaSignalExact,
+			Source:        "codex rollout token_count.rate_limits",
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(st.quotas) != 0 {
+		t.Fatalf("stale runtime-token signal persisted quota snapshots: %+v", st.quotas)
 	}
 }
 

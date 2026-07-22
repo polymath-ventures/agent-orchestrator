@@ -12,7 +12,7 @@ import (
 )
 
 const listLatestQuotaSnapshots = `-- name: ListLatestQuotaSnapshots :many
-SELECT q.id, q.harness, q.account_id, q.model, q.window_start, q.window_end, q.used, q.remaining, q.limit_value, q.signal_quality, q.source, q.basis, q.observed_at
+SELECT q.id, q.harness, q.account_id, q.model, q.window_start, q.window_end, q.used, q.remaining, q.limit_value, q.signal_quality, q.source, q.basis, q.observed_at, q.window_name
 FROM quota_snapshots q
 WHERE q.id = (
     SELECT latest.id
@@ -20,10 +20,11 @@ WHERE q.id = (
     WHERE latest.harness = q.harness
       AND latest.account_id = q.account_id
       AND latest.model = q.model
+      AND latest.window_name = q.window_name
     ORDER BY latest.observed_at DESC, latest.window_end DESC, latest.window_start DESC, latest.id DESC
     LIMIT 1
 )
-ORDER BY q.harness ASC, q.account_id ASC, q.model ASC
+ORDER BY q.harness ASC, q.account_id ASC, q.model ASC, q.window_name ASC
 `
 
 func (q *Queries) ListLatestQuotaSnapshots(ctx context.Context) ([]QuotaSnapshot, error) {
@@ -49,6 +50,7 @@ func (q *Queries) ListLatestQuotaSnapshots(ctx context.Context) ([]QuotaSnapshot
 			&i.Source,
 			&i.Basis,
 			&i.ObservedAt,
+			&i.WindowName,
 		); err != nil {
 			return nil, err
 		}
@@ -65,10 +67,10 @@ func (q *Queries) ListLatestQuotaSnapshots(ctx context.Context) ([]QuotaSnapshot
 
 const upsertQuotaSnapshot = `-- name: UpsertQuotaSnapshot :one
 INSERT INTO quota_snapshots (
-    id, harness, account_id, model, window_start, window_end,
+    id, harness, account_id, model, window_name, window_start, window_end,
     used, remaining, limit_value, signal_quality, source, basis, observed_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-ON CONFLICT(harness, account_id, model, window_start, window_end) DO UPDATE SET
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(harness, account_id, model, window_name, window_start, window_end) DO UPDATE SET
     used = excluded.used,
     remaining = excluded.remaining,
     limit_value = excluded.limit_value,
@@ -76,7 +78,7 @@ ON CONFLICT(harness, account_id, model, window_start, window_end) DO UPDATE SET
     source = excluded.source,
     basis = excluded.basis,
     observed_at = excluded.observed_at
-RETURNING id, harness, account_id, model, window_start, window_end, used, remaining, limit_value, signal_quality, source, basis, observed_at
+RETURNING id, harness, account_id, model, window_start, window_end, used, remaining, limit_value, signal_quality, source, basis, observed_at, window_name
 `
 
 type UpsertQuotaSnapshotParams struct {
@@ -84,6 +86,7 @@ type UpsertQuotaSnapshotParams struct {
 	Harness       string
 	AccountID     string
 	Model         string
+	WindowName    string
 	WindowStart   sql.NullTime
 	WindowEnd     sql.NullTime
 	Used          sql.NullFloat64
@@ -101,6 +104,7 @@ func (q *Queries) UpsertQuotaSnapshot(ctx context.Context, arg UpsertQuotaSnapsh
 		arg.Harness,
 		arg.AccountID,
 		arg.Model,
+		arg.WindowName,
 		arg.WindowStart,
 		arg.WindowEnd,
 		arg.Used,
@@ -126,6 +130,7 @@ func (q *Queries) UpsertQuotaSnapshot(ctx context.Context, arg UpsertQuotaSnapsh
 		&i.Source,
 		&i.Basis,
 		&i.ObservedAt,
+		&i.WindowName,
 	)
 	return i, err
 }

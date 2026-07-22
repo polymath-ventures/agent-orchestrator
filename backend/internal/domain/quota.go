@@ -33,6 +33,7 @@ type QuotaSnapshot struct {
 	Harness       AgentHarness       `json:"harness"`
 	AccountID     string             `json:"accountId"`
 	Model         string             `json:"model,omitempty"`
+	WindowName    string             `json:"windowName,omitempty"`
 	WindowStart   time.Time          `json:"windowStart,omitempty"`
 	WindowEnd     time.Time          `json:"windowEnd,omitempty"`
 	Used          *float64           `json:"used,omitempty"`
@@ -52,6 +53,7 @@ func (q QuotaSnapshot) MarshalJSON() ([]byte, error) {
 		Harness       AgentHarness       `json:"harness"`
 		AccountID     string             `json:"accountId"`
 		Model         string             `json:"model,omitempty"`
+		WindowName    string             `json:"windowName,omitempty"`
 		WindowStart   *time.Time         `json:"windowStart,omitempty"`
 		WindowEnd     *time.Time         `json:"windowEnd,omitempty"`
 		Used          *float64           `json:"used,omitempty"`
@@ -66,6 +68,7 @@ func (q QuotaSnapshot) MarshalJSON() ([]byte, error) {
 		Harness:       q.Harness,
 		AccountID:     q.AccountID,
 		Model:         q.Model,
+		WindowName:    q.WindowName,
 		WindowStart:   quotaWindowTime(q.WindowStart),
 		WindowEnd:     quotaWindowTime(q.WindowEnd),
 		Used:          q.Used,

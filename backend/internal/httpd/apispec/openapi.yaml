@@ -3426,6 +3426,8 @@ components:
         windowEnd:
           format: date-time
           type: string
+        windowName:
+          type: string
         windowStart:
           format: date-time
           type: string
@@ -3914,6 +3916,11 @@ components:
           description: Agent harness reporting the activity, used for usage telemetry
             attribution when the session row has no harness.
           type: string
+        quotas:
+          description: Optional quota snapshots extracted from harness-local records.
+          items:
+            $ref: '#/components/schemas/QuotaSnapshot'
+          type: array
         runtimeToken:
           description: Runtime generation token exported to this session's hooks;
             stale tokens are ignored.

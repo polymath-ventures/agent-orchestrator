@@ -41,14 +41,15 @@ const (
 // native payload when present. All four are optional: an old daemon decodes
 // the body leniently and simply ignores them.
 type setActivityAPIRequest struct {
-	State          string           `json:"state,omitempty"`
-	Harness        string           `json:"harness,omitempty"`
-	RuntimeToken   string           `json:"runtimeToken,omitempty"`
-	Event          string           `json:"event,omitempty"`
-	ToolName       string           `json:"toolName,omitempty"`
-	ToolUseID      string           `json:"toolUseId,omitempty"`
-	AgentSessionID string           `json:"agentSessionId,omitempty"`
-	Usage          *usageAPIRequest `json:"usage,omitempty"`
+	State          string                 `json:"state,omitempty"`
+	Harness        string                 `json:"harness,omitempty"`
+	RuntimeToken   string                 `json:"runtimeToken,omitempty"`
+	Event          string                 `json:"event,omitempty"`
+	ToolName       string                 `json:"toolName,omitempty"`
+	ToolUseID      string                 `json:"toolUseId,omitempty"`
+	AgentSessionID string                 `json:"agentSessionId,omitempty"`
+	Usage          *usageAPIRequest       `json:"usage,omitempty"`
+	Quotas         []domain.QuotaSnapshot `json:"quotas,omitempty"`
 }
 
 type usageAPIRequest struct {
@@ -193,7 +194,10 @@ func (c *commandContext) runHook(ctx context.Context, agent, event string) error
 			},
 		}
 		req.Usage, commitUsage = extractor.stopUsageDelta(agent, payload)
-		if req.Usage != nil {
+		if agent == string(domain.HarnessCodex) {
+			req.Quotas = extractor.codexQuotaSnapshots(c.deps.Now().UTC())
+		}
+		if req.Usage != nil || len(req.Quotas) > 0 {
 			req.Harness = agent
 		}
 	}

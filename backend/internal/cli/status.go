@@ -51,6 +51,7 @@ type statusQuota struct {
 	Harness       string     `json:"harness"`
 	AccountID     string     `json:"accountId"`
 	Model         string     `json:"model,omitempty"`
+	WindowName    string     `json:"windowName,omitempty"`
 	WindowStart   *time.Time `json:"windowStart,omitempty"`
 	WindowEnd     *time.Time `json:"windowEnd,omitempty"`
 	Used          *float64   `json:"used,omitempty"`
@@ -302,10 +303,21 @@ func writeStatus(cmd *cobra.Command, st daemonStatus) error {
 			return err
 		}
 		for _, q := range st.Quotas {
-			if _, err := fmt.Fprintf(out, "    %s/%s: %s", q.Harness, firstNonEmpty(q.AccountID, "unknown"), q.SignalQuality); err != nil {
+			label := q.Harness + "/" + firstNonEmpty(q.AccountID, "unknown")
+			if q.Model != "" {
+				label += "/" + q.Model
+			}
+			if q.WindowName != "" {
+				label += "/" + q.WindowName
+			}
+			if _, err := fmt.Fprintf(out, "    %s: %s", label, q.SignalQuality); err != nil {
 				return err
 			}
-			if q.Remaining != nil && q.Limit != nil {
+			if q.Used != nil && q.Limit != nil {
+				if _, err := fmt.Fprintf(out, " %.1f%% used", 100**q.Used / *q.Limit); err != nil {
+					return err
+				}
+			} else if q.Remaining != nil && q.Limit != nil {
 				if _, err := fmt.Fprintf(out, " %.1f/%.1f remaining", *q.Remaining, *q.Limit); err != nil {
 					return err
 				}

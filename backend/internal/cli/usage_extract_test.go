@@ -329,6 +329,57 @@ func TestUsageExtract_CodexMalformedRolloutEmitsNil(t *testing.T) {
 	}
 }
 
+func TestUsageExtract_CodexQuotaSnapshotsFromRateLimits(t *testing.T) {
+	codexHome := t.TempDir()
+	cwd := t.TempDir()
+	path := writeCodexRollout(t, codexHome, "rollout-a.jsonl", cwd, "", [][3]int{{100, 20, 120}})
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString(`{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":150,"output_tokens":50,"total_tokens":200}},"rate_limits":{"limit_id":"codex","primary":{"used_percent":92.5,"window_minutes":10080,"resets_at":1785277078},"secondary":{"used_percent":51,"window_minutes":300,"resets_at":1784680000},"plan_type":"pro"}}}` + "\n"); err != nil {
+		t.Fatal(err)
+	}
+	_ = f.Close()
+
+	e := &usageExtractor{codexHome: codexHome, cwd: cwd}
+	got := e.codexQuotaSnapshots(time.Unix(200, 0).UTC())
+	if len(got) != 2 {
+		t.Fatalf("quota snapshots = %+v, want primary and secondary", got)
+	}
+	if got[0].WindowName != "primary" || got[0].SignalQuality != "exact" {
+		t.Fatalf("primary snapshot = %+v", got[0])
+	}
+	if got[0].Used == nil || *got[0].Used != 92.5 {
+		t.Fatalf("primary used = %v, want 92.5", deref(got[0].Used))
+	}
+	if got[0].Remaining == nil || *got[0].Remaining != 7.5 {
+		t.Fatalf("primary remaining = %v, want 7.5", deref(got[0].Remaining))
+	}
+	if got[0].Limit == nil || *got[0].Limit != 100 {
+		t.Fatalf("primary limit = %v, want 100", deref(got[0].Limit))
+	}
+	if got[0].WindowEnd.Unix() != 1785277078 {
+		t.Fatalf("primary reset = %s, want unix 1785277078", got[0].WindowEnd)
+	}
+	if got[1].WindowName != "secondary" {
+		t.Fatalf("secondary snapshot = %+v", got[1])
+	}
+}
+
+func TestUsageExtract_CodexQuotaSnapshotsIgnoreInvalidRateLimits(t *testing.T) {
+	codexHome := t.TempDir()
+	cwd := t.TempDir()
+	path := writeCodexRollout(t, codexHome, "rollout-a.jsonl", cwd, "", [][3]int{{100, 20, 120}})
+	writeFile(t, path, `{"type":"session_meta","payload":{"session_id":"sess","cwd":`+jsonQuote(cwd)+`}}`+"\n"+
+		`{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":150,"output_tokens":50,"total_tokens":200}},"rate_limits":{"limit_id":"codex","primary":{"used_percent":120,"window_minutes":10080,"resets_at":1785277078},"secondary":{"used_percent":50,"window_minutes":0,"resets_at":1784680000}}}}`+"\n")
+
+	e := &usageExtractor{codexHome: codexHome, cwd: cwd}
+	if got := e.codexQuotaSnapshots(time.Unix(200, 0).UTC()); len(got) != 0 {
+		t.Fatalf("invalid quota windows should be ignored, got %+v", got)
+	}
+}
+
 // --- review-cycle-1 regression coverage ------------------------------------
 
 // A failed delivery (commit not called) must not advance the cursor: the next

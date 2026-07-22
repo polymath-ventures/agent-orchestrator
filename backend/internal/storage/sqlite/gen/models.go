@@ -165,6 +165,7 @@ type QuotaSnapshot struct {
 	Source        string
 	Basis         string
 	ObservedAt    time.Time
+	WindowName    string
 }
 
 type Review struct {

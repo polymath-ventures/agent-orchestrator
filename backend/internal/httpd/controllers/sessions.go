@@ -604,6 +604,7 @@ func (c *SessionsController) activity(w http.ResponseWriter, r *http.Request) {
 		ToolUseID:      capActivityMeta(domain.SanitizeControlChars(in.ToolUseID)),
 		AgentSessionID: agentSessionID,
 		Usage:          usageSignal(in.Usage),
+		Quotas:         in.Quotas,
 	}
 	if err := c.Activity.ApplyActivitySignal(r.Context(), sessionID(r), sig); err != nil {
 		if errors.Is(err, ports.ErrSessionNotFound) {

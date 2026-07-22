@@ -103,3 +103,26 @@ func TestEvaluatorLowQuotaClearsPerSubject(t *testing.T) {
 		t.Fatalf("want one clear transition, got %+v", tr)
 	}
 }
+
+func TestEvaluatorLowQuotaCanUseReportedUsedPercent(t *testing.T) {
+	e := newEvaluator(Thresholds{LowQuotaPercent: 10})
+	used, limit := 92.0, 100.0
+	alerts, tr := e.evaluate(Snapshot{Quotas: []domain.QuotaSnapshot{{
+		Harness:       domain.HarnessCodex,
+		AccountID:     "unknown",
+		WindowName:    "primary",
+		Used:          &used,
+		Limit:         &limit,
+		SignalQuality: domain.QuotaSignalExact,
+		ObservedAt:    time.Unix(1, 0).UTC(),
+	}}})
+	if len(alerts) != 1 || len(tr) != 1 || !tr[0].Firing {
+		t.Fatalf("used_percent 92 with threshold 10 should alert, got alerts=%+v tr=%+v", alerts, tr)
+	}
+	if alerts[0].Value != 8 {
+		t.Fatalf("alert value = %.1f, want 8.0 remaining percent derived from used_percent", alerts[0].Value)
+	}
+	if !strings.Contains(alerts[0].Subject, "/primary/") {
+		t.Fatalf("alert subject should include quota window name, got %q", alerts[0].Subject)
+	}
+}

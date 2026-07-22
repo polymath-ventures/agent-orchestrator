@@ -93,10 +93,13 @@ func (e *evaluator) evaluate(s Snapshot) ([]Alert, []AlertTransition) {
 func lowQuotaAlerts(quotas []domain.QuotaSnapshot, threshold float64) []Alert {
 	var out []Alert
 	for _, q := range quotas {
-		if q.SignalQuality == domain.QuotaSignalNone || q.Remaining == nil || q.Limit == nil || *q.Limit <= 0 {
+		if q.SignalQuality == domain.QuotaSignalNone || q.Limit == nil || *q.Limit <= 0 {
 			continue
 		}
-		pct := 100 * *q.Remaining / *q.Limit
+		pct, ok := remainingPercent(q)
+		if !ok {
+			continue
+		}
 		if pct > threshold {
 			continue
 		}
@@ -108,15 +111,29 @@ func lowQuotaAlerts(quotas []domain.QuotaSnapshot, threshold float64) []Alert {
 		if model == "" {
 			model = "default model"
 		}
-		subject := fmt.Sprintf("%s/%s/%s/%s", q.Harness, account, model, quotaWindowKey(q.WindowStart, q.WindowEnd))
+		windowName := q.WindowName
+		if windowName == "" {
+			windowName = "default"
+		}
+		subject := fmt.Sprintf("%s/%s/%s/%s/%s", q.Harness, account, model, windowName, quotaWindowKey(q.WindowStart, q.WindowEnd))
 		out = append(out, Alert{
 			Kind: AlertQuotaLow, Severity: SeverityWarn, Value: pct, Threshold: threshold,
 			Subject: subject,
-			Message: fmt.Sprintf("%s quota for %s %s is %.1f%% remaining; adjust the worker mix", q.Harness, account, model, pct),
+			Message: fmt.Sprintf("%s quota for %s %s %s is %.1f%% remaining; adjust the worker mix", q.Harness, account, model, windowName, pct),
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return alertKey(out[i]) < alertKey(out[j]) })
 	return out
+}
+
+func remainingPercent(q domain.QuotaSnapshot) (float64, bool) {
+	if q.Remaining != nil {
+		return 100 * *q.Remaining / *q.Limit, true
+	}
+	if q.Used != nil {
+		return 100 - (100 * *q.Used / *q.Limit), true
+	}
+	return 0, false
 }
 
 func quotaWindowKey(start, end time.Time) string {

@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -93,7 +94,7 @@ func TestSessionsAPI_ActivityThreadsCorrelationFields(t *testing.T) {
 		t.Fatalf("activity = %d, want 200; body=%s", status, body)
 	}
 	want := ports.ActivitySignal{Valid: true, State: domain.ActivityActive, RuntimeToken: "runtime-token-1", Event: "post-tool-use", ToolName: "Bash", ToolUseID: "toolu_42"}
-	if rec.gotSignal != want {
+	if !reflect.DeepEqual(rec.gotSignal, want) {
 		t.Fatalf("recorder signal = %#v, want %#v", rec.gotSignal, want)
 	}
 }
@@ -108,7 +109,7 @@ func TestSessionsAPI_ActivityAcceptsMetadataOnlyAgentSessionID(t *testing.T) {
 		t.Fatalf("activity = %d, want 200; body=%s", status, body)
 	}
 	want := ports.ActivitySignal{Event: "session-start", AgentSessionID: "native-session-1"}
-	if rec.gotSignal != want {
+	if !reflect.DeepEqual(rec.gotSignal, want) {
 		t.Fatalf("recorder signal = %#v, want %#v", rec.gotSignal, want)
 	}
 }
@@ -123,7 +124,7 @@ func TestSessionsAPI_ActivityThreadsAgentSessionIDWithState(t *testing.T) {
 		t.Fatalf("activity = %d, want 200; body=%s", status, body)
 	}
 	want := ports.ActivitySignal{Valid: true, State: domain.ActivityIdle, Event: "stop", AgentSessionID: "native-session-1"}
-	if rec.gotSignal != want {
+	if !reflect.DeepEqual(rec.gotSignal, want) {
 		t.Fatalf("recorder signal = %#v, want %#v", rec.gotSignal, want)
 	}
 }
