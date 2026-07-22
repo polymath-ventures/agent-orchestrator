@@ -76,8 +76,9 @@ func (m *Service) FleetPaused(ctx context.Context) (bool, error) {
 
 // SetFleetPaused sets or clears the daemon-global fleet pause flag. When pausing
 // hard, it fans out an immediate termination across every project. A fleet-wide
-// hard pause is the deliberate emergency stop, so it terminates orchestrators as
-// well as workers (best-effort — reports failure if any project's drain errored).
+// hard pause is the deliberate emergency stop, so it terminates privileged
+// supervisor sessions (orchestrators and prime) as well as workers
+// (best-effort — reports failure if any project's drain errored).
 func (m *Service) SetFleetPaused(ctx context.Context, paused, hard bool) error {
 	if err := m.store.SetFleetPaused(ctx, paused); err != nil {
 		return apierr.Internal("FLEET_PAUSE_FAILED", "Failed to update fleet pause state")
@@ -133,12 +134,12 @@ func (m *Service) SetProjectPaused(ctx context.Context, id domain.ProjectID, pau
 }
 
 // hardDrain terminates a project's live sessions through the clean
-// session-teardown Kill path. Workers are always drained. Orchestrators are
-// drained only when includeOrchestrators is set — this is reserved for the
-// fleet-wide hard pause (the emergency stop); a per-project hard pause passes
-// false so the orchestrator stays alive and idle to keep supervision and
-// alerting running. A nil session collaborator is a no-op. Best-effort: every
-// eligible session is attempted and failures are aggregated.
+// session-teardown Kill path. Workers are always drained. Privileged supervisor
+// sessions (orchestrator and prime) are drained only when includeOrchestrators is
+// set — this is reserved for the fleet-wide hard pause (the emergency stop); a
+// per-project hard pause passes false so those supervisors stay alive and idle to
+// keep supervision and alerting running. A nil session collaborator is a no-op.
+// Best-effort: every eligible session is attempted and failures are aggregated.
 func (m *Service) hardDrain(ctx context.Context, id domain.ProjectID, includeOrchestrators bool) error {
 	if m.sessions == nil {
 		return nil
@@ -152,7 +153,7 @@ func (m *Service) hardDrain(ctx context.Context, id domain.ProjectID, includeOrc
 		if string(s.ProjectID) != string(id) || s.IsTerminated {
 			continue
 		}
-		if s.Kind == domain.KindOrchestrator && !includeOrchestrators {
+		if (s.Kind == domain.KindOrchestrator || s.Kind == domain.KindPrime) && !includeOrchestrators {
 			continue
 		}
 		// Best-effort: one worker's Kill failure must not leave the rest of the

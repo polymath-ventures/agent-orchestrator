@@ -81,7 +81,8 @@ export function FleetSection() {
 				<CardContent className="flex flex-col gap-4">
 						<p className="text-xs leading-row text-muted-foreground">
 							Pause the whole fleet to stop new work across every project. A soft pause lets live workers finish and drain
-							at idle; a hard fleet pause terminates workers and orchestrators immediately and loses mid-flight work.
+							at idle; a hard fleet pause terminates workers, orchestrators, and prime sessions immediately and loses
+							mid-flight work.
 						</p>
 
 					<div className="flex flex-col gap-2 text-xs">
@@ -138,8 +139,8 @@ export function FleetSection() {
 				title="Hard pause the fleet?"
 					description={
 						<p className="text-sm text-muted-foreground">
-							This immediately terminates every live worker and orchestrator across all projects. In-flight, uncommitted
-							work is discarded. Use a normal pause to let workers drain instead.
+							This immediately terminates every live worker, orchestrator, and prime session across all projects. In-flight,
+							uncommitted work is discarded. Use a normal pause to let workers drain instead.
 						</p>
 					}
 				confirmLabel={pauseHard.isPending ? "Pausing…" : "Pause now"}

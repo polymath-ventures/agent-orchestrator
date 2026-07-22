@@ -113,6 +113,7 @@ func TestSetProjectPausedHardKillsWorkersNotOrchestrators(t *testing.T) {
 	seedPauseProject(t, store, "proj")
 	w := seedSession(t, store, "proj", domain.KindWorker)
 	seedSession(t, store, "proj", domain.KindOrchestrator)
+	seedSession(t, store, "proj", domain.KindPrime)
 	sessions := &fakePauseSessions{}
 	m := project.NewWithDeps(project.Deps{Store: store, Sessions: sessions})
 
@@ -120,7 +121,7 @@ func TestSetProjectPausedHardKillsWorkersNotOrchestrators(t *testing.T) {
 		t.Fatalf("SetProjectPaused hard: %v", err)
 	}
 	if len(sessions.killed) != 1 || sessions.killed[0] != w {
-		t.Fatalf("hard pause killed %v, want only worker %s", sessions.killed, w)
+		t.Fatalf("hard pause killed %v, want only worker %s (orchestrator and prime spared)", sessions.killed, w)
 	}
 }
 
@@ -187,6 +188,7 @@ func TestSetFleetPausedHardDrainsWorkersAndOrchestrators(t *testing.T) {
 	seedPauseProject(t, store, "p2")
 	w := seedSession(t, store, "p1", domain.KindWorker)
 	o := seedSession(t, store, "p2", domain.KindOrchestrator)
+	pr := seedSession(t, store, "p1", domain.KindPrime)
 	sessions := &fakePauseSessions{}
 	m := project.NewWithDeps(project.Deps{Store: store, Sessions: sessions})
 
@@ -197,7 +199,7 @@ func TestSetFleetPausedHardDrainsWorkersAndOrchestrators(t *testing.T) {
 	for _, id := range sessions.killed {
 		killed[id] = true
 	}
-	if len(sessions.killed) != 2 || !killed[w] || !killed[o] {
-		t.Fatalf("fleet hard pause killed %v, want both the worker %s and orchestrator %s (emergency stop)", sessions.killed, w, o)
+	if len(sessions.killed) != 3 || !killed[w] || !killed[o] || !killed[pr] {
+		t.Fatalf("fleet hard pause killed %v, want worker %s, orchestrator %s, and prime %s (emergency stop terminates every session)", sessions.killed, w, o, pr)
 	}
 }

@@ -80,7 +80,9 @@ describe("FleetSection", () => {
 
 		await waitFor(() => expect(screen.getByText("Running")).toBeInTheDocument());
 		await userEvent.click(screen.getByRole("button", { name: "Pause now (hard)" }));
-		expect(within(screen.getByRole("dialog")).getByText(/orchestrator/i)).toBeInTheDocument();
+		const dialog = within(screen.getByRole("dialog"));
+		expect(dialog.getByText(/orchestrator/i)).toBeInTheDocument();
+		expect(dialog.getByText(/prime session/i)).toBeInTheDocument();
 	});
 
 	it("renders an unavailable state (not Running) when status can't be loaded", async () => {
