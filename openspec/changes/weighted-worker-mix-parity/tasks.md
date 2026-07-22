@@ -40,4 +40,4 @@
 - [x] 7.1 Run focused backend tests for session manager, project service, tracker intake, and domain worker mix.
 - [x] 7.2 Run frontend worker-mix settings tests and typecheck.
 - [x] 7.3 Run `openspec validate --all --strict --no-interactive`.
-- [ ] 7.4 Update the PR body with the history-mined edge-case checklist, citing implementation file:line evidence or explicit non-applicability for each item.
+- [x] 7.4 Update the PR body with the history-mined edge-case checklist, citing implementation file:line evidence or explicit non-applicability for each item.
