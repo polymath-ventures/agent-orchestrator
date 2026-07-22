@@ -36,34 +36,42 @@ Every product command resolves to a daemon HTTP route. Run `ao <command>
 
 ### Product commands
 
-| Command                             | Daemon route                                                          |
-| ----------------------------------- | --------------------------------------------------------------------- |
-| `ao project add`                    | `POST /api/v1/projects`                                               |
-| `ao project ls`                     | `GET /api/v1/projects`                                                |
-| `ao project get <id>`               | `GET /api/v1/projects/{id}`                                           |
-| `ao project set-config <id>`        | `PUT /api/v1/projects/{id}/config`                                    |
-| `ao project config export <p>`      | `GET /api/v1/projects/{id}`                                           |
-| `ao project config apply <p> <f>`   | `GET` + `PUT /api/v1/projects/{id}/config`                            |
-| `ao project config diff <p> <f>`    | `GET /api/v1/projects/{id}`                                           |
-| `ao project rm <id>`                | `DELETE /api/v1/projects/{id}`                                        |
-| `ao role prompt <project> <role>`   | `GET /api/v1/projects/{id}/roles/{role}/prompt`                       |
-| `ao pause [project] [--hard]`       | `POST /api/v1/projects/{id}/pause` (or `/fleet/pause` with `--all`)   |
-| `ao resume [project]`               | `POST /api/v1/projects/{id}/resume` (or `/fleet/resume` with `--all`) |
-| `ao agent ls`                       | `GET /api/v1/agents`                                                  |
-| `ao agent ls --refresh`             | `POST /api/v1/agents/refresh`                                         |
-| `ao spawn`                          | `POST /api/v1/sessions`                                               |
-| `ao session ls`                     | `GET /api/v1/sessions`                                                |
-| `ao session get <id>`               | `GET /api/v1/sessions/{id}`                                           |
-| `ao session kill <id>`              | `POST /api/v1/sessions/{id}/kill`                                     |
-| `ao session restore <id>`           | `POST /api/v1/sessions/{id}/restore`                                  |
-| `ao session rename <id> <name>`     | `PATCH /api/v1/sessions/{id}`                                         |
-| `ao session cleanup`                | `POST /api/v1/sessions/cleanup`                                       |
-| `ao session claim-pr <id> <pr-ref>` | `POST /api/v1/sessions/{id}/pr/claim`                                 |
-| `ao orchestrator ls`                | `GET /api/v1/orchestrators`                                           |
-| `ao send`                           | `POST /api/v1/sessions/{id}/send`                                     |
-| `ao preview [url]`                  | `POST /api/v1/sessions/{id}/preview`                                  |
-| `ao notify slack`                   | `GET /api/v1/notifications/stream` (+ `GET /api/v1/notifications`)    |
-| `ao hooks <agent> <event>`          | `POST /api/v1/sessions/{id}/activity` (hidden)                        |
+| Command                           | Daemon route                                                          |
+| --------------------------------- | --------------------------------------------------------------------- |
+| `ao project add`                  | `POST /api/v1/projects`                                               |
+| `ao project ls`                   | `GET /api/v1/projects`                                                |
+| `ao project get <id>`             | `GET /api/v1/projects/{id}`                                           |
+| `ao project set-config <id>`      | `PUT /api/v1/projects/{id}/config`                                    |
+| `ao project config export <p>`    | `GET /api/v1/projects/{id}`                                           |
+| `ao project config apply <p> <f>` | `GET` + `PUT /api/v1/projects/{id}/config`                            |
+| `ao project config diff <p> <f>`  | `GET /api/v1/projects/{id}`                                           |
+| `ao project rm <id>`              | `DELETE /api/v1/projects/{id}`                                        |
+| `ao role prompt <project> <role>` | `GET /api/v1/projects/{id}/roles/{role}/prompt`                       |
+| `ao pause [project] [--hard]`     | `POST /api/v1/projects/{id}/pause` (or `/fleet/pause` with `--all`)   |
+| `ao resume [project]`             | `POST /api/v1/projects/{id}/resume` (or `/fleet/resume` with `--all`) |
+| `ao agent ls`                     | `GET /api/v1/agents`                                                  |
+| `ao agent ls --refresh`           | `POST /api/v1/agents/refresh`                                         |
+| `ao spawn`                        | `POST /api/v1/sessions`                                               |
+| `ao session ls`                   | `GET /api/v1/sessions`                                                |
+| `ao session get <id>`             | `GET /api/v1/sessions/{id}`                                           |
+| `ao session kill <id>`            | `POST /api/v1/sessions/{id}/kill`                                     |
+| `ao session restore <id>`         | `POST /api/v1/sessions/{id}/restore`                                  |
+
+`project config apply` sends the `configETag` from its read as `If-Match`, so
+concurrent edits fail with `PROJECT_CONFIG_STALE` instead of being overwritten.
+Repeat `--only <field.path>` to restore selected nested object paths.
+`project config diff --unexpected` additionally reports meaningful live fields
+absent from the spec; the default remains partial-spec comparison. Omitted
+`omitempty` zero/empty values compare as converged. Export warns on
+secret-shaped env keys, while diff redacts env and secret-shaped leaf values.
+| `ao session rename <id> <name>` | `PATCH /api/v1/sessions/{id}` |
+| `ao session cleanup` | `POST /api/v1/sessions/cleanup` |
+| `ao session claim-pr <id> <pr-ref>` | `POST /api/v1/sessions/{id}/pr/claim` |
+| `ao orchestrator ls` | `GET /api/v1/orchestrators` |
+| `ao send` | `POST /api/v1/sessions/{id}/send` |
+| `ao preview [url]` | `POST /api/v1/sessions/{id}/preview` |
+| `ao notify slack` | `GET /api/v1/notifications/stream` (+ `GET /api/v1/notifications`) |
+| `ao hooks <agent> <event>` | `POST /api/v1/sessions/{id}/activity` (hidden) |
 
 `ao agent ls` prints the daemon-supported agent catalog with local install/auth
 readiness. Use `--refresh` to rerun the bounded local probes and `--json` to

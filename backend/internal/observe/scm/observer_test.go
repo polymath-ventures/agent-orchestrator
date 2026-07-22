@@ -78,14 +78,19 @@ func (s *fakeStore) GetProject(_ context.Context, id string) (domain.ProjectReco
 	return p, ok, nil
 }
 
-func (s *fakeStore) UpsertProject(_ context.Context, row domain.ProjectRecord) error {
+func (s *fakeStore) SetProjectOriginURL(_ context.Context, id string, originURL string) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.projects == nil {
 		s.projects = map[string]domain.ProjectRecord{}
 	}
-	s.projects[row.ID] = row
-	return nil
+	row, ok := s.projects[id]
+	if !ok {
+		return false, nil
+	}
+	row.RepoOriginURL = originURL
+	s.projects[id] = row
+	return true, nil
 }
 
 func (s *fakeStore) ListWorkspaceRepos(_ context.Context, projectID string) ([]domain.WorkspaceRepoRecord, error) {
@@ -1367,9 +1372,11 @@ func TestDiscoverSubjects_BackfillsRepoOriginURL(t *testing.T) {
 
 	store := &fakeStore{
 		sessions: []domain.SessionRecord{{ID: "p-1", ProjectID: "p", Metadata: domain.SessionMetadata{Branch: "feat"}}},
-		projects: map[string]domain.ProjectRecord{"p": {ID: "p", Path: dir}}, // empty RepoOriginURL
-		prs:      map[domain.SessionID][]domain.PullRequest{},
-		checks:   map[string][]domain.PullRequestCheck{},
+		projects: map[string]domain.ProjectRecord{"p": {
+			ID: "p", Path: dir, Config: domain.ProjectConfig{SessionPrefix: "must-survive"},
+		}}, // empty RepoOriginURL
+		prs:    map[domain.SessionID][]domain.PullRequest{},
+		checks: map[string][]domain.PullRequestCheck{},
 	}
 	provider := &fakeProvider{}
 	obs := newTestObserver(store, provider, &fakeLifecycle{}, time.Unix(0, 0).UTC())
@@ -1379,6 +1386,9 @@ func TestDiscoverSubjects_BackfillsRepoOriginURL(t *testing.T) {
 	}
 	if got := store.projects["p"].RepoOriginURL; got != "https://github.com/o/r.git" {
 		t.Fatalf("RepoOriginURL after backfill = %q, want https://github.com/o/r.git", got)
+	}
+	if got := store.projects["p"].Config.SessionPrefix; got != "must-survive" {
+		t.Fatalf("config after origin backfill = %q, want preserved", got)
 	}
 }
 

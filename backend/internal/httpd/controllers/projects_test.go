@@ -466,6 +466,72 @@ type projectBody struct {
 	DefaultBranch string `json:"defaultBranch"`
 
 	Agent string `json:"agent"`
+
+	ConfigETag string `json:"configETag"`
+}
+
+func TestProjectsAPI_ConfigETagAndIfMatch(t *testing.T) {
+	srv := newTestServer(t)
+	repo := gitRepo(t, "config-etag")
+
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/projects",
+		`{"path":`+quote(repo)+`,"projectId":"config-etag"}`)
+	if status != http.StatusCreated {
+		t.Fatalf("POST project = %d, want 201; body=%s", status, body)
+	}
+
+	body, status, _ = doRequest(t, srv, "GET", "/api/v1/projects/config-etag", "")
+	if status != http.StatusOK {
+		t.Fatalf("GET project = %d, want 200; body=%s", status, body)
+	}
+	var get struct {
+		Project projectBody `json:"project"`
+	}
+	mustJSON(t, body, &get)
+	if get.Project.ConfigETag == "" {
+		t.Fatal("GET project omitted configETag")
+	}
+	stale := get.Project.ConfigETag
+
+	put := func(ifMatch, config string) ([]byte, int, http.Header) {
+		t.Helper()
+		req, err := http.NewRequest(http.MethodPut, srv.URL+"/api/v1/projects/config-etag/config",
+			strings.NewReader(`{"config":`+config+`}`))
+		if err != nil {
+			t.Fatalf("new request: %v", err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		if ifMatch != "" {
+			req.Header.Set("If-Match", ifMatch)
+		}
+		resp, err := srv.Client().Do(req)
+		if err != nil {
+			t.Fatalf("PUT config: %v", err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+		b, _ := io.ReadAll(resp.Body)
+		return b, resp.StatusCode, resp.Header
+	}
+
+	_, status, currentHeaders := put("", `{"sessionPrefix":"concurrent"}`)
+	if status != http.StatusOK {
+		t.Fatalf("tokenless PUT = %d, want 200", status)
+	}
+	current := currentHeaders.Get("ETag")
+	if current == "" {
+		t.Fatal("successful PUT omitted ETag response header")
+	}
+
+	body, status, _ = put(`"`+stale+`"`, `{"defaultBranch":"develop"}`)
+	assertErrorCode(t, body, status, http.StatusConflict, "PROJECT_CONFIG_STALE")
+
+	body, status, headers := put(current, `{"defaultBranch":"release"}`)
+	if status != http.StatusOK {
+		t.Fatalf("current If-Match PUT = %d, want 200; body=%s", status, body)
+	}
+	if headers.Get("ETag") == "" {
+		t.Fatal("current If-Match PUT omitted ETag")
+	}
 }
 
 type errorBody struct {

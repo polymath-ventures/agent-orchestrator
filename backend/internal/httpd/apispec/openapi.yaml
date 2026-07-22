@@ -875,6 +875,14 @@ paths:
         schema:
           description: Project identifier (registry key).
           type: string
+      - description: Config ETag from the project read this replacement was built
+          on. A stale token returns 409.
+        in: header
+        name: If-Match
+        schema:
+          description: Config ETag from the project read this replacement was built
+            on. A stale token returns 409.
+          type: string
       requestBody:
         content:
           application/json:
@@ -900,6 +908,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/APIError'
           description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
         "500":
           content:
             application/json:
@@ -3188,6 +3202,8 @@ components:
           type: string
         config:
           $ref: '#/components/schemas/ProjectConfig'
+        configETag:
+          type: string
         defaultBranch:
           type: string
         drainingWorkers:

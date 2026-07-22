@@ -97,3 +97,39 @@ func TestProjectConfigExport_DaemonErrorExitsNonzero(t *testing.T) {
 		t.Fatalf("error = %v, want it to surface the daemon message", err)
 	}
 }
+
+func TestProjectConfigExport_WarnsForSecretShapedEnvKeysButStaysLossless(t *testing.T) {
+	cfg := setConfigEnv(t)
+	response := `{"status":"ok","project":{"id":"demo","path":"/repo/demo","config":{"env":{"GITHUB_TOKEN":"secret","PATH":"/bin"}}}}`
+	srv, _ := projectServer(t, http.StatusOK, response)
+	writeRunFileFor(t, cfg, srv)
+
+	out, errOut, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }},
+		"project", "config", "export", "demo")
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	if !strings.Contains(out, `"GITHUB_TOKEN": "secret"`) {
+		t.Fatalf("lossless export omitted/redacted secret value: %q", out)
+	}
+	if !strings.Contains(errOut, "GITHUB_TOKEN") || !strings.Contains(strings.ToLower(errOut), "warning") {
+		t.Fatalf("stderr = %q, want secret-key warning", errOut)
+	}
+}
+
+func TestProjectConfigExport_ExactEnvKeyOverrideSuppressesWarning(t *testing.T) {
+	t.Setenv("AO_PROJECT_CONFIG_ALLOW_ENV_KEYS", "GITHUB_TOKEN")
+	cfg := setConfigEnv(t)
+	response := `{"status":"ok","project":{"id":"demo","path":"/repo/demo","config":{"env":{"GITHUB_TOKEN":"not-a-secret"}}}}`
+	srv, _ := projectServer(t, http.StatusOK, response)
+	writeRunFileFor(t, cfg, srv)
+
+	_, errOut, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }},
+		"project", "config", "export", "demo")
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	if errOut != "" {
+		t.Fatalf("stderr = %q, want no warning for exact override", errOut)
+	}
+}

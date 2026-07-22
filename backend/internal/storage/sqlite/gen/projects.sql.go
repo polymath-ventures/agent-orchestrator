@@ -112,6 +112,44 @@ func (q *Queries) ListProjects(ctx context.Context) ([]Project, error) {
 	return items, nil
 }
 
+const setProjectConfig = `-- name: SetProjectConfig :execrows
+UPDATE projects SET config = ? WHERE id = ?
+`
+
+type SetProjectConfigParams struct {
+	Config sql.NullString
+	ID     domain.ProjectID
+}
+
+// Config writes own only the config column; a whole-row upsert can revert
+// concurrently updated metadata such as origin URL or archived_at.
+func (q *Queries) SetProjectConfig(ctx context.Context, arg SetProjectConfigParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, setProjectConfig, arg.Config, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const setProjectOriginURL = `-- name: SetProjectOriginURL :execrows
+UPDATE projects SET repo_origin_url = ? WHERE id = ?
+`
+
+type SetProjectOriginURLParams struct {
+	RepoOriginURL string
+	ID            domain.ProjectID
+}
+
+// The SCM observer owns only this field. A whole-row upsert can restore a stale
+// config read while another writer updates config.
+func (q *Queries) SetProjectOriginURL(ctx context.Context, arg SetProjectOriginURLParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, setProjectOriginURL, arg.RepoOriginURL, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const setProjectPaused = `-- name: SetProjectPaused :execrows
 UPDATE projects SET paused = ? WHERE id = ?
 `

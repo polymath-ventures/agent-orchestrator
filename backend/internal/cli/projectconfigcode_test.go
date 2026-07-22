@@ -171,6 +171,121 @@ func TestDiffConfig_DistinguishesNullFromAbsent(t *testing.T) {
 	}
 }
 
+func TestAbsentEquivalentValuesConvergeButStillClearNonZeroLiveValues(t *testing.T) {
+	t.Parallel()
+
+	for name, value := range map[string]any{
+		"false":        false,
+		"zero":         json.Number("0"),
+		"empty-string": "",
+		"empty-object": map[string]any{},
+		"empty-array":  []any{},
+	} {
+		t.Run(name, func(t *testing.T) {
+			live := map[string]any{}
+			spec := map[string]any{"field": value}
+			merged, changed := overlayConfig(live, spec)
+			if len(changed) != 0 {
+				t.Fatalf("changed = %v, want none", changed)
+			}
+			if _, present := merged["field"]; present {
+				t.Fatalf("merged reintroduced omitted-equivalent value %#v", value)
+			}
+			if drift := diffConfig(live, spec); len(drift) != 0 {
+				t.Fatalf("drift = %v, want none", drift)
+			}
+		})
+	}
+
+	live := map[string]any{"field": json.Number("7")}
+	spec := map[string]any{"field": json.Number("0")}
+	merged, changed := overlayConfig(live, spec)
+	if !reflect.DeepEqual(changed, []string{"field"}) || merged["field"] != json.Number("0") {
+		t.Fatalf("clear nonzero: merged=%v changed=%v", merged, changed)
+	}
+}
+
+func TestDiffConfigUnexpectedModeReportsMeaningfulLiveOnlyFields(t *testing.T) {
+	t.Parallel()
+
+	live := map[string]any{
+		"defaultBranch": "main",
+		"sessionPrefix": "unexpected",
+		"empty":         "",
+	}
+	spec := map[string]any{"defaultBranch": "main"}
+
+	if drift := diffConfig(live, spec); len(drift) != 0 {
+		t.Fatalf("default drift = %v, want none", drift)
+	}
+	drift := diffConfigUnexpected(live, spec)
+	if len(drift) != 1 || drift[0].Field != "sessionPrefix" || drift[0].Kind != driftUnexpected {
+		t.Fatalf("unexpected drift = %#v, want sessionPrefix only", drift)
+	}
+}
+
+func TestMergeOnlyFieldsRestoresNestedPathsWithoutMutatingLive(t *testing.T) {
+	t.Parallel()
+
+	live := map[string]any{
+		"worker": map[string]any{
+			"agent":       "codex",
+			"agentConfig": map[string]any{"model": "old", "effort": "high"},
+		},
+		"defaultBranch": "main",
+	}
+	spec := map[string]any{
+		"worker": map[string]any{
+			"agent":       "claude-code",
+			"agentConfig": map[string]any{"model": "new", "effort": "low"},
+		},
+	}
+	merged, changed, err := mergeOnlyFields(live, spec, []string{"worker.agentConfig.model"})
+	if err != nil {
+		t.Fatalf("mergeOnlyFields: %v", err)
+	}
+	if !reflect.DeepEqual(changed, []string{"worker.agentConfig.model"}) {
+		t.Fatalf("changed = %v", changed)
+	}
+	worker := merged["worker"].(map[string]any)
+	if worker["agent"] != "codex" {
+		t.Fatalf("worker.agent = %v, want live codex", worker["agent"])
+	}
+	cfg := worker["agentConfig"].(map[string]any)
+	if cfg["model"] != "new" || cfg["effort"] != "high" {
+		t.Fatalf("merged agentConfig = %v", cfg)
+	}
+	if live["worker"].(map[string]any)["agentConfig"].(map[string]any)["model"] != "old" {
+		t.Fatal("mergeOnlyFields mutated live")
+	}
+}
+
+func TestMergeOnlyFieldsRejectsUnsafeAndMissingPaths(t *testing.T) {
+	t.Parallel()
+
+	spec := map[string]any{"worker": map[string]any{"agent": "codex"}}
+	for _, path := range []string{"worker.agent.missing", "worker..agent"} {
+		if _, _, err := mergeOnlyFields(map[string]any{}, spec, []string{path}); err == nil {
+			t.Errorf("mergeOnlyFields accepted %q", path)
+		}
+	}
+}
+
+func TestLooksSecretKeyUsesPATBoundaries(t *testing.T) {
+	t.Parallel()
+
+	for _, key := range []string{"GITHUB_TOKEN", "api_key", "DB_PASSWORD", "MY_PAT"} {
+		if !looksSecretKey(key) {
+			t.Errorf("looksSecretKey(%q) = false, want true", key)
+		}
+	}
+	for _, key := range []string{"PATH", "COMPAT", "POLYPOWERS_REPO"} {
+		if looksSecretKey(key) {
+			t.Errorf("looksSecretKey(%q) = true, want false", key)
+		}
+	}
+}
+
 func TestParseSpecObject_RejectsEmptyNullAndTrailing(t *testing.T) {
 	cases := map[string]string{
 		"empty":            "",

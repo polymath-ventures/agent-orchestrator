@@ -29,6 +29,12 @@ type ProjectIDParam struct {
 	ID string `path:"id" description:"Project identifier (registry key)."`
 }
 
+// ProjectConfigIfMatchParam is the optional config-content precondition for a
+// whole-object project config write.
+type ProjectConfigIfMatchParam struct {
+	IfMatch string `header:"If-Match,omitempty" description:"Config ETag from the project read this replacement was built on. A stale token returns 409."`
+}
+
 // AgentIDParam is the {agent} path parameter for one-agent catalog probes.
 type AgentIDParam struct {
 	Agent string `path:"agent" description:"Agent adapter identifier."`
