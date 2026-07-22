@@ -1,8 +1,11 @@
 # role-instructions Specification
 
 ## Purpose
+
 TBD - created by archiving change role-prompt-transparency. Update Purpose after archive.
+
 ## Requirements
+
 ### Requirement: Per-role operator instruction override
 
 The system SHALL allow an operator to configure, per project and per role (worker, orchestrator,
@@ -189,4 +192,3 @@ result before review is considered complete.
 - **WHEN** a reviewer adapter launches successfully but exits before producing a verdict
 - **THEN** final review does not mark the pass clean
 - **AND** the failure is visible in the review progress/status output
-
