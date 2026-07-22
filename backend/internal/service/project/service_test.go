@@ -716,6 +716,70 @@ func TestManager_SetConfigValidatesExplicitWorkerMixEffort(t *testing.T) {
 	}
 }
 
+func TestManager_SetConfigRejectsUnreachableWorkerMixModel(t *testing.T) {
+	ctx := context.Background()
+	store, err := sqlite.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	validator := &fakeProjectModelValidator{result: ports.ModelValidationResult{
+		Status:  ports.ModelValidationUnreachable,
+		Message: "provider rejected bucket model",
+	}}
+	m := project.NewWithDeps(project.Deps{Store: store, ModelValidator: validator})
+	if _, err := m.Add(ctx, project.AddInput{Path: gitRepo(t), ProjectID: ptr("ao")}); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+
+	_, err = m.SetConfig(ctx, "ao", project.SetConfigInput{Config: domain.ProjectConfig{
+		WorkerMix: domain.WorkerMix{{
+			Harness: domain.HarnessCodex, Model: "gpt-5-codex", Weight: 100,
+		}},
+	}})
+	wantCode(t, err, "MODEL_UNREACHABLE")
+	if len(validator.calls) != 1 || validator.calls[0].harness != domain.HarnessCodex || validator.calls[0].model != "gpt-5-codex" {
+		t.Fatalf("validator calls = %#v, want codex/gpt-5-codex worker-mix bucket", validator.calls)
+	}
+}
+
+func TestManager_SetConfigStoresWorkerMixWhenModelValidationIsUnknown(t *testing.T) {
+	ctx := context.Background()
+	store, err := sqlite.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	validator := &fakeProjectModelValidator{result: ports.ModelValidationResult{
+		Status:  ports.ModelValidationProbeUnavailable,
+		Message: "catalog stale",
+	}}
+	var logs bytes.Buffer
+	m := project.NewWithDeps(project.Deps{
+		Store:          store,
+		ModelValidator: validator,
+		Logger:         slog.New(slog.NewTextHandler(&logs, nil)),
+	})
+	if _, err := m.Add(ctx, project.AddInput{Path: gitRepo(t), ProjectID: ptr("ao")}); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+
+	updated, err := m.SetConfig(ctx, "ao", project.SetConfigInput{Config: domain.ProjectConfig{
+		WorkerMix: domain.WorkerMix{{
+			Harness: domain.HarnessCodex, Model: "gpt-5-codex", Weight: 100,
+		}},
+	}})
+	if err != nil {
+		t.Fatalf("SetConfig: %v", err)
+	}
+	if updated.Config == nil || len(updated.Config.WorkerMix) != 1 || updated.Config.WorkerMix[0].Model != "gpt-5-codex" {
+		t.Fatalf("saved config = %#v", updated.Config)
+	}
+	if got := logs.String(); !strings.Contains(got, "model validation unavailable") || !strings.Contains(got, "workerMix[0]") || !strings.Contains(got, "catalog stale") {
+		t.Fatalf("logs = %q, want worker-mix validation warning", got)
+	}
+}
+
 func TestManager_SetConfigRejectsWorkerMixDuplicateAfterEffortInheritance(t *testing.T) {
 	ctx := context.Background()
 	store, err := sqlite.Open(t.TempDir())

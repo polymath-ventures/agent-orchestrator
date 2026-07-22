@@ -12,6 +12,7 @@ import (
 	"reflect"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -22,6 +23,7 @@ import (
 var ctx = context.Background()
 
 type fakeStore struct {
+	mu             sync.Mutex
 	sessions       map[domain.SessionID]domain.SessionRecord
 	pr             map[domain.SessionID]domain.PRFacts
 	projects       map[string]domain.ProjectRecord
@@ -35,7 +37,8 @@ type fakeStore struct {
 	worktrees map[domain.SessionID][]domain.SessionWorktreeRecord
 	// sharedLog, when non-nil, receives an ordered call entry for each
 	// UpsertSessionWorktree invocation so ordering tests can compare across fakes.
-	sharedLog *[]string
+	sharedLog    *[]string
+	beforeCreate func(domain.SessionRecord)
 }
 
 func newFakeStore() *fakeStore {
@@ -58,20 +61,31 @@ func (f *fakeStore) ListWorkspaceRepos(_ context.Context, projectID string) ([]d
 	return f.workspaceRepo[projectID], nil
 }
 func (f *fakeStore) CreateSession(_ context.Context, rec domain.SessionRecord) (domain.SessionRecord, error) {
+	if f.beforeCreate != nil {
+		f.beforeCreate(rec)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.num++
 	rec.ID = domain.SessionID(fmt.Sprintf("%s-%d", rec.ProjectID, f.num))
 	f.sessions[rec.ID] = rec
 	return rec, nil
 }
 func (f *fakeStore) UpdateSession(_ context.Context, rec domain.SessionRecord) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.sessions[rec.ID] = rec
 	return nil
 }
 func (f *fakeStore) GetSession(_ context.Context, id domain.SessionID) (domain.SessionRecord, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	r, ok := f.sessions[id]
 	return r, ok, nil
 }
 func (f *fakeStore) ListSessions(_ context.Context, p domain.ProjectID) ([]domain.SessionRecord, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	var out []domain.SessionRecord
 	for _, r := range f.sessions {
 		if r.ProjectID == p {
@@ -81,6 +95,8 @@ func (f *fakeStore) ListSessions(_ context.Context, p domain.ProjectID) ([]domai
 	return out, nil
 }
 func (f *fakeStore) ListAllSessions(context.Context) ([]domain.SessionRecord, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	var out []domain.SessionRecord
 	for _, r := range f.sessions {
 		out = append(out, r)
@@ -88,6 +104,8 @@ func (f *fakeStore) ListAllSessions(context.Context) ([]domain.SessionRecord, er
 	return out, nil
 }
 func (f *fakeStore) DeleteSession(_ context.Context, id domain.SessionID) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if f.deleteErr != nil {
 		return false, f.deleteErr
 	}
@@ -146,6 +164,8 @@ type fakeLCM struct {
 
 func (l *fakeLCM) MarkSpawned(_ context.Context, id domain.SessionID, metadata domain.SessionMetadata) error {
 	l.completed++
+	l.store.mu.Lock()
+	defer l.store.mu.Unlock()
 	rec := l.store.sessions[id]
 	rec.IsTerminated = false
 	rec.Activity = domain.Activity{State: domain.ActivityIdle, LastActivityAt: time.Now()}
@@ -158,6 +178,8 @@ func (l *fakeLCM) MarkTerminated(_ context.Context, id domain.SessionID) error {
 		l.terminated = map[domain.SessionID]int{}
 	}
 	l.terminated[id]++
+	l.store.mu.Lock()
+	defer l.store.mu.Unlock()
 	rec := l.store.sessions[id]
 	rec.IsTerminated = true
 	rec.Activity = domain.Activity{State: domain.ActivityExited, LastActivityAt: time.Now()}
@@ -2160,6 +2182,12 @@ func TestSpawn_FreshCachedUnreachableSelectionRejectsBeforeAnyState(t *testing.T
 	if !errors.Is(err, ErrModelUnreachable) {
 		t.Fatalf("Spawn err = %v, want ErrModelUnreachable", err)
 	}
+	if !strings.Contains(err.Error(), "from project/role config") {
+		t.Fatalf("Spawn err = %v, want source project/role config", err)
+	}
+	if len(validator.calls) != 1 || validator.calls[0].harness != domain.HarnessCodex || validator.calls[0].model != "gpt-5-codex" {
+		t.Fatalf("validator calls = %#v, want resolved codex/gpt-5-codex tuple", validator.calls)
+	}
 	if st.num != 0 || len(st.sessions) != 0 {
 		t.Fatalf("session state created before rejection: num=%d rows=%#v", st.num, st.sessions)
 	}
@@ -2195,6 +2223,9 @@ func TestSpawn_UnknownCachedSelectionFailsOpenWithWarning(t *testing.T) {
 	}
 	if got := logs.String(); !strings.Contains(got, "model validation unavailable") || !strings.Contains(got, "no fresh cached catalog") {
 		t.Fatalf("logs = %q, want loud fail-open warning", got)
+	}
+	if got := logs.String(); !strings.Contains(got, "source=") || !strings.Contains(got, "project/role config") {
+		t.Fatalf("logs = %q, want model source", got)
 	}
 }
 
@@ -2279,6 +2310,67 @@ func TestSpawn_ExplicitCrossProviderModelRejectedBeforeState(t *testing.T) {
 	}
 	if len(validator.calls) != 0 {
 		t.Fatalf("model validator called before static mismatch rejection: %#v", validator.calls)
+	}
+}
+
+func TestSpawn_ExplicitUnreachableModelNamesSourceBeforeState(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{
+		Worker: domain.RoleOverride{Harness: domain.HarnessCodex},
+	}}
+	runtime := &fakeRuntime{}
+	workspace := &fakeWorkspace{}
+	validator := &fakeSpawnSelectionValidator{result: ports.ModelValidationResult{
+		Status: ports.ModelValidationUnreachable, Message: "cached provider rejection",
+	}}
+	m := New(Deps{
+		Runtime: runtime, Agents: singleAgent{agent: &recordingAgent{}}, Workspace: workspace, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st},
+		ModelValidator: validator,
+		LookPath:       func(string) (string, error) { return "/bin/true", nil },
+	})
+
+	_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Model: "gpt-5-codex"})
+	if !errors.Is(err, ErrModelUnreachable) {
+		t.Fatalf("Spawn err = %v, want ErrModelUnreachable", err)
+	}
+	if !strings.Contains(err.Error(), "from explicit spawn model") {
+		t.Fatalf("Spawn err = %v, want explicit spawn model source", err)
+	}
+	if len(st.sessions) != 0 || runtime.created != 0 || workspace.lastCfg.SessionID != "" {
+		t.Fatalf("state created before rejection: sessions=%#v runtime=%d workspace=%#v", st.sessions, runtime.created, workspace.lastCfg)
+	}
+}
+
+func TestSpawn_WorkerMixUnreachableModelNamesSourceBeforeState(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{
+		WorkerMix: domain.WorkerMix{{Harness: domain.HarnessCodex, Model: "gpt-5-codex", Weight: 100}},
+	}}
+	runtime := &fakeRuntime{}
+	workspace := &fakeWorkspace{}
+	validator := &fakeSpawnSelectionValidator{result: ports.ModelValidationResult{
+		Status: ports.ModelValidationUnreachable, Message: "cached provider rejection",
+	}}
+	m := New(Deps{
+		Runtime: runtime, Agents: singleAgent{agent: &recordingAgent{}}, Workspace: workspace, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st},
+		ModelValidator: validator,
+		LookPath:       func(string) (string, error) { return "/bin/true", nil },
+	})
+
+	_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	if !errors.Is(err, ErrModelUnreachable) {
+		t.Fatalf("Spawn err = %v, want ErrModelUnreachable", err)
+	}
+	if !strings.Contains(err.Error(), "from worker-mix bucket") {
+		t.Fatalf("Spawn err = %v, want worker-mix bucket source", err)
+	}
+	if len(validator.calls) != 1 || validator.calls[0].harness != domain.HarnessCodex || validator.calls[0].model != "gpt-5-codex" {
+		t.Fatalf("validator calls = %#v, want resolved worker-mix tuple", validator.calls)
+	}
+	if len(st.sessions) != 0 || runtime.created != 0 || workspace.lastCfg.SessionID != "" {
+		t.Fatalf("state created before rejection: sessions=%#v runtime=%d workspace=%#v", st.sessions, runtime.created, workspace.lastCfg)
 	}
 }
 

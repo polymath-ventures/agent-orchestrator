@@ -65,16 +65,14 @@ type SessionRecord struct {
 	// launched value keeps restore and worker-mix census identity stable when
 	// project configuration changes later.
 	Effort Effort `json:"effort,omitempty"`
-	// MixSelected reports that the worker mix chose this session's
-	// (harness, model, effort) tuple, as opposed to a caller pinning it. Only mix-selected
-	// sessions consume mix share, so the census counts these rows alone; without
-	// the flag a pinned spawn naming a configured bucket would be
-	// indistinguishable from a selection and would skew apportionment. Set once
-	// at spawn, where the choice is made. Internal fact, not part of the API read
-	// model.
-	MixSelected bool     `json:"-"`
-	DisplayName string   `json:"displayName,omitempty"`
-	Activity    Activity `json:"activity"`
+	// MixSelected reports that the worker mix chose this session, as opposed to
+	// a caller pinning a harness. MixBucketModel preserves the selected
+	// configured bucket's model for census when a model-only spawn launches an
+	// explicit overlay model. Internal facts, not part of the API read model.
+	MixSelected    bool     `json:"-"`
+	MixBucketModel string   `json:"-"`
+	DisplayName    string   `json:"displayName,omitempty"`
+	Activity       Activity `json:"activity"`
 	// FirstSignalAt is when the FIRST agent hook callback arrived for the
 	// current spawn/restore: raw signal receipt, independent of the derived
 	// activity state. Zero means no hook has ever reported, which deriveStatus

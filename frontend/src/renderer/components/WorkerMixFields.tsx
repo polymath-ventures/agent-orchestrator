@@ -88,6 +88,20 @@ export function workerMixInvalid(buckets: WorkerMixBucket[]): boolean {
 	return buckets.length > 0 && workerMixTotal(buckets) !== REQUIRED_TOTAL;
 }
 
+export function workerMixRowError(buckets: WorkerMixBucket[]): string | null {
+	for (let i = 0; i < buckets.length; i += 1) {
+		const bucket = buckets[i];
+		if (!bucket.agent.trim()) {
+			return `Worker mix bucket ${i + 1} requires an agent.`;
+		}
+		const weight = parseWeight(bucket.weight);
+		if (weight < 1 || weight > 100) {
+			return `Worker mix bucket ${i + 1} weight must be a whole number from 1 to 100.`;
+		}
+	}
+	return null;
+}
+
 // parseMaxLiveWorkers turns the cap input into the payload value: 0 or blank
 // means unbounded, serialized as `undefined` (omit). Number(), not parseInt, so
 // exponent notation such as "1e2" reads as 100 rather than being truncated to 1;

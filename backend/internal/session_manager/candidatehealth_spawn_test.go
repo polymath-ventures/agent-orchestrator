@@ -177,6 +177,52 @@ func TestSpawn_MixSelectedRuntimeRefusedMarksDown(t *testing.T) {
 	}
 }
 
+// Workspace preparation runs the selected agent's launch-specific setup after a
+// bucket was chosen. A failure here is attributable to the candidate and should
+// mark it down before rollback.
+func TestSpawn_MixSelectedWorkspacePreparationFailureMarksDown(t *testing.T) {
+	tr := candidatehealth.New(candidatehealth.Config{Source: "session_manager"})
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{WorkerMix: singleBucketMix()}}
+	agent := &hookErrorCleaningAgent{hookErr: errors.New("hooks install failed")}
+	m := New(Deps{
+		Runtime: &fakeRuntime{}, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st},
+		LookPath: func(string) (string, error) { return "/bin/true", nil }, Health: tr,
+	})
+
+	_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	if err == nil {
+		t.Fatal("expected workspace preparation failure")
+	}
+	if !tr.IsDown(workerMixCandidate(domain.HarnessClaudeCode, "", "")) {
+		t.Fatal("a mix-selected workspace-preparation failure must mark the bucket down")
+	}
+}
+
+// After-start prompt delivery is part of launching the selected bucket. If the
+// pane write fails after runtime start, the candidate should be marked down
+// before cleanup/termination obscures the launch attempt.
+func TestSpawn_MixSelectedAfterStartPromptFailureMarksDown(t *testing.T) {
+	tr := candidatehealth.New(candidatehealth.Config{Source: "session_manager"})
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{WorkerMix: singleBucketMix()}}
+	agent := &recordingAgent{}
+	m := New(Deps{
+		Runtime: &fakeRuntime{}, Agents: singleAgent{agent: afterStartAgent{recordingAgent: agent}}, Workspace: &fakeWorkspace{}, Store: st,
+		Messenger: &fakeMessenger{err: errors.New("pane unavailable")}, Lifecycle: &fakeLCM{store: st},
+		LookPath: func(string) (string, error) { return "/bin/true", nil }, Health: tr,
+	})
+
+	_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Prompt: "fix the button"})
+	if err == nil {
+		t.Fatal("expected after-start prompt delivery failure")
+	}
+	if !tr.IsDown(workerMixCandidate(domain.HarnessClaudeCode, "", "")) {
+		t.Fatal("a mix-selected after-start prompt failure must mark the bucket down")
+	}
+}
+
 // A configuration error (unknown harness) is not attributable to the candidate:
 // the harness or model is misconfigured, not broken, so the bucket stays healthy.
 func TestSpawn_MixSelectedUnknownHarnessDoesNotMarkDown(t *testing.T) {
@@ -234,25 +280,28 @@ func TestSpawn_MixSelectedCallerCanceledDoesNotMarkDown(t *testing.T) {
 	}
 }
 
-// A down bucket is excluded from selection and its share redistributes onto the
-// surviving healthy buckets: with the 60%% bucket down, every unpinned spawn goes
-// to the 40%% bucket rather than substituting a harness the mix never listed.
-func TestSpawn_DownBucketExcludedAndRedistributes(t *testing.T) {
+// A down bucket's share is debit-preserved, not removed from the mix. The first
+// spawn can go to the healthy survivor while the down bucket's debit is lower,
+// but once D'Hondt selects the down bucket's slot the spawn fails loudly instead
+// of silently redistributing that share forever.
+func TestSpawn_DownBucketDebitPreservedAndFailsWhenSelected(t *testing.T) {
 	tr := candidatehealth.New(candidatehealth.Config{Source: "session_manager"})
 	m, _, _ := healthMixManager(t, domain.ProjectConfig{WorkerMix: twoBucketMix()}, tr, nil)
 	tr.MarkDown(workerMixCandidate(domain.HarnessClaudeCode, "", ""), errors.New("binary gone"))
 
-	for i := 0; i < 10; i++ {
-		rec := spawnUnpinnedWorker(t, m)
-		if rec.Harness != domain.HarnessCodex {
-			t.Fatalf("selection %d = %q, want codex — the 60%% bucket is down and excluded", i, rec.Harness)
-		}
+	first := spawnUnpinnedWorker(t, m)
+	if first.Harness != domain.HarnessCodex {
+		t.Fatalf("first selection = %q, want codex while down bucket carries one skip debit", first.Harness)
+	}
+
+	_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	if !errors.Is(err, ErrWorkerMixBucketDown) {
+		t.Fatalf("second spawn err = %v, want ErrWorkerMixBucketDown when down bucket's slot is selected", err)
 	}
 }
 
-// When every bucket in the mix is down, selection has no candidate and the spawn
-// fails loudly with ErrWorkerMixExhausted rather than falling back to a harness
-// outside the mix.
+// When every bucket in the mix is down, selection fails with an exhausted-mix
+// error rather than falling back to a harness outside the mix.
 func TestSpawn_AllBucketsDownFailsLoudly(t *testing.T) {
 	tr := candidatehealth.New(candidatehealth.Config{Source: "session_manager"})
 	m, _, _ := healthMixManager(t, domain.ProjectConfig{WorkerMix: twoBucketMix()}, tr, nil)
@@ -262,6 +311,74 @@ func TestSpawn_AllBucketsDownFailsLoudly(t *testing.T) {
 	_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
 	if !errors.Is(err, ErrWorkerMixExhausted) {
 		t.Fatalf("spawn err = %v, want ErrWorkerMixExhausted", err)
+	}
+}
+
+func TestSpawn_ModelOnlyFailureMarksExplicitModelCandidateDown(t *testing.T) {
+	tr := candidatehealth.New(candidatehealth.Config{Source: "session_manager"})
+	m, rt, _ := healthMixManager(t, domain.ProjectConfig{
+		WorkerMix: domain.WorkerMix{{
+			Harness: domain.HarnessCodex, Model: "gpt-5.4-codex", Weight: 100,
+		}},
+	}, tr, nil)
+	rt.createErr = errors.New("runtime refused explicit model")
+
+	_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Model: "gpt-5.5-codex"})
+	if err == nil {
+		t.Fatal("expected explicit-model launch failure")
+	}
+	actual := workerMixCandidate(domain.HarnessCodex, "gpt-5.5-codex", "")
+	configured := workerMixCandidate(domain.HarnessCodex, "gpt-5.4-codex", "")
+	if !tr.IsDown(actual) {
+		t.Fatal("explicit model candidate was not marked down")
+	}
+	if tr.IsDown(configured) {
+		t.Fatal("configured bucket model was marked down instead of the explicit model candidate")
+	}
+
+	rt.createErr = nil
+	_, err = m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Model: "gpt-5.5-codex"})
+	if !errors.Is(err, ErrWorkerMixExhausted) {
+		t.Fatalf("repeat explicit-model spawn err = %v, want ErrWorkerMixExhausted for the all-down overlaid mix", err)
+	}
+
+	_, err = m.Spawn(ctx, ports.SpawnConfig{
+		ProjectID: "mer", Kind: domain.KindWorker, Harness: domain.HarnessCodex, Model: "gpt-5.5-codex",
+	})
+	if err != nil {
+		t.Fatalf("pinned exact overlay recovery spawn: %v", err)
+	}
+	if tr.IsDown(actual) {
+		t.Fatal("successful exact overlay spawn did not recover the explicit model candidate")
+	}
+	_, err = m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Model: "gpt-5.5-codex"})
+	if err != nil {
+		t.Fatalf("model-only spawn after recovery: %v", err)
+	}
+}
+
+func TestSpawn_ModelOnlyDownOverlayDebitSelectsHealthyBucket(t *testing.T) {
+	tr := candidatehealth.New(candidatehealth.Config{Source: "session_manager"})
+	m, rt, _ := healthMixManager(t, domain.ProjectConfig{
+		WorkerMix: domain.WorkerMix{
+			{Harness: domain.HarnessClaudeCode, Model: "configured-claude-model", Weight: 50},
+			{Harness: domain.HarnessCodex, Model: "configured-codex-model", Weight: 50},
+		},
+	}, tr, nil)
+	rt.createErr = errors.New("runtime refused explicit model")
+
+	_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Model: "explicit-overlay-model"})
+	if err == nil {
+		t.Fatal("expected first explicit-overlay launch failure")
+	}
+	rt.createErr = nil
+
+	rec, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Model: "explicit-overlay-model"})
+	if err != nil {
+		t.Fatalf("second explicit-overlay spawn: %v", err)
+	}
+	if rec.Harness != domain.HarnessCodex {
+		t.Fatalf("second explicit-overlay harness = %q, want codex after claude overlay debit", rec.Harness)
 	}
 }
 

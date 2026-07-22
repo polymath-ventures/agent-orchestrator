@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
 	"github.com/aoagents/agent-orchestrator/backend/internal/observe"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	sessionmanager "github.com/aoagents/agent-orchestrator/backend/internal/session_manager"
@@ -204,6 +205,7 @@ func (o *Observer) pollProject(ctx context.Context, project domain.ProjectRecord
 		return true
 	}
 	var spawnFailed bool
+	workerPoolFull := false
 	for _, issue := range issues {
 		if ctx.Err() != nil {
 			return true
@@ -218,25 +220,24 @@ func (o *Observer) pollProject(ctx context.Context, project domain.ProjectRecord
 		if issueID == "" || seen[issueID] {
 			continue
 		}
+		if workerPoolFull {
+			o.logger.Debug("tracker intake: worker pool already full, deferring issue", "project", project.ID, "issue", issueID)
+			continue
+		}
 		if _, err := o.spawner.Spawn(ctx, ports.SpawnConfig{
 			ProjectID: domain.ProjectID(project.ID),
 			IssueID:   issueID,
 			Kind:      domain.KindWorker,
 			Prompt:    BuildIssuePrompt(issue),
 		}); err != nil {
-			// A project at its worker cap is a healthy steady state, not a
-			// fault. Defer the issue: leave it unseen so the next poll retries
-			// it, and do not set spawnFailed so the project avoids the failure
-			// backoff a genuine spawn error triggers.
-			if errors.Is(err, sessionmanager.ErrWorkerConcurrencyCap) {
-				o.logger.Debug("tracker intake: deferring issue, project at worker cap", "project", project.ID, "issue", issueID)
-				continue
-			}
-			// A paused project (or fleet) refusing spawns is likewise a healthy
-			// operator state, not a fault: the pause gate raced this poll. Defer
-			// identically — unseen, retried after resume, no failure backoff.
-			if errors.Is(err, sessionmanager.ErrProjectPaused) {
-				o.logger.Debug("tracker intake: deferring issue, project paused", "project", project.ID, "issue", issueID)
+			// Worker-cap, pause, and worker-mix health refusals are healthy
+			// capacity states, not intake faults. Leave the issue unseen so a
+			// later poll retries it without putting the whole project in backoff.
+			if isWorkerDeferral(err) {
+				o.logger.Debug("tracker intake: deferring issue, worker capacity unavailable", "project", project.ID, "issue", issueID, "err", err)
+				if isWorkerConcurrencyCap(err) {
+					workerPoolFull = true
+				}
 				continue
 			}
 			o.logger.Error("tracker intake: spawn issue session failed", "project", project.ID, "issue", issueID, "err", err)
@@ -246,6 +247,33 @@ func (o *Observer) pollProject(ctx context.Context, project domain.ProjectRecord
 		seen[issueID] = true
 	}
 	return spawnFailed
+}
+
+func isWorkerConcurrencyCap(err error) bool {
+	if errors.Is(err, sessionmanager.ErrWorkerConcurrencyCap) {
+		return true
+	}
+	var apiError *apierr.Error
+	return errors.As(err, &apiError) && apiError.Code == "WORKER_CONCURRENCY_CAP"
+}
+
+func isWorkerDeferral(err error) bool {
+	if errors.Is(err, sessionmanager.ErrWorkerConcurrencyCap) ||
+		errors.Is(err, sessionmanager.ErrProjectPaused) ||
+		errors.Is(err, sessionmanager.ErrWorkerMixExhausted) ||
+		errors.Is(err, sessionmanager.ErrWorkerMixBucketDown) {
+		return true
+	}
+	var apiError *apierr.Error
+	if !errors.As(err, &apiError) {
+		return false
+	}
+	switch apiError.Code {
+	case "WORKER_CONCURRENCY_CAP", "PROJECT_PAUSED", "WORKER_MIX_EXHAUSTED", "WORKER_MIX_BUCKET_DOWN":
+		return true
+	default:
+		return false
+	}
 }
 
 func issueMatchesConfig(issue domain.Issue, cfg domain.TrackerIntakeConfig) bool {

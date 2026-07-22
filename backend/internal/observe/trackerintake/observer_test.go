@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	sessionmanager "github.com/aoagents/agent-orchestrator/backend/internal/session_manager"
 )
@@ -391,6 +392,33 @@ func TestPollDefersCappedIssueWithoutBackoff(t *testing.T) {
 	}
 }
 
+// Once a poll hits the worker cap, the normal worker pool is known full for the
+// rest of that project pass. Later issues stay unseen without burning more
+// spawn attempts that would return the same capacity refusal.
+func TestPollMemoizesWorkerCapForRestOfProjectPass(t *testing.T) {
+	store, tracker := capIntakeFixtures()
+	tracker.issues = append(tracker.issues, domain.Issue{
+		ID:        domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#13"},
+		Title:     "also capped",
+		State:     domain.IssueOpen,
+		Assignees: []string{"alice"},
+	})
+	spawner := &fakeSpawner{failErrByIssue: map[domain.IssueID]error{
+		"github:acme/demo#12": apierr.Conflict("WORKER_CONCURRENCY_CAP", "session: worker concurrency cap reached", nil),
+	}}
+	observer := New(singleResolver(tracker), store, spawner, Config{Logger: discardLogger()})
+
+	if err := observer.Poll(context.Background()); err != nil {
+		t.Fatalf("Poll() error = %v", err)
+	}
+	if len(spawner.calls) != 1 {
+		t.Fatalf("spawn attempts = %d, want only the first cap collision", len(spawner.calls))
+	}
+	if len(observer.backoffUntil) != 0 {
+		t.Fatalf("backoffUntil = %v, want empty — cap memoization must not trigger failure backoff", observer.backoffUntil)
+	}
+}
+
 // A genuine (non-cap) spawn failure still trips the existing failure backoff,
 // unchanged by the cap deferral path.
 func TestPollGenuineSpawnFailureStillBacksOff(t *testing.T) {
@@ -502,12 +530,18 @@ type fakeSpawner struct {
 	capActive bool
 	// pausedIssue returns the project-paused sentinel while pausedActive is
 	// true, modeling a pause gate racing the intake poll.
-	pausedIssue  domain.IssueID
-	pausedActive bool
+	pausedIssue    domain.IssueID
+	pausedActive   bool
+	failErrByIssue map[domain.IssueID]error
 }
 
 func (f *fakeSpawner) Spawn(_ context.Context, cfg ports.SpawnConfig) (domain.Session, error) {
 	f.calls = append(f.calls, cfg)
+	if f.failErrByIssue != nil {
+		if err := f.failErrByIssue[cfg.IssueID]; err != nil {
+			return domain.Session{}, err
+		}
+	}
 	if cfg.IssueID == f.failIssue {
 		return domain.Session{}, errors.New("spawn failed")
 	}
@@ -540,5 +574,53 @@ func TestPollDefersPausedProjectIssueWithoutBackoff(t *testing.T) {
 	}
 	if len(observer.backoffUntil) != 0 {
 		t.Fatalf("backoffUntil = %v, want empty — a pause deferral must not trigger failure backoff", observer.backoffUntil)
+	}
+}
+
+// A worker-mix bucket/capacity refusal is a deferral, not an intake fault. The
+// service maps these to API conflict codes, so the observer must recognize the
+// codes and retry the issue on later polls.
+func TestPollDefersWorkerMixCapacityWithoutBackoff(t *testing.T) {
+	cases := []struct {
+		name string
+		code string
+	}{
+		{"selected bucket down", "WORKER_MIX_BUCKET_DOWN"},
+		{"mix exhausted", "WORKER_MIX_EXHAUSTED"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			now := time.Date(2026, 7, 8, 10, 0, 0, 0, time.UTC)
+			store, tracker := capIntakeFixtures()
+			spawner := &fakeSpawner{failErrByIssue: map[domain.IssueID]error{
+				"github:acme/demo#12": apierr.Conflict(tc.code, "worker mix capacity unavailable", nil),
+			}}
+			observer := New(singleResolver(tracker), store, spawner, Config{
+				Clock:          func() time.Time { return now },
+				FailureBackoff: time.Hour,
+				Logger:         discardLogger(),
+			})
+
+			if err := observer.Poll(context.Background()); err != nil {
+				t.Fatalf("first Poll() error = %v", err)
+			}
+			if len(spawner.calls) != 1 {
+				t.Fatalf("first poll spawn attempts = %d, want 1", len(spawner.calls))
+			}
+			if len(observer.backoffUntil) != 0 {
+				t.Fatalf("backoffUntil = %v, want empty — worker-mix capacity deferral must not trigger failure backoff", observer.backoffUntil)
+			}
+
+			spawner.failErrByIssue = nil
+			if err := observer.Poll(context.Background()); err != nil {
+				t.Fatalf("second Poll() error = %v", err)
+			}
+			if len(spawner.calls) != 2 {
+				t.Fatalf("spawn attempts after capacity recovers = %d, want 2", len(spawner.calls))
+			}
+			if spawner.calls[1].IssueID != "github:acme/demo#12" {
+				t.Fatalf("retried issue = %q, want github:acme/demo#12", spawner.calls[1].IssueID)
+			}
+		})
 	}
 }
