@@ -97,7 +97,7 @@ func (m *Service) SetFleetPaused(ctx context.Context, paused, hard bool) error {
 		}
 	}
 	if failed > 0 {
-		return apierr.Internal("FLEET_HARD_PAUSE_FAILED", "Failed to terminate live workers for some projects")
+		return apierr.Internal("FLEET_HARD_PAUSE_FAILED", "Failed to terminate live sessions for some projects")
 	}
 	return nil
 }

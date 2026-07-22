@@ -9,10 +9,11 @@ deltas the reference never had.
 
 A verified gap analysis (every claim checked in code on both sides) found the
 current tree already at parity on storage/migrations, the drain sweeper, guard
-exemptions, sidebar badges, and API codes. The remaining divergences are the 6
-listed gaps (1 must + 5 should that survive as code deltas) plus a CLI polish
-gap. Each fix below cites reference `file:line` so "studied the reference" is
-falsifiable.
+exemptions, sidebar badges, and API codes. The issue comment's heading says
+"1 must, 6 should" but contains **six numbered gaps total**: GAP 1 (must) and
+GAPS 2–6 (should, including the CLI help/validation gap). This change implements
+all six numbered gaps. Each fix below cites reference `file:line` so "studied
+the reference" is falsifiable.
 
 ## Goals / Non-Goals
 
