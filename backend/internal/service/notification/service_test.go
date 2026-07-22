@@ -12,6 +12,9 @@ import (
 
 type fakeStore struct {
 	rows        []domain.NotificationRecord
+	beforeRows  []domain.NotificationRecord
+	gotBefore   time.Time
+	gotBeforeID string
 	markRow     domain.NotificationRecord
 	markOK      bool
 	markAllRows []domain.NotificationRecord
@@ -24,6 +27,11 @@ func (f *fakeStore) CreateNotification(context.Context, domain.NotificationRecor
 
 func (f *fakeStore) ListUnreadNotifications(_ context.Context, _ int) ([]domain.NotificationRecord, error) {
 	return f.rows, f.err
+}
+
+func (f *fakeStore) ListUnreadNotificationsBefore(_ context.Context, before time.Time, beforeID string, _ int) ([]domain.NotificationRecord, error) {
+	f.gotBefore, f.gotBeforeID = before, beforeID
+	return f.beforeRows, f.err
 }
 
 func (f *fakeStore) MarkNotificationRead(_ context.Context, _ string) (domain.NotificationRecord, bool, error) {
@@ -46,6 +54,21 @@ func TestListUnreadAddsTargets(t *testing.T) {
 	}
 	if got[0].Target.Kind != TargetSession || got[1].Target.Kind != TargetPR || got[1].Target.PRURL == "" {
 		t.Fatalf("targets = %+v", got)
+	}
+}
+
+func TestListUnreadUsesCursorStoreMethod(t *testing.T) {
+	before := time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC)
+	st := &fakeStore{beforeRows: []domain.NotificationRecord{{
+		ID: "n1", SessionID: "mer-1", ProjectID: "mer", Type: domain.NotificationNeedsInput,
+		Title: "needs", Status: domain.NotificationUnread, CreatedAt: before.Add(-time.Second),
+	}}}
+	got, err := New(Deps{Store: st}).ListUnread(context.Background(), ListFilter{Limit: 10, Before: before, BeforeID: "n2"})
+	if err != nil {
+		t.Fatalf("ListUnread: %v", err)
+	}
+	if st.gotBefore != before || st.gotBeforeID != "n2" || len(got) != 1 {
+		t.Fatalf("cursor=(%v,%q) rows=%d", st.gotBefore, st.gotBeforeID, len(got))
 	}
 }
 

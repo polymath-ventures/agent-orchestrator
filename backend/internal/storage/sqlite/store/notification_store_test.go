@@ -3,6 +3,7 @@ package store_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -46,6 +47,36 @@ func TestNotificationStore_InsertListAndDedupe(t *testing.T) {
 	}
 	if len(rows) != 1 || rows[0].ID != "ntf_1" {
 		t.Fatalf("rows = %+v", rows)
+	}
+}
+
+func TestNotificationStore_ListUnreadBeforePaginatesTimestampTies(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	at := time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC)
+	for i := 0; i < 105; i++ {
+		id := fmt.Sprintf("ntf_%03d", i)
+		_, inserted, err := s.CreateNotification(ctx, domain.NotificationRecord{
+			ID: id, DedupeKey: id, Type: domain.NotificationLowQuota, Title: id,
+			Status: domain.NotificationUnread, CreatedAt: at,
+		})
+		if err != nil || !inserted {
+			t.Fatalf("create %s inserted=%v err=%v", id, inserted, err)
+		}
+	}
+	first, err := s.ListUnreadNotifications(ctx, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first) != 100 || first[0].ID != "ntf_104" || first[99].ID != "ntf_005" {
+		t.Fatalf("first page bounds = len %d, %q..%q", len(first), first[0].ID, first[len(first)-1].ID)
+	}
+	second, err := s.ListUnreadNotificationsBefore(ctx, first[99].CreatedAt, first[99].ID, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(second) != 5 || second[0].ID != "ntf_004" || second[4].ID != "ntf_000" {
+		t.Fatalf("second page = %+v", second)
 	}
 }
 

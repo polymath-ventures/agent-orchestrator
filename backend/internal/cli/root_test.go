@@ -374,6 +374,11 @@ func setConfigEnv(t *testing.T) testConfig {
 	}
 	t.Setenv("AO_RUN_FILE", cfg.runFile)
 	t.Setenv("AO_DATA_DIR", cfg.dataDir)
+	statePath := filepath.Join(dir, "slack-state.json")
+	t.Setenv(slackStateEnv, statePath)
+	if err := os.WriteFile(statePath, []byte(`{"version":1,"initialized":true,"delivered":[]}`), 0o600); err != nil {
+		t.Fatalf("write Slack state: %v", err)
+	}
 	t.Setenv("AO_PORT", "3001")
 	t.Setenv("AO_REQUEST_TIMEOUT", "")
 	t.Setenv("AO_SHUTDOWN_TIMEOUT", "")

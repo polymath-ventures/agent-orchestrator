@@ -547,8 +547,10 @@ type AgentInfo = agentsvc.Info
 
 // ListNotificationsQuery is the query string accepted by GET /api/v1/notifications.
 type ListNotificationsQuery struct {
-	Status string `query:"status,omitempty" enum:"unread" description:"Notification status filter. V1 supports only unread."`
-	Limit  int    `query:"limit,omitempty" minimum:"1" maximum:"100" description:"Maximum notifications to return. Defaults to 50; capped at 100."`
+	Status   string `query:"status,omitempty" enum:"unread" description:"Notification status filter. V1 supports only unread."`
+	Limit    int    `query:"limit,omitempty" minimum:"1" maximum:"100" description:"Maximum notifications to return. Defaults to 50; capped at 100."`
+	Before   string `query:"before,omitempty" description:"Exclusive RFC3339 createdAt cursor; requires beforeId."`
+	BeforeID string `query:"beforeId,omitempty" description:"Exclusive notification id cursor tiebreak; requires before."`
 }
 
 // NotificationStreamQuery is the query string accepted by GET /api/v1/notifications/stream.
@@ -574,7 +576,7 @@ type NotificationResponse struct {
 	SessionID string             `json:"sessionId"`
 	ProjectID string             `json:"projectId"`
 	PRURL     string             `json:"prUrl"`
-	Type      string             `json:"type" enum:"needs_input,ready_to_merge,pr_merged,pr_closed_unmerged,low_quota"`
+	Type      string             `json:"type" enum:"needs_input,ready_to_merge,pr_merged,pr_closed_unmerged,low_quota,model_unreachable,model_recovered,prime_restart_capped"`
 	Title     string             `json:"title"`
 	Body      string             `json:"body"`
 	Status    string             `json:"status" enum:"unread,read"`

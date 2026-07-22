@@ -8,7 +8,15 @@ RETURNING *;
 SELECT *
 FROM notifications
 WHERE status = 'unread'
-ORDER BY created_at DESC
+ORDER BY created_at DESC, id DESC
+LIMIT ?;
+
+-- name: ListUnreadNotificationsBefore :many
+SELECT *
+FROM notifications
+WHERE status = 'unread'
+  AND (created_at < ? OR (created_at = ? AND id < ?))
+ORDER BY created_at DESC, id DESC
 LIMIT ?;
 
 -- name: MarkNotificationRead :one

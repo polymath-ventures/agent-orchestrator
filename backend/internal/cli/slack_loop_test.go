@@ -4,9 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -73,13 +76,14 @@ func sseFrame(n slackNotification) string {
 // streamFn is invoked per stream connection so a test can control framing and
 // disconnection; unread is returned by the list route.
 type fakeDaemon struct {
-	srv      *httptest.Server
-	mu       sync.Mutex
-	paths    []string
-	streams  int
-	unread   func(connection int) []slackNotification
-	stream   func(t *testing.T, connection int, w http.ResponseWriter, flush func(), ctx context.Context)
-	onListed func() // invoked after each unread listing is served
+	srv           *httptest.Server
+	mu            sync.Mutex
+	paths         []string
+	streams       int
+	unread        func(connection int) []slackNotification
+	unreadRequest func(r *http.Request, connection int) []slackNotification
+	stream        func(t *testing.T, connection int, w http.ResponseWriter, flush func(), ctx context.Context)
+	onListed      func() // invoked after each unread listing is served
 }
 
 func newFakeDaemon(t *testing.T, d *fakeDaemon) *fakeDaemon {
@@ -114,7 +118,9 @@ func newFakeDaemonWithListHook(t *testing.T, d *fakeDaemon, onListed func()) *fa
 			connection := d.streams
 			d.mu.Unlock()
 			var list []slackNotification
-			if d.unread != nil {
+			if d.unreadRequest != nil {
+				list = d.unreadRequest(r, connection)
+			} else if d.unread != nil {
 				list = d.unread(connection)
 			}
 			w.Header().Set("Content-Type", "application/json")
@@ -214,6 +220,84 @@ func TestSlackNotifyDeliversUnreadBacklogOnStartup(t *testing.T) {
 	waitForPath(t, daemon, "/api/v1/notifications/stream")
 	waitForPath(t, daemon, "/api/v1/notifications")
 	expectCleanShutdown(t, cancel, errCh)
+}
+
+func TestSlackNotifyFirstRunSeedsBacklogWithoutPosting(t *testing.T) {
+	sink := newSlackSink(t)
+	daemon := newFakeDaemon(t, &fakeDaemon{
+		unread: func(int) []slackNotification {
+			return []slackNotification{{ID: "ntf_old", Type: "pr_merged", Title: "historical", CreatedAt: time.Now()}}
+		},
+		stream: func(_ *testing.T, _ int, w http.ResponseWriter, flush func(), ctx context.Context) {
+			n := slackNotification{ID: "ntf_new", Type: "needs_input", Title: "new work"}
+			data, _ := json.Marshal(n)
+			_, _ = fmt.Fprintf(w, "event: notification_created\ndata: %s\n\n", data)
+			flush()
+			<-ctx.Done()
+		},
+	})
+	fastReconnect(t)
+	cfg := setConfigEnv(t)
+	writeRunFileFor(t, cfg, daemon.srv)
+	statePath := filepath.Join(t.TempDir(), "fresh-state.json")
+	t.Setenv(slackStateEnv, statePath)
+	ctx := &commandContext{deps: Deps{HTTPClient: &http.Client{}, ProcessAlive: func(int) bool { return true }}.withDefaults()}
+	runCtx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() { errCh <- ctx.runSlackNotify(runCtx, slackNotifyOptions{webhookURL: sink.srv.URL}) }()
+	got := sink.waitFor(t, 1)
+	if len(got) != 1 || !strings.Contains(got[0], "new work") || strings.Contains(got[0], "historical") {
+		t.Fatalf("deliveries = %v", got)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		state, err := loadSlackDeliveryState()
+		if err == nil && state.contains("ntf_new") {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("new delivery was not persisted: state=%+v err=%v", state, err)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	expectCleanShutdown(t, cancel, errCh)
+	state, err := loadSlackDeliveryState()
+	if err != nil || !state.Initialized || !state.contains("ntf_old") || !state.contains("ntf_new") {
+		t.Fatalf("state=%+v err=%v", state, err)
+	}
+}
+
+func TestListUnreadSlackReturnsCancellationInsteadOfPartialSeed(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	command := &commandContext{deps: Deps{}.withDefaults()}
+	got, err := command.listUnreadSlack(ctx)
+	if !errors.Is(err, context.Canceled) || got != nil {
+		t.Fatalf("got=%v err=%v, want nil context.Canceled", got, err)
+	}
+}
+
+func TestListUnreadSlackCancellationBetweenPagesDoesNotReturnPartialSeed(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	now := time.Now().UTC()
+	page := make([]slackNotification, slackUnreadLimit)
+	for i := range page {
+		page[i] = slackNotification{
+			ID: fmt.Sprintf("ntf_%03d", i), Type: "pr_merged", Title: "item",
+			CreatedAt: now.Add(-time.Duration(i) * time.Second),
+		}
+	}
+	daemon := newFakeDaemonWithListHook(t, &fakeDaemon{
+		unread: func(int) []slackNotification { return page },
+		stream: func(_ *testing.T, _ int, _ http.ResponseWriter, _ func(), ctx context.Context) { <-ctx.Done() },
+	}, cancel)
+	cfg := setConfigEnv(t)
+	writeRunFileFor(t, cfg, daemon.srv)
+	command := &commandContext{deps: Deps{HTTPClient: &http.Client{}, ProcessAlive: func(int) bool { return true }}.withDefaults()}
+	got, err := command.listUnreadSlack(ctx)
+	if !errors.Is(err, context.Canceled) || got != nil {
+		t.Fatalf("got=%v err=%v, want nil context.Canceled", got, err)
+	}
 }
 
 func containsPath(paths []string, want string) bool {
@@ -633,6 +717,46 @@ func TestSlackNotifyRequestsTheMaximumUnreadPage(t *testing.T) {
 		t.Fatal("reconciliation never queried the notifications list")
 	}
 	expectCleanShutdown(t, cancel, errCh)
+}
+
+func TestReconcileSlackPagesAndEnqueuesOldestFirst(t *testing.T) {
+	now := time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC)
+	newestFirst := make([]slackNotification, 105)
+	for i := range newestFirst {
+		newestFirst[i] = slackNotification{
+			ID: fmt.Sprintf("ntf_%03d", 104-i), Type: "pr_merged",
+			Title: fmt.Sprintf("item %03d", 104-i), CreatedAt: now.Add(-time.Duration(i) * time.Second),
+		}
+	}
+	daemon := newFakeDaemon(t, &fakeDaemon{
+		unreadRequest: func(r *http.Request, _ int) []slackNotification {
+			if r.URL.Query().Get("beforeId") == "" {
+				return newestFirst[:100]
+			}
+			if r.URL.Query().Get("beforeId") != newestFirst[99].ID {
+				t.Fatalf("beforeId = %q, want %q", r.URL.Query().Get("beforeId"), newestFirst[99].ID)
+			}
+			return newestFirst[100:]
+		},
+		stream: func(_ *testing.T, _ int, _ http.ResponseWriter, _ func(), ctx context.Context) { <-ctx.Done() },
+	})
+	cfg := setConfigEnv(t)
+	writeRunFileFor(t, cfg, daemon.srv)
+	command := &commandContext{deps: Deps{HTTPClient: &http.Client{}, ProcessAlive: func(int) bool { return true }}.withDefaults()}
+	state, err := loadSlackDeliveryState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	deliverer := newSlackDeliverer(slackPoster{}, state, "", func(string, ...any) {})
+	command.reconcileSlack(context.Background(), deliverer, &syncLogger{w: io.Discard})
+
+	for i := 0; i < len(newestFirst); i++ {
+		n := <-deliverer.queue
+		want := fmt.Sprintf("ntf_%03d", i)
+		if n.ID != want {
+			t.Fatalf("queue[%d] = %q, want %q", i, n.ID, want)
+		}
+	}
 }
 
 // Regression: a long backoff must not delay shutdown. With the daemon gone the

@@ -126,14 +126,22 @@ ao notify slack
 ```
 
 Because the daemon's notification hub is in-process with no replay, the command
-re-lists unread notifications each time it (re)connects and delivers whatever it
-has not already sent, deduping by notification id. One consequence worth knowing
-on first run: any notifications already sitting unread in the bell are delivered
-on startup. Mark them read first if you don't want the backlog.
+pages through all unread notifications each time it (re)connects and delivers
+whatever it has not already sent. Delivered notification ids are stored
+atomically in `$AO_DATA_DIR/slack-notifier-state.json` (override with
+`AO_SLACK_NOTIFIER_STATE`) so restarts do not replay the backlog. On the very
+first run, the current unread snapshot is seeded into that ledger without being
+posted; only notifications created after initialization are mirrored.
 
-Nothing is ever read _from_ Slack — there is no slash command, interactivity, or
-reply path. Stopping the process and unsetting the webhook removes the entire
-Slack surface.
+Set `AO_SLACK_MEMBER_ID` (or the conventional `SLACK_MEMBER_ID` fallback) to
+mention a Slack member for attention-class notifications (`needs_input`,
+`prime_restart_capped`, and `model_unreachable`). Routine notifications remain
+unmentioned.
+
+Nothing is ever read _from_ Slack — there is no slash command, interactivity,
+reply path, message-resolution edit, or bot-token requirement. Stopping the
+process and unsetting the webhook removes the active Slack surface; the optional
+delivery ledger can be deleted independently.
 
 `go run .` in `backend/` remains a compatibility wrapper around the daemon.
 
@@ -160,6 +168,10 @@ webhook to post to), falling back to the conventional un-prefixed
 but an environment variable is preferred: the command is long-lived, so a flag
 value would sit visible in the process table. Resolution order is `--webhook-url`
 → `AO_SLACK_WEBHOOK_URL` → `SLACK_WEBHOOK_URL`.
+
+Slack-only configuration also includes `AO_SLACK_MEMBER_ID` (fallback
+`SLACK_MEMBER_ID`) and `AO_SLACK_NOTIFIER_STATE` (default
+`$AO_DATA_DIR/slack-notifier-state.json`).
 
 The daemon always binds `127.0.0.1`.
 

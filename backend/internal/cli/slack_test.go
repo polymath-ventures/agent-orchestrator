@@ -51,6 +51,10 @@ func TestRenderNotificationPerType(t *testing.T) {
 			},
 			wantContains: []string{"PR closed", "abandoned", "https://github.com/o/r/pull/3"},
 		},
+		{name: "low quota", notification: slackNotification{ID: "ntf_5", Type: "low_quota", Title: "Quota low"}, wantContains: []string{":warning:", "Quota low"}},
+		{name: "model unreachable", notification: slackNotification{ID: "ntf_6", Type: "model_unreachable", Title: "Model unreachable"}, wantContains: []string{":brain:", "Model unreachable"}},
+		{name: "model recovered", notification: slackNotification{ID: "ntf_7", Type: "model_recovered", Title: "Model recovered"}, wantContains: []string{":green_heart:", "Model recovered"}},
+		{name: "prime restart capped", notification: slackNotification{ID: "ntf_8", Type: "prime_restart_capped", Title: "Prime capped"}, wantContains: []string{":rotating_light:", "Prime capped"}},
 	}
 
 	for _, tc := range tests {
@@ -65,6 +69,21 @@ func TestRenderNotificationPerType(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestRenderNotificationMentionsOnlyAttentionTypes(t *testing.T) {
+	for _, typ := range []string{"needs_input", "prime_restart_capped", "model_unreachable"} {
+		got := renderNotificationWithMember(slackNotification{Type: typ, Title: typ}, "U123")
+		if !strings.HasPrefix(got, "<@U123> ") {
+			t.Fatalf("%s = %q, want mention prefix", typ, got)
+		}
+	}
+	for _, typ := range []string{"ready_to_merge", "pr_merged", "pr_closed_unmerged", "low_quota", "model_recovered"} {
+		got := renderNotificationWithMember(slackNotification{Type: typ, Title: typ}, "U123")
+		if strings.Contains(got, "<@U123>") {
+			t.Fatalf("%s = %q, routine type must not mention", typ, got)
+		}
 	}
 }
 
@@ -140,6 +159,33 @@ func TestSlackPosterSendsTextPayload(t *testing.T) {
 	}
 	if payload["text"] != "hello world" {
 		t.Errorf("text = %q, want %q", payload["text"], "hello world")
+	}
+}
+
+func TestSlackPosterCancelsInFlightPost(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+		close(started)
+		<-release
+	}))
+	defer srv.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- (slackPoster{client: srv.Client(), webhookURL: srv.URL}).post(ctx, "hello")
+	}()
+	<-started
+	cancel()
+	select {
+	case err := <-errCh:
+		close(release)
+		if err == nil {
+			t.Fatal("post returned nil after cancellation")
+		}
+	case <-time.After(time.Second):
+		close(release)
+		t.Fatal("in-flight Slack post did not unblock on cancellation")
 	}
 }
 
