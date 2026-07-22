@@ -6,6 +6,7 @@ Define harness-native model and effort selection, validation, availability,
 health, persistence, and launch-safety behavior across AO's daemon, CLI, and UI.
 
 ## Requirements
+
 ### Requirement: Model pins are compatible with their harness
 
 The system SHALL reject a known-provider model pin when it is configured or
