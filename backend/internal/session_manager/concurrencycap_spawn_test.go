@@ -159,7 +159,7 @@ func TestSpawn_ConcurrentWorkerSpawnsSerializeCapAndSeedRow(t *testing.T) {
 	secondCreateEntered := make(chan struct{})
 	var createMu sync.Mutex
 	createCalls := 0
-	st.beforeCreate = func() {
+	st.beforeCreate = func(domain.SessionRecord) {
 		createMu.Lock()
 		createCalls++
 		call := createCalls
@@ -208,5 +208,70 @@ func TestSpawn_ConcurrentWorkerSpawnsSerializeCapAndSeedRow(t *testing.T) {
 	}
 	if len(st.sessions) != 1 {
 		t.Fatalf("sessions = %#v, want exactly one admitted row", st.sessions)
+	}
+}
+
+func TestSpawn_AdmissionLockIsScopedPerProject(t *testing.T) {
+	st := newFakeStore()
+	cfg := domain.ProjectConfig{
+		MaxLiveWorkers: 1,
+		Worker:         domain.RoleOverride{Harness: domain.HarnessClaudeCode},
+	}
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: cfg}
+	st.projects["other"] = domain.ProjectRecord{ID: "other", Config: cfg}
+	m := New(Deps{
+		Runtime: &fakeRuntime{}, Agents: fakeAgents{}, Workspace: &fakeWorkspace{}, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st},
+		LookPath: func(string) (string, error) { return "/bin/true", nil },
+	})
+	firstCreateEntered := make(chan struct{})
+	releaseFirstCreate := make(chan struct{})
+	otherCreateEntered := make(chan struct{})
+	var firstOnce sync.Once
+	var otherOnce sync.Once
+	st.beforeCreate = func(rec domain.SessionRecord) {
+		switch rec.ProjectID {
+		case "mer":
+			firstOnce.Do(func() {
+				close(firstCreateEntered)
+				<-releaseFirstCreate
+			})
+		case "other":
+			otherOnce.Do(func() { close(otherCreateEntered) })
+		}
+	}
+
+	firstErr := make(chan error, 1)
+	go func() {
+		_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+		firstErr <- err
+	}()
+
+	select {
+	case <-firstCreateEntered:
+	case <-time.After(time.Second):
+		t.Fatal("first project spawn did not reach CreateSession")
+	}
+
+	otherErr := make(chan error, 1)
+	go func() {
+		_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "other", Kind: domain.KindWorker})
+		otherErr <- err
+	}()
+
+	select {
+	case <-otherCreateEntered:
+	case <-time.After(100 * time.Millisecond):
+		close(releaseFirstCreate)
+		t.Fatal("spawn for another project was blocked by the first project's admission lock")
+	}
+	if err := <-otherErr; err != nil {
+		close(releaseFirstCreate)
+		t.Fatalf("other project spawn = %v, want admitted", err)
+	}
+
+	close(releaseFirstCreate)
+	if err := <-firstErr; err != nil {
+		t.Fatalf("first project spawn = %v, want admitted", err)
 	}
 }

@@ -38,7 +38,7 @@ type fakeStore struct {
 	// sharedLog, when non-nil, receives an ordered call entry for each
 	// UpsertSessionWorktree invocation so ordering tests can compare across fakes.
 	sharedLog    *[]string
-	beforeCreate func()
+	beforeCreate func(domain.SessionRecord)
 }
 
 func newFakeStore() *fakeStore {
@@ -62,7 +62,7 @@ func (f *fakeStore) ListWorkspaceRepos(_ context.Context, projectID string) ([]d
 }
 func (f *fakeStore) CreateSession(_ context.Context, rec domain.SessionRecord) (domain.SessionRecord, error) {
 	if f.beforeCreate != nil {
-		f.beforeCreate()
+		f.beforeCreate(rec)
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -2185,6 +2185,9 @@ func TestSpawn_FreshCachedUnreachableSelectionRejectsBeforeAnyState(t *testing.T
 	if !strings.Contains(err.Error(), "from project/role config") {
 		t.Fatalf("Spawn err = %v, want source project/role config", err)
 	}
+	if len(validator.calls) != 1 || validator.calls[0].harness != domain.HarnessCodex || validator.calls[0].model != "gpt-5-codex" {
+		t.Fatalf("validator calls = %#v, want resolved codex/gpt-5-codex tuple", validator.calls)
+	}
 	if st.num != 0 || len(st.sessions) != 0 {
 		t.Fatalf("session state created before rejection: num=%d rows=%#v", st.num, st.sessions)
 	}
@@ -2362,6 +2365,9 @@ func TestSpawn_WorkerMixUnreachableModelNamesSourceBeforeState(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "from worker-mix bucket") {
 		t.Fatalf("Spawn err = %v, want worker-mix bucket source", err)
+	}
+	if len(validator.calls) != 1 || validator.calls[0].harness != domain.HarnessCodex || validator.calls[0].model != "gpt-5-codex" {
+		t.Fatalf("validator calls = %#v, want resolved worker-mix tuple", validator.calls)
 	}
 	if len(st.sessions) != 0 || runtime.created != 0 || workspace.lastCfg.SessionID != "" {
 		t.Fatalf("state created before rejection: sessions=%#v runtime=%d workspace=%#v", st.sessions, runtime.created, workspace.lastCfg)

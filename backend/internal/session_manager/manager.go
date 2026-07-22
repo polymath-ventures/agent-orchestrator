@@ -231,11 +231,13 @@ type Manager struct {
 	health *candidatehealth.Tracker
 	// modelValidator consumes only previously cached model/catalog verdicts.
 	modelValidator SpawnModelSelectionValidator
-	// spawnMu serializes spawn admission: live cap check, worker-mix census and
-	// selection, resolved model validation, and seed-row creation. It is released
-	// once the seed row exists so runtime launch and workspace work do not serialize
-	// unnecessarily.
-	spawnMu sync.Mutex
+	// spawnLocks serializes spawn admission per project: live cap check,
+	// worker-mix census and selection, resolved model validation, and seed-row
+	// creation. A lock is released once the seed row exists so runtime launch
+	// and workspace work do not serialize unnecessarily, and unrelated projects
+	// can admit workers independently.
+	spawnLocksMu sync.Mutex
+	spawnLocks   map[domain.ProjectID]*sync.Mutex
 }
 
 // sendConfirmConfig bounds the best-effort activity-confirmation loop run after
@@ -317,6 +319,7 @@ func New(d Deps) *Manager {
 		logger:         d.Logger,
 		health:         d.Health,
 		modelValidator: d.ModelValidator,
+		spawnLocks:     map[domain.ProjectID]*sync.Mutex{},
 	}
 	if m.health == nil {
 		// A sink-less Tracker keeps selection narrowing and recovery working in
@@ -364,13 +367,12 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	requestedHarness := cfg.Harness
 	requestedModel := strings.TrimSpace(cfg.Model)
 	explicitSpawnModel := requestedModel != ""
-	spawnLocked := false
+	var unlockSpawnAdmission func()
 	if cfg.Kind == domain.KindWorker {
-		m.spawnMu.Lock()
-		spawnLocked = true
+		unlockSpawnAdmission = m.lockSpawnAdmission(cfg.ProjectID)
 		defer func() {
-			if spawnLocked {
-				m.spawnMu.Unlock()
+			if unlockSpawnAdmission != nil {
+				unlockSpawnAdmission()
 			}
 		}()
 	}
@@ -435,9 +437,9 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	if err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("spawn: create: %w", err)
 	}
-	if spawnLocked {
-		spawnLocked = false
-		m.spawnMu.Unlock()
+	if unlockSpawnAdmission != nil {
+		unlockSpawnAdmission()
+		unlockSpawnAdmission = nil
 	}
 	id := rec.ID
 	systemPromptFile, err := m.prepareSystemPromptFile(id, cfg.Harness, systemPrompt)
@@ -1442,6 +1444,18 @@ func (m *Manager) getRecord(ctx context.Context, id domain.SessionID) (domain.Se
 		return domain.SessionRecord{}, fmt.Errorf("get %s: %w", id, ErrNotFound)
 	}
 	return rec, nil
+}
+
+func (m *Manager) lockSpawnAdmission(project domain.ProjectID) func() {
+	m.spawnLocksMu.Lock()
+	lock := m.spawnLocks[project]
+	if lock == nil {
+		lock = &sync.Mutex{}
+		m.spawnLocks[project] = lock
+	}
+	m.spawnLocksMu.Unlock()
+	lock.Lock()
+	return lock.Unlock
 }
 
 // SaveAndTeardownAll captures uncommitted work and tears down every live
