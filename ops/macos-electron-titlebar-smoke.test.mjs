@@ -67,6 +67,11 @@ test("smoke records native process diagnostics and bounds failed cleanup", () =>
 	assert.match(smoke, /SIGTERM/);
 });
 
+test("smoke creates Electron userData before the remote-debugging launch", () => {
+	assert.match(smoke, /\.ao",\s*"electron"/);
+	assert.match(smoke, /recursive:\s*true/);
+});
+
 test("docs include dispatch instructions and isolated ARM64 self-hosted fallback", () => {
 	assert.match(docs, /workflow_dispatch/);
 	assert.match(docs, /macos-15/);
