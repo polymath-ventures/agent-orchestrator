@@ -2869,7 +2869,7 @@ func (m *Manager) verifyLaunchCommandRunning(ctx context.Context, handle ports.R
 		if running {
 			return nil
 		}
-		lastErr = fmt.Errorf("%q exited before spawn completed", command)
+		lastErr = fmt.Errorf("%q was not running after %d launch-process probe attempts", command, attempts)
 		if attempt < attempts {
 			select {
 			case <-ctx.Done():
