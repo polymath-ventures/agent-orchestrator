@@ -58,7 +58,10 @@ test("macOS Electron titlebar cluster clears the native traffic lights", async (
 			position: [number, number];
 			size: [number, number];
 		}>;
-		const windowButtons = nativeButtons.filter((button) => /close|minimize|zoom/i.test(button.description));
+		await writeFile(path.join(outputDir, "native-buttons.json"), `${JSON.stringify(nativeButtons, null, 2)}\n`);
+		const windowButtons = nativeButtons.filter((button) =>
+			/close|minimize|zoom|full.?screen/i.test(button.description),
+		);
 		expect(windowButtons.length, "macOS accessibility must expose native window buttons").toBeGreaterThanOrEqual(3);
 		const nativePosition = {
 			x: Math.min(...windowButtons.map((button) => button.position[0])),
