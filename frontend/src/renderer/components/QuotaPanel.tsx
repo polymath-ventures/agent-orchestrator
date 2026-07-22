@@ -29,7 +29,8 @@ function QuotaChip({ quota }: { quota: QuotaSnapshot }) {
 	const quality = quota.signalQuality;
 	const remaining = quota.remaining;
 	const limit = quota.limit;
-	const pct = typeof remaining === "number" && typeof limit === "number" && limit > 0 ? (remaining / limit) * 100 : null;
+	const pct =
+		typeof remaining === "number" && typeof limit === "number" && limit > 0 ? (remaining / limit) * 100 : null;
 	const tone =
 		quality === "none"
 			? "border-border text-passive"
@@ -49,13 +50,17 @@ function QuotaChip({ quota }: { quota: QuotaSnapshot }) {
 			<span className="min-w-0 truncate text-foreground">{quotaLabel(quota)}</span>
 			<span className="shrink-0">{quotaValue(quota, pct)}</span>
 			<span className="shrink-0 text-passive">{qualityLabel(quality)}</span>
-			{hasWindowEnd(quota.windowEnd) ? <span className="shrink-0 text-passive">{windowLabel(quota.windowEnd)}</span> : null}
+			{hasWindowEnd(quota.windowEnd) ? (
+				<span className="shrink-0 text-passive">{windowLabel(quota.windowEnd)}</span>
+			) : null}
 		</div>
 	);
 }
 
 function quotaKey(quota: QuotaSnapshot): string {
-	return [quota.harness, quota.accountId, quota.model, quota.windowName, quota.windowStart, quota.windowEnd].filter(Boolean).join(":");
+	return [quota.harness, quota.accountId, quota.model, quota.windowName, quota.windowStart, quota.windowEnd]
+		.filter(Boolean)
+		.join(":");
 }
 
 function quotaLabel(quota: QuotaSnapshot): string {
