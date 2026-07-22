@@ -1,17 +1,13 @@
-import { _electron as electron, expect, test } from "@playwright/test";
+import { chromium, expect, test } from "@playwright/test";
 import { execFile } from "node:child_process";
-import { createWriteStream } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 
 // main.ts sets trafficLightPosition.x=14. The three native controls occupy the
 // measured x=14..66 lane documented beside .titlebar-nav in styles.css.
-const NATIVE_BUTTON_LANE_WIDTH = 52;
-const NATIVE_BUTTON_LANE_HEIGHT = 16;
 const EXPECTED_GROUP_GAP = { min: 10, max: 16 }; // intended value: 13px
 
 test.skip(process.platform !== "darwin", "macOS native window-button smoke");
@@ -24,34 +20,14 @@ test("macOS Electron titlebar cluster clears the native traffic lights", async (
 	}
 
 	await mkdir(outputDir, { recursive: true });
-	const executablePath = path.join(appPath, "Contents", "MacOS", "agent-orchestrator");
-	const dataDir = path.join(process.env.RUNNER_TEMP || outputDir, `ao-titlebar-smoke-data-${process.pid}`);
-	// main.ts reparents Electron state (including DevToolsActivePort) under
-	// ~/.ao/electron before app.whenReady. A fresh hosted runner has no ~/.ao,
-	// and Chromium cannot complete its remote-debugging handshake if this parent
-	// is missing.
-	await mkdir(path.join(process.env.HOME || process.env.USERPROFILE || outputDir, ".ao", "electron"), {
-		recursive: true,
-	});
-
-	const electronApp = await electron.launch({
-		executablePath,
-		env: {
-			...process.env,
-			AO_DATA_DIR: dataDir,
-			AO_RUN_FILE: path.join(dataDir, "running.json"),
-		},
-	});
-	const appProcess = electronApp.process();
-	const stdoutLog = path.join(outputDir, "app-stdout.log");
-	const stderrLog = path.join(outputDir, "app-stderr.log");
-	const stdoutStream = createWriteStream(stdoutLog);
-	const stderrStream = createWriteStream(stderrLog);
-	appProcess.stdout?.pipe(stdoutStream);
-	appProcess.stderr?.pipe(stderrStream);
+	const cdpUrl = process.env.AO_MAC_SMOKE_CDP_URL;
+	const appPid = Number(process.env.AO_MAC_SMOKE_APP_PID);
+	if (!cdpUrl || !appPid) throw new Error("AO_MAC_SMOKE_CDP_URL and AO_MAC_SMOKE_APP_PID are required");
+	const browser = await chromium.connectOverCDP(cdpUrl);
 
 	try {
-		const appWindow = await electronApp.firstWindow({ timeout: 60_000 });
+		const appWindow = browser.contexts().flatMap((context) => context.pages())[0];
+		expect(appWindow, "packaged app must expose a renderer page over CDP").toBeTruthy();
 		await appWindow.waitForLoadState("domcontentloaded");
 
 		const readEnvironment = () =>
@@ -71,17 +47,29 @@ test("macOS Electron titlebar cluster clears the native traffic lights", async (
 		const clusterBox = await cluster.boundingBox();
 		expect(clusterBox, "TitlebarNav must have measurable renderer geometry").not.toBeNull();
 
-		const nativePosition = await electronApp.evaluate(({ BrowserWindow }) => {
-			const mainWindow = BrowserWindow.getAllWindows()[0];
-			return mainWindow?.getWindowButtonPosition() ?? null;
-		});
-		expect(nativePosition, "macOS BrowserWindow must expose native window-button position").not.toBeNull();
+		const { stdout: nativeButtonsJson } = await execFileAsync("/usr/bin/osascript", [
+			"-l",
+			"JavaScript",
+			"-e",
+			`const se=Application('System Events');const p=se.processes.whose({unixId:${appPid}})[0];JSON.stringify(p.windows[0].buttons().map(b=>({description:b.description(),position:b.position(),size:b.size()})))`,
+		]);
+		const nativeButtons = JSON.parse(nativeButtonsJson) as Array<{
+			description: string;
+			position: [number, number];
+			size: [number, number];
+		}>;
+		const windowButtons = nativeButtons.filter((button) => /close|minimize|zoom/i.test(button.description));
+		expect(windowButtons.length, "macOS accessibility must expose native window buttons").toBeGreaterThanOrEqual(3);
+		const nativePosition = {
+			x: Math.min(...windowButtons.map((button) => button.position[0])),
+			y: Math.min(...windowButtons.map((button) => button.position[1])),
+		};
 
 		const nativeButtonLane = {
 			left: nativePosition!.x,
-			right: nativePosition!.x + NATIVE_BUTTON_LANE_WIDTH,
-			top: nativePosition!.y,
-			bottom: nativePosition!.y + NATIVE_BUTTON_LANE_HEIGHT,
+			right: Math.max(...windowButtons.map((button) => button.position[0] + button.size[0])),
+			top: nativePosition.y,
+			bottom: Math.max(...windowButtons.map((button) => button.position[1] + button.size[1])),
 		};
 		const gap = clusterBox!.x - nativeButtonLane.right;
 
@@ -112,11 +100,11 @@ test("macOS Electron titlebar cluster clears the native traffic lights", async (
 			`${JSON.stringify(
 				{
 					appPath,
-					executablePath,
 					platform: process.platform,
 					arch: process.arch,
 					environment,
 					nativePosition,
+					nativeButtons,
 					nativeButtonLane,
 					clusterBox,
 					gap,
@@ -129,38 +117,7 @@ test("macOS Electron titlebar cluster clears the native traffic lights", async (
 				2,
 			)}\n`,
 		);
-	} catch (error) {
-		await writeFile(
-			path.join(outputDir, "launch-failure.json"),
-			`${JSON.stringify(
-				{
-					error: error instanceof Error ? { message: error.message, stack: error.stack } : String(error),
-					executablePath,
-					pid: appProcess.pid,
-					exitCode: appProcess.exitCode,
-					signalCode: appProcess.signalCode,
-					stdoutLog,
-					stderrLog,
-				},
-				null,
-				2,
-			)}\n`,
-		);
-		throw error;
 	} finally {
-		const closed = await Promise.race([
-			electronApp
-				.close()
-				.then(() => true)
-				.catch(() => true),
-			delay(10_000).then(() => false),
-		]);
-		if (!closed && !appProcess.killed) {
-			appProcess.kill("SIGTERM");
-		}
-		appProcess.stdout?.unpipe(stdoutStream);
-		appProcess.stderr?.unpipe(stderrStream);
-		stdoutStream.end();
-		stderrStream.end();
+		await browser.close();
 	}
 });

@@ -162,10 +162,13 @@ jobs:
             > "$AO_MAC_SMOKE_OUTPUT_DIR/direct-app-unified.log"
           if [[ ! -s "$AO_MAC_SMOKE_OUTPUT_DIR/direct-app-targets.json" ]]; then
             echo "AO_MAC_SMOKE_NO_DIRECT_TARGET=1" >> "$GITHUB_ENV"
+            pkill -TERM -f "$executable" 2>/dev/null
+            sleep 3
+            pkill -KILL -f "$executable" 2>/dev/null
+          else
+            echo "AO_MAC_SMOKE_CDP_URL=http://127.0.0.1:9222" >> "$GITHUB_ENV"
+            echo "AO_MAC_SMOKE_APP_PID=$app_pid" >> "$GITHUB_ENV"
           fi
-          pkill -TERM -f "$executable" 2>/dev/null
-          sleep 3
-          pkill -KILL -f "$executable" 2>/dev/null
           exit 0
 
       - name: Run native Electron titlebar smoke
@@ -175,42 +178,7 @@ jobs:
           DEBUG: pw:browser*
         shell: bash
         run: |
-          # Fresh installs show the app-owned "Enable auto-updates / Not now"
-          # modal before the shell window is available. Dismiss it exactly as a
-          # user would so Playwright's Electron handshake can complete.
-          (
-            executable="$AO_MAC_SMOKE_APP_PATH/Contents/MacOS/agent-orchestrator"
-            for _ in $(seq 1 30); do
-              sleep 1
-              app_pid="$(pgrep -f "$executable" | head -1)"
-              if [[ -n "$app_pid" ]]; then
-                osascript - "$app_pid" <<'APPLESCRIPT' && exit 0
-                on run argv
-                  set appPid to (item 1 of argv) as integer
-                  tell application "System Events"
-                    set appProcess to first application process whose unix id is appPid
-                    tell appProcess
-                      repeat with appWindow in windows
-                        if exists button "Not now" of appWindow then
-                          click button "Not now" of appWindow
-                          return "dismissed"
-                        end if
-                      end repeat
-                    end tell
-                  end tell
-                  error "updates modal not ready"
-                end run
-          APPLESCRIPT
-              fi
-            done
-          ) &
-          modal_watcher=$!
-          set +e
           npm run test:electron-titlebar
-          smoke_rc=$?
-          kill -TERM "$modal_watcher" 2>/dev/null
-          wait "$modal_watcher" 2>/dev/null
-          exit "$smoke_rc"
 
       - name: Upload smoke evidence
         if: always()

@@ -53,26 +53,18 @@ test("Playwright output cannot erase dispatch or native evidence", () => {
 });
 
 test("smoke verifies bridge, native buttons, cluster geometry, and screenshots", () => {
-	assert.match(smoke, /_electron/);
+	assert.match(smoke, /connectOverCDP/);
 	assert.match(smoke, /window\.ao/);
 	assert.match(smoke, /\.titlebar-nav/);
-	assert.match(smoke, /getWindowButtonPosition/);
+	assert.match(smoke, /osascript/);
+	assert.match(smoke, /nativeButtons/);
 	assert.match(smoke, /nativeButtonLane/);
 	assert.match(smoke, /screenshot/);
 	assert.match(smoke, /geometry\.json/);
 });
 
-test("smoke records native process diagnostics and bounds failed cleanup", () => {
-	assert.match(smoke, /app-stdout\.log/);
-	assert.match(smoke, /app-stderr\.log/);
-	assert.match(smoke, /launch-failure\.json/);
-	assert.match(smoke, /process\(\)/);
-	assert.match(smoke, /SIGTERM/);
-});
-
 test("smoke creates Electron userData before the remote-debugging launch", () => {
-	assert.match(smoke, /\.ao",\s*"electron"/);
-	assert.match(smoke, /recursive:\s*true/);
+	assert.match(workflow, /\$HOME\/\.ao\/electron/);
 });
 
 test("docs include dispatch instructions and isolated ARM64 self-hosted fallback", () => {
