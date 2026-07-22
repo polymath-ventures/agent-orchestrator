@@ -40,3 +40,35 @@ func TestWriteStatusShowsQuotaWindowUsedPercent(t *testing.T) {
 		}
 	}
 }
+
+func TestWriteStatusSkipsQuotaPercentWhenLimitIsZero(t *testing.T) {
+	used, remaining, limit := 92.0, 8.0, 0.0
+	cmd := &cobra.Command{}
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+
+	err := writeStatus(cmd, daemonStatus{
+		State:   stateReady,
+		RunFile: "/tmp/ao.json",
+		DataDir: "/tmp/ao",
+		Quotas: []statusQuota{{
+			Harness:       "codex",
+			AccountID:     "unknown",
+			WindowName:    "primary",
+			Used:          &used,
+			Remaining:     &remaining,
+			Limit:         &limit,
+			SignalQuality: "exact",
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := out.String()
+	if strings.Contains(body, "% used") || strings.Contains(body, "/0.0") {
+		t.Fatalf("status output used zero limit in a ratio:\n%s", body)
+	}
+	if !strings.Contains(body, "exact 8.0 remaining") {
+		t.Fatalf("status output missing remaining fallback:\n%s", body)
+	}
+}

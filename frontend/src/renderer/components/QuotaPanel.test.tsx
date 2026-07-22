@@ -87,6 +87,38 @@ describe("QuotaPanel", () => {
 		expect(screen.queryByText(/until/i)).not.toBeInTheDocument();
 	});
 
+	it("does not render ratios when limit is zero", async () => {
+		getMock.mockResolvedValue({
+			data: {
+				history: [],
+				latest: {
+					quotas: [
+						{
+							harness: "codex",
+							accountId: "chatgpt",
+							windowName: "primary",
+							remaining: 8,
+							used: 92,
+							limit: 0,
+							signalQuality: "exact",
+							source: "test",
+							observedAt: "2026-07-20T19:00:00Z",
+						},
+					],
+				},
+			},
+			error: undefined,
+			response: { status: 200 },
+		});
+
+		renderWithClient(<QuotaPanel />);
+
+		expect(await screen.findByText("codex/chatgpt/primary")).toBeInTheDocument();
+		expect(screen.getByText("8 remaining")).toBeInTheDocument();
+		expect(screen.queryByText(/% used/)).not.toBeInTheDocument();
+		expect(screen.queryByText("8/0")).not.toBeInTheDocument();
+	});
+
 	it("stays hidden when metrics are disabled", async () => {
 		getMock.mockResolvedValue({
 			data: undefined,

@@ -337,7 +337,7 @@ func TestUsageExtract_CodexQuotaSnapshotsFromRateLimits(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.WriteString(`{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":150,"output_tokens":50,"total_tokens":200}},"rate_limits":{"limit_id":"codex","primary":{"used_percent":92.5,"window_minutes":10080,"resets_at":1785277078},"secondary":{"used_percent":51,"window_minutes":300,"resets_at":1784680000},"plan_type":"pro"}}}` + "\n"); err != nil {
+	if _, err := f.WriteString(`{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":150,"output_tokens":50,"total_tokens":200}},"rate_limits":{"limit_id":"codex","primary":{"used_percent":92.5,"window_minutes":10080.5,"resets_at":1785277078},"secondary":{"used_percent":51,"window_minutes":300,"resets_at":1784680000},"plan_type":"pro"}}}` + "\n"); err != nil {
 		t.Fatal(err)
 	}
 	_ = f.Close()
@@ -361,6 +361,9 @@ func TestUsageExtract_CodexQuotaSnapshotsFromRateLimits(t *testing.T) {
 	}
 	if got[0].WindowEnd.Unix() != 1785277078 {
 		t.Fatalf("primary reset = %s, want unix 1785277078", got[0].WindowEnd)
+	}
+	if want := got[0].WindowEnd.Add(-time.Duration(10080.5 * float64(time.Minute))); !got[0].WindowStart.Equal(want) {
+		t.Fatalf("primary window start = %s, want %s", got[0].WindowStart, want)
 	}
 	if got[1].WindowName != "secondary" {
 		t.Fatalf("secondary snapshot = %+v", got[1])

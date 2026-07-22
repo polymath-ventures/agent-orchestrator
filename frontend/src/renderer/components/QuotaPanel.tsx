@@ -69,7 +69,7 @@ function quotaValue(quota: QuotaSnapshot, pct: number | null): string {
 	if (typeof quota.used === "number" && typeof quota.limit === "number" && quota.limit > 0) {
 		return `${((quota.used / quota.limit) * 100).toFixed(1)}% used`;
 	}
-	if (typeof quota.remaining === "number" && typeof quota.limit === "number") {
+	if (typeof quota.remaining === "number" && typeof quota.limit === "number" && quota.limit > 0) {
 		return pct === null ? `${formatNumber(quota.remaining)}/${formatNumber(quota.limit)}` : `${pct.toFixed(1)}%`;
 	}
 	if (typeof quota.remaining === "number") return `${formatNumber(quota.remaining)} remaining`;

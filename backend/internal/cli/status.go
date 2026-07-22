@@ -313,12 +313,16 @@ func writeStatus(cmd *cobra.Command, st daemonStatus) error {
 			if _, err := fmt.Fprintf(out, "    %s: %s", label, q.SignalQuality); err != nil {
 				return err
 			}
-			if q.Used != nil && q.Limit != nil {
-				if _, err := fmt.Fprintf(out, " %.1f%% used", 100**q.Used / *q.Limit); err != nil {
+			if q.Used != nil && q.Limit != nil && *q.Limit > 0 {
+				if _, err := fmt.Fprintf(out, " %.1f%% used", 100*(*q.Used)/(*q.Limit)); err != nil {
 					return err
 				}
-			} else if q.Remaining != nil && q.Limit != nil {
+			} else if q.Remaining != nil && q.Limit != nil && *q.Limit > 0 {
 				if _, err := fmt.Fprintf(out, " %.1f/%.1f remaining", *q.Remaining, *q.Limit); err != nil {
+					return err
+				}
+			} else if q.Remaining != nil {
+				if _, err := fmt.Fprintf(out, " %.1f remaining", *q.Remaining); err != nil {
 					return err
 				}
 			}

@@ -342,7 +342,7 @@ func (r codexRateLimits) snapshot(name string, win *codexRateWindow, observedAt 
 		Harness:       domain.HarnessCodex,
 		AccountID:     "unknown",
 		WindowName:    name,
-		WindowStart:   reset.Add(-time.Duration(minutes) * time.Minute),
+		WindowStart:   reset.Add(-time.Duration(minutes * float64(time.Minute))),
 		WindowEnd:     reset,
 		Used:          floatPtr(used),
 		Remaining:     floatPtr(remaining),
