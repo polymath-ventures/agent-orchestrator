@@ -221,6 +221,9 @@ type Manager struct {
 	// actually became active (the agent accepted the prompt). New fills in the
 	// sendConfirm* defaults; tests in this package shrink the timings directly.
 	sendConfirm sendConfirmConfig
+	// launchProbe bounds the process-health probe that rejects a spawn whose
+	// agent exited immediately. New fills in the defaults; tests can shrink them.
+	launchProbe launchProbeConfig
 	logger      *slog.Logger
 	// health is the worker-mix candidate-health circuit breaker. Selection calls
 	// it to skip down buckets; Spawn marks a mix-selected bucket down on a
@@ -263,7 +266,18 @@ const (
 	sendConfirmPollInterval    = 300 * time.Millisecond
 	sendConfirmAttemptDeadline = 2 * time.Second
 	sendConfirmMaxAttempts     = 3
+
+	launchCommandProbeRetryDelay = 200 * time.Millisecond
+	launchCommandProbeAttempts   = 3
 )
+
+// launchProbeConfig bounds the post-launch process-health probe. A slow start
+// is an infra condition, not agent death, so the probe retries over a bounded
+// grace window before rejecting a spawn.
+type launchProbeConfig struct {
+	retryDelay time.Duration
+	attempts   int
+}
 
 // Deps are the collaborators a Session Manager needs; New wires them together.
 type Deps struct {
@@ -315,6 +329,10 @@ func New(d Deps) *Manager {
 			pollInterval:    sendConfirmPollInterval,
 			attemptDeadline: sendConfirmAttemptDeadline,
 			maxAttempts:     sendConfirmMaxAttempts,
+		},
+		launchProbe: launchProbeConfig{
+			retryDelay: launchCommandProbeRetryDelay,
+			attempts:   launchCommandProbeAttempts,
 		},
 		logger:         d.Logger,
 		health:         d.Health,
@@ -2829,23 +2847,38 @@ func (m *Manager) verifyLaunchCommandRunning(ctx context.Context, handle ports.R
 	if !ok {
 		return nil
 	}
-	running, err := prober.IsRunningCommand(ctx, handle, command)
-	if err != nil {
-		alive, aliveErr := m.runtime.IsAlive(ctx, handle)
-		if alive && aliveErr == nil {
-			m.logger.Warn("spawn: launch-process probe failed but runtime session is alive; keeping session",
-				"handle", handle.ID, "command", command, "error", err)
+	attempts := m.launchProbe.attempts
+	if attempts < 1 {
+		attempts = 1
+	}
+	var lastErr error
+	for attempt := 1; attempt <= attempts; attempt++ {
+		running, err := prober.IsRunningCommand(ctx, handle, command)
+		if err != nil {
+			alive, aliveErr := m.runtime.IsAlive(ctx, handle)
+			if alive && aliveErr == nil {
+				m.logger.Warn("spawn: launch-process probe failed but runtime session is alive; keeping session",
+					"handle", handle.ID, "command", command, "error", err)
+				return nil
+			}
+			if aliveErr != nil {
+				return errors.Join(err, fmt.Errorf("session liveness probe: %w", aliveErr))
+			}
+			return err
+		}
+		if running {
 			return nil
 		}
-		if aliveErr != nil {
-			return errors.Join(err, fmt.Errorf("session liveness probe: %w", aliveErr))
+		lastErr = fmt.Errorf("%q exited before spawn completed", command)
+		if attempt < attempts {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(m.launchProbe.retryDelay):
+			}
 		}
-		return err
 	}
-	if running {
-		return nil
-	}
-	return fmt.Errorf("%q exited before spawn completed", command)
+	return lastErr
 }
 
 func launchProcessCommand(argv []string) string {

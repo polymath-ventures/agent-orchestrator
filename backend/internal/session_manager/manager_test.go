@@ -1128,8 +1128,8 @@ func TestSpawn_PrePromptLivenessDetectsImmediateExitBeforePromptInjection(t *tes
 	if len(msg.msgs) != 0 {
 		t.Fatalf("delivered prompts = %#v, want none", msg.msgs)
 	}
-	if got, want := rt.processCommands, []string{"launch"}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("launch-process probes = %#v, want one pre-prompt probe for %q", got, want)
+	if got, want := rt.processCommands, []string{"launch", "launch", "launch"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("launch-process probes = %#v, want bounded pre-prompt retries for %q", got, want)
 	}
 	if lcm.completed != 0 {
 		t.Fatalf("MarkSpawned called %d times, want 0 before immediate-exit rejection", lcm.completed)
@@ -1169,7 +1169,7 @@ func TestSpawn_RetriesTransientFalseLaunchProcessProbe(t *testing.T) {
 func TestSpawn_LateExitAfterProbeRollsBack(t *testing.T) {
 	st := newFakeStore()
 	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
-	rt := &fakeRuntime{aliveByHandle: map[string]bool{"h1": true}, processAliveSeq: []bool{true, false}}
+	rt := &fakeRuntime{aliveByHandle: map[string]bool{"h1": true}, processAliveSeq: []bool{true, false, false, false}}
 	lcm := &fakeLCM{store: st}
 	m := New(Deps{
 		Runtime: rt, Agents: singleAgent{agent: afterStartAgent{recordingAgent: &recordingAgent{}}}, Workspace: &fakeWorkspace{}, Store: st,
