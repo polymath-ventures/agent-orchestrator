@@ -30,8 +30,17 @@ type InitializeRepositoryResult struct {
 
 // SetConfigInput is the body shape for PUT /api/v1/projects/{id}/config. Config
 // replaces the project's stored config wholesale; a zero-value config clears it.
+//
+// Because the write is a whole-object replace, a writer working from a stale read
+// silently drops every field it never saw. IfMatch is how a writer proves it is
+// not stale: it carries the ConfigETag from the read the edit was built on, and a
+// mismatch is refused. "*" opts out deliberately — it is what a whole-object
+// writer like the config-as-code restore path sends, since overwriting drift is
+// its entire job. It is populated from the request's If-Match header, never from
+// the JSON body.
 type SetConfigInput struct {
-	Config domain.ProjectConfig `json:"config"`
+	Config  domain.ProjectConfig `json:"config"`
+	IfMatch string               `json:"-"`
 }
 
 // RemoveResult reports what DELETE /api/v1/projects/{id} actually did.

@@ -31,7 +31,7 @@ type statefulProjectManager struct {
 
 func (m *statefulProjectManager) Get(_ context.Context, id domain.ProjectID) (projectsvc.GetResult, error) {
 	cfg := m.config
-	p := projectsvc.Project{ID: id, Path: "/repo/" + string(id), Config: &cfg}
+	p := projectsvc.Project{ID: id, Path: "/repo/" + string(id), Config: &cfg, ConfigETag: cfg.ETag()}
 	return projectsvc.GetResult{Status: "ok", Project: &p}, nil
 }
 
@@ -39,7 +39,7 @@ func (m *statefulProjectManager) SetConfig(_ context.Context, id domain.ProjectI
 	m.config = in.Config
 	m.setCalls++
 	cfg := m.config
-	return projectsvc.Project{ID: id, Config: &cfg}, nil
+	return projectsvc.Project{ID: id, Config: &cfg, ConfigETag: cfg.ETag()}, nil
 }
 
 func runConfigCLI(t *testing.T, args ...string) (string, error) {

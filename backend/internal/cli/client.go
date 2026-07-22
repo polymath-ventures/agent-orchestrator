@@ -80,6 +80,11 @@ func (c *commandContext) putJSON(ctx context.Context, path string, body, out any
 	return c.doJSON(ctx, http.MethodPut, path, body, out)
 }
 
+// putJSONIfMatch is putJSON carrying an If-Match precondition.
+func (c *commandContext) putJSONIfMatch(ctx context.Context, path, ifMatch string, body, out any) error {
+	return c.doJSONPathHeaders(ctx, http.MethodPut, "/api/v1/"+path, map[string]string{"If-Match": ifMatch}, body, out)
+}
+
 // deleteJSON sends DELETE /api/v1/<path> to the running daemon and decodes a
 // 2xx response into out.
 func (c *commandContext) deleteJSON(ctx context.Context, path string, out any) error {
@@ -117,6 +122,10 @@ func (c *commandContext) daemonURL(path string) (string, error) {
 }
 
 func (c *commandContext) doJSONPath(ctx context.Context, method, path string, body, out any) error {
+	return c.doJSONPathHeaders(ctx, method, path, nil, body, out)
+}
+
+func (c *commandContext) doJSONPathHeaders(ctx context.Context, method, path string, headers map[string]string, body, out any) error {
 	url, err := c.daemonURL(path)
 	if err != nil {
 		return err
@@ -136,6 +145,11 @@ func (c *commandContext) doJSONPath(ctx context.Context, method, path string, bo
 	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
+	}
+	for key, value := range headers {
+		if value != "" {
+			req.Header.Set(key, value)
+		}
 	}
 
 	// Reuse the injected client's transport (keeps it stubbable in tests) but

@@ -95,6 +95,10 @@ type Service struct {
 	// covered by the store's own writeMu, so path/id conflict checks plus the
 	// subsequent mutation must be atomic from the perspective of concurrent callers.
 	addMu sync.Mutex
+	// configMu serialises SetConfig's load-compare-write. The staleness check is
+	// worthless if two savers can interleave between reading the current config
+	// and replacing it.
+	configMu sync.Mutex
 }
 
 var _ Manager = (*Service)(nil)
@@ -584,12 +588,25 @@ func (m *Service) SetConfig(ctx context.Context, id domain.ProjectID, in SetConf
 	if err := validateProjectConfigStatic(in.Config); err != nil {
 		return Project{}, err
 	}
+	// The whole load-compare-write below must be atomic, or two concurrent saves
+	// both read the same base, both pass the staleness check, and the later one
+	// still clobbers the earlier.
+	m.configMu.Lock()
+	defer m.configMu.Unlock()
+
 	row, ok, err := m.store.GetProject(ctx, string(id))
 	if err != nil {
 		return Project{}, apierr.Internal("PROJECT_LOAD_FAILED", "Failed to load project")
 	}
 	if !ok || !row.ArchivedAt.IsZero() {
 		return Project{}, apierr.NotFound("PROJECT_NOT_FOUND", "Unknown project")
+	}
+	if in.IfMatch != "" && !row.Config.ETagMatches(in.IfMatch) {
+		return Project{}, apierr.Conflict(
+			"PROJECT_CONFIG_STALE",
+			"The project config changed since it was read; reload and reapply the edit.",
+			map[string]any{"currentConfigETag": row.Config.ETag()},
+		)
 	}
 	if err := m.validateConfiguredModels(ctx, in.Config); err != nil {
 		return Project{}, err
@@ -886,6 +903,7 @@ func (m *Service) projectFromRow(row domain.ProjectRecord) Project {
 		Paused:        row.Paused,
 	}
 	p.Config = projectConfigPtr(row.Config)
+	p.ConfigETag = row.Config.ETag()
 	return p
 }
 

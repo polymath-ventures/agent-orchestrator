@@ -38,3 +38,8 @@ UPDATE projects SET archived_at = ? WHERE id = ? AND archived_at IS NULL;
 
 -- name: SetProjectPaused :execrows
 UPDATE projects SET paused = ? WHERE id = ?;
+
+-- name: SetProjectOriginURL :execrows
+-- The SCM observer owns only this field. A whole-row upsert can restore a stale
+-- config read while another writer updates config.
+UPDATE projects SET repo_origin_url = ? WHERE id = ?;

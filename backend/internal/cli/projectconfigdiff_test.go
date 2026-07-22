@@ -103,3 +103,44 @@ func TestProjectConfigDiff_RedactsEnvValues(t *testing.T) {
 		t.Fatalf("diff should still name the drifted env field: %q", out)
 	}
 }
+
+func TestProjectConfigDiff_UnexpectedFlagReportsLiveOnlyFields(t *testing.T) {
+	cfg := setConfigEnv(t)
+	srv, capture := startConfigRoundTripServer(t, diffLiveConfig, http.StatusOK)
+	writeRunFileFor(t, cfg, srv)
+	spec := writeSpecFile(t, `{"defaultBranch":"main"}`)
+
+	out, _, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }},
+		"project", "config", "diff", "demo", spec, "--unexpected")
+	if err == nil {
+		t.Fatal("expected unexpected live fields to produce drift")
+	}
+	for _, field := range []string{"sessionPrefix", "maxLiveWorkers", "unexpected"} {
+		if !strings.Contains(out, field) {
+			t.Fatalf("output %q missing %q", out, field)
+		}
+	}
+	if capture.putCalled {
+		t.Fatal("diff must never PUT")
+	}
+}
+
+func TestProjectConfigDiff_RedactsSecretShapedNestedLeaves(t *testing.T) {
+	cfg := setConfigEnv(t)
+	live := `{"worker":{"agentConfig":{"apiToken":"live-secret","model":"old"}}}`
+	srv, _ := startConfigRoundTripServer(t, live, http.StatusOK)
+	writeRunFileFor(t, cfg, srv)
+	spec := writeSpecFile(t, `{"worker":{"agentConfig":{"apiToken":"spec-secret","model":"new"}}}`)
+
+	out, _, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }},
+		"project", "config", "diff", "demo", spec)
+	if err == nil {
+		t.Fatal("expected drift")
+	}
+	if strings.Contains(out, "live-secret") || strings.Contains(out, "spec-secret") {
+		t.Fatalf("diff leaked nested secret-shaped leaf: %q", out)
+	}
+	if !strings.Contains(out, "<redacted>") || !strings.Contains(out, "model") {
+		t.Fatalf("diff = %q, want redacted secret leaf and visible non-secret context", out)
+	}
+}

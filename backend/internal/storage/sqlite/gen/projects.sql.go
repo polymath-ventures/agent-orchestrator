@@ -112,6 +112,25 @@ func (q *Queries) ListProjects(ctx context.Context) ([]Project, error) {
 	return items, nil
 }
 
+const setProjectOriginURL = `-- name: SetProjectOriginURL :execrows
+UPDATE projects SET repo_origin_url = ? WHERE id = ?
+`
+
+type SetProjectOriginURLParams struct {
+	RepoOriginURL string
+	ID            domain.ProjectID
+}
+
+// The SCM observer owns only this field. A whole-row upsert can restore a stale
+// config read while another writer updates config.
+func (q *Queries) SetProjectOriginURL(ctx context.Context, arg SetProjectOriginURLParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, setProjectOriginURL, arg.RepoOriginURL, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const setProjectPaused = `-- name: SetProjectPaused :execrows
 UPDATE projects SET paused = ? WHERE id = ?
 `

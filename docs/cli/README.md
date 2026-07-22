@@ -56,6 +56,14 @@ Every product command resolves to a daemon HTTP route. Run `ao <command>
 | `ao session get <id>`               | `GET /api/v1/sessions/{id}`                                           |
 | `ao session kill <id>`              | `POST /api/v1/sessions/{id}/kill`                                     |
 | `ao session restore <id>`           | `POST /api/v1/sessions/{id}/restore`                                  |
+
+`project config apply` sends the `configETag` from its read as `If-Match`, so
+concurrent edits fail with `PROJECT_CONFIG_STALE` instead of being overwritten.
+Repeat `--only <field.path>` to restore selected nested object paths.
+`project config diff --unexpected` additionally reports meaningful live fields
+absent from the spec; the default remains partial-spec comparison. Omitted
+`omitempty` zero/empty values compare as converged. Export warns on
+secret-shaped env keys, while diff redacts env and secret-shaped leaf values.
 | `ao session rename <id> <name>`     | `PATCH /api/v1/sessions/{id}`                                         |
 | `ao session cleanup`                | `POST /api/v1/sessions/cleanup`                                       |
 | `ao session claim-pr <id> <pr-ref>` | `POST /api/v1/sessions/{id}/pr/claim`                                 |

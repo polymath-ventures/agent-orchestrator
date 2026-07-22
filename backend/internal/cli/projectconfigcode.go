@@ -7,7 +7,10 @@ import (
 	"fmt"
 	"io"
 	"reflect"
+	"regexp"
 	"sort"
+	"strconv"
+	"strings"
 )
 
 // This file holds the pure, daemon-independent core of the `ao project config`
@@ -22,9 +25,79 @@ import (
 // Live == nil) from one that is absent from live config entirely (not present).
 type configDrift struct {
 	Field       string
+	Kind        configDriftKind
 	Spec        any
 	Live        any
+	SpecPresent bool
 	LivePresent bool
+}
+
+type configDriftKind string
+
+const (
+	driftChanged    configDriftKind = "changed"
+	driftMissing    configDriftKind = "missing"
+	driftUnexpected configDriftKind = "unexpected"
+)
+
+var fieldPathPattern = regexp.MustCompile(`^[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+)*$`)
+
+var secretKeyPattern = regexp.MustCompile(`(?i)(secret|token|passw(or)?d|passphrase|api[_-]?key|private[_-]?key|access[_-]?key|credential|cookie|session|signing|cert|database[_-]?url|conn(ection)?[_-]?str|dsn|auth)`)
+var patKeyPattern = regexp.MustCompile(`(?i)(^|[_-])pat([_-]|$)`)
+
+var unsafeFieldSegments = map[string]struct{}{
+	"__proto__":   {},
+	"prototype":   {},
+	"constructor": {},
+}
+
+func looksSecretKey(key string) bool {
+	return secretKeyPattern.MatchString(key) || patKeyPattern.MatchString(key)
+}
+
+func secretEnvKeys(config map[string]any, allowed map[string]struct{}) []string {
+	env, ok := config["env"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	var offenders []string
+	for key := range env {
+		if _, exempt := allowed[key]; !exempt && looksSecretKey(key) {
+			offenders = append(offenders, key)
+		}
+	}
+	sort.Strings(offenders)
+	return offenders
+}
+
+func redactSensitiveValue(path string, value any) any {
+	leaf := path
+	if idx := strings.LastIndex(path, "."); idx >= 0 {
+		leaf = path[idx+1:]
+	}
+	if path == "env" || strings.HasPrefix(path, "env.") || looksSecretKey(leaf) {
+		return "<redacted>"
+	}
+	switch typed := value.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(typed))
+		for key, child := range typed {
+			childPath := key
+			if path != "" {
+				childPath = path + "." + key
+			}
+			out[key] = redactSensitiveValue(childPath, child)
+		}
+		return out
+	case []any:
+		out := make([]any, len(typed))
+		for i, child := range typed {
+			out[i] = redactSensitiveValue(path, child)
+		}
+		return out
+	default:
+		return value
+	}
 }
 
 // parseConfigObject decodes a JSON object into map[string]any using UseNumber so
@@ -153,6 +226,9 @@ func overlayConfig(live, spec map[string]any) (map[string]any, []string) {
 	var changed []string
 	for k, specVal := range spec {
 		liveVal, present := live[k]
+		if !present && isAbsentEquivalent(specVal) {
+			continue
+		}
 		if !present || !reflect.DeepEqual(liveVal, specVal) {
 			changed = append(changed, k)
 		}
@@ -168,13 +244,174 @@ func overlayConfig(live, spec map[string]any) (map[string]any, []string) {
 // LivePresent=false so callers can render "absent" distinctly from an explicit
 // JSON null. Keys not named in spec are ignored. Results are sorted by field name.
 func diffConfig(live, spec map[string]any) []configDrift {
+	return diffConfigWithUnexpected(live, spec, false)
+}
+
+func diffConfigUnexpected(live, spec map[string]any) []configDrift {
+	return diffConfigWithUnexpected(live, spec, true)
+}
+
+func diffConfigWithUnexpected(live, spec map[string]any, includeUnexpected bool) []configDrift {
 	var drift []configDrift
 	for k, specVal := range spec {
 		liveVal, present := live[k]
+		if !present && isAbsentEquivalent(specVal) {
+			continue
+		}
 		if !present || !reflect.DeepEqual(liveVal, specVal) {
-			drift = append(drift, configDrift{Field: k, Spec: specVal, Live: liveVal, LivePresent: present})
+			kind := driftChanged
+			if !present {
+				kind = driftMissing
+			}
+			drift = append(drift, configDrift{
+				Field: k, Kind: kind, Spec: specVal, Live: liveVal,
+				SpecPresent: true, LivePresent: present,
+			})
+		}
+	}
+	if includeUnexpected {
+		for k, liveVal := range live {
+			if _, present := spec[k]; present || isAbsentEquivalent(liveVal) {
+				continue
+			}
+			drift = append(drift, configDrift{
+				Field: k, Kind: driftUnexpected, Live: liveVal, LivePresent: true,
+			})
 		}
 	}
 	sort.Slice(drift, func(i, j int) bool { return drift[i].Field < drift[j].Field })
 	return drift
+}
+
+// isAbsentEquivalent reports values that Go's ProjectConfig JSON omits under
+// omitempty. A hand-written spec naming one of these has converged when live
+// omits the field; if live is nonzero, applying the zero still clears it.
+func isAbsentEquivalent(v any) bool {
+	switch value := v.(type) {
+	case bool:
+		return !value
+	case string:
+		return value == ""
+	case json.Number:
+		n, err := strconv.ParseFloat(string(value), 64)
+		return err == nil && n == 0
+	case float64:
+		return value == 0
+	case float32:
+		return value == 0
+	case int:
+		return value == 0
+	case int64:
+		return value == 0
+	case map[string]any:
+		return len(value) == 0
+	case []any:
+		return len(value) == 0
+	default:
+		return false
+	}
+}
+
+func fieldPathParts(path string) ([]string, error) {
+	parts := strings.Split(path, ".")
+	if !fieldPathPattern.MatchString(path) {
+		return nil, fmt.Errorf("invalid --only field path %q: expected dotted object keys", path)
+	}
+	for _, part := range parts {
+		if _, unsafe := unsafeFieldSegments[part]; unsafe {
+			return nil, fmt.Errorf("invalid --only field path %q: unsafe segment %q", path, part)
+		}
+	}
+	return parts, nil
+}
+
+func cloneConfigValue(v any) any {
+	switch value := v.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(value))
+		for k, child := range value {
+			out[k] = cloneConfigValue(child)
+		}
+		return out
+	case []any:
+		out := make([]any, len(value))
+		for i, child := range value {
+			out[i] = cloneConfigValue(child)
+		}
+		return out
+	default:
+		return value
+	}
+}
+
+func readFieldPath(root map[string]any, path string, parts []string) (any, error) {
+	var current any = root
+	for _, part := range parts {
+		obj, ok := current.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("--only field path %s is not present in spec", path)
+		}
+		next, present := obj[part]
+		if !present {
+			return nil, fmt.Errorf("--only field path %s is not present in spec", path)
+		}
+		current = next
+	}
+	return cloneConfigValue(current), nil
+}
+
+func readOptionalFieldPath(root map[string]any, parts []string) (any, bool) {
+	var current any = root
+	for _, part := range parts {
+		obj, ok := current.(map[string]any)
+		if !ok {
+			return nil, false
+		}
+		next, present := obj[part]
+		if !present {
+			return nil, false
+		}
+		current = next
+	}
+	return current, true
+}
+
+func writeFieldPath(root map[string]any, parts []string, value any) {
+	current := root
+	for _, part := range parts[:len(parts)-1] {
+		child, ok := current[part].(map[string]any)
+		if !ok {
+			child = map[string]any{}
+			current[part] = child
+		}
+		current = child
+	}
+	current[parts[len(parts)-1]] = value
+}
+
+// mergeOnlyFields clones live and copies only selected safe dotted paths from
+// spec. It returns the selected paths whose values actually differ.
+func mergeOnlyFields(live, spec map[string]any, onlyPaths []string) (map[string]any, []string, error) {
+	merged, _ := cloneConfigValue(live).(map[string]any)
+	changed := make([]string, 0, len(onlyPaths))
+	for _, path := range onlyPaths {
+		parts, err := fieldPathParts(path)
+		if err != nil {
+			return nil, nil, err
+		}
+		specValue, err := readFieldPath(spec, path, parts)
+		if err != nil {
+			return nil, nil, err
+		}
+		liveValue, present := readOptionalFieldPath(live, parts)
+		if !present && isAbsentEquivalent(specValue) {
+			continue
+		}
+		if !present || !reflect.DeepEqual(liveValue, specValue) {
+			changed = append(changed, path)
+			writeFieldPath(merged, parts, specValue)
+		}
+	}
+	sort.Strings(changed)
+	return merged, changed, nil
 }

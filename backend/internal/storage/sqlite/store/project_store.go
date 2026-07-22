@@ -224,6 +224,22 @@ func (s *Store) SetProjectPaused(ctx context.Context, id string, paused bool) (b
 	return n > 0, nil
 }
 
+// SetProjectOriginURL updates only the project's origin URL. The SCM observer
+// must not upsert a previously-read whole project row because that would rewrite
+// config and could revert a concurrent config edit.
+func (s *Store) SetProjectOriginURL(ctx context.Context, id, originURL string) (bool, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	n, err := s.qw.SetProjectOriginURL(ctx, gen.SetProjectOriginURLParams{
+		RepoOriginURL: originURL,
+		ID:            domain.ProjectID(id),
+	})
+	if err != nil {
+		return false, fmt.Errorf("set project %s origin url: %w", id, err)
+	}
+	return n > 0, nil
+}
+
 // GetFleetPaused reads the daemon-global fleet pause flag. The single
 // daemon_settings row is seeded unpaused at migration time.
 func (s *Store) GetFleetPaused(ctx context.Context) (bool, error) {
