@@ -1,14 +1,20 @@
 # model-management Specification
 
 ## Purpose
-TBD - created by archiving change add-model-management. Update Purpose after archive.
+
+Define harness-native model and effort selection, validation, availability,
+health, persistence, and launch-safety behavior across AO's daemon, CLI, and UI.
+
 ## Requirements
+
 ### Requirement: Model pins are compatible with their harness
 
 The system SHALL reject a known-provider model pin when it is configured or
-requested for a known-provider harness from a different provider. Unknown
-models or harnesses SHALL remain permissive so novel providers can still be
-launched before AO learns their catalog.
+requested for a known-provider harness from a different provider. Fugu model
+identifiers SHALL classify as the Fugu provider before any generic Codex/OpenAI
+fragment match. Unknown models or harnesses SHALL remain permissive so novel
+providers can still be launched before AO learns their catalog, and the
+installed harness SHALL remain the final authority at execution time.
 
 #### Scenario: Cross-provider spawn override is rejected before worktree creation
 
@@ -30,6 +36,12 @@ launched before AO learns their catalog.
 
 - **WHEN** project config pins an Anthropic model under a Codex harness-specific entry
 - **THEN** saving that config fails with a validation error that names the invalid entry
+
+#### Scenario: Fugu classification wins over generic Codex fragments
+
+- **WHEN** a model identifier belongs to the installed Codex-Fugu catalog
+- **THEN** AO classifies it as Fugu before applying any generic `codex` fragment rule
+- **AND** the compatibility guard rejects it for a non-Fugu provider harness
 
 ### Requirement: Model resolution is harness-aware
 
@@ -89,10 +101,12 @@ do not move an existing session to a different model.
 
 ### Requirement: Model availability state is honest and cached
 
-The system SHALL expose model availability for configured model pins with
-reason codes that distinguish not-yet-probed, unavailable probe capability,
-known unreachable, recovered, and no-capability states. Spawning SHALL consult
-only cached verdicts and SHALL do no model probe network I/O on the spawn path.
+The system SHALL expose candidate and configured models through one authoritative
+model service with reason codes that distinguish not-yet-probed, unavailable
+probe capability, known unreachable, recovered, and no-capability states. The
+service SHALL bound request caching, per-pin verdict lifetime, concurrency, and
+memory growth. Spawning SHALL consult only fresh cached verdicts and SHALL do no
+model discovery or probe network I/O on the spawn path.
 
 #### Scenario: Availability has not been probed
 
@@ -103,26 +117,42 @@ only cached verdicts and SHALL do no model probe network I/O on the spawn path.
 
 - **WHEN** the selected harness exposes no model validation capability
 - **THEN** model availability reports reason code `no-capability`
+- **AND** save and spawn remain fail-open
 
 #### Scenario: Probe transport is unavailable
 
-- **WHEN** a model probe cannot complete because of auth, rate limit, timeout,
-  or transient provider failure
+- **WHEN** a model probe cannot complete because of auth, rate limit, timeout, provider failure, signal termination, or missing verdict metadata
 - **THEN** model availability reports reason code `probe-unavailable`
-- **AND** the spawn gate remains fail-open for that model pin
+- **AND** config save and the spawn gate remain fail-open for that model pin
 
-#### Scenario: Cached unreachable model warns without probing on spawn
+#### Scenario: Cached unreachable model blocks without probing on spawn
 
-- **WHEN** the cached verdict says a configured model is unreachable
-- **THEN** spawning that pinned model does not perform a live probe
-- **AND** AO surfaces the cached unreachable state to clients
+- **WHEN** a fresh cached verdict definitively says a configured model is unreachable
+- **THEN** spawning that pinned model performs no live probe
+- **AND** AO rejects the spawn before creating session or worktree state
 
-#### Scenario: Background revalidation emits transitions
+#### Scenario: Missing or stale verdict fails open
 
-- **WHEN** background revalidation changes a model from reachable to unreachable
-  or from unreachable to reachable
-- **THEN** AO emits the corresponding `model_unreachable` or `model_recovered`
-  notification intent once for that transition
+- **WHEN** the spawn gate has no verdict or its verdict is older than the configured TTL
+- **THEN** the spawn proceeds with a loud advisory warning
+- **AND** no provider call is made on the spawn path
+
+#### Scenario: Background revalidation preserves real state
+
+- **WHEN** revalidation returns an unknown verdict after a prior reachable or unreachable verdict
+- **THEN** the unknown result does not overwrite the prior real state
+- **AND** no false transition notification is emitted
+
+#### Scenario: Background revalidation emits first and later transitions
+
+- **WHEN** a configured pin is first observed unreachable, later changes from reachable to unreachable, or recovers from unreachable to reachable
+- **THEN** AO emits one typed transition intent carrying project, harness, model, and scope
+
+#### Scenario: Cache remains bounded under config churn
+
+- **WHEN** model pins are repeatedly added and removed
+- **THEN** expired and unconfigured verdicts are evicted before current definitive rejections
+- **AND** the cache does not exceed its configured entry cap
 
 ### Requirement: Reviewer launches support model pins
 
@@ -144,15 +174,35 @@ and orchestrator sessions.
 
 ### Requirement: Model management is surfaced consistently
 
-The system SHALL expose model overrides and availability state through the
-daemon API, `ao spawn`, project settings, and generated client schema without
-requiring clients to duplicate provider-compatibility rules.
+The system SHALL expose model overrides, harness catalogs, supported effort
+values, catalog provenance, and availability state through the daemon API,
+`ao spawn`, project creation, project settings, role/reviewer configuration, and
+worker-mix configuration without requiring clients to duplicate provider or
+effort compatibility rules.
 
 #### Scenario: CLI spawn accepts a model pin
 
 - **WHEN** the operator runs `ao spawn --model gpt-5-codex`
 - **THEN** the spawn request sends the model pin to the daemon and the created
   session read model includes the recorded model
+
+#### Scenario: Model catalog can be refreshed explicitly
+
+- **WHEN** a client requests `GET /agents/models?force=true`
+- **THEN** AO bypasses the request cache, runs bounded harness discovery, and returns a timestamped catalog
+- **AND** a harness discovery failure is returned as an error or visible fallback rather than an empty successful catalog
+
+#### Scenario: Every picker uses the dynamic harness registry
+
+- **WHEN** the installed registry contains a supported harness
+- **THEN** project, role, reviewer, and worker-mix model selectors render its catalog and effort choices
+- **AND** no client hardcoded harness list is required
+
+#### Scenario: Fallback is visible and recorded
+
+- **WHEN** live discovery fails but a known or cached catalog is available
+- **THEN** the selector remains usable and identifies the fallback source as unverified
+- **AND** AO does not silently change an explicit model and effort pair
 
 #### Scenario: Settings preserves hidden config
 
@@ -164,6 +214,111 @@ requiring clients to duplicate provider-compatibility rules.
 
 - **WHEN** the OpenAPI and TypeScript schemas are generated
 - **THEN** project config, spawn requests, session read models, reviewer config,
-  and model availability responses include the model-management fields clients
-  need
+  model catalog, effort metadata, and availability responses include the fields clients need
 
+### Requirement: Harness discovery and invocation remain native
+
+The system SHALL store and invoke harness-native model and effort identifiers.
+Discovery policy SHALL be harness-specific, and AO SHALL not invent a universal
+effort vocabulary or issue a paid model prompt solely to validate saved
+configuration.
+
+#### Scenario: Claude uses maintained aliases without a paid save probe
+
+- **WHEN** a user saves a Claude Code default using `fable`, `opus`, `sonnet`, or `haiku`
+- **THEN** AO validates it against maintained alias and installed-capability metadata
+- **AND** AO does not issue a Claude prompt merely to validate the save
+
+#### Scenario: Claude effort is passed per process
+
+- **WHEN** a Claude Code launch has an explicit supported effort
+- **THEN** AO passes it through `CLAUDE_CODE_EFFORT_LEVEL`
+- **AND** uses `--effort` only when the installed CLI reports that flag as supported
+
+#### Scenario: OpenCode catalog and variants are queried
+
+- **WHEN** OpenCode model selection is refreshed
+- **THEN** AO queries `opencode models --refresh --verbose`
+- **AND** stores provider/model IDs and declared variants without inventing an effort
+
+#### Scenario: Codex-Fugu catalog is installed data
+
+- **WHEN** `~/.codex/fugu.json` is readable
+- **THEN** AO derives model slugs and supported reasoning levels from that file
+- **AND** normalizes `max` to `xhigh`
+
+#### Scenario: Long-running Fugu execution is not a failure
+
+- **WHEN** a Codex-Fugu request continues producing or awaiting valid work beyond an ordinary Codex duration
+- **THEN** AO keeps it alive until explicit cancellation, process error, or the configured stream timeout
+
+### Requirement: Model probes are hermetic and provider-aware
+
+The system SHALL isolate validation probes from operator hooks, MCP servers,
+session persistence, writable sandboxes, and leaked descendant processes. A
+probe SHALL classify a model unreachable only from an explicit provider
+rejection status.
+
+#### Scenario: Codex probe can run outside a repository
+
+- **WHEN** AO validates a Codex or Fugu model from a non-repository working directory
+- **THEN** it invokes `codex exec` with skip-repo-check, read-only sandbox, and ephemeral-session flags
+- **AND** it does not pass TUI-only approval flags
+
+#### Scenario: Claude probe is hermetic
+
+- **WHEN** AO runs a Claude validation probe
+- **THEN** the prompt is delivered on stdin and the JSON result envelope determines the verdict
+- **AND** setting sources, MCP loading, and session persistence are disabled
+
+#### Scenario: Only provider model rejection is definitive
+
+- **WHEN** a probe reports HTTP 400, 404, or 422 for the selected model
+- **THEN** AO records `unreachable`
+- **AND** 401, 403, 408, 429, 5xx, signal termination, OOM, timeout, and missing status remain `probe-unavailable`
+
+#### Scenario: Probe timeout kills the process tree
+
+- **WHEN** a probe exceeds its independent 45-second deadline
+- **THEN** AO terminates the probe process group and waits for descendant pipes to close
+- **AND** the refresh loop proceeds without leaked processes
+
+### Requirement: Agent installation and authentication health is observable
+
+The system SHALL expose cached installed/authenticated health for configured
+harnesses and SHALL monitor transitions at an environment-configurable cadence.
+Unknown probe results SHALL remain advisory.
+
+#### Scenario: Health endpoint distinguishes actionable states
+
+- **WHEN** a configured harness binary is missing or its authentication expires
+- **THEN** `/agents/health` reports `missing` or `unauthorized` with a remedy
+- **AND** AO records the transition once through its read-side callback and log surface
+- **AND** no session-scoped notification is persisted
+
+#### Scenario: Unknown health does not page
+
+- **WHEN** install or authentication health cannot be determined
+- **THEN** the endpoint reports `unknown`
+- **AND** AO records no actionable unhealthy transition
+
+#### Scenario: Health cadence can be disabled
+
+- **WHEN** `AO_AGENT_HEALTH_INTERVAL` is set to zero
+- **THEN** scheduled health checks are disabled without affecting explicit reads or spawns
+
+### Requirement: Model management preserves session launch liveness
+
+The system SHALL determine spawned-agent liveness from the process tree before
+delivering title or prompt data and SHALL not infer death from the tmux pane's
+launcher-shell command name.
+
+#### Scenario: Launcher shell remains while agent is healthy
+
+- **WHEN** tmux reports `sh` as the pane command while the agent descendant is alive
+- **THEN** AO treats the session as alive and does not kill or respawn it
+
+#### Scenario: Immediate exit is detected before prompt delivery
+
+- **WHEN** the agent process exits immediately after launch
+- **THEN** AO detects the dead process tree before typing title or prompt text into the keep-alive shell
