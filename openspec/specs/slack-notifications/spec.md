@@ -6,7 +6,9 @@ One-way mirroring of AO's existing notifications to a Slack channel via a read-o
 (`ao notify slack`). The sidecar consumes the daemon's existing notification stream and posts each
 notification the desktop bell shows to a Slack incoming webhook. Delivery is strictly outbound: no
 inbound Slack surface, no filtering beyond on/off, and no daemon changes.
+
 ## Requirements
+
 ### Requirement: Slack delivery is opt-in via configuration alone
 
 The system SHALL deliver notifications to Slack only when a Slack incoming webhook URL is
@@ -315,4 +317,3 @@ fix (#86); current consumer comment handling is `backend/internal/cli/slack.go:5
 
 - **WHEN** the command receives SIGTERM while sleeping, fetching, posting, or paging
 - **THEN** the in-flight operation is cancelled and the command exits cleanly
-
