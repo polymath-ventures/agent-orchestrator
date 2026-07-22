@@ -116,19 +116,29 @@ jobs:
       - name: Diagnose direct packaged-app launch
         shell: bash
         run: |
-          set -euo pipefail
+          # Diagnostic only: never fail or hang the job. Launch the packaged app
+          # with Chromium remote debugging and ask its own DevTools endpoint
+          # whether any window/page target exists — independent of Playwright.
+          set +e
           mkdir -p "$HOME/.ao/electron" "$AO_MAC_SMOKE_OUTPUT_DIR"
           executable="$AO_MAC_SMOKE_APP_PATH/Contents/MacOS/agent-orchestrator"
-          "$executable" \
+          ELECTRON_ENABLE_LOGGING=1 "$executable" \
+            --remote-debugging-port=9222 --enable-logging=stderr --v=1 \
             >"$AO_MAC_SMOKE_OUTPUT_DIR/direct-app-stdout.log" \
             2>"$AO_MAC_SMOKE_OUTPUT_DIR/direct-app-stderr.log" &
           app_pid=$!
           echo "$app_pid" > "$AO_MAC_SMOKE_OUTPUT_DIR/direct-app.pid"
-          sleep 15
-          if kill -0 "$app_pid" 2>/dev/null; then
-            kill -TERM "$app_pid"
-          fi
-          wait "$app_pid" || echo "$?" > "$AO_MAC_SMOKE_OUTPUT_DIR/direct-app-exit-code"
+          for _ in $(seq 1 20); do
+            sleep 2
+            curl -sS --max-time 5 http://127.0.0.1:9222/json/list \
+              -o "$AO_MAC_SMOKE_OUTPUT_DIR/direct-app-targets.json" && break
+          done
+          curl -sS --max-time 5 http://127.0.0.1:9222/json/version \
+            -o "$AO_MAC_SMOKE_OUTPUT_DIR/direct-app-cdp-version.json"
+          pkill -TERM -f "Agent Orchestrator Smoke ${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.app" 2>/dev/null
+          sleep 3
+          pkill -KILL -f "Agent Orchestrator Smoke ${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.app" 2>/dev/null
+          exit 0
 
       - name: Run native Electron titlebar smoke
         working-directory: harness/frontend
