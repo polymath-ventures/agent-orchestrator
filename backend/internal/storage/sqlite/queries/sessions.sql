@@ -6,39 +6,27 @@ INSERT INTO sessions (
     id, project_id, num, issue_id, kind, harness, display_name,
     activity_state, activity_last_at, first_signal_at, is_terminated,
     branch, workspace_path, runtime_handle_id, agent_session_id, prompt,
-    preview_url, preview_revision, model, effort, mix_selected, runtime_token, launch_command,
+    preview_url, preview_revision, model, effort, mix_selected, mix_bucket_model, runtime_token, launch_command,
     prompt_policy_hash, created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 -- name: UpdateSession :exec
 UPDATE sessions SET
     issue_id = ?, kind = ?, harness = ?, display_name = ?,
     activity_state = ?, activity_last_at = ?, first_signal_at = ?, is_terminated = ?,
     branch = ?, workspace_path = ?, runtime_handle_id = ?, agent_session_id = ?, prompt = ?,
-    preview_url = ?, preview_revision = ?, model = ?, effort = ?, mix_selected = ?, runtime_token = ?,
+    preview_url = ?, preview_revision = ?, model = ?, effort = ?, mix_selected = ?, mix_bucket_model = ?, runtime_token = ?,
     launch_command = ?, prompt_policy_hash = ?, updated_at = ?
 WHERE id = ?;
 
 -- name: GetSession :one
-SELECT id, project_id, num, issue_id, kind, harness,
-    activity_state, activity_last_at, is_terminated, branch, workspace_path,
-    runtime_handle_id, agent_session_id, prompt, created_at, updated_at, display_name, first_signal_at,
-    preview_url, preview_revision, model, mix_selected, runtime_token, launch_command, effort, prompt_policy_hash
-FROM sessions WHERE id = ?;
+SELECT * FROM sessions WHERE id = ?;
 
 -- name: ListSessionsByProject :many
-SELECT id, project_id, num, issue_id, kind, harness,
-    activity_state, activity_last_at, is_terminated, branch, workspace_path,
-    runtime_handle_id, agent_session_id, prompt, created_at, updated_at, display_name, first_signal_at,
-    preview_url, preview_revision, model, mix_selected, runtime_token, launch_command, effort, prompt_policy_hash
-FROM sessions WHERE project_id = ? ORDER BY num;
+SELECT * FROM sessions WHERE project_id = ? ORDER BY num;
 
 -- name: ListAllSessions :many
-SELECT id, project_id, num, issue_id, kind, harness,
-    activity_state, activity_last_at, is_terminated, branch, workspace_path,
-    runtime_handle_id, agent_session_id, prompt, created_at, updated_at, display_name, first_signal_at,
-    preview_url, preview_revision, model, mix_selected, runtime_token, launch_command, effort, prompt_policy_hash
-FROM sessions ORDER BY project_id, num;
+SELECT * FROM sessions ORDER BY project_id, num;
 
 
 -- name: RenameSession :execrows

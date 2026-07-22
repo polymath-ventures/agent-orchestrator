@@ -228,6 +228,33 @@ func TestSpawn_ModelOnlyPinUsesMixSelectedHarness(t *testing.T) {
 	}
 }
 
+func TestSpawn_ModelOnlyPinConsumesSelectedBucketShare(t *testing.T) {
+	m, st := mixManager(domain.ProjectConfig{
+		WorkerMix: domain.WorkerMix{
+			{Harness: domain.HarnessClaudeCode, Model: "configured-claude-model", Weight: 50},
+			{Harness: domain.HarnessCodex, Model: "configured-codex-model", Weight: 50},
+		},
+	})
+
+	first, err := m.Spawn(ctx, ports.SpawnConfig{
+		ProjectID: "mer", Kind: domain.KindWorker, Model: "explicit-overlay-model",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Harness != domain.HarnessClaudeCode || first.Model != "explicit-overlay-model" {
+		t.Fatalf("model-only spawn = (%q, %q), want selected claude-code with explicit overlay", first.Harness, first.Model)
+	}
+	if got := st.sessions[first.ID].MixBucketModel; got != "configured-claude-model" {
+		t.Fatalf("mix bucket model = %q, want selected configured bucket model", got)
+	}
+
+	second := spawnUnpinnedWorker(t, m)
+	if second.Harness != domain.HarnessCodex {
+		t.Fatalf("second selection = %q, want codex because the model-only spawn consumed claude share", second.Harness)
+	}
+}
+
 // A pinned worker in a configured bucket consumes actual live capacity for that
 // bucket. The selector balances the real fleet, not only rows selected by the
 // mix itself.

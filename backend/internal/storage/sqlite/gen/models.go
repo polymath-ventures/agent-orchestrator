@@ -221,6 +221,7 @@ type Session struct {
 	LaunchCommand    string
 	Effort           string
 	PromptPolicyHash string
+	MixBucketModel   string
 }
 
 type SessionWorktree struct {

@@ -291,12 +291,16 @@ func TestSessionMixSelectedRoundTrips(t *testing.T) {
 
 	selected := sampleRecord("mer")
 	selected.MixSelected = true
+	selected.MixBucketModel = "configured-claude-model"
 	created, err := s.CreateSession(ctx, selected)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !created.MixSelected {
 		t.Fatal("created mixSelected = false, want true")
+	}
+	if created.MixBucketModel != "configured-claude-model" {
+		t.Fatalf("created mixBucketModel = %q, want configured-claude-model", created.MixBucketModel)
 	}
 	got, ok, err := s.GetSession(ctx, created.ID)
 	if err != nil || !ok {
@@ -305,14 +309,17 @@ func TestSessionMixSelectedRoundTrips(t *testing.T) {
 	if !got.MixSelected {
 		t.Fatal("read-back mixSelected = false, want true")
 	}
+	if got.MixBucketModel != "configured-claude-model" {
+		t.Fatalf("read-back mixBucketModel = %q, want configured-claude-model", got.MixBucketModel)
+	}
 
 	// The flag survives an update alongside the rest of the record.
 	got.Metadata.RuntimeHandleID = "h1"
 	if err := s.UpdateSession(ctx, got); err != nil {
 		t.Fatal(err)
 	}
-	if again, _, _ := s.GetSession(ctx, created.ID); !again.MixSelected {
-		t.Fatal("mixSelected after update = false, want true")
+	if again, _, _ := s.GetSession(ctx, created.ID); !again.MixSelected || again.MixBucketModel != "configured-claude-model" {
+		t.Fatalf("after update mixSelected=%v mixBucketModel=%q, want true/configured-claude-model", again.MixSelected, again.MixBucketModel)
 	}
 
 	// A pinned spawn's row carries the flag unset everywhere it is read.
@@ -331,6 +338,9 @@ func TestSessionMixSelectedRoundTrips(t *testing.T) {
 		want := rec.ID != pinned.ID
 		if rec.MixSelected != want {
 			t.Fatalf("listed %s mixSelected = %v, want %v", rec.ID, rec.MixSelected, want)
+		}
+		if want && rec.MixBucketModel != "configured-claude-model" {
+			t.Fatalf("listed %s mixBucketModel = %q, want configured-claude-model", rec.ID, rec.MixBucketModel)
 		}
 	}
 }
