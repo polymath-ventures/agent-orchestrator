@@ -129,6 +129,83 @@ func TestListReturnsInitialSupportedInventoryWithoutProbing(t *testing.T) {
 	}
 }
 
+func TestInventoryDerivesReviewerCapabilityFromHarness(t *testing.T) {
+	svc := NewWithAgents([]agentregistry.HarnessAgent{
+		harnessAuthAgent(string(domain.HarnessOpenCode), "OpenCode", ports.AgentAuthStatusAuthorized, nil),
+		harnessAuthAgent(string(domain.HarnessCodexFugu), "Codex Fugu", ports.AgentAuthStatusUnauthorized, nil),
+	})
+
+	initial, err := svc.List(context.Background())
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	assertReviewerCapabilities(t, initial.Supported)
+
+	// A caller cannot mutate the cached capability metadata through List.
+	flipReviewerCapabilities(initial.Supported)
+	cloned, err := svc.List(context.Background())
+	if err != nil {
+		t.Fatalf("List cloned: %v", err)
+	}
+	assertReviewerCapabilities(t, cloned.Supported)
+
+	refreshed, err := svc.Refresh(context.Background())
+	if err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+	assertReviewerCapabilities(t, refreshed.Supported)
+	assertReviewerCapabilities(t, refreshed.Installed)
+	assertReviewerCapabilities(t, refreshed.Authorized)
+
+	// Refresh also returns a clone rather than exposing the cached slices.
+	flipReviewerCapabilities(refreshed.Supported)
+	flipReviewerCapabilities(refreshed.Installed)
+	flipReviewerCapabilities(refreshed.Authorized)
+	cached, err := svc.List(context.Background())
+	if err != nil {
+		t.Fatalf("List after Refresh: %v", err)
+	}
+	assertReviewerCapabilities(t, cached.Supported)
+	assertReviewerCapabilities(t, cached.Installed)
+	assertReviewerCapabilities(t, cached.Authorized)
+
+	for _, tc := range []struct {
+		id   string
+		want bool
+	}{
+		{id: string(domain.HarnessOpenCode), want: true},
+		{id: string(domain.HarnessCodexFugu), want: false},
+	} {
+		got, err := svc.Probe(context.Background(), tc.id)
+		if err != nil {
+			t.Fatalf("Probe(%q): %v", tc.id, err)
+		}
+		if got.Agent.ReviewerCapable != tc.want {
+			t.Fatalf("Probe(%q).Agent.ReviewerCapable = %t, want %t", tc.id, got.Agent.ReviewerCapable, tc.want)
+		}
+	}
+}
+
+func flipReviewerCapabilities(infos []Info) {
+	for i := range infos {
+		infos[i].ReviewerCapable = !infos[i].ReviewerCapable
+	}
+}
+
+func assertReviewerCapabilities(t *testing.T, infos []Info) {
+	t.Helper()
+	byID := make(map[string]Info, len(infos))
+	for _, info := range infos {
+		byID[info.ID] = info
+	}
+	if !byID[string(domain.HarnessOpenCode)].ReviewerCapable {
+		t.Fatalf("opencode = %#v, want reviewer capable", byID[string(domain.HarnessOpenCode)])
+	}
+	if byID[string(domain.HarnessCodexFugu)].ReviewerCapable {
+		t.Fatalf("codex-fugu = %#v, want worker-only", byID[string(domain.HarnessCodexFugu)])
+	}
+}
+
 func TestRefreshReportsInstalledAgentsAndIgnoresDetectorErrors(t *testing.T) {
 	svc := NewWithAgents([]agentregistry.HarnessAgent{
 		harnessAgent("codex", "Codex", nil),

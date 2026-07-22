@@ -6,9 +6,10 @@ import (
 )
 
 // WorkerMixEntry is one bucket in a project's weighted worker mix: an agent
-// harness, an optional model for that harness, and a percentage weight. It reads
-// "spawn this fraction of the project's workers on this agent/model." One row in
-// the Settings mix table maps to exactly one entry.
+// harness, an optional model and effort for that harness, and a percentage
+// weight. It reads "spawn this fraction of the project's workers on this native
+// agent/model/effort tuple." One row in the Settings mix table maps to exactly
+// one entry.
 type WorkerMixEntry struct {
 	// Harness is the agent CLI the bucket's workers launch.
 	Harness AgentHarness `json:"agent"`
@@ -16,20 +17,27 @@ type WorkerMixEntry struct {
 	// model (resolved through AgentConfig at spawn). A non-empty model must belong
 	// to the harness's provider — a cross-provider model is rejected by Validate.
 	Model string `json:"model,omitempty"`
+	// Effort pins the harness-native reasoning effort for the bucket. Empty
+	// inherits the resolved worker/project effort. Compatibility aliases are
+	// normalized in bucket identity so equivalent native tuples cannot be
+	// configured twice.
+	Effort Effort `json:"effort,omitempty"`
 	// Weight is the bucket's percentage share of worker spawns (1..100). Weights
 	// across the mix must sum to 100.
 	Weight int `json:"weight"`
 }
 
-// key identifies a bucket for running-count matching: harness + model, the two
-// axes a worker spawn is distributed over. The model is trimmed so the bucket
-// identity matches the model recorded on a spawned session (Spawn trims the
-// per-session model before persisting it) — otherwise a whitespace-padded config
-// model would count against a different key than it selects on, over-serving that
-// bucket. Validate already rejects such padding; this trim is defense-in-depth
-// for any path that reaches Select without going through Validate.
+// key identifies a bucket for running-count matching. Model is trimmed and
+// effort is normalized so identity matches the tuple persisted on a spawned
+// session. Validate rejects padded models and invalid efforts; normalization is
+// still required because aliases such as Fugu max and xhigh are the same native
+// effort.
 func (e WorkerMixEntry) key() BucketKey {
-	return BucketKey{Harness: e.Harness, Model: strings.TrimSpace(e.Model)}
+	return BucketKey{
+		Harness: e.Harness,
+		Model:   strings.TrimSpace(e.Model),
+		Effort:  NormalizeEffortForHarness(e.Harness, e.Effort),
+	}
 }
 
 // BucketKey returns the normalized identity of this mix bucket for consumers
@@ -39,11 +47,12 @@ func (e WorkerMixEntry) BucketKey() BucketKey {
 	return e.key()
 }
 
-// BucketKey identifies one agent/model bucket. It keys the running-session
-// counts the deficit selector consumes.
+// BucketKey identifies one native agent/model/effort bucket. It keys the
+// running-session counts the deficit selector consumes.
 type BucketKey struct {
 	Harness AgentHarness
 	Model   string
+	Effort  Effort
 }
 
 // WorkerMix is a project's weighted worker mix: worker spawns are distributed
@@ -82,9 +91,12 @@ func (mix WorkerMix) Validate() error {
 				return fmt.Errorf("workerMix[%d].model: %q is not a %s model", i, e.Model, hp)
 			}
 		}
+		if !e.Effort.Valid() {
+			return fmt.Errorf("workerMix[%d].effort: invalid effort %q", i, e.Effort)
+		}
 		k := e.key()
 		if _, dup := seen[k]; dup {
-			return fmt.Errorf("workerMix[%d]: duplicate bucket agent=%q model=%q", i, e.Harness, e.Model)
+			return fmt.Errorf("workerMix[%d]: duplicate bucket agent=%q model=%q effort=%q", i, e.Harness, e.Model, k.Effort)
 		}
 		seen[k] = struct{}{}
 		sum += e.Weight

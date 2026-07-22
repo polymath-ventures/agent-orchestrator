@@ -60,6 +60,9 @@ type Candidate struct {
 	// Model pins the model when the surface distributes over models; empty means
 	// the harness default.
 	Model string
+	// Effort pins the reasoning effort when the surface distributes over native
+	// model/effort tuples; empty means inherited or provider default.
+	Effort string
 	// Provider names the model/back-end provider when a surface distributes over
 	// providers (empty when not relevant).
 	Provider string
@@ -80,6 +83,7 @@ func (c Candidate) Normalized() Candidate {
 		Surface:  strings.TrimSpace(c.Surface),
 		Harness:  strings.TrimSpace(c.Harness),
 		Model:    strings.TrimSpace(c.Model),
+		Effort:   strings.TrimSpace(c.Effort),
 		Provider: strings.TrimSpace(c.Provider),
 		Account:  strings.TrimSpace(c.Account),
 		Bot:      strings.TrimSpace(c.Bot),
@@ -91,7 +95,7 @@ func (c Candidate) Normalized() Candidate {
 // appear, so the rendering stays terse for simple surfaces.
 func (c Candidate) String() string {
 	n := c.Normalized()
-	parts := make([]string, 0, 6)
+	parts := make([]string, 0, 7)
 	if n.Surface != "" {
 		parts = append(parts, n.Surface)
 	}
@@ -100,6 +104,9 @@ func (c Candidate) String() string {
 	}
 	if n.Model != "" {
 		parts = append(parts, n.Model)
+	}
+	if n.Effort != "" {
+		parts = append(parts, "effort="+n.Effort)
 	}
 	if n.Provider != "" {
 		parts = append(parts, "provider="+n.Provider)
@@ -329,6 +336,9 @@ func (t *Tracker) emit(name string, level ports.TelemetryLevel, c Candidate, rea
 	}
 	if c.Model != "" {
 		payload["model"] = c.Model
+	}
+	if c.Effort != "" {
+		payload["effort"] = c.Effort
 	}
 	if c.Provider != "" {
 		payload["provider"] = c.Provider

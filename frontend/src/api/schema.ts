@@ -876,6 +876,7 @@ export interface components {
             id: string;
             label: string;
             models: components["schemas"]["AgentModelAvailability"][];
+            reviewerCapable: boolean;
         };
         AgentHealthSnapshot: {
             /** Format: date-time */
@@ -890,6 +891,7 @@ export interface components {
             authStatus?: "authorized" | "unauthorized" | "unknown";
             id: string;
             label: string;
+            reviewerCapable: boolean;
         };
         AgentModelAvailability: {
             defaultEffort?: string;
@@ -946,6 +948,7 @@ export interface components {
             /** Format: date-time */
             createdAt: string;
             displayName?: string;
+            effort?: string;
             harness?: string;
             id: string;
             isTerminated: boolean;
@@ -1511,6 +1514,7 @@ export interface components {
         WorkerMix: components["schemas"]["WorkerMixEntry"][];
         WorkerMixEntry: {
             agent: string;
+            effort?: string;
             model?: string;
             weight: number;
         };

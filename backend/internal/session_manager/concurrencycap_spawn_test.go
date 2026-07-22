@@ -124,7 +124,7 @@ func TestSpawn_CapRefusalMarksNoCandidateDown(t *testing.T) {
 	if !errors.Is(err, ErrWorkerConcurrencyCap) {
 		t.Fatalf("spawn err = %v, want ErrWorkerConcurrencyCap", err)
 	}
-	if tr.IsDown(workerMixCandidate(domain.HarnessClaudeCode, "")) {
+	if tr.IsDown(workerMixCandidate(domain.HarnessClaudeCode, "", "")) {
 		t.Fatal("a cap refusal must not mark any candidate down")
 	}
 	if got := sink.count(candidatehealth.EventCandidateDown); got != 0 {

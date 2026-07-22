@@ -193,9 +193,10 @@ func TestMarkRecoveredHealthyIsSilent(t *testing.T) {
 // failure never marks another down.
 func TestCandidateIdentityPreventsFalseSubstitution(t *testing.T) {
 	tr := newTestTracker(&recordingSink{})
-	failed := Candidate{Surface: "worker_mix", Harness: "codex", Model: "gpt-5.5-codex"}
+	failed := Candidate{Surface: "worker_mix", Harness: "codex", Model: "gpt-5.5-codex", Effort: "high"}
 	other := Candidate{Surface: "worker_mix", Harness: "claude-code", Model: "opus"}
 	sameHarnessOtherModel := Candidate{Surface: "worker_mix", Harness: "codex", Model: "gpt-5.4-codex"}
+	sameHarnessModelOtherEffort := Candidate{Surface: "worker_mix", Harness: "codex", Model: "gpt-5.5-codex", Effort: "low"}
 
 	tr.MarkDown(failed, errors.New("boom"))
 	if !tr.IsDown(failed) {
@@ -207,12 +208,15 @@ func TestCandidateIdentityPreventsFalseSubstitution(t *testing.T) {
 	if tr.IsDown(sameHarnessOtherModel) {
 		t.Fatal("same harness but different model is a distinct candidate")
 	}
+	if tr.IsDown(sameHarnessModelOtherEffort) {
+		t.Fatal("same harness/model but different effort is a distinct candidate")
+	}
 }
 
 func TestCandidateNormalizationKeysConsistently(t *testing.T) {
 	tr := newTestTracker(&recordingSink{})
-	padded := Candidate{Surface: " worker_mix ", Harness: " codex ", Model: " gpt-5.5-codex "}
-	clean := Candidate{Surface: "worker_mix", Harness: "codex", Model: "gpt-5.5-codex"}
+	padded := Candidate{Surface: " worker_mix ", Harness: " codex ", Model: " gpt-5.5-codex ", Effort: " high "}
+	clean := Candidate{Surface: "worker_mix", Harness: "codex", Model: "gpt-5.5-codex", Effort: "high"}
 	tr.MarkDown(padded, errors.New("boom"))
 	if !tr.IsDown(clean) {
 		t.Fatal("padded and trimmed candidates must key the same slot")
@@ -225,6 +229,7 @@ func TestCandidateStringOmitsEmptyAxes(t *testing.T) {
 		want string
 	}{
 		{Candidate{Surface: "worker_mix", Harness: "codex", Model: "gpt-5.5-codex"}, "worker_mix:codex:gpt-5.5-codex"},
+		{Candidate{Surface: "worker_mix", Harness: "codex", Model: "gpt-5.5-codex", Effort: "high"}, "worker_mix:codex:gpt-5.5-codex:effort=high"},
 		{Candidate{Surface: "reviewer", Harness: "codex"}, "reviewer:codex"},
 		{Candidate{Surface: "reviewer", Harness: "copilot", Bot: "copilot-pr"}, "reviewer:copilot:bot=copilot-pr"},
 		{Candidate{}, "candidate"},

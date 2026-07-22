@@ -51,6 +51,7 @@ func TestBuildIncludesAgentModelsAndHealthContracts(t *testing.T) {
 		[]byte("catalogSource:"),
 		[]byte("catalogReason:"),
 		[]byte("catalogVerified:"),
+		[]byte("reviewerCapable:"),
 		[]byte("defaultEffort:"),
 		[]byte("/api/v1/agents/health:"),
 		[]byte("operationId: getAgentHealth"),
@@ -59,5 +60,25 @@ func TestBuildIncludesAgentModelsAndHealthContracts(t *testing.T) {
 		if !bytes.Contains(got, want) {
 			t.Fatalf("generated spec missing %q", want)
 		}
+	}
+}
+
+func TestBuildIncludesReviewerCapabilityOnAgentInventory(t *testing.T) {
+	got, err := specgen.Build()
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	want := []byte("AgentInfo:\n      properties:\n        authStatus:")
+	start := bytes.Index(got, want)
+	if start < 0 {
+		t.Fatalf("generated spec missing AgentInfo schema")
+	}
+	end := bytes.Index(got[start:], []byte("    AgentModelAvailability:"))
+	if end < 0 {
+		t.Fatalf("generated spec missing schema after AgentInfo")
+	}
+	agentInfo := got[start : start+end]
+	if !bytes.Contains(agentInfo, []byte("reviewerCapable:")) {
+		t.Fatalf("generated AgentInfo schema missing reviewerCapable: %s", agentInfo)
 	}
 }

@@ -96,6 +96,7 @@ type ModelAvailability struct {
 type HarnessModels struct {
 	ID              string              `json:"id"`
 	Label           string              `json:"label"`
+	ReviewerCapable bool                `json:"reviewerCapable"`
 	CatalogSource   ModelCatalogSource  `json:"catalogSource" enum:"adapter,cached-adapter,known-set,configured-pins,none"`
 	CatalogReason   string              `json:"catalogReason,omitempty"`
 	CatalogVerified bool                `json:"catalogVerified"`
@@ -215,6 +216,7 @@ func (s *Service) freshModelAvailability(ctx context.Context, req ModelAvailabil
 		harnesses = append(harnesses, HarnessModels{
 			ID:              string(item.Harness),
 			Label:           label,
+			ReviewerCapable: domain.ReviewerHarness(item.Harness).IsKnown(),
 			CatalogSource:   source,
 			CatalogReason:   reason,
 			CatalogVerified: catalogVerified,

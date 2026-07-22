@@ -31,16 +31,16 @@
 
 ## 5. Replace static UI model inputs with one live picker
 
-- [ ] 5.1 Port and extend reference `ModelAvailabilityField.tsx:22-131` plus its query hook to render models, efforts, status/reason, checked time, refresh, and visible fallback provenance from `/agents/models`.
-- [ ] 5.2 Replace `MODEL_HARNESS_OPTIONS` and hardcoded rows with the canonical dynamic agent/model registry, including Codex-Fugu and synthetic configured pins without model-capable catalog rows.
-- [ ] 5.3 Add a reusable harness/model/effort row for project, worker, orchestrator, prime, and reviewer configuration; on harness switch restore that harness's saved pair or clear stale cross-provider values.
-- [ ] 5.4 Replace the worker-mix model text input while preserving the current standalone component, numeric parsing, exponent validation, and live totals; explicitly carry or inherit effort according to the resolved launch contract.
-- [ ] 5.5 Add an optional harness-native model/effort override to create-project while preserving blank daemon-owned defaults and preventing a scalar model from leaking across harnesses.
-- [ ] 5.6 Add frontend tests for dynamic harness discovery, model/effort filtering, role persistence, harness-switch clearing, cached fallback, explicit create override, hidden-config preservation, and existing worker-mix parsing.
+- [x] 5.1 Port and extend reference `ModelAvailabilityField.tsx:22-131` plus its query hook to render models, efforts, status/reason, checked time, refresh, and visible fallback provenance from `/agents/models`.
+- [x] 5.2 Replace `MODEL_HARNESS_OPTIONS` and hardcoded rows with the canonical dynamic agent/model registry, including Codex-Fugu and synthetic configured pins without model-capable catalog rows.
+- [x] 5.3 Add a reusable harness/model/effort row for project, worker, orchestrator, prime, and reviewer configuration; on harness switch restore that harness's saved pair or clear stale cross-provider values.
+- [x] 5.4 Replace the worker-mix model text input while preserving the current standalone component, numeric parsing, exponent validation, and live totals; explicitly carry or inherit effort according to the resolved launch contract.
+- [x] 5.5 Add an optional harness-native model/effort override to create-project while preserving blank daemon-owned defaults and preventing a scalar model from leaking across harnesses.
+- [x] 5.6 Add frontend tests for dynamic harness discovery, model/effort filtering, role persistence, harness-switch clearing, cached fallback, explicit create override, hidden-config preservation, and existing worker-mix parsing.
 
 ## 6. Verify parity and prepare review
 
-- [ ] 6.1 Run focused Go, frontend, controller, adapter, storage, and generated-schema tests after each phase; update the delta-spec checkboxes only when each behavior is verified.
+- [x] 6.1 Run focused Go, frontend, controller, adapter, storage, and generated-schema tests after each phase; update the delta-spec checkboxes only when each behavior is verified.
 - [ ] 6.2 Exercise every history-mined edge case from issue #4 and cite the passing test or current invariant in the PR body, including the rejected `--skip-probe` escape hatch and independent per-probe deadlines.
-- [ ] 6.3 Run `ao preview` and capture desktop and narrow-panel verification of project settings, worker mix, create-project, refresh failure with cached data, and unverified fallback states.
+- [x] 6.3 Run `ao preview` and capture desktop and narrow-panel verification of project settings, worker mix, create-project, refresh failure with cached data, and unverified fallback states.
 - [ ] 6.4 Run the repository's full CI commands, rebase on the fetched remote default branch, push the final head, and complete independent cross-family final review before declaring the PR merge-ready.

@@ -624,6 +624,30 @@ func validateProjectConfigStatic(cfg domain.ProjectConfig) error {
 	if err := validateRoleModelCompatibility(cfg); err != nil {
 		return apierr.Invalid("INVALID_PROJECT_CONFIG", err.Error(), nil)
 	}
+	if err := validateResolvedWorkerMix(cfg); err != nil {
+		return apierr.Invalid("INVALID_PROJECT_CONFIG", err.Error(), nil)
+	}
+	return nil
+}
+
+func validateResolvedWorkerMix(cfg domain.ProjectConfig) error {
+	mix := make(domain.WorkerMix, len(cfg.WorkerMix))
+	copy(mix, cfg.WorkerMix)
+	for i := range mix {
+		entry := &mix[i]
+		if entry.Effort != "" {
+			entry.Effort = domain.NormalizeEffortForHarness(entry.Harness, entry.Effort)
+			continue
+		}
+		resolved, err := agentconfig.Effective(domain.KindWorker, cfg, entry.Model, entry.Harness)
+		if err != nil {
+			return fmt.Errorf("workerMix[%d]: resolve inherited effort: %w", i, err)
+		}
+		entry.Effort = resolved.Effort
+	}
+	if err := mix.Validate(); err != nil {
+		return fmt.Errorf("resolved worker mix: %w", err)
+	}
 	return nil
 }
 
@@ -743,7 +767,22 @@ func configuredModelSelections(cfg domain.ProjectConfig) []configuredModelSelect
 	addHarnessMap("orchestrator.agentConfig.modelByHarness", domain.KindOrchestrator, cfg.Orchestrator.AgentConfig.ModelByHarness)
 	addHarnessMap("prime.agentConfig.modelByHarness", domain.KindPrime, cfg.Prime.AgentConfig.ModelByHarness)
 	for i, bucket := range cfg.WorkerMix {
-		addRole("workerMix["+strconv.Itoa(i)+"]", domain.KindWorker, bucket.Harness, bucket.Model)
+		resolved, err := agentconfig.Effective(domain.KindWorker, cfg, bucket.Model, bucket.Harness)
+		if err != nil {
+			continue
+		}
+		if bucket.Effort != "" {
+			resolved.Effort = domain.NormalizeEffortForHarness(bucket.Harness, bucket.Effort)
+		}
+		if strings.TrimSpace(resolved.Model) == "" && resolved.Effort == "" {
+			continue
+		}
+		selections = append(selections, configuredModelSelection{
+			scope:   "workerMix[" + strconv.Itoa(i) + "]",
+			harness: bucket.Harness,
+			model:   strings.TrimSpace(resolved.Model),
+			effort:  resolved.Effort,
+		})
 	}
 
 	seen := make(map[string]struct{}, len(selections))

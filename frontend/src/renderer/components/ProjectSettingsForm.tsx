@@ -2,14 +2,21 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import type { components } from "../../api/schema";
 import { agentsQueryKey, agentsQueryOptions, refreshAgents } from "../hooks/useAgentsQuery";
+import {
+	modelAvailabilityQueryKey,
+	type AgentModelAvailabilityResponse,
+	useModelAvailabilityQuery,
+	useRefreshModelAvailability,
+} from "../hooks/useModelAvailabilityQuery";
 import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { captureRendererEvent } from "../lib/telemetry";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { newestActiveOrchestrator } from "../types/workspace";
-import { RequiredAgentField } from "./CreateProjectAgentSheet";
+import { modelAvailabilityFromAgentInventory, RequiredAgentField } from "./CreateProjectAgentSheet";
 import { DashboardSubhead } from "./DashboardSubhead";
 import { buildIntake, deriveGitHubRepo, IntakeFields, type IntakeForm, intakeNeedsRule } from "./IntakeFields";
+import { type ConfiguredModelPin, ModelAvailabilityField, type ModelSelection } from "./ModelAvailabilityField";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Label } from "./ui/label";
@@ -25,10 +32,9 @@ import {
 
 type Project = components["schemas"]["Project"];
 type ProjectConfig = components["schemas"]["ProjectConfig"];
+type AgentConfig = components["schemas"]["AgentConfig"];
+type AgentInfo = components["schemas"]["AgentInfo"];
 type TrackerIntakeConfig = components["schemas"]["TrackerIntakeConfig"];
-type ModelAvailability = components["schemas"]["DomainModelAvailability"];
-type ModelByHarness = NonNullable<components["schemas"]["AgentConfig"]["modelByHarness"]>;
-type ReviewerConfig = components["schemas"]["DomainReviewerConfig"];
 
 const PERMISSION_MODE_OPTIONS = [
 	{ value: "default", label: "Default" },
@@ -36,9 +42,6 @@ const PERMISSION_MODE_OPTIONS = [
 	{ value: "auto", label: "Auto" },
 	{ value: "bypass-permissions", label: "Bypass permissions" },
 ] as const;
-
-const REVIEWER_OPTIONS = ["claude-code", "codex", "opencode"] as const;
-const MODEL_HARNESS_OPTIONS = ["claude-code", "codex", "opencode"] as const;
 
 const ROLE_PROMPT_OPTIONS = ["worker", "orchestrator", "reviewer"] as const;
 type RolePromptRole = (typeof ROLE_PROMPT_OPTIONS)[number];
@@ -93,16 +96,27 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 	const activeOrchestrator = newestActiveOrchestrator(workspace?.sessions ?? []);
 	const intake: TrackerIntakeConfig = config.trackerIntake ?? {};
 	const firstReviewer = config.reviewers?.[0];
+	const initialProjectHarness = firstConfiguredHarness(config.agentConfig);
+	const initialWorkerAgent = config.worker?.agent ?? "";
+	const initialOrchestratorAgent = config.orchestrator?.agent ?? "";
+	const initialPrimeAgent = config.prime?.agent ?? "";
+	const initialReviewerHarness = firstReviewer?.harness ?? "";
 	const [form, setForm] = useState({
 		defaultBranch: config.defaultBranch ?? project.defaultBranch ?? "",
 		sessionPrefix: config.sessionPrefix ?? "",
-		workerAgent: config.worker?.agent ?? "",
-		orchestratorAgent: config.orchestrator?.agent ?? "",
+		projectHarness: initialProjectHarness,
 		model: config.agentConfig?.model ?? "",
+		effort: config.agentConfig?.effort ?? "",
 		modelByHarness: toHarnessModelForm(config.agentConfig?.modelByHarness),
+		workerAgent: initialWorkerAgent,
+		workerModels: toRoleHarnessModelForm(config.worker?.agentConfig, initialWorkerAgent),
+		orchestratorAgent: initialOrchestratorAgent,
+		orchestratorModels: toRoleHarnessModelForm(config.orchestrator?.agentConfig, initialOrchestratorAgent),
+		primeAgent: initialPrimeAgent,
+		primeModels: toRoleHarnessModelForm(config.prime?.agentConfig, initialPrimeAgent),
 		permissions: config.agentConfig?.permissions ?? "",
-		reviewerHarness: firstReviewer?.harness ?? "",
-		reviewerModel: firstReviewer?.agentConfig?.model ?? "",
+		reviewerHarness: initialReviewerHarness,
+		reviewerModels: toRoleHarnessModelForm(firstReviewer?.agentConfig, initialReviewerHarness),
 		agentRules: config.agentRules ?? "",
 		agentRulesFile: config.agentRulesFile ?? "",
 		orchestratorRules: config.orchestratorRules ?? "",
@@ -118,10 +132,12 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 	const [savedAt, setSavedAt] = useState<number | null>(null);
 	const [replacementError, setReplacementError] = useState<string | null>(null);
 	const [validationError, setValidationError] = useState<string | null>(null);
-	const initialOrchestratorAgent = config.orchestrator?.agent ?? "";
 	const missingRequiredAgent = form.workerAgent === "" || form.orchestratorAgent === "";
 	const agentsQuery = useQuery(agentsQueryOptions);
+	const modelAvailabilityQuery = useModelAvailabilityQuery();
+	const { refresh: refreshModels, isRefreshing: isRefreshingModels } = useRefreshModelAvailability();
 	const agentCatalog = agentsQuery.data;
+	const effectiveModelAvailability = modelAvailabilityQuery.data ?? modelAvailabilityFromAgentInventory(agentCatalog);
 	const refreshAgentsMutation = useMutation({
 		mutationFn: refreshAgents,
 		onSuccess: (next) => queryClient.setQueryData(agentsQueryKey, next),
@@ -155,10 +171,49 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 				...config,
 				defaultBranch: form.defaultBranch || undefined,
 				sessionPrefix: form.sessionPrefix || undefined,
-				worker: { ...config.worker, agent: form.workerAgent },
-				orchestrator: { ...config.orchestrator, agent: form.orchestratorAgent },
-				agentConfig: buildAgentConfig(config.agentConfig, form.model, form.permissions, form.modelByHarness),
-				reviewers: buildReviewerConfig(firstReviewer, form.reviewerHarness, form.reviewerModel),
+				worker: {
+					...config.worker,
+					agent: form.workerAgent,
+					agentConfig: buildRoleAgentConfig(
+						config.worker?.agentConfig,
+						initialWorkerAgent,
+						form.workerAgent,
+						form.workerModels,
+					),
+				},
+				orchestrator: {
+					...config.orchestrator,
+					agent: form.orchestratorAgent,
+					agentConfig: buildRoleAgentConfig(
+						config.orchestrator?.agentConfig,
+						initialOrchestratorAgent,
+						form.orchestratorAgent,
+						form.orchestratorModels,
+					),
+				},
+				prime: blankToUndefined({
+					...config.prime,
+					agent: form.primeAgent || undefined,
+					agentConfig: buildRoleAgentConfig(
+						config.prime?.agentConfig,
+						initialPrimeAgent,
+						form.primeAgent,
+						form.primeModels,
+					),
+				}),
+				agentConfig: buildAgentConfig(
+					config.agentConfig,
+					form.model,
+					form.effort,
+					form.permissions,
+					form.modelByHarness,
+				),
+				reviewers: buildReviewerConfig(
+					config.reviewers,
+					form.reviewerHarness,
+					initialReviewerHarness,
+					form.reviewerModels,
+				),
 				agentRules: form.agentRules.trim() || undefined,
 				agentRulesFile: form.agentRulesFile.trim() || undefined,
 				orchestratorRules: form.orchestratorRules.trim() || undefined,
@@ -194,6 +249,7 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 			setReplacementError(result.replacementError);
 			setValidationError(null);
 			void queryClient.invalidateQueries({ queryKey: ["project", projectId] });
+			void queryClient.invalidateQueries({ queryKey: modelAvailabilityQueryKey });
 			onSaved();
 		},
 		onError: () => {
@@ -290,32 +346,119 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 
 			<Card>
 				<CardHeader>
-					<CardTitle className="text-control">Agents</CardTitle>
+					<CardTitle className="text-control">Harnesses and models</CardTitle>
 				</CardHeader>
 				<CardContent className="flex flex-col gap-4">
-					<RequiredAgentField
-						id="workerAgent"
-						value={form.workerAgent}
-						placeholder="Select worker agent"
-						label="Default worker agent"
-						authorized={agentCatalog?.authorized}
-						installed={agentCatalog?.installed}
-						supported={agentCatalog?.supported}
-						disabled={agentsQuery.isFetching && agentCatalog === undefined}
-						invalid={validationError !== null && form.workerAgent === ""}
-						onChange={(v) => setForm((f) => ({ ...f, workerAgent: v }))}
+					<p className="text-xs leading-row text-muted-foreground">
+						Each role keeps an independent harness-native model and effort pair. Switching harnesses restores that
+						harness's saved pair or clears the fields when none exists.
+					</p>
+					<HarnessModelRow
+						id="project-model"
+						harnessLabel="Project model harness"
+						modelLabel="Project model and effort"
+						selection={projectSelection(form.projectHarness, form.model, form.effort, form.modelByHarness)}
+						configuredPins={[
+							{ harness: "", model: form.model, effort: form.effort },
+							...modelPins(form.modelByHarness),
+						]}
+						agentCatalog={agentCatalog}
+						availability={effectiveModelAvailability}
+						allowDefaultHarness
+						allowScalar
+						defaultHarnessLabel="Scalar fallback"
+						isRefreshingModels={isRefreshingModels || modelAvailabilityQuery.isFetching}
+						onRefreshModels={refreshModels}
+						onChange={(selection) =>
+							setForm((f) =>
+								selection.harness === ""
+									? { ...f, projectHarness: "", model: selection.model, effort: selection.effort }
+									: {
+											...f,
+											projectHarness: selection.harness,
+											modelByHarness: patchHarnessSelection(f.modelByHarness, selection),
+										},
+							)
+						}
 					/>
-					<RequiredAgentField
-						id="orchestratorAgent"
-						value={form.orchestratorAgent}
-						placeholder="Select orchestrator agent"
-						label="Default orchestrator agent"
-						authorized={agentCatalog?.authorized}
-						installed={agentCatalog?.installed}
-						supported={agentCatalog?.supported}
-						disabled={agentsQuery.isFetching && agentCatalog === undefined}
-						invalid={validationError !== null && form.orchestratorAgent === ""}
-						onChange={(v) => setForm((f) => ({ ...f, orchestratorAgent: v }))}
+					<HarnessModelRow
+						id="worker-model"
+						harnessLabel="Default worker agent"
+						modelLabel="Worker model and effort"
+						selection={roleSelection(form.workerAgent, form.workerModels)}
+						configuredPins={modelPins(form.workerModels)}
+						agentCatalog={agentCatalog}
+						availability={effectiveModelAvailability}
+						invalidHarness={validationError !== null && form.workerAgent === ""}
+						isRefreshingModels={isRefreshingModels || modelAvailabilityQuery.isFetching}
+						onRefreshModels={refreshModels}
+						onChange={(selection) =>
+							setForm((f) => ({
+								...f,
+								workerAgent: selection.harness,
+								workerModels: patchHarnessSelection(f.workerModels, selection),
+							}))
+						}
+					/>
+					<HarnessModelRow
+						id="orchestrator-model"
+						harnessLabel="Default orchestrator agent"
+						modelLabel="Orchestrator model and effort"
+						selection={roleSelection(form.orchestratorAgent, form.orchestratorModels)}
+						configuredPins={modelPins(form.orchestratorModels)}
+						agentCatalog={agentCatalog}
+						availability={effectiveModelAvailability}
+						invalidHarness={validationError !== null && form.orchestratorAgent === ""}
+						isRefreshingModels={isRefreshingModels || modelAvailabilityQuery.isFetching}
+						onRefreshModels={refreshModels}
+						onChange={(selection) =>
+							setForm((f) => ({
+								...f,
+								orchestratorAgent: selection.harness,
+								orchestratorModels: patchHarnessSelection(f.orchestratorModels, selection),
+							}))
+						}
+					/>
+					<HarnessModelRow
+						id="prime-model"
+						harnessLabel="Prime agent"
+						modelLabel="Prime model and effort"
+						selection={roleSelection(form.primeAgent, form.primeModels)}
+						configuredPins={modelPins(form.primeModels)}
+						agentCatalog={agentCatalog}
+						availability={effectiveModelAvailability}
+						allowDefaultHarness
+						defaultHarnessLabel="Project default"
+						isRefreshingModels={isRefreshingModels || modelAvailabilityQuery.isFetching}
+						onRefreshModels={refreshModels}
+						onChange={(selection) =>
+							setForm((f) => ({
+								...f,
+								primeAgent: selection.harness,
+								primeModels: patchHarnessSelection(f.primeModels, selection),
+							}))
+						}
+					/>
+					<HarnessModelRow
+						id="reviewer-model"
+						harnessLabel="Default reviewer agent"
+						modelLabel="Reviewer model and effort"
+						selection={roleSelection(form.reviewerHarness, form.reviewerModels)}
+						configuredPins={modelPins(form.reviewerModels)}
+						agentCatalog={agentCatalog}
+						availability={effectiveModelAvailability}
+						allowDefaultHarness
+						defaultHarnessLabel="Project default"
+						reviewerOnly
+						isRefreshingModels={isRefreshingModels || modelAvailabilityQuery.isFetching}
+						onRefreshModels={refreshModels}
+						onChange={(selection) =>
+							setForm((f) => ({
+								...f,
+								reviewerHarness: selection.harness,
+								reviewerModels: patchHarnessSelection(f.reviewerModels, selection),
+							}))
+						}
 					/>
 					<div className="flex items-center justify-between gap-3 text-xs leading-row text-muted-foreground">
 						<span>Agent availability is cached.</span>
@@ -338,64 +481,16 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 					{missingRequiredAgent && (
 						<p className="text-xs leading-row text-error">Worker and orchestrator agents are required.</p>
 					)}
-					<Field label="Model override" htmlFor="model">
-						<input
-							id="model"
-							className="h-control-form w-full rounded-md border border-input bg-transparent px-2.5 text-control text-foreground placeholder:text-passive focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-weak"
-							value={form.model}
-							onChange={(e) => setForm((f) => ({ ...f, model: e.target.value }))}
-							placeholder="(agent default)"
-						/>
-					</Field>
-					<div className="grid gap-3 sm:grid-cols-3">
-						{MODEL_HARNESS_OPTIONS.map((harness) => (
-							<Field key={harness} label={`${harness} model`} htmlFor={`model-${harness}`}>
-								<input
-									id={`model-${harness}`}
-									className="h-control-form w-full rounded-md border border-input bg-transparent px-2.5 text-control text-foreground placeholder:text-passive focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-weak"
-									value={form.modelByHarness[harness]?.model ?? ""}
-									onChange={(e) =>
-										setForm((f) => ({
-											...f,
-											modelByHarness: patchHarnessModel(f.modelByHarness, harness, e.target.value),
-										}))
-									}
-									placeholder="(default)"
-								/>
-							</Field>
-						))}
-					</div>
-					<ModelAvailabilityRows rows={project.modelAvailability ?? []} />
+					{modelAvailabilityQuery.isError && (
+						<p className="text-xs leading-row text-warning">
+							Model catalogs are unavailable; saved pins and the agent inventory remain usable.
+						</p>
+					)}
 					<Field label="Permission mode" htmlFor="permissionMode">
 						<PermissionModeSelect
 							id="permissionMode"
 							value={form.permissions}
 							onChange={(v) => setForm((f) => ({ ...f, permissions: v }))}
-						/>
-					</Field>
-				</CardContent>
-			</Card>
-
-			<Card>
-				<CardHeader>
-					<CardTitle className="text-control">Reviewers</CardTitle>
-				</CardHeader>
-				<CardContent className="flex flex-col gap-4">
-					<Field label="Default reviewer agent" htmlFor="reviewerHarness">
-						<ReviewerSelect
-							id="reviewerHarness"
-							value={form.reviewerHarness}
-							onChange={(v) => setForm((f) => ({ ...f, reviewerHarness: v }))}
-						/>
-					</Field>
-					<Field label="Reviewer model" htmlFor="reviewerModel">
-						<input
-							id="reviewerModel"
-							className="h-control-form w-full rounded-md border border-input bg-transparent px-2.5 text-control text-foreground placeholder:text-passive focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-weak disabled:opacity-50"
-							value={form.reviewerModel}
-							disabled={!form.reviewerHarness}
-							onChange={(e) => setForm((f) => ({ ...f, reviewerModel: e.target.value }))}
-							placeholder="(reviewer default)"
 						/>
 					</Field>
 				</CardContent>
@@ -464,6 +559,9 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 						buckets={form.workerMix}
 						onChange={(next) => setForm((f) => ({ ...f, workerMix: next }))}
 						agentCatalog={agentCatalog}
+						availability={effectiveModelAvailability}
+						isRefreshing={isRefreshingModels || modelAvailabilityQuery.isFetching}
+						onRefresh={refreshModels}
 					/>
 					<Field label="Max live workers (0 = unlimited)" htmlFor="maxLiveWorkers">
 						<input
@@ -533,21 +631,84 @@ function PermissionModeSelect({
 	);
 }
 
-function ReviewerSelect({ id, value, onChange }: { id: string; value: string; onChange: (value: string) => void }) {
+const DEFAULT_HARNESS_ID = "__project_default__";
+
+function HarnessModelRow({
+	id,
+	harnessLabel,
+	modelLabel,
+	selection,
+	configuredPins,
+	agentCatalog,
+	availability,
+	allowDefaultHarness = false,
+	allowScalar = false,
+	defaultHarnessLabel = "Project default",
+	reviewerOnly = false,
+	invalidHarness = false,
+	isRefreshingModels,
+	onRefreshModels,
+	onChange,
+}: {
+	id: string;
+	harnessLabel: string;
+	modelLabel: string;
+	selection: ModelSelection;
+	configuredPins: ConfiguredModelPin[];
+	agentCatalog: { authorized?: AgentInfo[]; installed?: AgentInfo[]; supported?: AgentInfo[] } | undefined;
+	availability?: AgentModelAvailabilityResponse;
+	allowDefaultHarness?: boolean;
+	allowScalar?: boolean;
+	defaultHarnessLabel?: string;
+	reviewerOnly?: boolean;
+	invalidHarness?: boolean;
+	isRefreshingModels: boolean;
+	onRefreshModels: () => void | Promise<unknown>;
+	onChange: (selection: ModelSelection) => void;
+}) {
+	const scopedAvailability = reviewerOnly ? reviewerModelAvailability(availability, selection.harness) : availability;
+	const scopedCatalog = modelHarnessCatalog(
+		agentCatalog,
+		availability,
+		selection.harness,
+		reviewerOnly,
+		allowDefaultHarness,
+		defaultHarnessLabel,
+	);
+	const harnessValue = allowDefaultHarness && selection.harness === "" ? DEFAULT_HARNESS_ID : selection.harness;
+	const changeHarness = (rawHarness: string) => {
+		const harness = rawHarness === DEFAULT_HARNESS_ID ? "" : rawHarness;
+		const saved = configuredPins.find((pin) => pin.harness === harness);
+		onChange({ harness, model: saved?.model ?? "", effort: saved?.effort ?? "" });
+	};
+
 	return (
-		<Select value={value || "__default__"} onValueChange={(v) => onChange(v === "__default__" ? "" : v)}>
-			<SelectTrigger id={id} className="h-control-form w-full text-control">
-				<SelectValue />
-			</SelectTrigger>
-			<SelectContent>
-				<SelectItem value="__default__">Project default</SelectItem>
-				{REVIEWER_OPTIONS.map((reviewer) => (
-					<SelectItem key={reviewer} value={reviewer}>
-						{reviewer}
-					</SelectItem>
-				))}
-			</SelectContent>
-		</Select>
+		<div className="grid gap-3 rounded-md border border-border px-3 py-3 md:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
+			<RequiredAgentField
+				id={`${id}-harness`}
+				value={harnessValue}
+				placeholder={`Select ${harnessLabel.toLowerCase()}`}
+				label={harnessLabel}
+				authorized={scopedCatalog.authorized}
+				installed={scopedCatalog.installed}
+				supported={scopedCatalog.supported}
+				invalid={invalidHarness}
+				onChange={changeHarness}
+			/>
+			<ModelAvailabilityField
+				id={id}
+				label={modelLabel}
+				value={selection}
+				onChange={onChange}
+				availability={scopedAvailability}
+				configuredPins={configuredPins}
+				disabled={selection.harness === "" && !allowScalar}
+				isRefreshing={isRefreshingModels}
+				onRefresh={onRefreshModels}
+				showHarness={false}
+				emptyLabel="Inherit default"
+			/>
+		</div>
 	);
 }
 
@@ -595,27 +756,6 @@ function RulesField({
 	);
 }
 
-function ModelAvailabilityRows({ rows }: { rows: ModelAvailability[] }) {
-	if (rows.length === 0) {
-		return null;
-	}
-	return (
-		<div className="grid gap-2">
-			{rows.map((row) => (
-				<div
-					key={`${row.harness}:${row.model}`}
-					className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-md border border-border px-3 py-2 text-xs"
-				>
-					<span className="min-w-0 truncate font-mono text-foreground">
-						{row.harness}/{row.model}
-					</span>
-					<span className={`shrink-0 font-medium ${availabilityClass(row.status)}`}>{availabilityLabel(row)}</span>
-				</div>
-			))}
-		</div>
-	);
-}
-
 function RolePromptInspector({ projectId }: { projectId: string }) {
 	const [role, setRole] = useState<RolePromptRole>("worker");
 	const query = useQuery({
@@ -659,20 +799,6 @@ function RolePromptInspector({ projectId }: { projectId: string }) {
 	);
 }
 
-function availabilityLabel(row: ModelAvailability) {
-	if (row.reason === "not-probed") return "not probed";
-	if (row.reason === "no-capability") return "no probe";
-	if (row.reason === "probe-unavailable") return "probe unavailable";
-	if (row.reason === "recovered") return "recovered";
-	return row.status;
-}
-
-function availabilityClass(status: ModelAvailability["status"]) {
-	if (status === "reachable") return "text-success";
-	if (status === "unreachable") return "text-error";
-	return "text-muted-foreground";
-}
-
 function Field({ label, htmlFor, children }: { label: string; htmlFor?: string; children: React.ReactNode }) {
 	return (
 		<div className="flex flex-col gap-1.5">
@@ -705,24 +831,52 @@ function blankToUndefined<T extends object>(obj: T): T | undefined {
 	return Object.values(obj).some((v) => v !== undefined) ? obj : undefined;
 }
 
-// HarnessModelForm mirrors the per-harness config entries. The form only
-// exposes a model input, but effort must round-trip untouched: rebuilding
-// entries as { model } alone would silently wipe a persisted effort on save.
-type HarnessModelForm = Record<string, { model: string; effort?: string }>;
+type HarnessModelForm = Record<string, { model: string; effort: string }>;
 
-function toHarnessModelForm(modelByHarness: ModelByHarness | undefined) {
+function firstConfiguredHarness(config: AgentConfig | undefined) {
+	return Object.keys(config?.modelByHarness ?? {}).sort()[0] ?? "";
+}
+
+function toHarnessModelForm(modelByHarness: AgentConfig["modelByHarness"] | undefined) {
 	const out: HarnessModelForm = {};
 	for (const [harness, value] of Object.entries(modelByHarness ?? {})) {
-		out[harness] = { model: value?.model ?? "", effort: value?.effort };
+		out[harness] = { model: value?.model ?? "", effort: value?.effort ?? "" };
 	}
 	return out;
 }
 
-function patchHarnessModel(form: HarnessModelForm, harness: string, model: string) {
+function toRoleHarnessModelForm(config: AgentConfig | undefined, harness: string) {
+	const out = toHarnessModelForm(config?.modelByHarness);
+	if (harness) {
+		const current = out[harness] ?? { model: "", effort: "" };
+		out[harness] = {
+			model: current.model || config?.model || "",
+			effort: current.effort || config?.effort || "",
+		};
+	}
+	return out;
+}
+
+function projectSelection(harness: string, model: string, effort: string, form: HarnessModelForm): ModelSelection {
+	if (!harness) return { harness: "", model, effort };
+	return roleSelection(harness, form);
+}
+
+function roleSelection(harness: string, form: HarnessModelForm): ModelSelection {
+	const pair = form[harness];
+	return { harness, model: pair?.model ?? "", effort: pair?.effort ?? "" };
+}
+
+function patchHarnessSelection(form: HarnessModelForm, selection: ModelSelection) {
+	if (!selection.harness) return form;
 	return {
 		...form,
-		[harness]: { ...(form[harness] ?? {}), model },
+		[selection.harness]: { model: selection.model, effort: selection.effort },
 	};
+}
+
+function modelPins(form: HarnessModelForm): ConfiguredModelPin[] {
+	return Object.entries(form).map(([harness, pair]) => ({ harness, ...pair }));
 }
 
 function buildHarnessModelConfig(form: HarnessModelForm) {
@@ -734,7 +888,8 @@ function buildHarnessModelConfig(form: HarnessModelForm) {
 			// must not delete a persisted effort the form cannot display.
 			const out: { model?: string; effort?: string } = {};
 			if (model) out.model = model;
-			if (value.effort) out.effort = value.effort;
+			const effort = value.effort.trim();
+			if (effort) out.effort = effort;
 			return [harness, out] as const;
 		})
 		.filter(([, value]) => Object.keys(value).length > 0);
@@ -744,12 +899,14 @@ function buildHarnessModelConfig(form: HarnessModelForm) {
 function buildAgentConfig(
 	current: ProjectConfig["agentConfig"],
 	model: string,
+	effort: string,
 	permissions: string,
 	modelByHarnessForm: HarnessModelForm,
 ) {
 	const next = {
 		...current,
 		model: model.trim() || undefined,
+		effort: effort.trim() || undefined,
 		permissions: permissions || undefined,
 	};
 	const modelByHarness = buildHarnessModelConfig(modelByHarnessForm);
@@ -761,15 +918,113 @@ function buildAgentConfig(
 	return blankToUndefined(withoutHarnessMap);
 }
 
-function buildReviewerConfig(current: ReviewerConfig | undefined, harness: string, model: string) {
-	if (!harness) return undefined;
-	const reviewer = { ...current, harness };
-	const agentConfig = blankToUndefined({
-		...current?.agentConfig,
-		model: model.trim() || undefined,
-	});
-	if (agentConfig) {
-		return [{ ...reviewer, agentConfig }];
+function buildRoleAgentConfig(
+	current: AgentConfig | undefined,
+	initialHarness: string,
+	selectedHarness: string,
+	form: HarnessModelForm,
+) {
+	const next: AgentConfig = { ...(current ?? {}) };
+	// A legacy scalar role pair belongs to the harness that was configured when
+	// the form loaded. The form seeds it into that harness's map. Once a concrete
+	// role harness is involved, remove the scalar so it cannot leak when the role
+	// later switches providers.
+	if (initialHarness || selectedHarness) {
+		delete next.model;
+		delete next.effort;
 	}
-	return [reviewer];
+	const modelByHarness = buildHarnessModelConfig(form);
+	if (modelByHarness) next.modelByHarness = modelByHarness;
+	else delete next.modelByHarness;
+	return blankToUndefined(next);
+}
+
+function buildReviewerConfig(
+	current: ProjectConfig["reviewers"],
+	harness: string,
+	initialHarness: string,
+	form: HarnessModelForm,
+) {
+	const rest = current?.slice(1) ?? [];
+	if (!harness) return rest.length > 0 ? rest : undefined;
+	const first = current?.[0];
+	return [
+		{
+			...(first ?? {}),
+			harness,
+			agentConfig: buildRoleAgentConfig(first?.agentConfig, initialHarness, harness, form),
+		},
+		...rest,
+	];
+}
+
+function reviewerModelAvailability(
+	availability: AgentModelAvailabilityResponse | undefined,
+	currentHarness: string,
+): AgentModelAvailabilityResponse | undefined {
+	if (!availability) return undefined;
+	return {
+		...availability,
+		harnesses: (availability.harnesses ?? []).filter(
+			(harness) => harness.reviewerCapable || harness.id === currentHarness,
+		),
+	};
+}
+
+function modelHarnessCatalog(
+	catalog: { authorized?: AgentInfo[]; installed?: AgentInfo[]; supported?: AgentInfo[] } | undefined,
+	availability: AgentModelAvailabilityResponse | undefined,
+	currentHarness: string,
+	reviewerOnly: boolean,
+	includeDefault: boolean,
+	defaultLabel: string,
+) {
+	const availabilityByID = new Map((availability?.harnesses ?? []).map((harness) => [harness.id, harness]));
+	const reviewerIDs = new Set(
+		(availability?.harnesses ?? []).filter((harness) => harness.reviewerCapable).map((harness) => harness.id),
+	);
+	for (const agents of [catalog?.supported, catalog?.installed, catalog?.authorized]) {
+		for (const agent of agents ?? []) {
+			if (agent.reviewerCapable) reviewerIDs.add(agent.id);
+		}
+	}
+	const allowed = (id: string) => !reviewerOnly || reviewerIDs.has(id) || id === currentHarness;
+	const supportedByID = new Map<string, AgentInfo>();
+	for (const agent of catalog?.supported ?? []) {
+		if (allowed(agent.id)) supportedByID.set(agent.id, agent);
+	}
+	for (const harness of availability?.harnesses ?? []) {
+		if (allowed(harness.id) && !supportedByID.has(harness.id)) {
+			supportedByID.set(harness.id, {
+				id: harness.id,
+				label: harness.label,
+				reviewerCapable: harness.reviewerCapable,
+			});
+		}
+	}
+	if (currentHarness && !supportedByID.has(currentHarness)) {
+		supportedByID.set(currentHarness, {
+			id: currentHarness,
+			label: availabilityByID.get(currentHarness)?.label ?? currentHarness,
+			reviewerCapable: availabilityByID.get(currentHarness)?.reviewerCapable ?? false,
+		});
+	}
+	const defaultAgent: AgentInfo = {
+		id: DEFAULT_HARNESS_ID,
+		label: defaultLabel,
+		authStatus: "authorized",
+		reviewerCapable: false,
+	};
+	if (includeDefault) supportedByID.set(defaultAgent.id, defaultAgent);
+	const filter = (agents: AgentInfo[] | undefined) => {
+		if (!agents) return undefined;
+		const out = agents.filter((agent) => allowed(agent.id));
+		if (includeDefault) out.push(defaultAgent);
+		return out;
+	};
+	return {
+		supported: [...supportedByID.values()],
+		installed: filter(catalog?.installed),
+		authorized: filter(catalog?.authorized),
+	};
 }

@@ -89,6 +89,9 @@ func TestProjectConfigRoundTrips(t *testing.T) {
 		OrchestratorRules: "Keep workers unblocked.",
 		AgentConfig:       domain.AgentConfig{Model: "claude-opus-4-5", Permissions: domain.PermissionModeAcceptEdits},
 		Worker:            domain.RoleOverride{Harness: domain.HarnessCodex},
+		WorkerMix: domain.WorkerMix{{
+			Harness: domain.HarnessCodex, Model: "gpt-5-codex", Effort: domain.EffortHigh, Weight: 100,
+		}},
 	}
 	if err := s.UpsertProject(ctx, domain.ProjectRecord{
 		ID: "cfg", Path: "/tmp/cfg", RegisteredAt: now, Config: cfg,
@@ -264,6 +267,38 @@ func TestSessionMixSelectedRoundTrips(t *testing.T) {
 		if rec.MixSelected != want {
 			t.Fatalf("listed %s mixSelected = %v, want %v", rec.ID, rec.MixSelected, want)
 		}
+	}
+}
+
+func TestSessionEffortRoundTrips(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+
+	rec := sampleRecord("mer")
+	rec.Effort = domain.EffortXHigh
+	created, err := s.CreateSession(ctx, rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, ok, err := s.GetSession(ctx, created.ID)
+	if err != nil || !ok {
+		t.Fatalf("get: ok=%v err=%v", ok, err)
+	}
+	if got.Effort != domain.EffortXHigh {
+		t.Fatalf("read-back effort = %q, want xhigh", got.Effort)
+	}
+
+	got.Effort = domain.EffortHigh
+	if err := s.UpdateSession(ctx, got); err != nil {
+		t.Fatal(err)
+	}
+	list, err := s.ListSessions(ctx, "mer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 || list[0].Effort != domain.EffortHigh {
+		t.Fatalf("listed sessions = %#v, want effort high", list)
 	}
 }
 

@@ -2290,6 +2290,31 @@ func TestRestore_UsesPersistedModel(t *testing.T) {
 	}
 }
 
+func TestRestore_UsesPersistedEffort(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{
+		Worker: domain.RoleOverride{AgentConfig: domain.AgentConfig{Effort: domain.EffortLow}},
+	}}
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID:           "mer-1",
+		ProjectID:    "mer",
+		Kind:         domain.KindWorker,
+		Harness:      domain.HarnessCodex,
+		Effort:       domain.EffortHigh,
+		IsTerminated: true,
+		Metadata:     domain.SessionMetadata{Branch: "ao/mer-1", WorkspacePath: "/tmp/ws", AgentSessionID: "native-1"},
+	}
+	agent := &recordingAgent{}
+	m := modelManager(st, agent)
+
+	if _, err := m.RestoreWithMode(ctx, "mer-1"); err != nil {
+		t.Fatal(err)
+	}
+	if agent.lastRestore.Config.Effort != domain.EffortHigh {
+		t.Fatalf("restore effort = %q, want persisted high over current low config", agent.lastRestore.Config.Effort)
+	}
+}
+
 func TestRestore_EmptyMixBucketLaunchesHarnessDefault(t *testing.T) {
 	st := newFakeStore()
 	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{

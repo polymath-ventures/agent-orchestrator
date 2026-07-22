@@ -1,6 +1,8 @@
 package sessionmanager
 
 import (
+	"errors"
+	"strings"
 	"testing"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -76,6 +78,105 @@ func TestSpawn_MixBucketSuppliesModel(t *testing.T) {
 	}
 	if got := st.sessions["mer-1"].Model; got != "opus" {
 		t.Fatalf("persisted model = %q, want opus", got)
+	}
+}
+
+func TestSpawn_MixBucketEffortOverridesOrInheritsLaunchConfig(t *testing.T) {
+	tests := []struct {
+		name       string
+		mixEffort  domain.Effort
+		wantEffort domain.Effort
+	}{
+		{name: "explicit overrides", mixEffort: domain.EffortHigh, wantEffort: domain.EffortHigh},
+		{name: "blank inherits", wantEffort: domain.EffortLow},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			st := newFakeStore()
+			st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{
+				Worker: domain.RoleOverride{AgentConfig: domain.AgentConfig{Effort: domain.EffortLow}},
+				WorkerMix: domain.WorkerMix{{
+					Harness: domain.HarnessCodex, Model: "gpt-5-codex", Effort: tt.mixEffort, Weight: 100,
+				}},
+			}}
+			agent := &recordingAgent{}
+			m := modelManager(st, agent)
+
+			rec := spawnUnpinnedWorker(t, m)
+			if rec.Effort != tt.wantEffort {
+				t.Fatalf("session effort = %q, want %q", rec.Effort, tt.wantEffort)
+			}
+			if got := st.sessions[rec.ID].Effort; got != tt.wantEffort {
+				t.Fatalf("persisted effort = %q, want %q", got, tt.wantEffort)
+			}
+			if agent.lastConfig.Effort != tt.wantEffort {
+				t.Fatalf("adapter effort = %q, want %q", agent.lastConfig.Effort, tt.wantEffort)
+			}
+		})
+	}
+}
+
+func TestSpawn_MixCensusDistinguishesEffort(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{
+		WorkerMix: domain.WorkerMix{
+			{Harness: domain.HarnessCodex, Model: "gpt-5-codex", Effort: domain.EffortLow, Weight: 50},
+			{Harness: domain.HarnessCodex, Model: "gpt-5-codex", Effort: domain.EffortHigh, Weight: 50},
+		},
+	}}
+	m := modelManager(st, &recordingAgent{})
+
+	first := spawnUnpinnedWorker(t, m)
+	second := spawnUnpinnedWorker(t, m)
+	if first.Effort != domain.EffortLow || second.Effort != domain.EffortHigh {
+		t.Fatalf("selected efforts = (%q, %q), want (low, high)", first.Effort, second.Effort)
+	}
+}
+
+func TestSpawn_MixCandidateHealthDistinguishesEffort(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{
+		WorkerMix: domain.WorkerMix{
+			{Harness: domain.HarnessCodex, Model: "gpt-5-codex", Effort: domain.EffortLow, Weight: 50},
+			{Harness: domain.HarnessCodex, Model: "gpt-5-codex", Effort: domain.EffortHigh, Weight: 50},
+		},
+	}}
+	m := modelManager(st, &recordingAgent{})
+	m.health.MarkDown(workerMixCandidate(domain.HarnessCodex, "gpt-5-codex", domain.EffortLow), errors.New("low effort unavailable"))
+
+	rec := spawnUnpinnedWorker(t, m)
+	if rec.Effort != domain.EffortHigh {
+		t.Fatalf("selected effort = %q, want healthy high bucket", rec.Effort)
+	}
+}
+
+func TestMixHasBucketMatchesExactNormalizedTuple(t *testing.T) {
+	mix := domain.WorkerMix{{
+		Harness: domain.HarnessCodexFugu, Model: "fugu", Effort: domain.EffortMax, Weight: 100,
+	}}
+	if !mixHasBucket(mix, domain.HarnessCodexFugu, " fugu ", domain.EffortXHigh) {
+		t.Fatal("max bucket did not match normalized xhigh tuple")
+	}
+	if mixHasBucket(mix, domain.HarnessCodexFugu, "fugu", domain.EffortHigh) {
+		t.Fatal("same harness/model with different effort matched bucket")
+	}
+}
+
+func TestSpawn_RejectsBucketsThatDuplicateAfterEffortInheritance(t *testing.T) {
+	m, st := mixManager(domain.ProjectConfig{
+		Worker: domain.RoleOverride{AgentConfig: domain.AgentConfig{Effort: domain.EffortHigh}},
+		WorkerMix: domain.WorkerMix{
+			{Harness: domain.HarnessCodex, Model: "gpt-5-codex", Weight: 50},
+			{Harness: domain.HarnessCodex, Model: "gpt-5-codex", Effort: domain.EffortHigh, Weight: 50},
+		},
+	})
+
+	_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	if err == nil || !strings.Contains(err.Error(), "duplicate bucket") {
+		t.Fatalf("Spawn err = %v, want duplicate effective tuple", err)
+	}
+	if len(st.sessions) != 0 {
+		t.Fatalf("sessions = %#v, want no state before duplicate rejection", st.sessions)
 	}
 }
 

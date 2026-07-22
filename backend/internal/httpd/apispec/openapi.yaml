@@ -2180,9 +2180,12 @@ components:
           items:
             $ref: '#/components/schemas/AgentModelAvailability'
           type: array
+        reviewerCapable:
+          type: boolean
       required:
       - id
       - label
+      - reviewerCapable
       - catalogSource
       - catalogVerified
       - models
@@ -2214,9 +2217,12 @@ components:
           type: string
         label:
           type: string
+        reviewerCapable:
+          type: boolean
       required:
       - id
       - label
+      - reviewerCapable
       type: object
     AgentModelAvailability:
       properties:
@@ -2368,6 +2374,8 @@ components:
           format: date-time
           type: string
         displayName:
+          type: string
+        effort:
           type: string
         harness:
           type: string
@@ -3848,6 +3856,8 @@ components:
     WorkerMixEntry:
       properties:
         agent:
+          type: string
+        effort:
           type: string
         model:
           type: string

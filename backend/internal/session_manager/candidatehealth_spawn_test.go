@@ -124,7 +124,7 @@ func TestSpawn_MixSelectedBinaryMissingMarksDown(t *testing.T) {
 	if !errors.Is(err, ports.ErrAgentBinaryNotFound) {
 		t.Fatalf("spawn err = %v, want ErrAgentBinaryNotFound", err)
 	}
-	if !tr.IsDown(workerMixCandidate(domain.HarnessClaudeCode, "")) {
+	if !tr.IsDown(workerMixCandidate(domain.HarnessClaudeCode, "", "")) {
 		t.Fatal("a mix-selected binary-missing spawn must mark the bucket down")
 	}
 }
@@ -140,7 +140,7 @@ func TestSpawn_MixSelectedLaunchCommandBinaryMissingMarksDown(t *testing.T) {
 	if !errors.Is(err, ports.ErrAgentBinaryNotFound) {
 		t.Fatalf("spawn err = %v, want ErrAgentBinaryNotFound", err)
 	}
-	if !tr.IsDown(workerMixCandidate(domain.HarnessClaudeCode, "")) {
+	if !tr.IsDown(workerMixCandidate(domain.HarnessClaudeCode, "", "")) {
 		t.Fatal("GetLaunchCommand returning ErrAgentBinaryNotFound must mark the bucket down")
 	}
 }
@@ -155,7 +155,7 @@ func TestSpawn_MixSelectedLaunchCommandGenericErrorDoesNotMarkDown(t *testing.T)
 	if err == nil {
 		t.Fatal("expected spawn to fail")
 	}
-	if tr.IsDown(workerMixCandidate(domain.HarnessClaudeCode, "")) {
+	if tr.IsDown(workerMixCandidate(domain.HarnessClaudeCode, "", "")) {
 		t.Fatal("a non-binary launch-command error must not mark the bucket down")
 	}
 }
@@ -172,7 +172,7 @@ func TestSpawn_MixSelectedRuntimeRefusedMarksDown(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected runtime-refused spawn to fail")
 	}
-	if !tr.IsDown(workerMixCandidate(domain.HarnessClaudeCode, "")) {
+	if !tr.IsDown(workerMixCandidate(domain.HarnessClaudeCode, "", "")) {
 		t.Fatal("a mix-selected runtime-refused spawn must mark the bucket down")
 	}
 }
@@ -193,7 +193,7 @@ func TestSpawn_MixSelectedUnknownHarnessDoesNotMarkDown(t *testing.T) {
 	if !errors.Is(err, ErrUnknownHarness) {
 		t.Fatalf("spawn err = %v, want ErrUnknownHarness", err)
 	}
-	if tr.IsDown(workerMixCandidate(domain.HarnessClaudeCode, "")) {
+	if tr.IsDown(workerMixCandidate(domain.HarnessClaudeCode, "", "")) {
 		t.Fatal("a configuration error must not mark the bucket down")
 	}
 }
@@ -211,7 +211,7 @@ func TestSpawn_MixSelectedEnvironmentalErrorDoesNotMarkDown(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected workspace failure to fail the spawn")
 	}
-	if tr.IsDown(workerMixCandidate(domain.HarnessClaudeCode, "")) {
+	if tr.IsDown(workerMixCandidate(domain.HarnessClaudeCode, "", "")) {
 		t.Fatal("an environmental error must not mark the bucket down")
 	}
 }
@@ -229,7 +229,7 @@ func TestSpawn_MixSelectedCallerCanceledDoesNotMarkDown(t *testing.T) {
 	if !errors.Is(err, ports.ErrAgentBinaryNotFound) {
 		t.Fatalf("spawn err = %v, want it to reach the agent-binary check", err)
 	}
-	if tr.IsDown(workerMixCandidate(domain.HarnessClaudeCode, "")) {
+	if tr.IsDown(workerMixCandidate(domain.HarnessClaudeCode, "", "")) {
 		t.Fatal("a caller-cancelled attempt must not mark the bucket down")
 	}
 }
@@ -240,7 +240,7 @@ func TestSpawn_MixSelectedCallerCanceledDoesNotMarkDown(t *testing.T) {
 func TestSpawn_DownBucketExcludedAndRedistributes(t *testing.T) {
 	tr := candidatehealth.New(candidatehealth.Config{Source: "session_manager"})
 	m, _, _ := healthMixManager(t, domain.ProjectConfig{WorkerMix: twoBucketMix()}, tr, nil)
-	tr.MarkDown(workerMixCandidate(domain.HarnessClaudeCode, ""), errors.New("binary gone"))
+	tr.MarkDown(workerMixCandidate(domain.HarnessClaudeCode, "", ""), errors.New("binary gone"))
 
 	for i := 0; i < 10; i++ {
 		rec := spawnUnpinnedWorker(t, m)
@@ -256,8 +256,8 @@ func TestSpawn_DownBucketExcludedAndRedistributes(t *testing.T) {
 func TestSpawn_AllBucketsDownFailsLoudly(t *testing.T) {
 	tr := candidatehealth.New(candidatehealth.Config{Source: "session_manager"})
 	m, _, _ := healthMixManager(t, domain.ProjectConfig{WorkerMix: twoBucketMix()}, tr, nil)
-	tr.MarkDown(workerMixCandidate(domain.HarnessClaudeCode, ""), errors.New("binary gone"))
-	tr.MarkDown(workerMixCandidate(domain.HarnessCodex, ""), errors.New("runtime refused"))
+	tr.MarkDown(workerMixCandidate(domain.HarnessClaudeCode, "", ""), errors.New("binary gone"))
+	tr.MarkDown(workerMixCandidate(domain.HarnessCodex, "", ""), errors.New("runtime refused"))
 
 	_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
 	if !errors.Is(err, ErrWorkerMixExhausted) {
@@ -274,7 +274,7 @@ func TestSpawn_SuccessfulSpawnRecoversDownBucket(t *testing.T) {
 	tr := candidatehealth.New(candidatehealth.Config{Source: "session_manager", Telemetry: sink})
 	m, _, _ := healthMixManager(t, domain.ProjectConfig{WorkerMix: singleBucketMix()}, tr, nil)
 
-	cand := workerMixCandidate(domain.HarnessClaudeCode, "")
+	cand := workerMixCandidate(domain.HarnessClaudeCode, "", "")
 	tr.MarkDown(cand, errors.New("was broken"))
 	if !tr.IsDown(cand) {
 		t.Fatal("precondition: the bucket should be down")
@@ -302,7 +302,7 @@ func TestSpawn_PinnedFailureDoesNotMarkDown(t *testing.T) {
 	if !errors.Is(err, ports.ErrAgentBinaryNotFound) {
 		t.Fatalf("spawn err = %v, want ErrAgentBinaryNotFound", err)
 	}
-	if tr.IsDown(workerMixCandidate(domain.HarnessClaudeCode, "")) {
+	if tr.IsDown(workerMixCandidate(domain.HarnessClaudeCode, "", "")) {
 		t.Fatal("a pinned spawn failure must not mark any candidate down")
 	}
 }

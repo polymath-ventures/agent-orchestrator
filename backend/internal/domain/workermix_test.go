@@ -83,6 +83,27 @@ func TestWorkerMixValidate(t *testing.T) {
 			},
 			false,
 		},
+		{
+			"same harness and model with different effort ok",
+			WorkerMix{
+				{Harness: HarnessCodex, Model: "gpt-5-codex", Effort: EffortLow, Weight: 50},
+				{Harness: HarnessCodex, Model: "gpt-5-codex", Effort: EffortHigh, Weight: 50},
+			},
+			false,
+		},
+		{
+			"invalid effort rejected",
+			WorkerMix{{Harness: HarnessCodex, Effort: "turbo", Weight: 100}},
+			true,
+		},
+		{
+			"native-equivalent fugu efforts are duplicate buckets",
+			WorkerMix{
+				{Harness: HarnessCodexFugu, Model: "fugu", Effort: EffortMax, Weight: 50},
+				{Harness: HarnessCodexFugu, Model: "fugu", Effort: EffortXHigh, Weight: 50},
+			},
+			true,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -103,10 +124,10 @@ func TestWorkerMixSelectEmpty(t *testing.T) {
 }
 
 func TestWorkerMixSelectSingle(t *testing.T) {
-	mix := WorkerMix{{Harness: HarnessClaudeCode, Model: "opus", Weight: 100}}
-	got, ok := mix.Select(map[BucketKey]int{{HarnessClaudeCode, "opus"}: 99})
-	if !ok || got.Harness != HarnessClaudeCode || got.Model != "opus" {
-		t.Fatalf("single-bucket select = %+v ok=%v, want claude-code/opus", got, ok)
+	mix := WorkerMix{{Harness: HarnessCodexFugu, Model: "fugu", Effort: EffortMax, Weight: 100}}
+	got, ok := mix.Select(map[BucketKey]int{{Harness: HarnessCodexFugu, Model: "fugu", Effort: EffortXHigh}: 99})
+	if !ok || got.Harness != HarnessCodexFugu || got.Model != "fugu" || got.Effort != EffortMax {
+		t.Fatalf("single-bucket select = %+v ok=%v, want codex-fugu/fugu/max", got, ok)
 	}
 }
 
@@ -126,7 +147,7 @@ func TestWorkerMixSelectConverges(t *testing.T) {
 		if !ok {
 			t.Fatalf("spawn %d: mix selected nothing", i)
 		}
-		running[BucketKey{pick.Harness, pick.Model}]++
+		running[pick.BucketKey()]++
 	}
 	want := map[AgentHarness]int{HarnessCodex: 6, HarnessDroid: 3, HarnessClaudeCode: 1}
 	for h, w := range want {

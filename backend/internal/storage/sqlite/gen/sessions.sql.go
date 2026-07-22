@@ -16,7 +16,7 @@ import (
 const getSession = `-- name: GetSession :one
 SELECT id, project_id, num, issue_id, kind, harness,
     activity_state, activity_last_at, is_terminated, branch, workspace_path,
-    runtime_handle_id, agent_session_id, prompt, created_at, updated_at, display_name, first_signal_at, preview_url, preview_revision, model, mix_selected, runtime_token, launch_command
+    runtime_handle_id, agent_session_id, prompt, created_at, updated_at, display_name, first_signal_at, preview_url, preview_revision, model, mix_selected, runtime_token, launch_command, effort
 FROM sessions WHERE id = ?
 `
 
@@ -48,6 +48,7 @@ func (q *Queries) GetSession(ctx context.Context, id domain.SessionID) (Session,
 		&i.MixSelected,
 		&i.RuntimeToken,
 		&i.LaunchCommand,
+		&i.Effort,
 	)
 	return i, err
 }
@@ -57,8 +58,8 @@ INSERT INTO sessions (
     id, project_id, num, issue_id, kind, harness, display_name,
     activity_state, activity_last_at, first_signal_at, is_terminated,
     branch, workspace_path, runtime_handle_id, agent_session_id, prompt,
-    preview_url, preview_revision, model, mix_selected, runtime_token, launch_command, created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    preview_url, preview_revision, model, effort, mix_selected, runtime_token, launch_command, created_at, updated_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type InsertSessionParams struct {
@@ -81,6 +82,7 @@ type InsertSessionParams struct {
 	PreviewURL      string
 	PreviewRevision int64
 	Model           string
+	Effort          string
 	MixSelected     bool
 	RuntimeToken    string
 	LaunchCommand   string
@@ -109,6 +111,7 @@ func (q *Queries) InsertSession(ctx context.Context, arg InsertSessionParams) er
 		arg.PreviewURL,
 		arg.PreviewRevision,
 		arg.Model,
+		arg.Effort,
 		arg.MixSelected,
 		arg.RuntimeToken,
 		arg.LaunchCommand,
@@ -121,7 +124,7 @@ func (q *Queries) InsertSession(ctx context.Context, arg InsertSessionParams) er
 const listAllSessions = `-- name: ListAllSessions :many
 SELECT id, project_id, num, issue_id, kind, harness,
     activity_state, activity_last_at, is_terminated, branch, workspace_path,
-    runtime_handle_id, agent_session_id, prompt, created_at, updated_at, display_name, first_signal_at, preview_url, preview_revision, model, mix_selected, runtime_token, launch_command
+    runtime_handle_id, agent_session_id, prompt, created_at, updated_at, display_name, first_signal_at, preview_url, preview_revision, model, mix_selected, runtime_token, launch_command, effort
 FROM sessions ORDER BY project_id, num
 `
 
@@ -159,6 +162,7 @@ func (q *Queries) ListAllSessions(ctx context.Context) ([]Session, error) {
 			&i.MixSelected,
 			&i.RuntimeToken,
 			&i.LaunchCommand,
+			&i.Effort,
 		); err != nil {
 			return nil, err
 		}
@@ -176,7 +180,7 @@ func (q *Queries) ListAllSessions(ctx context.Context) ([]Session, error) {
 const listSessionsByProject = `-- name: ListSessionsByProject :many
 SELECT id, project_id, num, issue_id, kind, harness,
     activity_state, activity_last_at, is_terminated, branch, workspace_path,
-    runtime_handle_id, agent_session_id, prompt, created_at, updated_at, display_name, first_signal_at, preview_url, preview_revision, model, mix_selected, runtime_token, launch_command
+    runtime_handle_id, agent_session_id, prompt, created_at, updated_at, display_name, first_signal_at, preview_url, preview_revision, model, mix_selected, runtime_token, launch_command, effort
 FROM sessions WHERE project_id = ? ORDER BY num
 `
 
@@ -214,6 +218,7 @@ func (q *Queries) ListSessionsByProject(ctx context.Context, projectID domain.Pr
 			&i.MixSelected,
 			&i.RuntimeToken,
 			&i.LaunchCommand,
+			&i.Effort,
 		); err != nil {
 			return nil, err
 		}
@@ -307,7 +312,7 @@ UPDATE sessions SET
     issue_id = ?, kind = ?, harness = ?, display_name = ?,
     activity_state = ?, activity_last_at = ?, first_signal_at = ?, is_terminated = ?,
     branch = ?, workspace_path = ?, runtime_handle_id = ?, agent_session_id = ?, prompt = ?,
-    preview_url = ?, preview_revision = ?, model = ?, mix_selected = ?, runtime_token = ?, launch_command = ?, updated_at = ?
+    preview_url = ?, preview_revision = ?, model = ?, effort = ?, mix_selected = ?, runtime_token = ?, launch_command = ?, updated_at = ?
 WHERE id = ?
 `
 
@@ -328,6 +333,7 @@ type UpdateSessionParams struct {
 	PreviewURL      string
 	PreviewRevision int64
 	Model           string
+	Effort          string
 	MixSelected     bool
 	RuntimeToken    string
 	LaunchCommand   string
@@ -353,6 +359,7 @@ func (q *Queries) UpdateSession(ctx context.Context, arg UpdateSessionParams) er
 		arg.PreviewURL,
 		arg.PreviewRevision,
 		arg.Model,
+		arg.Effort,
 		arg.MixSelected,
 		arg.RuntimeToken,
 		arg.LaunchCommand,

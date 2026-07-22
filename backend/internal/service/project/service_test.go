@@ -683,6 +683,65 @@ func TestManager_SetConfigAcceptsSupportedModelEffortPair(t *testing.T) {
 	}
 }
 
+func TestManager_SetConfigValidatesExplicitWorkerMixEffort(t *testing.T) {
+	ctx := context.Background()
+	store, err := sqlite.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	validator := &fakeProjectModelValidator{result: ports.ModelValidationResult{Status: ports.ModelValidationReachable}}
+	m := project.NewWithDeps(project.Deps{Store: store, ModelValidator: validator})
+	if _, err := m.Add(ctx, project.AddInput{Path: gitRepo(t), ProjectID: ptr("ao")}); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+
+	_, err = m.SetConfig(ctx, "ao", project.SetConfigInput{Config: domain.ProjectConfig{
+		Worker: domain.RoleOverride{AgentConfig: domain.AgentConfig{Effort: domain.EffortLow}},
+		WorkerMix: domain.WorkerMix{{
+			Harness: domain.HarnessCodex, Model: "gpt-5-codex", Effort: domain.EffortHigh, Weight: 100,
+		}},
+	}})
+	if err != nil {
+		t.Fatalf("SetConfig: %v", err)
+	}
+	found := false
+	for _, call := range validator.calls {
+		if call.harness == domain.HarnessCodex && call.model == "gpt-5-codex" && call.effort == domain.EffortHigh {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("validator calls = %#v, want explicit worker-mix high effort rather than inherited low", validator.calls)
+	}
+}
+
+func TestManager_SetConfigRejectsWorkerMixDuplicateAfterEffortInheritance(t *testing.T) {
+	ctx := context.Background()
+	store, err := sqlite.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	validator := &fakeProjectModelValidator{result: ports.ModelValidationResult{Status: ports.ModelValidationReachable}}
+	m := project.NewWithDeps(project.Deps{Store: store, ModelValidator: validator})
+	if _, err := m.Add(ctx, project.AddInput{Path: gitRepo(t), ProjectID: ptr("ao")}); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+
+	_, err = m.SetConfig(ctx, "ao", project.SetConfigInput{Config: domain.ProjectConfig{
+		Worker: domain.RoleOverride{AgentConfig: domain.AgentConfig{Effort: domain.EffortHigh}},
+		WorkerMix: domain.WorkerMix{
+			{Harness: domain.HarnessCodex, Model: "gpt-5-codex", Weight: 50},
+			{Harness: domain.HarnessCodex, Model: "gpt-5-codex", Effort: domain.EffortHigh, Weight: 50},
+		},
+	}})
+	wantCode(t, err, "INVALID_PROJECT_CONFIG")
+	if len(validator.calls) != 0 {
+		t.Fatalf("validator calls = %#v, want static duplicate rejection first", validator.calls)
+	}
+}
+
 func TestManager_ListIncludesOnlySummarySafeProjectConfig(t *testing.T) {
 	ctx := context.Background()
 	m := newManager(t)

@@ -172,6 +172,32 @@ func TestModelAvailabilityMergesConfiguredPinsAndSortsDeterministically(t *testi
 	}
 }
 
+func TestModelAvailabilityMarksReviewerCapabilityFromDomainVocabulary(t *testing.T) {
+	svc := NewWithAgents([]agentregistry.HarnessAgent{
+		harnessCatalogAgent(domain.HarnessOpenCode, "OpenCode", &catalogProbeAgent{
+			catalog: []ports.ModelCatalogEntry{{ID: "openai/gpt-5.4", Label: "GPT-5.4"}},
+		}),
+		harnessCatalogAgent(domain.HarnessCodexFugu, "Codex Fugu", &catalogProbeAgent{
+			catalog: []ports.ModelCatalogEntry{{ID: "fugu", Label: "Fugu"}},
+		}),
+	})
+
+	got, err := svc.ModelAvailability(context.Background(), ModelAvailabilityRequest{Force: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	byID := make(map[string]HarnessModels, len(got.Harnesses))
+	for _, harness := range got.Harnesses {
+		byID[harness.ID] = harness
+	}
+	if !byID[string(domain.HarnessOpenCode)].ReviewerCapable {
+		t.Fatalf("opencode = %#v, want reviewer capable", byID[string(domain.HarnessOpenCode)])
+	}
+	if byID[string(domain.HarnessCodexFugu)].ReviewerCapable {
+		t.Fatalf("codex-fugu = %#v, want worker-only", byID[string(domain.HarnessCodexFugu)])
+	}
+}
+
 func TestModelAvailabilityMarksConfiguredPinWithoutValidatorAsNoCapability(t *testing.T) {
 	svc := NewWithAgents([]agentregistry.HarnessAgent{
 		harnessCatalogAgent(domain.HarnessClaudeCode, "Claude Code", fakeAgent{}),

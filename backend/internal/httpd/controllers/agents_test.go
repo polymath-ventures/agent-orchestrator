@@ -86,9 +86,9 @@ func (f *fakeAgentCatalog) Probe(_ context.Context, agentID string) (agentsvc.Pr
 func TestListAgents(t *testing.T) {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	catalog := &fakeAgentCatalog{inventory: agentsvc.Inventory{
-		Supported:  []agentsvc.Info{{ID: "claude-code", Label: "Claude Code"}, {ID: "codex", Label: "Codex"}},
-		Installed:  []agentsvc.Info{{ID: "codex", Label: "Codex"}},
-		Authorized: []agentsvc.Info{{ID: "codex", Label: "Codex"}},
+		Supported:  []agentsvc.Info{{ID: "opencode", Label: "OpenCode", ReviewerCapable: true}, {ID: "codex-fugu", Label: "Codex Fugu"}},
+		Installed:  []agentsvc.Info{{ID: "opencode", Label: "OpenCode", ReviewerCapable: true}},
+		Authorized: []agentsvc.Info{{ID: "opencode", Label: "OpenCode", ReviewerCapable: true}},
 	}}
 	srv := httptest.NewServer(httpd.NewRouterWithControl(config.Config{}, log, nil, httpd.APIDeps{
 		Agents: catalog,
@@ -99,7 +99,7 @@ func TestListAgents(t *testing.T) {
 	if status != http.StatusOK {
 		t.Fatalf("GET /agents = %d, body=%s", status, body)
 	}
-	for _, want := range []string{`"supported"`, `"installed"`, `"authorized"`, `"id":"codex"`} {
+	for _, want := range []string{`"supported"`, `"installed"`, `"authorized"`, `"id":"opencode"`, `"reviewerCapable":true`, `"id":"codex-fugu"`, `"reviewerCapable":false`} {
 		if !strings.Contains(string(body), want) {
 			t.Fatalf("body missing %s: %s", want, body)
 		}
@@ -177,6 +177,7 @@ func TestListAgentModelsPassesInjectedPinsAndForce(t *testing.T) {
 		Harnesses: []agentsvc.HarnessModels{{
 			ID:              "opencode",
 			Label:           "OpenCode",
+			ReviewerCapable: true,
 			CatalogSource:   agentsvc.ModelCatalogCachedAdapter,
 			CatalogReason:   "refresh failed: offline",
 			CatalogVerified: false,
@@ -206,6 +207,7 @@ func TestListAgentModelsPassesInjectedPinsAndForce(t *testing.T) {
 	}
 	for _, want := range []string{
 		`"catalogSource":"cached-adapter"`, `"catalogReason":"refresh failed: offline"`, `"catalogVerified":false`,
+		`"reviewerCapable":true`,
 		`"model":"openai/gpt-5.4"`, `"label":"GPT-5.4"`, `"efforts":["high","turbo"]`,
 		`"defaultEffort":"high"`, `"dynamic":true`, `"verified":false`, `"status":"unknown"`,
 		`"reasonCode":"probe-unavailable"`, `"checkedAt":"2026-07-21T22:00:00Z"`,

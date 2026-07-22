@@ -4,6 +4,7 @@ import { type CSSProperties, useCallback, useEffect, useRef, useState } from "re
 import { NotificationRuntime } from "../components/NotificationCenter";
 import { GlobalNewTaskDialog } from "../components/GlobalNewTaskDialog";
 import { KeyboardShortcutsDialog } from "../components/KeyboardShortcutsDialog";
+import type { CreateProjectInput } from "../components/CreateProjectFlow";
 import { ShellTopbar } from "../components/ShellTopbar";
 import { OrchestratorReplacementDialog } from "../components/OrchestratorReplacementDialog";
 import { Sidebar } from "../components/Sidebar";
@@ -40,16 +41,25 @@ function errorMessage(error: unknown) {
 	return error instanceof Error ? error.message : "Could not load projects";
 }
 
-type CreateProjectConfigInput = {
-	workerAgent: string;
-	orchestratorAgent: string;
-	trackerIntake?: components["schemas"]["TrackerIntakeConfig"];
-};
+type CreateProjectConfigInput = Pick<
+	CreateProjectInput,
+	"workerAgent" | "orchestratorAgent" | "modelOverride" | "trackerIntake"
+>;
 
 export function createProjectConfig(input: CreateProjectConfigInput): components["schemas"]["ProjectConfig"] {
+	const harness = input.modelOverride.harness.trim();
+	const model = input.modelOverride.model.trim();
+	const effort = input.modelOverride.effort.trim();
+	const harnessOverride = {
+		...(model ? { model } : {}),
+		...(effort ? { effort } : {}),
+	};
+	const agentConfig =
+		harness && Object.keys(harnessOverride).length > 0 ? { modelByHarness: { [harness]: harnessOverride } } : undefined;
 	return {
 		worker: { agent: input.workerAgent as components["schemas"]["RoleOverride"]["agent"] },
 		orchestrator: { agent: input.orchestratorAgent as components["schemas"]["RoleOverride"]["agent"] },
+		...(agentConfig ? { agentConfig } : {}),
 		...(input.trackerIntake ? { trackerIntake: input.trackerIntake } : {}),
 	};
 }
@@ -102,13 +112,7 @@ function ShellLayout() {
 	);
 
 	const createProject = useCallback(
-		async (input: {
-			path: string;
-			workerAgent: string;
-			orchestratorAgent: string;
-			trackerIntake?: components["schemas"]["TrackerIntakeConfig"];
-			asWorkspace?: boolean;
-		}) => {
+		async (input: CreateProjectInput) => {
 			void addRendererExceptionStep("Project add requested", {
 				source: "project-add",
 				operation: "project_add",

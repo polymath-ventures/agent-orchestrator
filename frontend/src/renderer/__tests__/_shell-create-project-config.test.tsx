@@ -7,6 +7,7 @@ describe("createProjectConfig", () => {
 			createProjectConfig({
 				workerAgent: "codex",
 				orchestratorAgent: "claude-code",
+				modelOverride: { harness: "", model: "", effort: "" },
 			}),
 		).toEqual({
 			worker: { agent: "codex" },
@@ -14,11 +15,31 @@ describe("createProjectConfig", () => {
 		});
 	});
 
+	it("writes an explicit Fugu tuple only to its harness-specific project override", () => {
+		const config = createProjectConfig({
+			workerAgent: "codex-fugu",
+			orchestratorAgent: "claude-code",
+			modelOverride: { harness: "codex-fugu", model: "fugu", effort: "xhigh" },
+		});
+
+		expect(config).toEqual({
+			worker: { agent: "codex-fugu" },
+			orchestrator: { agent: "claude-code" },
+			agentConfig: {
+				modelByHarness: {
+					"codex-fugu": { model: "fugu", effort: "xhigh" },
+				},
+			},
+		});
+		expect(config.agentConfig).not.toHaveProperty("model");
+	});
+
 	it("preserves tracker intake alongside selected agent defaults", () => {
 		expect(
 			createProjectConfig({
 				workerAgent: "cursor",
 				orchestratorAgent: "opencode",
+				modelOverride: { harness: "", model: "", effort: "" },
 				trackerIntake: { enabled: true, provider: "github", assignee: "octocat" },
 			}),
 		).toEqual({
