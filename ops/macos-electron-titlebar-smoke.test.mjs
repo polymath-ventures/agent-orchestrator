@@ -26,6 +26,23 @@ test("workflow packages the real Electron app and uploads evidence", () => {
 	assert.match(workflow, /electron-titlebar-smoke/);
 });
 
+test("workflow keeps the merged harness separate from the requested target ref", () => {
+	assert.equal((workflow.match(/actions\/checkout@v4/g) ?? []).length, 2);
+	assert.match(workflow, /ref:\s*\$\{\{\s*github\.event\.repository\.default_branch\s*\}\}[\s\S]*?path:\s*harness/);
+	assert.match(workflow, /ref:\s*\$\{\{\s*inputs\.ref\s*\}\}[\s\S]*?path:\s*target/);
+	assert.match(workflow, /go-version-file:\s*target\/backend\/go\.mod/);
+	assert.match(workflow, /working-directory:\s*target\/frontend[\s\S]*?npm run package/);
+	assert.match(workflow, /working-directory:\s*harness\/frontend[\s\S]*?npm run test:electron-titlebar/);
+	assert.match(workflow, /find target\/frontend\/out/);
+});
+
+test("workflow creates dispatch evidence before the native smoke can fail", () => {
+	assert.match(workflow, /mkdir -p "\$output_dir"/);
+	assert.match(workflow, /git -C harness rev-parse HEAD/);
+	assert.match(workflow, /git -C target rev-parse HEAD/);
+	assert.match(workflow, /dispatch\.json/);
+});
+
 test("smoke verifies bridge, native buttons, cluster geometry, and screenshots", () => {
 	assert.match(smoke, /_electron/);
 	assert.match(smoke, /window\.ao/);
@@ -39,6 +56,7 @@ test("smoke verifies bridge, native buttons, cluster geometry, and screenshots",
 test("docs include dispatch instructions and isolated ARM64 self-hosted fallback", () => {
 	assert.match(docs, /workflow_dispatch/);
 	assert.match(docs, /macos-15/);
+	assert.match(docs, /separate.+harness.+target/is);
 	assert.match(docs, /self-hosted,\s*macOS,\s*ARM64,\s*ao-mac-ui/);
 	assert.match(docs, /public repository/i);
 	assert.match(docs, /isolated/i);
