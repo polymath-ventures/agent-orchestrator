@@ -33,9 +33,6 @@ Fork-only examples include ops/systemd/Tailscale integration, Codex Fugu
 support, and SDLC files. Upstream-candidate work should be narrow enough to
 submit directly to upstream after review.
 
-Blacksmith CI runner migration is intentionally out of scope for this bootstrap;
-the operator applies that PR directly.
-
 ## Browser Mode On The Tailnet
 
 The fork ships a small browser-mode web server for headless hosts. It serves the
