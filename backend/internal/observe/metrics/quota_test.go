@@ -14,7 +14,7 @@ type fakeQuotaStore struct {
 
 func (f *fakeQuotaStore) UpsertQuotaSnapshot(_ context.Context, snap domain.QuotaSnapshot) (domain.QuotaSnapshot, error) {
 	for i, row := range f.rows {
-		if row.Harness == snap.Harness && row.AccountID == snap.AccountID && row.Model == snap.Model {
+		if row.Harness == snap.Harness && row.AccountID == snap.AccountID && row.Model == snap.Model && row.WindowName == snap.WindowName {
 			f.rows[i] = snap
 			return snap, nil
 		}
@@ -65,6 +65,53 @@ func TestStoreQuotaCollectorRecordsNoSignalForSubscriptionHarnesses(t *testing.T
 		if !seen {
 			t.Errorf("missing quota snapshot for %s", harness)
 		}
+	}
+}
+
+func TestStoreQuotaCollectorSuppressesStaticNoSignalWhenExactSignalExists(t *testing.T) {
+	used, remaining, limit := 12.0, 88.0, 100.0
+	store := &fakeQuotaStore{rows: []domain.QuotaSnapshot{
+		{
+			Harness:       domain.HarnessCodex,
+			AccountID:     "unknown",
+			SignalQuality: domain.QuotaSignalNone,
+			Source:        "old static row",
+			ObservedAt:    time.Unix(1, 0).UTC(),
+		},
+		{
+			Harness:       domain.HarnessCodex,
+			AccountID:     "unknown",
+			WindowName:    "primary",
+			Used:          &used,
+			Remaining:     &remaining,
+			Limit:         &limit,
+			SignalQuality: domain.QuotaSignalExact,
+			Source:        "codex rollout token_count.rate_limits",
+			ObservedAt:    time.Unix(2, 0).UTC(),
+		},
+	}}
+
+	rows, err := NewStoreQuotaCollector(store).CollectQuota(context.Background(), time.Unix(3, 0).UTC())
+	if err != nil {
+		t.Fatalf("CollectQuota returned error: %v", err)
+	}
+	var codexRows, claudeRows int
+	for _, row := range rows {
+		switch row.Harness {
+		case domain.HarnessCodex:
+			codexRows++
+			if row.SignalQuality == domain.QuotaSignalNone {
+				t.Fatalf("Codex no-signal row should be suppressed when exact signal exists: %+v", rows)
+			}
+		case domain.HarnessClaudeCode:
+			claudeRows++
+			if row.SignalQuality != domain.QuotaSignalNone {
+				t.Fatalf("Claude fallback should remain no-signal: %+v", row)
+			}
+		}
+	}
+	if codexRows != 1 || claudeRows != 1 {
+		t.Fatalf("rows = %+v, want one exact Codex row and one Claude no-signal row", rows)
 	}
 }
 

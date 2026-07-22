@@ -44,3 +44,20 @@ func TestQuotaSnapshotJSONIncludesKnownWindowTimes(t *testing.T) {
 		t.Fatalf("known quota window missing or not normalized to UTC: %s", body)
 	}
 }
+
+func TestQuotaSnapshotJSONIncludesWindowName(t *testing.T) {
+	raw, err := json.Marshal(QuotaSnapshot{
+		Harness:       HarnessCodex,
+		AccountID:     "unknown",
+		WindowName:    "primary",
+		SignalQuality: QuotaSignalExact,
+		Source:        "test",
+		ObservedAt:    time.Unix(1, 0).UTC(),
+	})
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	if !strings.Contains(string(raw), `"windowName":"primary"`) {
+		t.Fatalf("expected windowName in JSON: %s", raw)
+	}
+}

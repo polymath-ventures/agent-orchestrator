@@ -32,11 +32,13 @@ describe("QuotaPanel", () => {
 						{
 							harness: "codex",
 							accountId: "chatgpt",
-							model: "gpt-5",
+							windowName: "primary",
 							remaining: 8,
+							used: 92,
 							limit: 100,
 							signalQuality: "exact",
 							source: "test",
+							windowEnd: "2026-07-20T19:30:00Z",
 							observedAt: "2026-07-20T19:00:00Z",
 						},
 					],
@@ -49,9 +51,10 @@ describe("QuotaPanel", () => {
 		renderWithClient(<QuotaPanel />);
 
 		expect(await screen.findByText("Quota")).toBeInTheDocument();
-		expect(screen.getByText("codex/chatgpt/gpt-5")).toBeInTheDocument();
-		expect(screen.getByText("8.0%")).toBeInTheDocument();
+		expect(screen.getByText("codex/chatgpt/primary")).toBeInTheDocument();
+		expect(screen.getByText("92.0% used")).toBeInTheDocument();
 		expect(screen.getByText("exact")).toBeInTheDocument();
+		expect(screen.getByText(/until/i)).toBeInTheDocument();
 	});
 
 	it("renders no-signal snapshots honestly", async () => {
@@ -82,6 +85,38 @@ describe("QuotaPanel", () => {
 		expect(screen.getByText("no signal")).toBeInTheDocument();
 		expect(screen.getByText("none")).toBeInTheDocument();
 		expect(screen.queryByText(/until/i)).not.toBeInTheDocument();
+	});
+
+	it("does not render ratios when limit is zero", async () => {
+		getMock.mockResolvedValue({
+			data: {
+				history: [],
+				latest: {
+					quotas: [
+						{
+							harness: "codex",
+							accountId: "chatgpt",
+							windowName: "primary",
+							remaining: 8,
+							used: 92,
+							limit: 0,
+							signalQuality: "exact",
+							source: "test",
+							observedAt: "2026-07-20T19:00:00Z",
+						},
+					],
+				},
+			},
+			error: undefined,
+			response: { status: 200 },
+		});
+
+		renderWithClient(<QuotaPanel />);
+
+		expect(await screen.findByText("codex/chatgpt/primary")).toBeInTheDocument();
+		expect(screen.getByText("8 remaining")).toBeInTheDocument();
+		expect(screen.queryByText(/% used/)).not.toBeInTheDocument();
+		expect(screen.queryByText("8/0")).not.toBeInTheDocument();
 	});
 
 	it("stays hidden when metrics are disabled", async () => {

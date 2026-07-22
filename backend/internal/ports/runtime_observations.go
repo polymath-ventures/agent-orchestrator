@@ -48,6 +48,7 @@ type ActivitySignal struct {
 	ToolUseID      string
 	AgentSessionID string
 	Usage          *UsageSignal
+	Quotas         []domain.QuotaSnapshot
 }
 
 // UsageSignal carries allowlisted per-turn token/cost facts from agent hooks.

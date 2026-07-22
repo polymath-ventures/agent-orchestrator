@@ -42,6 +42,12 @@ func (c *StoreQuotaCollector) CollectQuota(ctx context.Context, observedAt time.
 	if err != nil {
 		return nil, err
 	}
+	exactOrEstimated := make(map[domain.AgentHarness]bool, len(latest))
+	for _, snap := range latest {
+		if snap.SignalQuality == domain.QuotaSignalExact || snap.SignalQuality == domain.QuotaSignalEstimated {
+			exactOrEstimated[snap.Harness] = true
+		}
+	}
 	seen := make(map[domain.AgentHarness]bool, len(latest))
 	for _, snap := range latest {
 		if snap.SignalQuality == domain.QuotaSignalNone && snap.AccountID == "unknown" && snap.Model == "" {
@@ -49,6 +55,9 @@ func (c *StoreQuotaCollector) CollectQuota(ctx context.Context, observedAt time.
 		}
 	}
 	for _, harness := range c.harnesses {
+		if exactOrEstimated[harness] {
+			continue
+		}
 		if seen[harness] {
 			continue
 		}
@@ -56,13 +65,46 @@ func (c *StoreQuotaCollector) CollectQuota(ctx context.Context, observedAt time.
 			Harness:       harness,
 			AccountID:     "unknown",
 			SignalQuality: domain.QuotaSignalNone,
-			Source:        "official docs and local inspection",
-			Basis:         "No stable public quota endpoint, response header, CLI output, or local state file is available to AO; user-facing limit warnings exist but are not machine-readable.",
+			Source:        noSignalSource(harness),
+			Basis:         noSignalBasis(harness),
 			ObservedAt:    observedAt,
 		})
 		if err != nil {
 			return nil, err
 		}
 	}
-	return c.store.ListLatestQuotaSnapshots(ctx)
+	latest, err = c.store.ListLatestQuotaSnapshots(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := latest[:0]
+	for _, snap := range latest {
+		if snap.SignalQuality == domain.QuotaSignalNone && exactOrEstimated[snap.Harness] {
+			continue
+		}
+		out = append(out, snap)
+	}
+	return out, nil
+}
+
+func noSignalSource(harness domain.AgentHarness) string {
+	switch harness {
+	case domain.HarnessClaudeCode:
+		return "Claude Code local probe evidence"
+	case domain.HarnessCodex:
+		return "Codex rollout probe evidence"
+	default:
+		return "local probe evidence"
+	}
+}
+
+func noSignalBasis(harness domain.AgentHarness) string {
+	switch harness {
+	case domain.HarnessClaudeCode:
+		return "Claude Code transcripts expose per-message token usage only; local CLI help exposes no quota/status command; checked local Claude config/data paths on this host and found no stable machine-readable quota snapshot. Authenticated /usage remains a future integration path."
+	case domain.HarnessCodex:
+		return "No matching Codex rollout token_count.rate_limits snapshot has been observed yet; AO will replace this no-signal row when rollout rate limits appear."
+	default:
+		return "No stable machine-readable quota snapshot source has been observed for this harness."
+	}
 }

@@ -29,7 +29,8 @@ function QuotaChip({ quota }: { quota: QuotaSnapshot }) {
 	const quality = quota.signalQuality;
 	const remaining = quota.remaining;
 	const limit = quota.limit;
-	const pct = typeof remaining === "number" && typeof limit === "number" && limit > 0 ? (remaining / limit) * 100 : null;
+	const pct =
+		typeof remaining === "number" && typeof limit === "number" && limit > 0 ? (remaining / limit) * 100 : null;
 	const tone =
 		quality === "none"
 			? "border-border text-passive"
@@ -49,23 +50,31 @@ function QuotaChip({ quota }: { quota: QuotaSnapshot }) {
 			<span className="min-w-0 truncate text-foreground">{quotaLabel(quota)}</span>
 			<span className="shrink-0">{quotaValue(quota, pct)}</span>
 			<span className="shrink-0 text-passive">{qualityLabel(quality)}</span>
-			{hasWindowEnd(quota.windowEnd) ? <span className="shrink-0 text-passive">{windowLabel(quota.windowEnd)}</span> : null}
+			{hasWindowEnd(quota.windowEnd) ? (
+				<span className="shrink-0 text-passive">{windowLabel(quota.windowEnd)}</span>
+			) : null}
 		</div>
 	);
 }
 
 function quotaKey(quota: QuotaSnapshot): string {
-	return [quota.harness, quota.accountId, quota.model, quota.windowStart, quota.windowEnd].filter(Boolean).join(":");
+	return [quota.harness, quota.accountId, quota.model, quota.windowName, quota.windowStart, quota.windowEnd]
+		.filter(Boolean)
+		.join(":");
 }
 
 function quotaLabel(quota: QuotaSnapshot): string {
 	const account = quota.accountId || "unknown";
-	return quota.model ? `${quota.harness}/${account}/${quota.model}` : `${quota.harness}/${account}`;
+	const parts = [quota.harness, account, quota.model, quota.windowName].filter(Boolean);
+	return parts.join("/");
 }
 
 function quotaValue(quota: QuotaSnapshot, pct: number | null): string {
 	if (quota.signalQuality === "none") return "no signal";
-	if (typeof quota.remaining === "number" && typeof quota.limit === "number") {
+	if (typeof quota.used === "number" && typeof quota.limit === "number" && quota.limit > 0) {
+		return `${((quota.used / quota.limit) * 100).toFixed(1)}% used`;
+	}
+	if (typeof quota.remaining === "number" && typeof quota.limit === "number" && quota.limit > 0) {
 		return pct === null ? `${formatNumber(quota.remaining)}/${formatNumber(quota.limit)}` : `${pct.toFixed(1)}%`;
 	}
 	if (typeof quota.remaining === "number") return `${formatNumber(quota.remaining)} remaining`;

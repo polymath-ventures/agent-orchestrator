@@ -37,6 +37,10 @@ type notificationSink interface {
 	Notify(ctx context.Context, intent ports.NotificationIntent) error
 }
 
+type quotaSnapshotStore interface {
+	UpsertQuotaSnapshot(ctx context.Context, snap domain.QuotaSnapshot) (domain.QuotaSnapshot, error)
+}
+
 // Option customizes a Manager.
 type Option func(*Manager)
 
@@ -132,7 +136,7 @@ func (m *Manager) ApplyRuntimeObservation(ctx context.Context, id domain.Session
 // existing activity and first-signal facts untouched.
 func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, s ports.ActivitySignal) error {
 	s.AgentSessionID = strings.TrimSpace(s.AgentSessionID)
-	if !s.Valid && s.AgentSessionID == "" && s.Usage == nil {
+	if !s.Valid && s.AgentSessionID == "" && s.Usage == nil && len(s.Quotas) == 0 {
 		return nil
 	}
 	var intent *ports.NotificationIntent
@@ -152,9 +156,13 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 		return nil
 	}
 	usageEvent, hasUsageEvent := usageTelemetryEvent(rec, s, now)
+	quotas := acceptedQuotaSnapshots(rec, s, now)
 	if rec.IsTerminated {
 		delete(m.flights, id)
 		m.mu.Unlock()
+		if err := m.persistQuotaSnapshots(ctx, quotas); err != nil {
+			return err
+		}
 		if hasUsageEvent {
 			m.emitTelemetry(ctx, usageEvent)
 		}
@@ -171,6 +179,9 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 	}
 	if !s.Valid && !metadataChanged {
 		m.mu.Unlock()
+		if err := m.persistQuotaSnapshots(ctx, quotas); err != nil {
+			return err
+		}
 		if hasUsageEvent {
 			m.emitTelemetry(ctx, usageEvent)
 		}
@@ -181,6 +192,11 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 		rec.UpdatedAt = now
 		err := m.store.UpdateSession(ctx, rec)
 		m.mu.Unlock()
+		if err == nil {
+			if err := m.persistQuotaSnapshots(ctx, quotas); err != nil {
+				return err
+			}
+		}
 		if err == nil && hasUsageEvent {
 			m.emitTelemetry(ctx, usageEvent)
 		}
@@ -205,12 +221,20 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 			rec.UpdatedAt = now
 			err := m.store.UpdateSession(ctx, rec)
 			m.mu.Unlock()
+			if err == nil {
+				if quotaErr := m.persistQuotaSnapshots(ctx, quotas); quotaErr != nil {
+					return quotaErr
+				}
+			}
 			if err == nil && hasUsageEvent {
 				m.emitTelemetry(ctx, usageEvent)
 			}
 			return err
 		}
 		m.mu.Unlock()
+		if err := m.persistQuotaSnapshots(ctx, quotas); err != nil {
+			return err
+		}
 		if hasUsageEvent {
 			m.emitTelemetry(ctx, usageEvent)
 		}
@@ -243,6 +267,9 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 	}
 	waitingEvents := m.waitingInputEvents(next, prevState, prevAt, now)
 	m.mu.Unlock()
+	if err := m.persistQuotaSnapshots(ctx, quotas); err != nil {
+		return err
+	}
 	if hasUsageEvent {
 		m.emitTelemetry(ctx, usageEvent)
 	}
@@ -250,6 +277,49 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 		m.emitTelemetry(ctx, ev)
 	}
 	m.emitNotification(ctx, intent)
+	return nil
+}
+
+func acceptedQuotaSnapshots(rec domain.SessionRecord, s ports.ActivitySignal, now time.Time) []domain.QuotaSnapshot {
+	if len(s.Quotas) == 0 {
+		return nil
+	}
+	harness := rec.Harness
+	if harness == "" {
+		harness = s.Harness
+	}
+	out := make([]domain.QuotaSnapshot, 0, len(s.Quotas))
+	for _, snap := range s.Quotas {
+		if snap.Harness == "" {
+			snap.Harness = harness
+		}
+		if snap.Harness == "" || !snap.Harness.IsKnown() || !snap.SignalQuality.Valid() || strings.TrimSpace(snap.Source) == "" {
+			continue
+		}
+		if strings.TrimSpace(snap.AccountID) == "" {
+			snap.AccountID = "unknown"
+		}
+		if snap.ObservedAt.IsZero() {
+			snap.ObservedAt = now.UTC()
+		}
+		out = append(out, snap)
+	}
+	return out
+}
+
+func (m *Manager) persistQuotaSnapshots(ctx context.Context, quotas []domain.QuotaSnapshot) error {
+	if len(quotas) == 0 {
+		return nil
+	}
+	store, ok := m.store.(quotaSnapshotStore)
+	if !ok {
+		return nil
+	}
+	for _, snap := range quotas {
+		if _, err := store.UpsertQuotaSnapshot(ctx, snap); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
