@@ -1139,6 +1139,33 @@ func TestSpawn_PrePromptLivenessDetectsImmediateExitBeforePromptInjection(t *tes
 	}
 }
 
+func TestSpawn_RetriesTransientFalseLaunchProcessProbe(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+	rt := &fakeRuntime{aliveByHandle: map[string]bool{"h1": true}, processAliveSeq: []bool{false, false, true, true}}
+	lcm := &fakeLCM{store: st}
+	m := New(Deps{
+		Runtime: rt, Agents: singleAgent{agent: afterStartAgent{recordingAgent: &recordingAgent{}}}, Workspace: &fakeWorkspace{}, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: lcm,
+		LookPath: func(string) (string, error) { return "/bin/true", nil },
+	})
+
+	if _, err := m.Spawn(ctx, ports.SpawnConfig{
+		ProjectID: "mer", Kind: domain.KindWorker, Prompt: "task",
+	}); err != nil {
+		t.Fatalf("healthy slow-start spawn must survive transient false launch-process probes: %v", err)
+	}
+	if lcm.completed != 1 {
+		t.Fatalf("MarkSpawned called %d times, want 1", lcm.completed)
+	}
+	if rt.destroyed != 0 {
+		t.Fatalf("runtime destroyed %d times, want 0", rt.destroyed)
+	}
+	if len(rt.processAliveSeq) != 0 {
+		t.Fatalf("processAliveSeq has %d entries left, want all probes consumed", len(rt.processAliveSeq))
+	}
+}
+
 func TestSpawn_LateExitAfterProbeRollsBack(t *testing.T) {
 	st := newFakeStore()
 	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
