@@ -113,6 +113,23 @@ jobs:
 
           echo "AO_MAC_SMOKE_APP_PATH=$smoke_app" >> "$GITHUB_ENV"
 
+      - name: Diagnose direct packaged-app launch
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.ao/electron" "$AO_MAC_SMOKE_OUTPUT_DIR"
+          executable="$AO_MAC_SMOKE_APP_PATH/Contents/MacOS/agent-orchestrator"
+          "$executable" \
+            >"$AO_MAC_SMOKE_OUTPUT_DIR/direct-app-stdout.log" \
+            2>"$AO_MAC_SMOKE_OUTPUT_DIR/direct-app-stderr.log" &
+          app_pid=$!
+          echo "$app_pid" > "$AO_MAC_SMOKE_OUTPUT_DIR/direct-app.pid"
+          sleep 15
+          if kill -0 "$app_pid" 2>/dev/null; then
+            kill -TERM "$app_pid"
+          fi
+          wait "$app_pid" || echo "$?" > "$AO_MAC_SMOKE_OUTPUT_DIR/direct-app-exit-code"
+
       - name: Run native Electron titlebar smoke
         working-directory: harness/frontend
         env:

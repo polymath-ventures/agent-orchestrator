@@ -42,6 +42,9 @@ test("workflow creates dispatch evidence before the native smoke can fail", () =
 	assert.match(workflow, /git -C harness rev-parse HEAD/);
 	assert.match(workflow, /git -C target rev-parse HEAD/);
 	assert.match(workflow, /dispatch\.json/);
+	assert.match(workflow, /Diagnose direct packaged-app launch/);
+	assert.match(workflow, /direct-app-stdout\.log/);
+	assert.match(workflow, /direct-app-stderr\.log/);
 });
 
 test("Playwright output cannot erase dispatch or native evidence", () => {
