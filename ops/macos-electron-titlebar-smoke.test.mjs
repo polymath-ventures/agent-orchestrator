@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const workflow = readFileSync(".github/workflows/macos-electron-titlebar-smoke.yml", "utf8");
+const playwrightConfig = readFileSync("frontend/playwright.electron.config.ts", "utf8");
 const smoke = readFileSync("frontend/e2e-electron/titlebar-chrome.electron.ts", "utf8");
 const docs = readFileSync("docs/macos-electron-titlebar-smoke.md", "utf8");
 
@@ -43,6 +44,11 @@ test("workflow creates dispatch evidence before the native smoke can fail", () =
 	assert.match(workflow, /dispatch\.json/);
 });
 
+test("Playwright output cannot erase dispatch or native evidence", () => {
+	assert.match(playwrightConfig, /path\.join\(evidenceDir,\s*"playwright"\)/);
+	assert.doesNotMatch(playwrightConfig, /outputDir:\s*process\.env\.AO_MAC_SMOKE_OUTPUT_DIR/);
+});
+
 test("smoke verifies bridge, native buttons, cluster geometry, and screenshots", () => {
 	assert.match(smoke, /_electron/);
 	assert.match(smoke, /window\.ao/);
@@ -51,6 +57,14 @@ test("smoke verifies bridge, native buttons, cluster geometry, and screenshots",
 	assert.match(smoke, /nativeButtonLane/);
 	assert.match(smoke, /screenshot/);
 	assert.match(smoke, /geometry\.json/);
+});
+
+test("smoke records native process diagnostics and bounds failed cleanup", () => {
+	assert.match(smoke, /app-stdout\.log/);
+	assert.match(smoke, /app-stderr\.log/);
+	assert.match(smoke, /launch-failure\.json/);
+	assert.match(smoke, /process\(\)/);
+	assert.match(smoke, /SIGTERM/);
 });
 
 test("docs include dispatch instructions and isolated ARM64 self-hosted fallback", () => {
