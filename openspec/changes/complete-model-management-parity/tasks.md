@@ -41,6 +41,6 @@
 ## 6. Verify parity and prepare review
 
 - [x] 6.1 Run focused Go, frontend, controller, adapter, storage, and generated-schema tests after each phase; update the delta-spec checkboxes only when each behavior is verified.
-- [ ] 6.2 Exercise every history-mined edge case from issue #4 and cite the passing test or current invariant in the PR body, including the rejected `--skip-probe` escape hatch and independent per-probe deadlines.
+- [x] 6.2 Exercise every history-mined edge case from issue #4 and cite the passing test or current invariant in the PR body, including the rejected `--skip-probe` escape hatch and independent per-probe deadlines.
 - [x] 6.3 Run `ao preview` and capture desktop and narrow-panel verification of project settings, worker mix, create-project, refresh failure with cached data, and unverified fallback states.
 - [ ] 6.4 Run the repository's full CI commands, rebase on the fetched remote default branch, push the final head, and complete independent cross-family final review before declaring the PR merge-ready.
