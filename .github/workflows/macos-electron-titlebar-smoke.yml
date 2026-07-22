@@ -25,37 +25,79 @@ jobs:
     # Standard GitHub-hosted macOS runners are free for public repositories.
     runs-on: macos-15
     timeout-minutes: 30
-    defaults:
-      run:
-        working-directory: frontend
     steps:
-      - name: Check out requested ref
+      - name: Check out merged smoke harness
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          path: harness
+
+      - name: Check out requested target ref
         uses: actions/checkout@v4
         with:
           ref: ${{ inputs.ref }}
+          path: target
 
       - uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: npm
-          cache-dependency-path: frontend/package-lock.json
+          cache-dependency-path: |
+            harness/frontend/package-lock.json
+            target/frontend/package-lock.json
 
       - uses: actions/setup-go@v5
         with:
-          go-version-file: backend/go.mod
-          cache-dependency-path: backend/go.sum
+          go-version-file: target/backend/go.mod
+          cache-dependency-path: target/backend/go.sum
 
-      - name: Install frontend dependencies
+      - name: Record dispatch metadata
+        shell: bash
+        env:
+          TARGET_REF: ${{ inputs.ref }}
+        run: |
+          set -euo pipefail
+          output_dir="$RUNNER_TEMP/electron-titlebar-smoke"
+          mkdir -p "$output_dir"
+          harness_sha="$(git -C harness rev-parse HEAD)"
+          target_sha="$(git -C target rev-parse HEAD)"
+          python3 - "$output_dir/dispatch.json" "$harness_sha" "$target_sha" <<'PY'
+          import json
+          import os
+          import sys
+
+          path, harness_sha, target_sha = sys.argv[1:]
+          with open(path, "w", encoding="utf-8") as handle:
+              json.dump(
+                  {
+                      "harnessSha": harness_sha,
+                      "targetRef": os.environ["TARGET_REF"],
+                      "targetSha": target_sha,
+                  },
+                  handle,
+                  indent=2,
+              )
+              handle.write("\n")
+          PY
+          echo "AO_MAC_SMOKE_OUTPUT_DIR=$output_dir" >> "$GITHUB_ENV"
+
+      - name: Install target frontend dependencies
+        working-directory: target/frontend
+        run: npm ci
+
+      - name: Install smoke harness dependencies
+        working-directory: harness/frontend
         run: npm ci
 
       - name: Package unsigned macOS Electron app
+        working-directory: target/frontend
         run: npm run package
 
       - name: Stage app in Applications
         shell: bash
         run: |
           set -euo pipefail
-          packaged_app="$(find out -type d -name 'Agent Orchestrator.app' -print -quit)"
+          packaged_app="$(find target/frontend/out -type d -name 'Agent Orchestrator.app' -print -quit)"
           if [[ -z "$packaged_app" ]]; then
             echo "::error::electron-forge package did not produce Agent Orchestrator.app"
             exit 1
@@ -67,9 +109,9 @@ jobs:
           sudo chown -R "$(id -un):$(id -gn)" "$smoke_app"
 
           echo "AO_MAC_SMOKE_APP_PATH=$smoke_app" >> "$GITHUB_ENV"
-          echo "AO_MAC_SMOKE_OUTPUT_DIR=$RUNNER_TEMP/electron-titlebar-smoke" >> "$GITHUB_ENV"
 
       - name: Run native Electron titlebar smoke
+        working-directory: harness/frontend
         run: npm run test:electron-titlebar
 
       - name: Upload smoke evidence
@@ -84,7 +126,6 @@ jobs:
       - name: Remove staged app
         if: always()
         shell: bash
-        working-directory: .
         run: |
           if [[ -n "${AO_MAC_SMOKE_APP_PATH:-}" ]]; then
             sudo rm -rf "$AO_MAC_SMOKE_APP_PATH"

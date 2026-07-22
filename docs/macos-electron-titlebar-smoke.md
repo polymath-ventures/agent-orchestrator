@@ -26,6 +26,21 @@ requests and has only `contents: read` permission.
 Use the full head SHA when verifying a merge-ready PR so the result is pinned to
 the exact reviewed commit.
 
+## Harness and target are separate
+
+The workflow checks out the merged smoke harness from the repository's default
+branch into `harness/` and the requested `ref` into `target/`. Packaging runs
+from `target/frontend`, while Playwright runs from `harness/frontend`.
+
+This separation is intentional: the target ref may predate this workflow and
+therefore may not contain `test:electron-titlebar` or the native smoke files.
+The target app is still built entirely from the requested ref; only the test
+harness comes from current `main`.
+
+Every run writes `dispatch.json` before installing or packaging. It records the
+harness SHA, requested ref, and resolved target SHA, so the always-uploaded
+artifact identifies exactly what was attempted even on an early failure.
+
 ## Why the app is staged in `/Applications`
 
 Packaged macOS builds call Electron's `moveToApplicationsFolder()` at startup.
