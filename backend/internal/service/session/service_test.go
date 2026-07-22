@@ -1079,6 +1079,20 @@ func TestSpawnPrimePassesConfiguredDisplayName(t *testing.T) {
 	}
 }
 
+func TestSpawnPrimeUsesProjectDisplayNameFallback(t *testing.T) {
+	st := newFakeStore()
+	st.projects["ao"] = domain.ProjectRecord{ID: "ao", DisplayName: "Agent Orchestrator"}
+	fc := &fakeCommander{spawnRecord: domain.SessionRecord{ID: "ao-prime", ProjectID: "ao", Kind: domain.KindPrime}}
+	svc := NewWithDeps(Deps{Manager: fc, Store: st})
+
+	if _, err := svc.SpawnPrime(context.Background(), "ao", true); err != nil {
+		t.Fatalf("SpawnPrime: %v", err)
+	}
+	if fc.spawnedCfg.DisplayName != "Agent Orchestr Prime" {
+		t.Fatalf("prime display name = %q, want Agent Orchestr Prime", fc.spawnedCfg.DisplayName)
+	}
+}
+
 func TestSpawnPrimeVerifiesReplacementHarnessAndBranch(t *testing.T) {
 	st := newFakeStore()
 	st.projects["ao"] = domain.ProjectRecord{

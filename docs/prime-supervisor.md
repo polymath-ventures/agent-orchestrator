@@ -34,12 +34,19 @@ exists across the fleet:
 - active healthy prime: leave it alone;
 - active prime stuck `no_signal` or `exited` for at least five minutes: retire
   all active primes and spawn a clean replacement;
-- active idle prime: send a bounded wake message so it can continue supervising;
+- active idle or waiting-input prime: send a bounded wake message so it can
+  continue supervising;
 - repeated unhealthy replacement: stop after three replacement attempts per
   hour, then create a `prime_restart_capped` notification for the active prime.
 
 Storage owns the singleton invariant with a partial unique index over active
 prime sessions, so concurrent daemon loops cannot create two live primes.
+
+Wake nudges require at least one observed activity signal for the current
+prime, so the daemon does not auto-answer a session whose hook pipeline has
+never checked in. Pausing the host project or the fleet suppresses wake nudges
+but does not suppress unhealthy-prime replacement; prime survives pause, while
+work-nudging honors pause.
 
 ## Project config
 
@@ -48,15 +55,26 @@ Prime uses the same role override shape as workers and orchestrators:
 ```json
 {
 	"prime": {
-		"harness": "codex",
+		"agent": "codex",
 		"agentConfig": {
 			"model": "gpt-5.4"
+		},
+		"wakeInterval": "15m",
+		"wakeBackoff": {
+			"enabled": true,
+			"base": "15m",
+			"max": "1h"
 		}
 	},
 	"primeRules": "Keep fleet-wide state concise.",
 	"primeRulesFile": "docs/prime-rules.md"
 }
 ```
+
+`prime.wakeInterval` controls the first eligible wake after idle or
+waiting-input activity. `prime.wakeBackoff` controls repeat wake spacing; omit
+it for exponential backoff from `wakeInterval` up to one hour, or set
+`enabled: false` to keep fixed-interval nudges.
 
 `ao role prompt <project> prime` shows the effective prime prompt, including
 project-specific prime rules.

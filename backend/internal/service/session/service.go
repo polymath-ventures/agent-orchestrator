@@ -372,7 +372,11 @@ func (s *Service) SpawnPrime(ctx context.Context, projectID domain.ProjectID, cl
 	} else if len(existing) > 0 {
 		return newestSession(existing), nil
 	}
-	sess, err := s.spawn(ctx, ports.SpawnConfig{ProjectID: projectID, Kind: domain.KindPrime, DisplayName: s.primeDisplayName}, true)
+	displayName := strings.TrimSpace(s.primeDisplayName)
+	if displayName == "" {
+		displayName = domain.ComposePrimeDisplayName(projectDisplayName(project))
+	}
+	sess, err := s.spawn(ctx, ports.SpawnConfig{ProjectID: projectID, Kind: domain.KindPrime, DisplayName: displayName}, true)
 	if err != nil {
 		return domain.Session{}, err
 	}
@@ -432,6 +436,13 @@ func (s *Service) verifyOrchestratorReplacement(project domain.ProjectRecord, se
 		return fmt.Errorf("orchestrator replacement verification failed: new session %s uses branch %q, want %q", sess.ID, sess.Metadata.Branch, expectedBranch)
 	}
 	return nil
+}
+
+func projectDisplayName(project domain.ProjectRecord) string {
+	if name := strings.TrimSpace(project.DisplayName); name != "" {
+		return name
+	}
+	return project.ID
 }
 
 func verifyPrimeReplacement(project domain.ProjectRecord, sess domain.Session) error {

@@ -18,9 +18,9 @@ const (
 	defaultPrimeRestartLimit       = 3
 	defaultPrimeRestartBackoff     = 30 * time.Second
 	defaultPrimeRestartMaxBackoff  = 15 * time.Minute
-	defaultPrimeIdleWakeAfter      = 15 * time.Minute
-	defaultPrimeIdleWakeBackoff    = 5 * time.Minute
-	defaultPrimeIdleWakeMaxBackoff = 30 * time.Minute
+	defaultPrimeIdleWakeAfter      = domain.DefaultPrimeWakeInterval
+	defaultPrimeIdleWakeBackoff    = domain.DefaultPrimeWakeInterval
+	defaultPrimeIdleWakeMaxBackoff = domain.DefaultWakeBackoffMaxInterval
 )
 
 type primeSessionService interface {
@@ -29,19 +29,30 @@ type primeSessionService interface {
 	Send(ctx context.Context, id domain.SessionID, message string) error
 }
 
+type primeProjectConfigSource interface {
+	GetProject(ctx context.Context, id string) (domain.ProjectRecord, bool, error)
+}
+
+type primeFleetPauseSource interface {
+	GetFleetPaused(ctx context.Context) (bool, error)
+}
+
 type primeSupervisorConfig struct {
-	ProjectID       domain.ProjectID
-	Interval        time.Duration
-	UnhealthyAfter  time.Duration
-	RestartWindow   time.Duration
-	RestartLimit    int
-	RestartBackoff  time.Duration
-	MaxBackoff      time.Duration
-	IdleWakeAfter   time.Duration
-	IdleWakeBackoff time.Duration
-	IdleWakeMaxBack time.Duration
-	Now             func() time.Time
-	Logger          *slog.Logger
+	ProjectID               domain.ProjectID
+	Interval                time.Duration
+	UnhealthyAfter          time.Duration
+	RestartWindow           time.Duration
+	RestartLimit            int
+	RestartBackoff          time.Duration
+	MaxBackoff              time.Duration
+	IdleWakeAfter           time.Duration
+	IdleWakeBackoff         time.Duration
+	IdleWakeMaxBack         time.Duration
+	IdleWakeBackoffDisabled bool
+	ResolveProject          func(context.Context) (domain.ProjectRecord, bool)
+	FleetPaused             func(context.Context) bool
+	Now                     func() time.Time
+	Logger                  *slog.Logger
 }
 
 type primeSupervisorState struct {
@@ -54,12 +65,15 @@ type primeSupervisorState struct {
 	idleWakeBackoff time.Duration
 }
 
-func startPrimeSupervisor(ctx context.Context, cfg config.Config, sessions primeSessionService, notifier notificationSink, logger *slog.Logger) <-chan struct{} {
+func startPrimeSupervisor(ctx context.Context, cfg config.Config, projects primeProjectConfigSource, sessions primeSessionService, notifier notificationSink, logger *slog.Logger) <-chan struct{} {
 	projectID := domain.ProjectID(cfg.PrimeProjectID)
 	if projectID == "" {
 		done := make(chan struct{})
 		close(done)
 		return done
+	}
+	if logger == nil {
+		logger = slog.Default()
 	}
 	return startPrimeSupervisorWithConfig(ctx, primeSupervisorConfig{
 		ProjectID:       projectID,
@@ -72,8 +86,34 @@ func startPrimeSupervisor(ctx context.Context, cfg config.Config, sessions prime
 		IdleWakeAfter:   defaultPrimeIdleWakeAfter,
 		IdleWakeBackoff: defaultPrimeIdleWakeBackoff,
 		IdleWakeMaxBack: defaultPrimeIdleWakeMaxBackoff,
-		Now:             time.Now,
-		Logger:          logger,
+		ResolveProject: func(ctx context.Context) (domain.ProjectRecord, bool) {
+			if projects == nil {
+				return domain.ProjectRecord{}, false
+			}
+			project, ok, err := projects.GetProject(ctx, string(projectID))
+			if err != nil {
+				logger.Warn("prime supervisor: project lookup failed", "project", projectID, "err", err)
+				return domain.ProjectRecord{}, false
+			}
+			return project, ok
+		},
+		FleetPaused: func(ctx context.Context) bool {
+			if projects == nil {
+				return false
+			}
+			fleetPause, ok := projects.(primeFleetPauseSource)
+			if !ok {
+				return false
+			}
+			paused, err := fleetPause.GetFleetPaused(ctx)
+			if err != nil {
+				logger.Warn("prime supervisor: fleet pause lookup failed", "project", projectID, "err", err)
+				return false
+			}
+			return paused
+		},
+		Now:    time.Now,
+		Logger: logger,
 	}, sessions, notifier)
 }
 
@@ -139,6 +179,22 @@ func (c primeSupervisorConfig) withDefaults() primeSupervisorConfig {
 	return c
 }
 
+func (c primeSupervisorConfig) withProjectWakePolicy(project domain.ProjectRecord, ok bool) primeSupervisorConfig {
+	if !ok {
+		return c
+	}
+	policy, err := project.Config.WithDefaults().Prime.WakeBackoffPolicy()
+	if err != nil {
+		c.Logger.Warn("prime supervisor: invalid prime wake config; using daemon defaults", "project", c.ProjectID, "err", err)
+		return c
+	}
+	c.IdleWakeAfter = policy.Base
+	c.IdleWakeBackoff = policy.Base
+	c.IdleWakeMaxBack = policy.Max
+	c.IdleWakeBackoffDisabled = !policy.Enabled
+	return c
+}
+
 func ensurePrime(ctx context.Context, cfg primeSupervisorConfig, state *primeSupervisorState, sessions primeSessionService, notifier notificationSink) {
 	if sessions == nil || state == nil {
 		return
@@ -193,6 +249,15 @@ func ensurePrime(ctx context.Context, cfg primeSupervisorConfig, state *primeSup
 		return
 	}
 	state.resetRestart()
+	project, projectOK := domain.ProjectRecord{}, false
+	if cfg.ResolveProject != nil {
+		project, projectOK = cfg.ResolveProject(ctx)
+	}
+	if primeProjectPaused(ctx, cfg, project, projectOK) {
+		state.resetIdleWake()
+		return
+	}
+	cfg = cfg.withProjectWakePolicy(project, projectOK)
 	if primeShouldWake(active, now, cfg.IdleWakeAfter) {
 		if state.reserveIdleWake(now, cfg) {
 			if err := sessions.Send(ctx, active.ID, primeIdleWakeMessage); err != nil {
@@ -204,6 +269,13 @@ func ensurePrime(ctx context.Context, cfg primeSupervisorConfig, state *primeSup
 	state.resetIdleWake()
 }
 
+func primeProjectPaused(ctx context.Context, cfg primeSupervisorConfig, project domain.ProjectRecord, projectOK bool) bool {
+	if projectOK && project.Paused {
+		return true
+	}
+	return cfg.FleetPaused != nil && cfg.FleetPaused(ctx)
+}
+
 func primeNeedsReplacement(sess domain.Session, now time.Time, unhealthyAfter time.Duration) bool {
 	if sess.Status != domain.StatusNoSignal && sess.Activity.State != domain.ActivityExited {
 		return false
@@ -212,7 +284,13 @@ func primeNeedsReplacement(sess domain.Session, now time.Time, unhealthyAfter ti
 }
 
 func primeShouldWake(sess domain.Session, now time.Time, idleAfter time.Duration) bool {
-	if sess.Status != domain.StatusIdle || sess.Activity.State != domain.ActivityIdle {
+	if sess.FirstSignalAt.IsZero() {
+		return false
+	}
+	if sess.Status != domain.StatusIdle && sess.Status != domain.StatusNeedsInput {
+		return false
+	}
+	if sess.Activity.State != domain.ActivityIdle && sess.Activity.State != domain.ActivityWaitingInput {
 		return false
 	}
 	return now.Sub(primeActivityTime(sess)) >= idleAfter
@@ -263,7 +341,7 @@ func (s *primeSupervisorState) reserveIdleWake(now time.Time, cfg primeSuperviso
 		return false
 	}
 	backoff := s.idleWakeBackoff
-	if backoff <= 0 {
+	if cfg.IdleWakeBackoffDisabled || backoff <= 0 {
 		backoff = cfg.IdleWakeBackoff
 	} else {
 		backoff *= 2

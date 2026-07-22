@@ -94,6 +94,7 @@ const SIDEBAR_COLLAPSE_THRESHOLD = SIDEBAR_MIN_WIDTH;
 type SidebarProps = {
 	/** Hide the sidebar's right edge stroke on the welcome board inset chrome. */
 	hideEdgeBorder?: boolean;
+	primeSession?: WorkspaceSession;
 	underTopbar?: boolean;
 	/** Chrome height to clear when underTopbar is set. Defaults to the 56px shell toolbar. */
 	topbarOffset?: "toolbar" | "titlebar";
@@ -115,6 +116,7 @@ function useSelection() {
 		activeProjectId: params.projectId,
 		activeSessionId: params.sessionId,
 		goHome: () => void navigate({ to: "/" }),
+		goGlobalSession: (sessionId: string) => void navigate({ to: "/sessions/$sessionId", params: { sessionId } }),
 		goGlobalSettings: () => void navigate({ to: "/settings" }),
 		goSettings: (projectId: string) => void navigate({ to: "/projects/$projectId/settings", params: { projectId } }),
 		goProject: (projectId: string) => void navigate({ to: "/projects/$projectId", params: { projectId } }),
@@ -136,6 +138,7 @@ function SessionDot({ session }: { session: WorkspaceSession }) {
 // via group-data-[collapsible=icon] into the 48px letter rail.
 export function Sidebar({
 	hideEdgeBorder = false,
+	primeSession,
 	underTopbar = true,
 	topbarOffset = "toolbar",
 	workspaceError,
@@ -282,6 +285,19 @@ export function Sidebar({
 			</SidebarHeader>
 
 			<SidebarContent className="gap-0 pl-2.5 pr-1.75 group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:px-1.5">
+				{primeSession && (
+					<SidebarGroup className="p-0 pb-3">
+						<SidebarGroupContent>
+							<SidebarMenu className="gap-1">
+								<PrimeItem
+									active={selection.activeSessionId === primeSession.id}
+									onOpen={() => selection.goGlobalSession(primeSession.id)}
+									session={primeSession}
+								/>
+							</SidebarMenu>
+						</SidebarGroupContent>
+					</SidebarGroup>
+				)}
 				<SidebarGroup className="p-0">
 					{/* Section label (project-sidebar__nav-label) */}
 					<div className="sidebar-expanded-chrome flex shrink-0 items-center justify-between px-2 pb-2 group-data-[collapsible=icon]:hidden">
@@ -371,6 +387,34 @@ export function Sidebar({
 }
 
 type Selection = ReturnType<typeof useSelection>;
+
+function PrimeItem({ session, active, onOpen }: { session: WorkspaceSession; active: boolean; onOpen: () => void }) {
+	return (
+		<SidebarMenuItem>
+			<SidebarMenuButton
+				aria-current={active ? "page" : undefined}
+				aria-label={`Open ${session.title}`}
+				className={cn(
+					"relative h-9 gap-[9px] rounded-[5px] px-2 py-0 text-[13px] font-medium text-muted-foreground transition-colors",
+					"hover:bg-interactive-hover hover:text-foreground",
+					"data-[active=true]:bg-interactive-active data-[active=true]:font-semibold data-[active=true]:text-foreground",
+					"group-data-[collapsible=icon]:size-9! group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:rounded-lg group-data-[collapsible=icon]:p-0!",
+				)}
+				isActive={active}
+				onClick={onOpen}
+				tooltip={session.title}
+			>
+				<OrchestratorIcon aria-hidden="true" className="size-4 shrink-0" />
+				<span className="sidebar-expanded-chrome min-w-0 flex-1 truncate group-data-[collapsible=icon]:hidden">
+					{session.title}
+				</span>
+				<span className="sidebar-expanded-chrome group-data-[collapsible=icon]:hidden">
+					<SessionDot session={session} />
+				</span>
+			</SidebarMenuButton>
+		</SidebarMenuItem>
+	);
+}
 
 function ProjectItem({
 	workspace,

@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"time"
 )
 
 // ProjectConfig is the typed per-project configuration — the SQLite twin of the
@@ -124,10 +125,43 @@ func crossFamilyReviewer(worker AgentHarness) ReviewerHarness {
 type RoleOverride struct {
 	Harness     AgentHarness `json:"agent,omitempty"`
 	AgentConfig AgentConfig  `json:"agentConfig,omitempty"`
+	// WakeInterval controls how long prime may sit idle or at waiting_input
+	// before the daemon sends a supervision-loop nudge. It is consumed for the
+	// prime role only; empty means use the daemon default.
+	WakeInterval string `json:"wakeInterval,omitempty" description:"Prime role only. Positive Go duration string such as 15m; empty uses the daemon default."`
+	// WakeBackoff controls exponential prime idle wake spacing. When unset,
+	// backoff is enabled with WakeInterval as its base and a 60m max.
+	WakeBackoff *WakeBackoffConfig `json:"wakeBackoff,omitempty"`
+}
+
+// WakeBackoffConfig is the JSON config for prime idle wake backoff. Base and
+// Max are positive Go duration strings. Empty Base inherits WakeInterval; empty
+// Max uses DefaultWakeBackoffMaxInterval.
+type WakeBackoffConfig struct {
+	Enabled *bool  `json:"enabled,omitempty" description:"When false, keep fixed-interval wake behavior at the base interval instead of exponential idle backoff. Defaults to true."`
+	Base    string `json:"base,omitempty" description:"Positive Go duration for the reset/base wake interval. Empty inherits wakeInterval."`
+	Max     string `json:"max,omitempty" description:"Positive Go duration cap for exponential idle wake backoff. Empty uses the daemon default."`
+}
+
+// WakeBackoffPolicy is the parsed scheduler policy.
+type WakeBackoffPolicy struct {
+	Enabled bool
+	Base    time.Duration
+	Max     time.Duration
 }
 
 // DefaultBranchName is the base branch used when a project configures none.
 const DefaultBranchName = "main"
+
+// DefaultPrimeWakeInterval is the daemon fallback when a project leaves
+// prime.wakeInterval unset.
+const DefaultPrimeWakeInterval = 15 * time.Minute
+
+// DefaultWakeBackoffMaxInterval is the cap for prime idle wake backoff when
+// wakeBackoff.max is unset.
+const DefaultWakeBackoffMaxInterval = time.Hour
+
+const defaultPrimeWakeIntervalConfig = "15m"
 
 // DefaultProjectConfig returns the config a project has when it sets nothing:
 // branch "main". Every other field defaults to its zero value (no
@@ -144,6 +178,9 @@ func (c ProjectConfig) WithDefaults() ProjectConfig {
 	def := DefaultProjectConfig()
 	if c.DefaultBranch == "" {
 		c.DefaultBranch = def.DefaultBranch
+	}
+	if c.Prime.WakeInterval == "" {
+		c.Prime.WakeInterval = defaultPrimeWakeIntervalConfig
 	}
 	c.TrackerIntake = c.TrackerIntake.WithDefaults()
 	// WorkerMix deliberately gets no default: IsZero compares against the zero
@@ -174,6 +211,24 @@ func (c ProjectConfig) Validate() error {
 		if err := ro.AgentConfig.Validate(); err != nil {
 			return fmt.Errorf("%s.%w", role, err)
 		}
+	}
+	if c.Worker.WakeInterval != "" {
+		return fmt.Errorf("worker.wakeInterval: not supported")
+	}
+	if c.Worker.WakeBackoff != nil {
+		return fmt.Errorf("worker.wakeBackoff: not supported")
+	}
+	if c.Orchestrator.WakeInterval != "" {
+		return fmt.Errorf("orchestrator.wakeInterval: not supported")
+	}
+	if c.Orchestrator.WakeBackoff != nil {
+		return fmt.Errorf("orchestrator.wakeBackoff: not supported")
+	}
+	if _, err := c.Prime.WakeIntervalDuration(); err != nil {
+		return fmt.Errorf("prime.wakeInterval: %w", err)
+	}
+	if _, err := c.Prime.WakeBackoffPolicy(); err != nil {
+		return fmt.Errorf("prime.wakeBackoff: %w", err)
 	}
 	for _, s := range c.Symlinks {
 		if err := validateRepoRelative(s); err != nil {
@@ -219,6 +274,71 @@ func (c ProjectConfig) Validate() error {
 		return fmt.Errorf("maxLiveWorkers: must not be negative, got %d", c.MaxLiveWorkers)
 	}
 	return nil
+}
+
+// WakeIntervalDuration parses the configured prime wake interval. An empty
+// value resolves to DefaultPrimeWakeInterval.
+func (r RoleOverride) WakeIntervalDuration() (time.Duration, error) {
+	if r.WakeInterval == "" {
+		return DefaultPrimeWakeInterval, nil
+	}
+	d, err := time.ParseDuration(r.WakeInterval)
+	if err != nil {
+		return 0, err
+	}
+	if d <= 0 {
+		return 0, fmt.Errorf("must be positive")
+	}
+	return d, nil
+}
+
+// WakeBackoffPolicy parses the prime wake backoff config. An unset wakeBackoff
+// block means enabled backoff using WakeInterval as the base and a one-hour
+// cap. A disabled block keeps fixed-interval wake behavior.
+func (r RoleOverride) WakeBackoffPolicy() (WakeBackoffPolicy, error) {
+	base, err := r.WakeIntervalDuration()
+	if err != nil {
+		return WakeBackoffPolicy{}, err
+	}
+	maxInterval := DefaultWakeBackoffMaxInterval
+	enabled := true
+	maxSet := false
+	if r.WakeBackoff != nil {
+		if r.WakeBackoff.Enabled != nil {
+			enabled = *r.WakeBackoff.Enabled
+		}
+		if r.WakeBackoff.Base != "" {
+			base, err = parsePositiveDuration("base", r.WakeBackoff.Base)
+			if err != nil {
+				return WakeBackoffPolicy{}, err
+			}
+		}
+		if r.WakeBackoff.Max != "" {
+			maxInterval, err = parsePositiveDuration("max", r.WakeBackoff.Max)
+			if err != nil {
+				return WakeBackoffPolicy{}, err
+			}
+			maxSet = true
+		}
+	}
+	if !maxSet && maxInterval < base {
+		maxInterval = base
+	}
+	if maxSet && maxInterval < base {
+		return WakeBackoffPolicy{}, fmt.Errorf("max must be greater than or equal to base")
+	}
+	return WakeBackoffPolicy{Enabled: enabled, Base: base, Max: maxInterval}, nil
+}
+
+func parsePositiveDuration(field, value string) (time.Duration, error) {
+	d, err := time.ParseDuration(value)
+	if err != nil {
+		return 0, fmt.Errorf("%s: %w", field, err)
+	}
+	if d <= 0 {
+		return 0, fmt.Errorf("%s: must be positive", field)
+	}
+	return d, nil
 }
 
 func validateNoWhitespaceField(name, value string) error {
