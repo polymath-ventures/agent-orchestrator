@@ -18,6 +18,8 @@ test("macOS Electron titlebar smoke stays manual, hosted, and read-only", () => 
 test("workflow packages the real Electron app and uploads evidence", () => {
 	assert.match(workflow, /npm run package/);
 	assert.match(workflow, /\/Applications\//);
+	assert.match(workflow, /chown -R "\$\(id -un\):\$\(id -gn\)"/);
+	assert.doesNotMatch(workflow, /:staff/);
 	assert.match(workflow, /npm run test:electron-titlebar/);
 	assert.match(workflow, /actions\/upload-artifact@v4/);
 	assert.match(workflow, /if:\s*always\(\)/);

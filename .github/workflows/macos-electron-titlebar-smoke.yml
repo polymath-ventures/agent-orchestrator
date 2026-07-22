@@ -64,7 +64,7 @@ jobs:
           smoke_app="/Applications/Agent Orchestrator Smoke ${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.app"
           sudo rm -rf "$smoke_app"
           sudo ditto "$packaged_app" "$smoke_app"
-          sudo chown -R "$(id -un):staff" "$smoke_app"
+          sudo chown -R "$(id -un):$(id -gn)" "$smoke_app"
 
           echo "AO_MAC_SMOKE_APP_PATH=$smoke_app" >> "$GITHUB_ENV"
           echo "AO_MAC_SMOKE_OUTPUT_DIR=$RUNNER_TEMP/electron-titlebar-smoke" >> "$GITHUB_ENV"
