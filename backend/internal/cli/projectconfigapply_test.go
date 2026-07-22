@@ -159,7 +159,7 @@ func TestProjectConfigApply_OnlyRestoresSelectedNestedPath(t *testing.T) {
 }
 
 func TestProjectConfigApply_OnlyRejectsUnsafeOrMissingPath(t *testing.T) {
-	for _, path := range []string{"worker.__proto__.model", "worker.missing.model"} {
+	for _, path := range []string{"worker.missing.model", "worker..model"} {
 		t.Run(path, func(t *testing.T) {
 			cfg := setConfigEnv(t)
 			srv, capture := startConfigRoundTripServer(t, `{"worker":{"agent":"codex"}}`, http.StatusOK)

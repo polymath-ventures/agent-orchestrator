@@ -43,3 +43,8 @@ UPDATE projects SET paused = ? WHERE id = ?;
 -- The SCM observer owns only this field. A whole-row upsert can restore a stale
 -- config read while another writer updates config.
 UPDATE projects SET repo_origin_url = ? WHERE id = ?;
+
+-- name: SetProjectConfig :execrows
+-- Config writes own only the config column; a whole-row upsert can revert
+-- concurrently updated metadata such as origin URL or archived_at.
+UPDATE projects SET config = ? WHERE id = ?;

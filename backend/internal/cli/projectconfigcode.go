@@ -45,12 +45,6 @@ var fieldPathPattern = regexp.MustCompile(`^[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+)*$`)
 var secretKeyPattern = regexp.MustCompile(`(?i)(secret|token|passw(or)?d|passphrase|api[_-]?key|private[_-]?key|access[_-]?key|credential|cookie|session|signing|cert|database[_-]?url|conn(ection)?[_-]?str|dsn|auth)`)
 var patKeyPattern = regexp.MustCompile(`(?i)(^|[_-])pat([_-]|$)`)
 
-var unsafeFieldSegments = map[string]struct{}{
-	"__proto__":   {},
-	"prototype":   {},
-	"constructor": {},
-}
-
 func looksSecretKey(key string) bool {
 	return secretKeyPattern.MatchString(key) || patKeyPattern.MatchString(key)
 }
@@ -316,11 +310,6 @@ func fieldPathParts(path string) ([]string, error) {
 	parts := strings.Split(path, ".")
 	if !fieldPathPattern.MatchString(path) {
 		return nil, fmt.Errorf("invalid --only field path %q: expected dotted object keys", path)
-	}
-	for _, part := range parts {
-		if _, unsafe := unsafeFieldSegments[part]; unsafe {
-			return nil, fmt.Errorf("invalid --only field path %q: unsafe segment %q", path, part)
-		}
 	}
 	return parts, nil
 }

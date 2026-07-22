@@ -612,8 +612,12 @@ func (m *Service) SetConfig(ctx context.Context, id domain.ProjectID, in SetConf
 		return Project{}, err
 	}
 	row.Config = in.Config
-	if err := m.store.UpsertProject(ctx, row); err != nil {
+	updated, err := m.store.SetProjectConfig(ctx, row.ID, row.Config)
+	if err != nil {
 		return Project{}, apierr.Internal("PROJECT_CONFIG_UPDATE_FAILED", "Failed to update project config")
+	}
+	if !updated {
+		return Project{}, apierr.NotFound("PROJECT_NOT_FOUND", "Unknown project")
 	}
 	return m.projectFromRow(row), nil
 }

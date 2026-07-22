@@ -240,6 +240,24 @@ func (s *Store) SetProjectOriginURL(ctx context.Context, id, originURL string) (
 	return n > 0, nil
 }
 
+// SetProjectConfig updates only the project's config column.
+func (s *Store) SetProjectConfig(ctx context.Context, id string, config domain.ProjectConfig) (bool, error) {
+	raw, err := marshalProjectConfig(config)
+	if err != nil {
+		return false, err
+	}
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	n, err := s.qw.SetProjectConfig(ctx, gen.SetProjectConfigParams{
+		Config: raw,
+		ID:     domain.ProjectID(id),
+	})
+	if err != nil {
+		return false, fmt.Errorf("set project %s config: %w", id, err)
+	}
+	return n > 0, nil
+}
+
 // GetFleetPaused reads the daemon-global fleet pause flag. The single
 // daemon_settings row is seeded unpaused at migration time.
 func (s *Store) GetFleetPaused(ctx context.Context) (bool, error) {

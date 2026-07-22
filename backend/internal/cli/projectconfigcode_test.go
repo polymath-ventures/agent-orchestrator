@@ -264,7 +264,7 @@ func TestMergeOnlyFieldsRejectsUnsafeAndMissingPaths(t *testing.T) {
 	t.Parallel()
 
 	spec := map[string]any{"worker": map[string]any{"agent": "codex"}}
-	for _, path := range []string{"worker.__proto__.x", "worker.agent.missing", "worker..agent"} {
+	for _, path := range []string{"worker.agent.missing", "worker..agent"} {
 		if _, _, err := mergeOnlyFields(map[string]any{}, spec, []string{path}); err == nil {
 			t.Errorf("mergeOnlyFields accepted %q", path)
 		}
