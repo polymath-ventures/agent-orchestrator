@@ -742,7 +742,7 @@ func (m *Manager) resolveSpawnTarget(ctx context.Context, cfg ports.SpawnConfig,
 		if err != nil {
 			return "", "", "", false, err
 		}
-		entry, err := m.selectMixBucket(ctx, cfg.ProjectID, mix)
+		entry, err := m.selectMixBucket(ctx, cfg.ProjectID, mix, strings.TrimSpace(cfg.Model))
 		if err != nil {
 			return "", "", "", false, err
 		}
@@ -843,7 +843,7 @@ func spawnModelSource(explicitModel, mixSelected bool) string {
 // The candidate set is the configured mix. Candidate health does not narrow it
 // before selection: skip debit is folded into the census so a down bucket's share
 // is preserved instead of silently reallocated to healthy buckets.
-func (m *Manager) selectMixBucket(ctx context.Context, project domain.ProjectID, mix domain.WorkerMix) (domain.WorkerMixEntry, error) {
+func (m *Manager) selectMixBucket(ctx context.Context, project domain.ProjectID, mix domain.WorkerMix, explicitModel string) (domain.WorkerMixEntry, error) {
 	census, err := m.mixCensus(ctx, project, mix)
 	if err != nil {
 		return domain.WorkerMixEntry{}, err
@@ -853,11 +853,35 @@ func (m *Manager) selectMixBucket(ctx context.Context, project domain.ProjectID,
 	if !ok {
 		return domain.WorkerMixEntry{}, fmt.Errorf("%w: project %s configures %d bucket(s), none selectable", ErrWorkerMixExhausted, project, len(mix))
 	}
-	bk := entry.BucketKey()
+	bk := selectedWorkerMixKey(entry, explicitModel)
 	if m.health.RecordSkipIfDown(workerMixCandidate(bk.Harness, bk.Model, bk.Effort)) {
+		if m.allWorkerMixCandidatesDown(mix, explicitModel) {
+			return domain.WorkerMixEntry{}, fmt.Errorf("%w: project %s has every worker mix bucket down", ErrWorkerMixExhausted, project)
+		}
 		return domain.WorkerMixEntry{}, fmt.Errorf("worker mix selected %s: %w", bucketKeyString(bk), ErrWorkerMixBucketDown)
 	}
 	return entry, nil
+}
+
+func selectedWorkerMixKey(entry domain.WorkerMixEntry, explicitModel string) domain.BucketKey {
+	bk := entry.BucketKey()
+	if explicitModel != "" {
+		bk.Model = explicitModel
+	}
+	return bk
+}
+
+func (m *Manager) allWorkerMixCandidatesDown(mix domain.WorkerMix, explicitModel string) bool {
+	if len(mix) == 0 {
+		return false
+	}
+	for _, entry := range mix {
+		bk := selectedWorkerMixKey(entry, explicitModel)
+		if !m.health.IsDown(workerMixCandidate(bk.Harness, bk.Model, bk.Effort)) {
+			return false
+		}
+	}
+	return true
 }
 
 // mixCensus counts the project's live workers per mix bucket, the input the

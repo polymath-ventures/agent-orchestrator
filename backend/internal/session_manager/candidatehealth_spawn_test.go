@@ -300,9 +300,8 @@ func TestSpawn_DownBucketDebitPreservedAndFailsWhenSelected(t *testing.T) {
 	}
 }
 
-// When every bucket in the mix is down, selection still picks the highest-debit
-// configured bucket and refuses that exact down bucket rather than falling back
-// to a harness outside the mix.
+// When every bucket in the mix is down, selection fails with an exhausted-mix
+// error rather than falling back to a harness outside the mix.
 func TestSpawn_AllBucketsDownFailsLoudly(t *testing.T) {
 	tr := candidatehealth.New(candidatehealth.Config{Source: "session_manager"})
 	m, _, _ := healthMixManager(t, domain.ProjectConfig{WorkerMix: twoBucketMix()}, tr, nil)
@@ -310,8 +309,37 @@ func TestSpawn_AllBucketsDownFailsLoudly(t *testing.T) {
 	tr.MarkDown(workerMixCandidate(domain.HarnessCodex, "", ""), errors.New("runtime refused"))
 
 	_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
-	if !errors.Is(err, ErrWorkerMixBucketDown) {
-		t.Fatalf("spawn err = %v, want ErrWorkerMixBucketDown", err)
+	if !errors.Is(err, ErrWorkerMixExhausted) {
+		t.Fatalf("spawn err = %v, want ErrWorkerMixExhausted", err)
+	}
+}
+
+func TestSpawn_ModelOnlyFailureMarksExplicitModelCandidateDown(t *testing.T) {
+	tr := candidatehealth.New(candidatehealth.Config{Source: "session_manager"})
+	m, rt, _ := healthMixManager(t, domain.ProjectConfig{
+		WorkerMix: domain.WorkerMix{{
+			Harness: domain.HarnessCodex, Model: "gpt-5.4-codex", Weight: 100,
+		}},
+	}, tr, nil)
+	rt.createErr = errors.New("runtime refused explicit model")
+
+	_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Model: "gpt-5.5-codex"})
+	if err == nil {
+		t.Fatal("expected explicit-model launch failure")
+	}
+	actual := workerMixCandidate(domain.HarnessCodex, "gpt-5.5-codex", "")
+	configured := workerMixCandidate(domain.HarnessCodex, "gpt-5.4-codex", "")
+	if !tr.IsDown(actual) {
+		t.Fatal("explicit model candidate was not marked down")
+	}
+	if tr.IsDown(configured) {
+		t.Fatal("configured bucket model was marked down instead of the explicit model candidate")
+	}
+
+	rt.createErr = nil
+	_, err = m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Model: "gpt-5.5-codex"})
+	if !errors.Is(err, ErrWorkerMixExhausted) {
+		t.Fatalf("repeat explicit-model spawn err = %v, want ErrWorkerMixExhausted for the all-down overlaid mix", err)
 	}
 }
 
