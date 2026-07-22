@@ -13,8 +13,8 @@
 ## 3. Spawn Model Selection Parity
 
 - [x] 3.1 Add failing tests proving a model-only worker spawn on a mix project uses the mix to select a harness, then launches the explicit model (ref `agent-orchestrator-fscked/backend/internal/session_manager/manager.go:577-592`; current `backend/internal/session_manager/manager.go:696-733`).
-- [ ] 3.2 Add failing tests proving spawn-time validation rejects definitive unreachable resolved tuples before durable state and names the selection source (ref `agent-orchestrator-fscked/backend/internal/session_manager/manager.go:626,1005-1045`; current `backend/internal/session_manager/manager.go:762-785`).
-- [ ] 3.3 Adapt the current #4 validation engine rather than porting the old validator interface, preserving fail-open for unknown/probe-unavailable verdicts.
+- [x] 3.2 Add failing tests proving spawn-time validation rejects definitive unreachable resolved tuples before durable state and names the selection source (ref `agent-orchestrator-fscked/backend/internal/session_manager/manager.go:626,1005-1045`; current `backend/internal/session_manager/manager.go:762-785`).
+- [x] 3.3 Adapt the current #4 validation engine rather than porting the old validator interface, preserving fail-open for unknown/probe-unavailable verdicts.
 
 ## 4. Candidate Health Wiring
 

@@ -363,6 +363,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	}
 	requestedHarness := cfg.Harness
 	requestedModel := strings.TrimSpace(cfg.Model)
+	explicitSpawnModel := requestedModel != ""
 	spawnLocked := false
 	if cfg.Kind == domain.KindWorker {
 		m.spawnMu.Lock()
@@ -417,7 +418,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	if mixSelected {
 		agentConfig.Effort = mixEffort
 	}
-	if err := m.validateSpawnSelection(ctx, cfg.Harness, cfg.Model, agentConfig.Effort); err != nil {
+	if err := m.validateSpawnSelection(ctx, cfg.Harness, cfg.Model, agentConfig.Effort, spawnModelSource(explicitSpawnModel, mixSelected)); err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("spawn: %w", err)
 	}
 
@@ -787,13 +788,13 @@ func effectiveWorkerMix(cfg domain.ProjectConfig) (domain.WorkerMix, error) {
 	return mix, nil
 }
 
-func (m *Manager) validateSpawnSelection(ctx context.Context, harness domain.AgentHarness, model string, effort domain.Effort) error {
+func (m *Manager) validateSpawnSelection(ctx context.Context, harness domain.AgentHarness, model string, effort domain.Effort, source string) error {
 	if m.modelValidator == nil {
 		return nil
 	}
 	result, err := m.modelValidator.ValidateSpawnSelection(ctx, harness, model, effort)
 	if err != nil {
-		m.warnSpawnSelectionUnavailable(harness, model, effort, err.Error())
+		m.warnSpawnSelectionUnavailable(harness, model, effort, source, err.Error())
 		return nil
 	}
 	if result.Status == ports.ModelValidationUnreachable {
@@ -801,25 +802,36 @@ func (m *Manager) validateSpawnSelection(ctx context.Context, harness domain.Age
 		if reason == "" {
 			reason = "the provider rejected this model selection"
 		}
-		return fmt.Errorf("%w: harness %q model %q effort %q: %s", ErrModelUnreachable, harness, model, effort, reason)
+		return fmt.Errorf("%w: harness %q model %q effort %q from %s: %s", ErrModelUnreachable, harness, model, effort, source, reason)
 	}
 	if result.Status != ports.ModelValidationReachable {
 		reason := strings.TrimSpace(result.Message)
 		if reason == "" {
 			reason = "no fresh cached model selection verdict"
 		}
-		m.warnSpawnSelectionUnavailable(harness, model, effort, reason)
+		m.warnSpawnSelectionUnavailable(harness, model, effort, source, reason)
 	}
 	return nil
 }
 
-func (m *Manager) warnSpawnSelectionUnavailable(harness domain.AgentHarness, model string, effort domain.Effort, reason string) {
+func (m *Manager) warnSpawnSelectionUnavailable(harness domain.AgentHarness, model string, effort domain.Effort, source, reason string) {
 	m.logger.Warn("model validation unavailable; continuing spawn",
 		"harness", harness,
 		"model", model,
 		"effort", effort,
+		"source", source,
 		"reason", reason,
 	)
+}
+
+func spawnModelSource(explicitModel bool, mixSelected bool) string {
+	if explicitModel {
+		return "explicit spawn model"
+	}
+	if mixSelected {
+		return "worker-mix bucket"
+	}
+	return "project/role config"
 }
 
 // selectMixBucket picks the bucket the next unpinned worker spawn launches on.
