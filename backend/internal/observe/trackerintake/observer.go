@@ -205,6 +205,7 @@ func (o *Observer) pollProject(ctx context.Context, project domain.ProjectRecord
 		return true
 	}
 	var spawnFailed bool
+	workerPoolFull := false
 	for _, issue := range issues {
 		if ctx.Err() != nil {
 			return true
@@ -219,6 +220,10 @@ func (o *Observer) pollProject(ctx context.Context, project domain.ProjectRecord
 		if issueID == "" || seen[issueID] {
 			continue
 		}
+		if workerPoolFull {
+			o.logger.Debug("tracker intake: worker pool already full, deferring issue", "project", project.ID, "issue", issueID)
+			continue
+		}
 		if _, err := o.spawner.Spawn(ctx, ports.SpawnConfig{
 			ProjectID: domain.ProjectID(project.ID),
 			IssueID:   issueID,
@@ -230,6 +235,9 @@ func (o *Observer) pollProject(ctx context.Context, project domain.ProjectRecord
 			// later poll retries it without putting the whole project in backoff.
 			if isWorkerDeferral(err) {
 				o.logger.Debug("tracker intake: deferring issue, worker capacity unavailable", "project", project.ID, "issue", issueID, "err", err)
+				if isWorkerConcurrencyCap(err) {
+					workerPoolFull = true
+				}
 				continue
 			}
 			o.logger.Error("tracker intake: spawn issue session failed", "project", project.ID, "issue", issueID, "err", err)
@@ -239,6 +247,14 @@ func (o *Observer) pollProject(ctx context.Context, project domain.ProjectRecord
 		seen[issueID] = true
 	}
 	return spawnFailed
+}
+
+func isWorkerConcurrencyCap(err error) bool {
+	if errors.Is(err, sessionmanager.ErrWorkerConcurrencyCap) {
+		return true
+	}
+	var apiError *apierr.Error
+	return errors.As(err, &apiError) && apiError.Code == "WORKER_CONCURRENCY_CAP"
 }
 
 func isWorkerDeferral(err error) bool {

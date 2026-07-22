@@ -24,9 +24,9 @@
 
 ## 5. Tracker Intake Deferrals
 
-- [ ] 5.1 Add failing tests proving worker cap deferral memoizes `workerPoolFull` for the rest of the poll pass (ref `agent-orchestrator-fscked/backend/internal/observe/trackerintake/observer.go:232-299`; current `backend/internal/observe/trackerintake/observer.go:221-242`).
+- [x] 5.1 Add failing tests proving worker cap deferral memoizes `workerPoolFull` for the rest of the poll pass (ref `agent-orchestrator-fscked/backend/internal/observe/trackerintake/observer.go:232-299`; current `backend/internal/observe/trackerintake/observer.go:221-242`).
 - [x] 5.2 Add failing tests proving `WORKER_MIX_EXHAUSTED` is treated as a retryable deferral rather than a genuine spawn failure/backoff.
-- [ ] 5.3 Implement the intake deferral changes without restoring ruled-out tracker label routing.
+- [x] 5.3 Implement the intake deferral changes without restoring ruled-out tracker label routing.
 
 ## 6. Config And UI Validation
 

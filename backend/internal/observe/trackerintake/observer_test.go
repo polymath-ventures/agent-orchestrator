@@ -392,6 +392,33 @@ func TestPollDefersCappedIssueWithoutBackoff(t *testing.T) {
 	}
 }
 
+// Once a poll hits the worker cap, the normal worker pool is known full for the
+// rest of that project pass. Later issues stay unseen without burning more
+// spawn attempts that would return the same capacity refusal.
+func TestPollMemoizesWorkerCapForRestOfProjectPass(t *testing.T) {
+	store, tracker := capIntakeFixtures()
+	tracker.issues = append(tracker.issues, domain.Issue{
+		ID:        domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#13"},
+		Title:     "also capped",
+		State:     domain.IssueOpen,
+		Assignees: []string{"alice"},
+	})
+	spawner := &fakeSpawner{failErrByIssue: map[domain.IssueID]error{
+		"github:acme/demo#12": apierr.Conflict("WORKER_CONCURRENCY_CAP", "session: worker concurrency cap reached", nil),
+	}}
+	observer := New(singleResolver(tracker), store, spawner, Config{Logger: discardLogger()})
+
+	if err := observer.Poll(context.Background()); err != nil {
+		t.Fatalf("Poll() error = %v", err)
+	}
+	if len(spawner.calls) != 1 {
+		t.Fatalf("spawn attempts = %d, want only the first cap collision", len(spawner.calls))
+	}
+	if len(observer.backoffUntil) != 0 {
+		t.Fatalf("backoffUntil = %v, want empty — cap memoization must not trigger failure backoff", observer.backoffUntil)
+	}
+}
+
 // A genuine (non-cap) spawn failure still trips the existing failure backoff,
 // unchanged by the cap deferral path.
 func TestPollGenuineSpawnFailureStillBacksOff(t *testing.T) {
