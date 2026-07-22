@@ -18,9 +18,9 @@
 
 ## 4. Candidate Health Wiring
 
-- [ ] 4.1 Add failing tests for mark-down on selected worker-mix candidate failures in workspace preparation, missing binary launch command, runtime creation, launch liveness, and after-start prompt delivery (ref `agent-orchestrator-fscked/backend/internal/session_manager/manager.go:707-816`; current `backend/internal/session_manager/manager.go:458-554`).
-- [ ] 4.2 Implement the missing mark-down calls before rollback can obscure the caller context, while preserving non-candidate refusals as no-ops.
-- [ ] 4.3 Verify successful launch recovers the exact candidate and does not recover similar buckets.
+- [x] 4.1 Add failing tests for mark-down on selected worker-mix candidate failures in workspace preparation, missing binary launch command, runtime creation, launch liveness, and after-start prompt delivery (ref `agent-orchestrator-fscked/backend/internal/session_manager/manager.go:707-816`; current `backend/internal/session_manager/manager.go:458-554`).
+- [x] 4.2 Implement the missing mark-down calls before rollback can obscure the caller context, while preserving non-candidate refusals as no-ops.
+- [x] 4.3 Verify successful launch recovers the exact candidate and does not recover similar buckets.
 
 ## 5. Tracker Intake Deferrals
 

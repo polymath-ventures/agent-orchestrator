@@ -177,6 +177,52 @@ func TestSpawn_MixSelectedRuntimeRefusedMarksDown(t *testing.T) {
 	}
 }
 
+// Workspace preparation runs the selected agent's launch-specific setup after a
+// bucket was chosen. A failure here is attributable to the candidate and should
+// mark it down before rollback.
+func TestSpawn_MixSelectedWorkspacePreparationFailureMarksDown(t *testing.T) {
+	tr := candidatehealth.New(candidatehealth.Config{Source: "session_manager"})
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{WorkerMix: singleBucketMix()}}
+	agent := &hookErrorCleaningAgent{hookErr: errors.New("hooks install failed")}
+	m := New(Deps{
+		Runtime: &fakeRuntime{}, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st},
+		LookPath: func(string) (string, error) { return "/bin/true", nil }, Health: tr,
+	})
+
+	_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	if err == nil {
+		t.Fatal("expected workspace preparation failure")
+	}
+	if !tr.IsDown(workerMixCandidate(domain.HarnessClaudeCode, "", "")) {
+		t.Fatal("a mix-selected workspace-preparation failure must mark the bucket down")
+	}
+}
+
+// After-start prompt delivery is part of launching the selected bucket. If the
+// pane write fails after runtime start, the candidate should be marked down
+// before cleanup/termination obscures the launch attempt.
+func TestSpawn_MixSelectedAfterStartPromptFailureMarksDown(t *testing.T) {
+	tr := candidatehealth.New(candidatehealth.Config{Source: "session_manager"})
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{WorkerMix: singleBucketMix()}}
+	agent := &recordingAgent{}
+	m := New(Deps{
+		Runtime: &fakeRuntime{}, Agents: singleAgent{agent: afterStartAgent{recordingAgent: agent}}, Workspace: &fakeWorkspace{}, Store: st,
+		Messenger: &fakeMessenger{err: errors.New("pane unavailable")}, Lifecycle: &fakeLCM{store: st},
+		LookPath: func(string) (string, error) { return "/bin/true", nil }, Health: tr,
+	})
+
+	_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Prompt: "fix the button"})
+	if err == nil {
+		t.Fatal("expected after-start prompt delivery failure")
+	}
+	if !tr.IsDown(workerMixCandidate(domain.HarnessClaudeCode, "", "")) {
+		t.Fatal("a mix-selected after-start prompt failure must mark the bucket down")
+	}
+}
+
 // A configuration error (unknown harness) is not attributable to the candidate:
 // the harness or model is misconfigured, not broken, so the bucket stays healthy.
 func TestSpawn_MixSelectedUnknownHarnessDoesNotMarkDown(t *testing.T) {
