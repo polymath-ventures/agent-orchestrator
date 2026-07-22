@@ -2,8 +2,8 @@ name: macOS Electron titlebar smoke
 
 # Manual-only native smoke for GH #76 / the Electron-only chrome boundary from
 # GH #54. This packages and launches the REAL macOS Electron app, measures the
-# renderer TitlebarNav against BrowserWindow.getWindowButtonPosition(), and
-# uploads the renderer screenshot + geometry JSON.
+# renderer TitlebarNav against native traffic-light geometry read via System
+# Events accessibility, and uploads the renderer screenshot + geometry JSON.
 #
 # Dispatch from Actions → "macOS Electron titlebar smoke" and provide a branch
 # or full commit SHA in `ref` (for example, the head SHA of a merge-ready PR).
@@ -149,8 +149,10 @@ jobs:
           APPLESCRIPT
           for _ in $(seq 1 10); do
             sleep 2
-            curl -sS --max-time 5 http://127.0.0.1:9222/json/list \
-              -o "$AO_MAC_SMOKE_OUTPUT_DIR/direct-app-targets.json" && break
+            if curl -sS --max-time 5 http://127.0.0.1:9222/json/list \
+              -o "$AO_MAC_SMOKE_OUTPUT_DIR/direct-app-targets.json"; then
+              grep -q '"type": *"page"' "$AO_MAC_SMOKE_OUTPUT_DIR/direct-app-targets.json" && break
+            fi
           done
           curl -sS --max-time 5 http://127.0.0.1:9222/json/version \
             -o "$AO_MAC_SMOKE_OUTPUT_DIR/direct-app-cdp-version.json"
@@ -160,7 +162,7 @@ jobs:
           log show --last 2m --style compact \
             --predicate "process == 'agent-orchestrator'" \
             > "$AO_MAC_SMOKE_OUTPUT_DIR/direct-app-unified.log"
-          if [[ ! -s "$AO_MAC_SMOKE_OUTPUT_DIR/direct-app-targets.json" ]]; then
+          if ! grep -q '"type": *"page"' "$AO_MAC_SMOKE_OUTPUT_DIR/direct-app-targets.json"; then
             echo "AO_MAC_SMOKE_NO_DIRECT_TARGET=1" >> "$GITHUB_ENV"
             pkill -TERM -f "$executable" 2>/dev/null
             sleep 3

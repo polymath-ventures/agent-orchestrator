@@ -5,7 +5,7 @@ chrome that only exists inside the real macOS Electron window:
 
 - the preload bridge (`window.ao`) is present;
 - the Electron-only `.titlebar-nav` cluster renders;
-- Electron's native window-button position is available;
+- native traffic-light geometry is available through System Events accessibility;
 - the renderer cluster clears the measured macOS traffic-light lane with the
   intended group gap;
 - renderer and best-effort whole-desktop screenshots plus `geometry.json` are
@@ -44,9 +44,11 @@ harness SHA, requested ref, and resolved target SHA, so the always-uploaded
 artifact identifies exactly what was attempted even on an early failure.
 
 The uploaded evidence directory is separate from Playwright's own output
-directory. Native launch failures include `app-stdout.log`, `app-stderr.log`,
-`launch-failure.json`, and the retained Playwright trace. Electron cleanup is
-bounded so a failed launch cannot hold the runner until the job timeout.
+directory. Native launch failures include `direct-app-stdout.log`,
+`direct-app-stderr.log`, `direct-app-modal.txt`, `direct-app-sample.txt`, and
+`direct-app-unified.log`; Playwright retains its trace when it starts. Electron
+cleanup is bounded so a failed launch cannot hold the runner until the job
+timeout.
 
 ## Why the app is staged in `/Applications`
 

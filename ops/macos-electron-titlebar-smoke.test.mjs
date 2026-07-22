@@ -47,6 +47,11 @@ test("workflow creates dispatch evidence before the native smoke can fail", () =
 	assert.match(workflow, /direct-app-stderr\.log/);
 });
 
+test("workflow waits for a real CDP page target before running Playwright", () => {
+	assert.match(workflow, /grep -q '"type":\s\*"page"' "\$AO_MAC_SMOKE_OUTPUT_DIR\/direct-app-targets\.json"/);
+	assert.doesNotMatch(workflow, /if \[\[ ! -s "\$AO_MAC_SMOKE_OUTPUT_DIR\/direct-app-targets\.json" \]\]/);
+});
+
 test("Playwright output cannot erase dispatch or native evidence", () => {
 	assert.match(playwrightConfig, /path\.join\(evidenceDir,\s*"playwright"\)/);
 	assert.doesNotMatch(playwrightConfig, /outputDir:\s*process\.env\.AO_MAC_SMOKE_OUTPUT_DIR/);
@@ -74,4 +79,12 @@ test("docs include dispatch instructions and isolated ARM64 self-hosted fallback
 	assert.match(docs, /self-hosted,\s*macOS,\s*ARM64,\s*ao-mac-ui/);
 	assert.match(docs, /public repository/i);
 	assert.match(docs, /isolated/i);
+});
+
+test("docs name the native accessibility mechanism and real evidence files", () => {
+	assert.match(docs, /System Events accessibility/);
+	assert.match(docs, /direct-app-stdout\.log/);
+	assert.match(docs, /direct-app-stderr\.log/);
+	assert.doesNotMatch(docs, /launch-failure\.json/);
+	assert.doesNotMatch(docs, /getWindowButtonPosition/);
 });
