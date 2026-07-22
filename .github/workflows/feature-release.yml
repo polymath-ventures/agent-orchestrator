@@ -45,7 +45,7 @@ jobs:
   # Runs on ubuntu with no environment and no secrets so it can be inspected
   # freely; secrets are consumed only in the gated build jobs below.
   guard:
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
       tag: ${{ steps.version.outputs.tag }}
@@ -207,7 +207,7 @@ jobs:
         include:
           - os: macos-latest
             platform: mac
-          - os: blacksmith-4vcpu-windows-2025
+          - os: windows-2025
             platform: win
           - os: ubuntu-latest
             platform: linux
@@ -308,7 +308,7 @@ jobs:
   release-intel:
     needs: guard
     if: needs.guard.outputs.build_mac == 'true'
-    runs-on: blacksmith-6vcpu-macos-15
+    runs-on: macos-15-intel
     environment: release
     permissions:
       contents: write
@@ -386,7 +386,7 @@ jobs:
       needs.guard.result == 'success' &&
       needs.release.result == 'success' &&
       needs.release-intel.result != 'failure'
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     environment: release
     permissions:
       contents: write

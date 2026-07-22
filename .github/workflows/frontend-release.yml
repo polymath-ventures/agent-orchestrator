@@ -39,7 +39,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, blacksmith-4vcpu-windows-2025, ubuntu-latest]
+        os: [macos-latest, windows-2025, ubuntu-latest]
     runs-on: ${{ matrix.os }}
     # Gates the signed release behind the `release` environment's required
     # reviewers: any write-access user can push a desktop-v* tag, but only
@@ -174,7 +174,7 @@ jobs:
   # Runner is macos-15-intel: macos-13 is deprecated/has no capacity (multi-hour
   # queues), so this leg uses the supported Intel x64 image.
   release-intel:
-    runs-on: blacksmith-6vcpu-macos-15
+    runs-on: macos-15-intel
     environment: release # same approval gate as the matrix release job
     permissions:
       contents: write
@@ -243,7 +243,7 @@ jobs:
   # hashes already-built artifacts, so it needs no per-OS runner.
   publish-feed:
     needs: [release, release-intel]
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     permissions:
       contents: write
     defaults:

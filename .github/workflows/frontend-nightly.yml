@@ -17,7 +17,7 @@ on:
 
 jobs:
   guard:
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     outputs:
       should_build: ${{ steps.check.outputs.should_build }}
       version: ${{ steps.version.outputs.version }}
@@ -54,7 +54,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, blacksmith-4vcpu-windows-2025, ubuntu-latest]
+        os: [macos-latest, windows-2025, ubuntu-latest]
     runs-on: ${{ matrix.os }}
     permissions:
       contents: write
@@ -118,7 +118,7 @@ jobs:
   release-intel:
     needs: guard
     if: needs.guard.outputs.should_build == 'true'
-    runs-on: blacksmith-6vcpu-macos-15
+    runs-on: macos-15-intel
     permissions:
       contents: write
     env:
@@ -192,7 +192,7 @@ jobs:
   # so derive the tag from the guard job's computed version, not package.json.
   publish-feed:
     needs: [guard, release, release-intel]
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     permissions:
       contents: write
     defaults:
