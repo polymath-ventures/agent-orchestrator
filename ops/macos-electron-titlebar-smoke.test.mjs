@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const workflow = readFileSync(".github/workflows/macos-electron-titlebar-smoke.yml", "utf8");
-const smoke = readFileSync("frontend/e2e-electron/titlebar-chrome.spec.ts", "utf8");
+const smoke = readFileSync("frontend/e2e-electron/titlebar-chrome.electron.ts", "utf8");
 const docs = readFileSync("docs/macos-electron-titlebar-smoke.md", "utf8");
 
 test("macOS Electron titlebar smoke stays manual, hosted, and read-only", () => {

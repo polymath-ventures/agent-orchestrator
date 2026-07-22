@@ -6,6 +6,7 @@ import { defineConfig } from "@playwright/test";
 // browser e2e suite and this native smoke never run together by accident.
 export default defineConfig({
 	testDir: "e2e-electron",
+	testMatch: "**/*.electron.ts",
 	outputDir: process.env.AO_MAC_SMOKE_OUTPUT_DIR || "test-results/electron-titlebar-smoke",
 	// Packaging + first-boot daemon startup on a cold CI runner is slow.
 	timeout: 240_000,
