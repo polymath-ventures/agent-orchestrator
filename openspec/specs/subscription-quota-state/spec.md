@@ -1,8 +1,11 @@
 # subscription-quota-state Specification
 
 ## Purpose
+
 TBD - created by archiving change add-usage-telemetry-quota. Update Purpose after archive.
+
 ## Requirements
+
 ### Requirement: Quota signal discovery and snapshots
 
 AO SHALL discover and store quota-window snapshots per subscription
