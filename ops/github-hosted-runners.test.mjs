@@ -2,8 +2,10 @@ import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
-const workflowsDir = ".github/workflows";
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const workflowsDir = path.join(repoRoot, ".github/workflows");
 const workflows = readdirSync(workflowsDir)
 	.filter((name) => name.endsWith(".yml") || name.endsWith(".yaml"))
 	.map((name) => ({
