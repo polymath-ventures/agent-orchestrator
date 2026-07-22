@@ -1,6 +1,7 @@
 package sessionmanager
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"io"
 	"os"
@@ -172,27 +173,7 @@ func LoadRoleRules(cfg RoleRulesConfig) (string, error) {
 		parts = append(parts, rules)
 	}
 	if rel != "" {
-		clean, err := cleanRepoRelative(rel)
-		if err != nil {
-			return "", fail(err)
-		}
-		if strings.TrimSpace(cfg.ProjectPath) == "" {
-			return "", fail(fmt.Errorf("project path is required"))
-		}
-		// os.Root confines every path operation to the project directory,
-		// refusing symlinks and `..` that would escape it — defense in depth
-		// over the lexical check above, and closing the symlink-escape hole.
-		root, err := os.OpenRoot(cfg.ProjectPath)
-		if err != nil {
-			return "", fail(err)
-		}
-		defer func() { _ = root.Close() }()
-		// Open non-blocking, then validate the *opened* handle: O_NONBLOCK keeps
-		// open() from hanging on a FIFO (which blocks until a writer appears), and
-		// checking the type/size via f.Stat() on this same descriptor closes the
-		// Stat-then-Open race — a regular file swapped for a FIFO after a
-		// pre-open stat can no longer reintroduce the hang.
-		f, err := root.OpenFile(clean, rulesFileOpenFlag, 0)
+		f, err := openRoleRulesFile(cfg.ProjectPath, rel)
 		if err != nil {
 			return "", fail(err)
 		}
@@ -222,6 +203,36 @@ func LoadRoleRules(cfg RoleRulesConfig) (string, error) {
 		parts = append(parts, strings.TrimSpace(string(data)))
 	}
 	return strings.Join(parts, "\n\n"), nil
+}
+
+func openRoleRulesFile(projectPath, path string) (*os.File, error) {
+	if filepath.IsAbs(path) {
+		return os.OpenFile(path, rulesFileOpenFlag, 0)
+	}
+	clean, err := cleanRepoRelative(path)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(projectPath) == "" {
+		return nil, fmt.Errorf("project path is required")
+	}
+	// os.Root confines every path operation to the project directory, refusing
+	// symlinks and `..` that would escape it. Absolute/shared policy files are
+	// explicit operator-owned inputs and are intentionally handled above.
+	root, err := os.OpenRoot(projectPath)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = root.Close() }()
+	return root.OpenFile(clean, rulesFileOpenFlag, 0)
+}
+
+func promptPolicyHash(systemPrompt string) string {
+	if strings.TrimSpace(systemPrompt) == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(systemPrompt))
+	return fmt.Sprintf("sha256:%x", sum[:])
 }
 
 // cleanRepoRelative validates that rel is a repo-relative path that does not

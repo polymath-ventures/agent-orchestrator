@@ -157,6 +157,25 @@ func TestLoadRoleRules_MergesInlineAndFileContent(t *testing.T) {
 	}
 }
 
+func TestLoadRoleRules_LoadsAbsoluteFileContent(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "shared-policy.md")
+	if err := os.WriteFile(path, []byte("Shared policy.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := LoadRoleRules(RoleRulesConfig{
+		Role:      "prime",
+		ProjectID: "ao",
+		RulesFile: path,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "Shared policy." {
+		t.Fatalf("rules = %q, want shared policy content", got)
+	}
+}
+
 func TestLoadRoleRules_NoOverrideIsInert(t *testing.T) {
 	got, err := LoadRoleRules(RoleRulesConfig{Role: "orchestrator", ProjectPath: t.TempDir()})
 	if err != nil {

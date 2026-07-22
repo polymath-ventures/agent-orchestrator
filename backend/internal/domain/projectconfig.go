@@ -180,16 +180,16 @@ func (c ProjectConfig) Validate() error {
 			return fmt.Errorf("symlink %q: %w", s, err)
 		}
 	}
-	if err := validateRepoRelative(c.AgentRulesFile); err != nil {
+	if err := validateRoleRulesFilePath(c.AgentRulesFile); err != nil {
 		return fmt.Errorf("agentRulesFile %q: %w", c.AgentRulesFile, err)
 	}
-	if err := validateRepoRelative(c.OrchestratorRulesFile); err != nil {
+	if err := validateRoleRulesFilePath(c.OrchestratorRulesFile); err != nil {
 		return fmt.Errorf("orchestratorRulesFile %q: %w", c.OrchestratorRulesFile, err)
 	}
-	if err := validateRepoRelative(c.ReviewerRulesFile); err != nil {
+	if err := validateRoleRulesFilePath(c.ReviewerRulesFile); err != nil {
 		return fmt.Errorf("reviewerRulesFile %q: %w", c.ReviewerRulesFile, err)
 	}
-	if err := validateRepoRelative(c.PrimeRulesFile); err != nil {
+	if err := validateRoleRulesFilePath(c.PrimeRulesFile); err != nil {
 		return fmt.Errorf("primeRulesFile %q: %w", c.PrimeRulesFile, err)
 	}
 	for i, rv := range c.Reviewers {
@@ -264,4 +264,15 @@ func validateRepoRelative(p string) error {
 		}
 	}
 	return nil
+}
+
+func validateRoleRulesFilePath(p string) error {
+	trimmed := strings.TrimSpace(p)
+	if trimmed == "" {
+		return nil
+	}
+	if filepath.IsAbs(trimmed) || strings.HasPrefix(trimmed, "/") || strings.HasPrefix(trimmed, `\`) {
+		return nil
+	}
+	return validateRepoRelative(trimmed)
 }

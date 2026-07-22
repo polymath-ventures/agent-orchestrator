@@ -2381,7 +2381,8 @@ func TestSpawnWorker_ProjectRulesInSystemPrompt(t *testing.T) {
 	lookPath := func(string) (string, error) { return "/bin/true", nil }
 	m := New(Deps{Runtime: &fakeRuntime{}, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
 
-	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); err != nil {
+	s, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	if err != nil {
 		t.Fatal(err)
 	}
 
@@ -2393,6 +2394,9 @@ func TestSpawnWorker_ProjectRulesInSystemPrompt(t *testing.T) {
 	}
 	if strings.Contains(agent.lastLaunch.Prompt, "Inline rule.") || strings.Contains(agent.lastLaunch.Prompt, "File rule.") {
 		t.Fatalf("project rules must not be in task prompt:\n%s", agent.lastLaunch.Prompt)
+	}
+	if got, want := st.sessions[s.ID].Metadata.PromptPolicyHash, promptPolicyHash(systemPrompt); got != want {
+		t.Fatalf("prompt policy hash = %q, want %q", got, want)
 	}
 }
 

@@ -24,9 +24,9 @@
 
 - [ ] 3.1 Adopt the slim-scaffold prompt pattern for worker, orchestrator, reviewer, and prime where
       prompt assembly is owned by AO.
-- [ ] 3.2 Support intentional absolute/shared role instruction files while preserving fail-closed
+- [x] 3.2 Support intentional absolute/shared role instruction files while preserving fail-closed
       loading and repo-relative confinement for repo policy files.
-- [ ] 3.3 Record per-session injected policy provenance, at least by stable hash, and expose it where
+- [x] 3.3 Record per-session injected policy provenance, at least by stable hash, and expose it where
       session diagnostics need it.
 - [ ] 3.4 Add prime role configuration and prompt-inspector coverage.
 
@@ -42,7 +42,7 @@
 
 - [ ] 5.1 Add regression coverage for status-context literal drift, merge-park vs failed-review
       state, stale PR lookup, malformed review timestamps, and foreground reviewer execution.
-- [ ] 5.2 Add prompt-loader coverage for missing/empty/oversized files, absolute paths, and
+- [x] 5.2 Add prompt-loader coverage for missing/empty/oversized files, absolute paths, and
       TOCTOU-resistant size checks.
 - [ ] 5.3 Run focused backend/frontend tests after each phase and update this task list only when
       behavior is verified.

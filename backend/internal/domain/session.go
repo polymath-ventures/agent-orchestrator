@@ -33,6 +33,9 @@ type SessionMetadata struct {
 	LaunchCommand   string `json:"launchCommand,omitempty"`
 	AgentSessionID  string `json:"agentSessionId,omitempty"`
 	Prompt          string `json:"prompt,omitempty"`
+	// PromptPolicyHash is the stable identity of the assembled system prompt
+	// policy the session received at spawn/restore time.
+	PromptPolicyHash string `json:"promptPolicyHash,omitempty"`
 	// PreviewURL is the browser preview target the desktop app opens for this
 	// session. Set via `ao preview` (POST /sessions/{id}/preview); persisted so
 	// it survives a daemon restart. Empty means no preview has been requested.
