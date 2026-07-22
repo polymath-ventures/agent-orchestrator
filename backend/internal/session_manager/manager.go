@@ -583,16 +583,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		m.markMixCandidateDown(ctx, target.mixSelected, cfg, agentConfig.Effort, err)
 		return domain.SessionRecord{}, fmt.Errorf("spawn %s: launch process: %w", id, err)
 	}
-	// The spawn launched end to end. A success on a candidate that is a
-	// configured mix bucket clears any stale down state for that exact bucket;
-	// MarkRecovered is a no-op when the bucket was healthy.
-	if mix, resolveErr := effectiveWorkerMix(project.Config); resolveErr == nil {
-		if mixHasBucket(mix, cfg.Harness, cfg.Model, agentConfig.Effort) {
-			m.health.MarkRecovered(workerMixCandidate(cfg.Harness, cfg.Model, agentConfig.Effort))
-		} else if requestedHarness != "" && mixHasBucket(mix, cfg.Harness, requestedModel, agentConfig.Effort) {
-			m.health.MarkRecovered(workerMixCandidate(cfg.Harness, requestedModel, agentConfig.Effort))
-		}
-	}
+	m.recoverMixCandidate(project.Config, cfg, requestedHarness, requestedModel, agentConfig.Effort, target.mixSelected)
 	return m.getRecord(ctx, id)
 }
 
@@ -862,7 +853,7 @@ func (m *Manager) selectMixBucket(ctx context.Context, project domain.ProjectID,
 	if err != nil {
 		return domain.WorkerMixEntry{}, err
 	}
-	m.applyWorkerMixSkipped(census)
+	m.applyWorkerMixSkipped(census, mix, explicitModel)
 	entry, ok := mix.Select(census)
 	if !ok {
 		return domain.WorkerMixEntry{}, fmt.Errorf("%w: project %s configures %d bucket(s), none selectable", ErrWorkerMixExhausted, project, len(mix))
@@ -931,7 +922,8 @@ func (m *Manager) mixCensus(ctx context.Context, project domain.ProjectID, mix d
 	return counts, nil
 }
 
-func (m *Manager) applyWorkerMixSkipped(counts map[domain.BucketKey]int) {
+func (m *Manager) applyWorkerMixSkipped(counts map[domain.BucketKey]int, mix domain.WorkerMix, explicitModel string) {
+	explicitModel = strings.TrimSpace(explicitModel)
 	m.health.ForEachSkipped(func(c candidatehealth.Candidate, skipped int) {
 		if c.Surface != candidateSurfaceWorkerMix {
 			return
@@ -941,8 +933,34 @@ func (m *Manager) applyWorkerMixSkipped(counts map[domain.BucketKey]int) {
 			Model:   strings.TrimSpace(c.Model),
 			Effort:  domain.NormalizeEffortForHarness(domain.AgentHarness(c.Harness), domain.Effort(c.Effort)),
 		}
-		counts[key] += skipped
+		if _, inMix := counts[key]; inMix {
+			counts[key] += skipped
+			return
+		}
+		if explicitModel == "" || key.Model != explicitModel {
+			return
+		}
+		if bucket, ok := workerMixBucketForOverlaySkip(mix, key); ok {
+			counts[bucket] += skipped
+		}
 	})
+}
+
+func workerMixBucketForOverlaySkip(mix domain.WorkerMix, overlay domain.BucketKey) (domain.BucketKey, bool) {
+	var match domain.BucketKey
+	matched := false
+	for _, entry := range mix {
+		bucket := entry.BucketKey()
+		if bucket.Harness != overlay.Harness || bucket.Effort != overlay.Effort {
+			continue
+		}
+		if matched {
+			return domain.BucketKey{}, false
+		}
+		match = bucket
+		matched = true
+	}
+	return match, matched
 }
 
 func bucketKeyString(key domain.BucketKey) string {
@@ -1002,6 +1020,21 @@ func (m *Manager) markMixCandidateDown(ctx context.Context, mixSelected bool, cf
 		return
 	}
 	m.health.MarkDownForAttempt(ctx, workerMixCandidate(cfg.Harness, cfg.Model, effort), err)
+}
+
+func (m *Manager) recoverMixCandidate(projectConfig domain.ProjectConfig, cfg ports.SpawnConfig, requestedHarness domain.AgentHarness, requestedModel string, effort domain.Effort, mixSelected bool) {
+	if mixSelected || requestedHarness != "" {
+		m.health.MarkRecovered(workerMixCandidate(cfg.Harness, cfg.Model, effort))
+	}
+	mix, err := effectiveWorkerMix(projectConfig)
+	if err != nil {
+		return
+	}
+	if mixHasBucket(mix, cfg.Harness, cfg.Model, effort) {
+		m.health.MarkRecovered(workerMixCandidate(cfg.Harness, cfg.Model, effort))
+	} else if requestedHarness != "" && mixHasBucket(mix, cfg.Harness, requestedModel, effort) {
+		m.health.MarkRecovered(workerMixCandidate(cfg.Harness, requestedModel, effort))
+	}
 }
 
 // mixHasBucket reports whether the exact normalized native tuple is a

@@ -341,6 +341,45 @@ func TestSpawn_ModelOnlyFailureMarksExplicitModelCandidateDown(t *testing.T) {
 	if !errors.Is(err, ErrWorkerMixExhausted) {
 		t.Fatalf("repeat explicit-model spawn err = %v, want ErrWorkerMixExhausted for the all-down overlaid mix", err)
 	}
+
+	_, err = m.Spawn(ctx, ports.SpawnConfig{
+		ProjectID: "mer", Kind: domain.KindWorker, Harness: domain.HarnessCodex, Model: "gpt-5.5-codex",
+	})
+	if err != nil {
+		t.Fatalf("pinned exact overlay recovery spawn: %v", err)
+	}
+	if tr.IsDown(actual) {
+		t.Fatal("successful exact overlay spawn did not recover the explicit model candidate")
+	}
+	_, err = m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Model: "gpt-5.5-codex"})
+	if err != nil {
+		t.Fatalf("model-only spawn after recovery: %v", err)
+	}
+}
+
+func TestSpawn_ModelOnlyDownOverlayDebitSelectsHealthyBucket(t *testing.T) {
+	tr := candidatehealth.New(candidatehealth.Config{Source: "session_manager"})
+	m, rt, _ := healthMixManager(t, domain.ProjectConfig{
+		WorkerMix: domain.WorkerMix{
+			{Harness: domain.HarnessClaudeCode, Model: "configured-claude-model", Weight: 50},
+			{Harness: domain.HarnessCodex, Model: "configured-codex-model", Weight: 50},
+		},
+	}, tr, nil)
+	rt.createErr = errors.New("runtime refused explicit model")
+
+	_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Model: "explicit-overlay-model"})
+	if err == nil {
+		t.Fatal("expected first explicit-overlay launch failure")
+	}
+	rt.createErr = nil
+
+	rec, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Model: "explicit-overlay-model"})
+	if err != nil {
+		t.Fatalf("second explicit-overlay spawn: %v", err)
+	}
+	if rec.Harness != domain.HarnessCodex {
+		t.Fatalf("second explicit-overlay harness = %q, want codex after claude overlay debit", rec.Harness)
+	}
 }
 
 // A successful spawn on a bucket's exact identity recovers a previously-down
