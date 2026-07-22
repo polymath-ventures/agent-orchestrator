@@ -5,7 +5,7 @@ chrome that only exists inside the real macOS Electron window:
 
 - the preload bridge (`window.ao`) is present;
 - the Electron-only `.titlebar-nav` cluster renders;
-- Electron's native window-button position is available;
+- native traffic-light geometry is available through System Events accessibility;
 - the renderer cluster clears the measured macOS traffic-light lane with the
   intended group gap;
 - renderer and best-effort whole-desktop screenshots plus `geometry.json` are
@@ -25,6 +25,30 @@ requests and has only `contents: read` permission.
 
 Use the full head SHA when verifying a merge-ready PR so the result is pinned to
 the exact reviewed commit.
+
+## Harness and target are separate
+
+The workflow checks out the smoke harness from the same revision that supplied
+the workflow (`github.sha`) into `harness/`, and the requested `ref` into
+`target/`. Packaging runs from `target/frontend`, while Playwright runs from
+`harness/frontend`. This lets a workflow fix be tested on its branch before
+merge; after merge, the workflow and harness both come from `main`.
+
+This separation is intentional: the target ref may predate this workflow and
+therefore may not contain `test:electron-titlebar` or the native smoke files.
+The target app is still built entirely from the requested ref; only the test
+harness comes from the workflow's own revision.
+
+Every run writes `dispatch.json` before installing or packaging. It records the
+harness SHA, requested ref, and resolved target SHA, so the always-uploaded
+artifact identifies exactly what was attempted even on an early failure.
+
+The uploaded evidence directory is separate from Playwright's own output
+directory. Native launch failures include `direct-app-stdout.log`,
+`direct-app-stderr.log`, `direct-app-modal.txt`, `direct-app-sample.txt`, and
+`direct-app-unified.log`; Playwright retains its trace when it starts. Electron
+cleanup is bounded so a failed launch cannot hold the runner until the job
+timeout.
 
 ## Why the app is staged in `/Applications`
 

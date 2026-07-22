@@ -1,4 +1,4 @@
-import { _electron as electron, expect, test } from "@playwright/test";
+import { chromium, expect, test } from "@playwright/test";
 import { execFile } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -8,8 +8,6 @@ const execFileAsync = promisify(execFile);
 
 // main.ts sets trafficLightPosition.x=14. The three native controls occupy the
 // measured x=14..66 lane documented beside .titlebar-nav in styles.css.
-const NATIVE_BUTTON_LANE_WIDTH = 52;
-const NATIVE_BUTTON_LANE_HEIGHT = 16;
 const EXPECTED_GROUP_GAP = { min: 10, max: 16 }; // intended value: 13px
 
 test.skip(process.platform !== "darwin", "macOS native window-button smoke");
@@ -22,20 +20,14 @@ test("macOS Electron titlebar cluster clears the native traffic lights", async (
 	}
 
 	await mkdir(outputDir, { recursive: true });
-	const executablePath = path.join(appPath, "Contents", "MacOS", "agent-orchestrator");
-	const dataDir = path.join(process.env.RUNNER_TEMP || outputDir, `ao-titlebar-smoke-data-${process.pid}`);
-
-	const electronApp = await electron.launch({
-		executablePath,
-		env: {
-			...process.env,
-			AO_DATA_DIR: dataDir,
-			AO_RUN_FILE: path.join(dataDir, "running.json"),
-		},
-	});
+	const cdpUrl = process.env.AO_MAC_SMOKE_CDP_URL;
+	const appPid = Number(process.env.AO_MAC_SMOKE_APP_PID);
+	if (!cdpUrl || !appPid) throw new Error("AO_MAC_SMOKE_CDP_URL and AO_MAC_SMOKE_APP_PID are required");
+	const browser = await chromium.connectOverCDP(cdpUrl);
 
 	try {
-		const appWindow = await electronApp.firstWindow();
+		const appWindow = browser.contexts().flatMap((context) => context.pages())[0];
+		expect(appWindow, "packaged app must expose a renderer page over CDP").toBeTruthy();
 		await appWindow.waitForLoadState("domcontentloaded");
 
 		const readEnvironment = () =>
@@ -55,17 +47,42 @@ test("macOS Electron titlebar cluster clears the native traffic lights", async (
 		const clusterBox = await cluster.boundingBox();
 		expect(clusterBox, "TitlebarNav must have measurable renderer geometry").not.toBeNull();
 
-		const nativePosition = await electronApp.evaluate(({ BrowserWindow }) => {
-			const mainWindow = BrowserWindow.getAllWindows()[0];
-			return mainWindow?.getWindowButtonPosition() ?? null;
-		});
-		expect(nativePosition, "macOS BrowserWindow must expose native window-button position").not.toBeNull();
+		// System Events AXPosition is in global screen coordinates for every
+		// element, while Playwright boundingBox() is window/viewport-local. Read
+		// the owning window's AX origin and translate the button positions into
+		// window-local space so the two measurements share a frame regardless of
+		// where the compositor placed the window. Pick the window that actually
+		// exposes the traffic-light buttons rather than assuming index 0.
+		const { stdout: nativeMeasurementJson } = await execFileAsync("/usr/bin/osascript", [
+			"-l",
+			"JavaScript",
+			"-e",
+			`const se=Application('System Events');const p=se.processes.whose({unixId:${appPid}})[0];const wins=p.windows();const btns=w=>{try{return w.buttons()}catch(e){return[]}};const win=wins.find(w=>btns(w).some(b=>/close|minimize|zoom|full.?screen/i.test(b.description())))||wins[0];const wp=win.position();JSON.stringify({window:{position:wp,size:win.size()},buttons:btns(win).map(b=>({description:b.description(),position:[b.position()[0]-wp[0],b.position()[1]-wp[1]],size:b.size()}))})`,
+		]);
+		const nativeMeasurement = JSON.parse(nativeMeasurementJson) as {
+			window: { position: [number, number]; size: [number, number] };
+			buttons: Array<{
+				description: string;
+				position: [number, number];
+				size: [number, number];
+			}>;
+		};
+		const nativeButtons = nativeMeasurement.buttons;
+		await writeFile(path.join(outputDir, "native-buttons.json"), `${JSON.stringify(nativeMeasurement, null, 2)}\n`);
+		const windowButtons = nativeButtons.filter((button) =>
+			/close|minimize|zoom|full.?screen/i.test(button.description),
+		);
+		expect(windowButtons.length, "macOS accessibility must expose native window buttons").toBeGreaterThanOrEqual(3);
+		const nativePosition = {
+			x: Math.min(...windowButtons.map((button) => button.position[0])),
+			y: Math.min(...windowButtons.map((button) => button.position[1])),
+		};
 
 		const nativeButtonLane = {
 			left: nativePosition!.x,
-			right: nativePosition!.x + NATIVE_BUTTON_LANE_WIDTH,
-			top: nativePosition!.y,
-			bottom: nativePosition!.y + NATIVE_BUTTON_LANE_HEIGHT,
+			right: Math.max(...windowButtons.map((button) => button.position[0] + button.size[0])),
+			top: nativePosition.y,
+			bottom: Math.max(...windowButtons.map((button) => button.position[1] + button.size[1])),
 		};
 		const gap = clusterBox!.x - nativeButtonLane.right;
 
@@ -96,11 +113,12 @@ test("macOS Electron titlebar cluster clears the native traffic lights", async (
 			`${JSON.stringify(
 				{
 					appPath,
-					executablePath,
 					platform: process.platform,
 					arch: process.arch,
 					environment,
+					nativeWindow: nativeMeasurement.window,
 					nativePosition,
+					nativeButtons,
 					nativeButtonLane,
 					clusterBox,
 					gap,
@@ -114,6 +132,6 @@ test("macOS Electron titlebar cluster clears the native traffic lights", async (
 			)}\n`,
 		);
 	} finally {
-		await electronApp.close();
+		await browser.close();
 	}
 });

@@ -2,8 +2,8 @@ name: macOS Electron titlebar smoke
 
 # Manual-only native smoke for GH #76 / the Electron-only chrome boundary from
 # GH #54. This packages and launches the REAL macOS Electron app, measures the
-# renderer TitlebarNav against BrowserWindow.getWindowButtonPosition(), and
-# uploads the renderer screenshot + geometry JSON.
+# renderer TitlebarNav against native traffic-light geometry read via System
+# Events accessibility, and uploads the renderer screenshot + geometry JSON.
 #
 # Dispatch from Actions → "macOS Electron titlebar smoke" and provide a branch
 # or full commit SHA in `ref` (for example, the head SHA of a merge-ready PR).
@@ -25,37 +25,82 @@ jobs:
     # Standard GitHub-hosted macOS runners are free for public repositories.
     runs-on: macos-15
     timeout-minutes: 30
-    defaults:
-      run:
-        working-directory: frontend
     steps:
-      - name: Check out requested ref
+      - name: Check out merged smoke harness
+        uses: actions/checkout@v4
+        with:
+          # Match the harness to the workflow revision being invoked. On a
+          # pre-merge branch test this is that branch head; after merge it is
+          # the selected default-branch revision.
+          ref: ${{ github.sha }}
+          path: harness
+
+      - name: Check out requested target ref
         uses: actions/checkout@v4
         with:
           ref: ${{ inputs.ref }}
+          path: target
 
       - uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: npm
-          cache-dependency-path: frontend/package-lock.json
+          cache-dependency-path: |
+            harness/frontend/package-lock.json
+            target/frontend/package-lock.json
 
       - uses: actions/setup-go@v5
         with:
-          go-version-file: backend/go.mod
-          cache-dependency-path: backend/go.sum
+          go-version-file: target/backend/go.mod
+          cache-dependency-path: target/backend/go.sum
 
-      - name: Install frontend dependencies
+      - name: Record dispatch metadata
+        shell: bash
+        env:
+          TARGET_REF: ${{ inputs.ref }}
+        run: |
+          set -euo pipefail
+          output_dir="$RUNNER_TEMP/electron-titlebar-smoke"
+          mkdir -p "$output_dir"
+          harness_sha="$(git -C harness rev-parse HEAD)"
+          target_sha="$(git -C target rev-parse HEAD)"
+          python3 - "$output_dir/dispatch.json" "$harness_sha" "$target_sha" <<'PY'
+          import json
+          import os
+          import sys
+
+          path, harness_sha, target_sha = sys.argv[1:]
+          with open(path, "w", encoding="utf-8") as handle:
+              json.dump(
+                  {
+                      "harnessSha": harness_sha,
+                      "targetRef": os.environ["TARGET_REF"],
+                      "targetSha": target_sha,
+                  },
+                  handle,
+                  indent=2,
+              )
+              handle.write("\n")
+          PY
+          echo "AO_MAC_SMOKE_OUTPUT_DIR=$output_dir" >> "$GITHUB_ENV"
+
+      - name: Install target frontend dependencies
+        working-directory: target/frontend
+        run: npm ci
+
+      - name: Install smoke harness dependencies
+        working-directory: harness/frontend
         run: npm ci
 
       - name: Package unsigned macOS Electron app
+        working-directory: target/frontend
         run: npm run package
 
       - name: Stage app in Applications
         shell: bash
         run: |
           set -euo pipefail
-          packaged_app="$(find out -type d -name 'Agent Orchestrator.app' -print -quit)"
+          packaged_app="$(find target/frontend/out -type d -name 'Agent Orchestrator.app' -print -quit)"
           if [[ -z "$packaged_app" ]]; then
             echo "::error::electron-forge package did not produce Agent Orchestrator.app"
             exit 1
@@ -67,10 +112,112 @@ jobs:
           sudo chown -R "$(id -un):$(id -gn)" "$smoke_app"
 
           echo "AO_MAC_SMOKE_APP_PATH=$smoke_app" >> "$GITHUB_ENV"
-          echo "AO_MAC_SMOKE_OUTPUT_DIR=$RUNNER_TEMP/electron-titlebar-smoke" >> "$GITHUB_ENV"
+
+      - name: Diagnose direct packaged-app launch
+        shell: bash
+        run: |
+          # Diagnostic only: never fail or hang the job. Launch the packaged app
+          # with Chromium remote debugging and ask its own DevTools endpoint
+          # whether any window/page target exists — independent of Playwright.
+          set +e
+          mkdir -p "$HOME/.ao/electron" "$AO_MAC_SMOKE_OUTPUT_DIR"
+          executable="$AO_MAC_SMOKE_APP_PATH/Contents/MacOS/agent-orchestrator"
+          process_pattern="^${executable}( |$)"
+          open -n \
+            --stdout "$AO_MAC_SMOKE_OUTPUT_DIR/direct-app-stdout.log" \
+            --stderr "$AO_MAC_SMOKE_OUTPUT_DIR/direct-app-stderr.log" \
+            "$AO_MAC_SMOKE_APP_PATH" --args \
+            --remote-debugging-port=9222 --enable-logging=stderr --v=1
+
+          bundle_id="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' \
+            "$AO_MAC_SMOKE_APP_PATH/Contents/Info.plist")"
+          app_pid=""
+          for _ in $(seq 1 20); do
+            app_pid="$(osascript - "$bundle_id" <<'APPLESCRIPT'
+          on run argv
+            set bundleId to item 1 of argv
+            tell application "System Events"
+              try
+                return unix id of first application process whose bundle identifier is bundleId
+              on error
+                return ""
+              end try
+            end tell
+          end run
+          APPLESCRIPT
+          )"
+            [[ "$app_pid" =~ ^[0-9]+$ ]] && break
+            sleep 1
+          done
+          printf '%s\n' "$app_pid" > "$AO_MAC_SMOKE_OUTPUT_DIR/direct-app.pid"
+          if [[ ! "$app_pid" =~ ^[0-9]+$ ]]; then
+            echo "AO_MAC_SMOKE_NO_DIRECT_TARGET=1" >> "$GITHUB_ENV"
+            exit 0
+          fi
+          sleep 3
+          osascript - "$app_pid" \
+            > "$AO_MAC_SMOKE_OUTPUT_DIR/direct-app-modal.txt" 2>&1 <<'APPLESCRIPT'
+          on run argv
+            set appPid to (item 1 of argv) as integer
+            tell application "System Events"
+              set appProcess to first application process whose unix id is appPid
+              set modalDescription to "windows=" & (name of windows of appProcess as text)
+              repeat with appWindow in windows of appProcess
+                try
+                  set modalDescription to modalDescription & "; buttons=" & (name of buttons of appWindow as text)
+                end try
+              end repeat
+              tell appProcess to key code 53
+              return modalDescription
+            end tell
+          end run
+          APPLESCRIPT
+          for _ in $(seq 1 10); do
+            sleep 2
+            if curl -sS --max-time 5 http://127.0.0.1:9222/json/list \
+              -o "$AO_MAC_SMOKE_OUTPUT_DIR/direct-app-targets.json"; then
+              grep -q '"type": *"page"' "$AO_MAC_SMOKE_OUTPUT_DIR/direct-app-targets.json" && break
+            fi
+          done
+          curl -sS --max-time 5 http://127.0.0.1:9222/json/version \
+            -o "$AO_MAC_SMOKE_OUTPUT_DIR/direct-app-cdp-version.json"
+          ps -p "$app_pid" -o pid,ppid,state,etime,command \
+            > "$AO_MAC_SMOKE_OUTPUT_DIR/direct-app-ps.txt"
+          sample "$app_pid" 5 -file "$AO_MAC_SMOKE_OUTPUT_DIR/direct-app-sample.txt"
+          log show --last 2m --style compact \
+            --predicate "process == 'agent-orchestrator'" \
+            > "$AO_MAC_SMOKE_OUTPUT_DIR/direct-app-unified.log"
+          if ! grep -q '"type": *"page"' "$AO_MAC_SMOKE_OUTPUT_DIR/direct-app-targets.json"; then
+            echo "AO_MAC_SMOKE_NO_DIRECT_TARGET=1" >> "$GITHUB_ENV"
+            pkill -TERM -f "$process_pattern" 2>/dev/null
+            sleep 3
+            pkill -KILL -f "$process_pattern" 2>/dev/null
+          else
+            echo "AO_MAC_SMOKE_CDP_URL=http://127.0.0.1:9222" >> "$GITHUB_ENV"
+            echo "AO_MAC_SMOKE_APP_PID=$app_pid" >> "$GITHUB_ENV"
+          fi
+          exit 0
 
       - name: Run native Electron titlebar smoke
-        run: npm run test:electron-titlebar
+        if: env.AO_MAC_SMOKE_NO_DIRECT_TARGET != '1'
+        working-directory: harness/frontend
+        env:
+          DEBUG: pw:browser*
+        shell: bash
+        run: |
+          npm run test:electron-titlebar
+
+      - name: Stop staged app
+        if: always()
+        shell: bash
+        run: |
+          if [[ -n "${AO_MAC_SMOKE_APP_PATH:-}" ]]; then
+            executable="$AO_MAC_SMOKE_APP_PATH/Contents/MacOS/agent-orchestrator"
+            process_pattern="^${executable}( |$)"
+            pkill -TERM -f "$process_pattern" 2>/dev/null || true
+            sleep 3
+            pkill -KILL -f "$process_pattern" 2>/dev/null || true
+          fi
 
       - name: Upload smoke evidence
         if: always()
@@ -84,8 +231,13 @@ jobs:
       - name: Remove staged app
         if: always()
         shell: bash
-        working-directory: .
         run: |
           if [[ -n "${AO_MAC_SMOKE_APP_PATH:-}" ]]; then
             sudo rm -rf "$AO_MAC_SMOKE_APP_PATH"
           fi
+
+      - name: Fail when packaged app creates no page target
+        if: env.AO_MAC_SMOKE_NO_DIRECT_TARGET == '1'
+        run: |
+          echo "::error::Packaged app created no Chromium page target; inspect direct-app-sample.txt and logs."
+          exit 1
