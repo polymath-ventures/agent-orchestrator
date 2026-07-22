@@ -35,7 +35,7 @@ from `target/frontend`, while Playwright runs from `harness/frontend`.
 This separation is intentional: the target ref may predate this workflow and
 therefore may not contain `test:electron-titlebar` or the native smoke files.
 The target app is still built entirely from the requested ref; only the test
-harness comes from current `main`.
+harness comes from the repository's current default branch.
 
 Every run writes `dispatch.json` before installing or packaging. It records the
 harness SHA, requested ref, and resolved target SHA, so the always-uploaded
