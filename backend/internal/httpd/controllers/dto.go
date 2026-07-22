@@ -543,7 +543,7 @@ type RefreshAgentsResponse = agentsvc.Inventory
 // ProbeAgentResponse is the body of POST /api/v1/agents/{agent}/probe.
 type ProbeAgentResponse = agentsvc.ProbeResult
 
-// ListAgentModelsQuery is the query string accepted by GET /agents/models.
+// ListAgentModelsQuery is the query string accepted by GET /api/v1/agents/models.
 type ListAgentModelsQuery struct {
 	Force bool `query:"force,omitempty" description:"Bypass the five-minute request cache and refresh native harness catalogs."`
 }
