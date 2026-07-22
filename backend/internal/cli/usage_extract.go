@@ -321,6 +321,9 @@ func (r codexRateLimits) snapshot(name string, win *codexRateWindow, observedAt 
 	if math.IsNaN(minutes) || math.IsInf(minutes, 0) || minutes <= 0 {
 		return domain.QuotaSnapshot{}, false
 	}
+	if *win.ResetsAt <= 0 {
+		return domain.QuotaSnapshot{}, false
+	}
 	reset := time.Unix(*win.ResetsAt, 0).UTC()
 	if reset.IsZero() {
 		return domain.QuotaSnapshot{}, false

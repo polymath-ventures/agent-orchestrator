@@ -372,7 +372,8 @@ func TestUsageExtract_CodexQuotaSnapshotsIgnoreInvalidRateLimits(t *testing.T) {
 	cwd := t.TempDir()
 	path := writeCodexRollout(t, codexHome, "rollout-a.jsonl", cwd, "", [][3]int{{100, 20, 120}})
 	writeFile(t, path, `{"type":"session_meta","payload":{"session_id":"sess","cwd":`+jsonQuote(cwd)+`}}`+"\n"+
-		`{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":150,"output_tokens":50,"total_tokens":200}},"rate_limits":{"limit_id":"codex","primary":{"used_percent":120,"window_minutes":10080,"resets_at":1785277078},"secondary":{"used_percent":50,"window_minutes":0,"resets_at":1784680000}}}}`+"\n")
+		`{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":150,"output_tokens":50,"total_tokens":200}},"rate_limits":{"limit_id":"codex","primary":{"used_percent":120,"window_minutes":10080,"resets_at":1785277078},"secondary":{"used_percent":50,"window_minutes":0,"resets_at":1784680000}}}}`+"\n"+
+		`{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":151,"output_tokens":51,"total_tokens":202}},"rate_limits":{"limit_id":"codex","primary":{"used_percent":50,"window_minutes":10080,"resets_at":0}}}}`+"\n")
 
 	e := &usageExtractor{codexHome: codexHome, cwd: cwd}
 	if got := e.codexQuotaSnapshots(time.Unix(200, 0).UTC()); len(got) != 0 {

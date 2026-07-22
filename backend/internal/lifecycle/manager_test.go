@@ -191,6 +191,41 @@ func TestActivity_SameStateSignalStillStoresAgentSessionID(t *testing.T) {
 	}
 }
 
+func TestActivity_SameStateMetadataSignalPersistsQuotaSnapshots(t *testing.T) {
+	st := newFakeStore()
+	m := New(st, nil)
+	now := time.Unix(200, 0).UTC()
+	m.clock = func() time.Time { return now }
+	rec := working("mer-1")
+	rec.Harness = domain.HarnessCodex
+	rec.FirstSignalAt = now.Add(-time.Minute)
+	st.sessions["mer-1"] = rec
+	used, remaining, limit := 92.0, 8.0, 100.0
+
+	err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{
+		Valid:          true,
+		State:          rec.Activity.State,
+		AgentSessionID: "native-session-1",
+		Quotas: []domain.QuotaSnapshot{{
+			WindowName:    "primary",
+			Used:          &used,
+			Remaining:     &remaining,
+			Limit:         &limit,
+			SignalQuality: domain.QuotaSignalExact,
+			Source:        "codex rollout token_count.rate_limits",
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(st.quotas) != 1 {
+		t.Fatalf("quotas = %+v, want one persisted snapshot", st.quotas)
+	}
+	if got := st.quotas[0]; got.Harness != domain.HarnessCodex || got.WindowName != "primary" || !got.ObservedAt.Equal(now) {
+		t.Fatalf("quota snapshot was not normalized/persisted correctly: %+v", got)
+	}
+}
+
 func TestActivity_BlankAgentSessionIDDoesNotOverwriteMetadata(t *testing.T) {
 	m, st, _ := newManager()
 	rec := working("mer-1")

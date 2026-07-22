@@ -221,6 +221,11 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 			rec.UpdatedAt = now
 			err := m.store.UpdateSession(ctx, rec)
 			m.mu.Unlock()
+			if err == nil {
+				if quotaErr := m.persistQuotaSnapshots(ctx, quotas); quotaErr != nil {
+					return quotaErr
+				}
+			}
 			if err == nil && hasUsageEvent {
 				m.emitTelemetry(ctx, usageEvent)
 			}
