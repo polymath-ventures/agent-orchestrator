@@ -23,9 +23,11 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/notify"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	"github.com/aoagents/agent-orchestrator/backend/internal/preview"
+	"github.com/aoagents/agent-orchestrator/backend/internal/push"
 	"github.com/aoagents/agent-orchestrator/backend/internal/roleprompt"
 	"github.com/aoagents/agent-orchestrator/backend/internal/runfile"
 	agentsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/agent"
+	devimportsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/devimport"
 	importsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/importer"
 	notificationsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/notification"
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
@@ -159,6 +161,32 @@ func Run() error {
 	}
 	mc := &controllers.MobileController{Bridge: bs}
 
+	// Push-device registry: persisted phones that receive OS push notifications.
+	// A load failure must not block boot — degrade to no push rather than refusing
+	// to start the daemon. pushRegistry (interface) is assigned only when load
+	// succeeds so a failure leaves a true nil interface (not a non-nil interface
+	// wrapping a nil pointer), which the controller's nil guard relies on to
+	// return 501. pushDevices keeps the concrete registry for the dispatcher.
+	var (
+		pushRegistry controllers.PushRegistry
+		pushDevices  *mobilebridge.DeviceRegistry
+	)
+	if reg, regErr := mobilebridge.LoadRegistry(mobilebridge.PushDevicesPath(cfg.DataDir)); regErr != nil {
+		log.Warn("load push device registry failed; push notifications disabled", "err", regErr)
+	} else {
+		pushRegistry = reg
+		pushDevices = reg
+	}
+
+	// Push dispatcher: an additive notification-hub subscriber that relays each
+	// new notification to every registered device via the Expo Push Service. Runs
+	// for the daemon's lifetime and stops when ctx is cancelled. EXPO_ACCESS_TOKEN
+	// (optional) enables Expo's enforced push security when set.
+	if pushDevices != nil {
+		dispatcher := push.NewDispatcher(notificationHub, pushDevices, push.NewExpoClient(os.Getenv("EXPO_ACCESS_TOKEN")), log)
+		go dispatcher.Run(ctx)
+	}
+
 	srv, err := httpd.NewWithDeps(cfg, log, termMgr, httpd.APIDeps{
 		Projects:           projectsvc.NewWithDeps(projectsvc.Deps{Store: store, Sessions: sessionSvc, ModelHealth: modelHealthView, ModelValidator: agentSvc, DefaultHarness: domain.AgentHarness(cfg.Agent), Telemetry: telemetrySink, Logger: log}),
 		RolePrompt:         roleprompt.New(sessMgr, store),
@@ -171,12 +199,20 @@ func Run() error {
 		Notifications:      notifier,
 		NotificationStream: notificationHub,
 		Metrics:            metricsProvider(metricsObserver),
+		Push:               pushRegistry,
 		Import:             importsvc.New(importsvc.Deps{Store: store}),
-		CDC:                store,
-		Events:             cdcPipe.Broadcaster,
-		Activity:           lcStack.LCM,
-		Telemetry:          telemetrySink,
-		Mobile:             mc,
+		DevImport: devimportsvc.New(devimportsvc.Deps{
+			Store:         store,
+			TargetDataDir: cfg.DataDir,
+			OpenSource: func(ctx context.Context, dataDir string) (devimportsvc.SourceStore, error) {
+				return sqlite.OpenReadOnly(ctx, dataDir)
+			},
+		}),
+		CDC:       store,
+		Events:    cdcPipe.Broadcaster,
+		Activity:  lcStack.LCM,
+		Telemetry: telemetrySink,
+		Mobile:    mc,
 	})
 	if err != nil {
 		stop()

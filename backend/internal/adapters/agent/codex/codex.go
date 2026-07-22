@@ -14,7 +14,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -22,6 +21,7 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/agentbase"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/binaryutil"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
@@ -131,6 +131,22 @@ func (p *Plugin) Manifest() adapters.Manifest {
 			adapters.CapabilityAgent,
 		},
 	}
+}
+
+// GetConfigSpec reports the per-project agent config keys Codex understands.
+func (p *Plugin) GetConfigSpec(ctx context.Context) (ports.ConfigSpec, error) {
+	if err := ctx.Err(); err != nil {
+		return ports.ConfigSpec{}, err
+	}
+	return ports.ConfigSpec{
+		Fields: []ports.ConfigField{
+			{
+				Key:         "model",
+				Type:        ports.ConfigFieldString,
+				Description: "Model override passed to `codex --model`.",
+			},
+		},
+	}, nil
 }
 
 // GetLaunchCommand builds the argv to start a new Codex session, applying the
@@ -499,9 +515,15 @@ func ResolveAgentBinary(ctx context.Context, binaryName string) (string, error) 
 	if home, err := os.UserHomeDir(); err == nil {
 		candidates = append(candidates,
 			filepath.Join(home, ".cargo", "bin", binaryName),
+			filepath.Join(home, ".local", "bin", binaryName),
+			filepath.Join(home, ".npm-global", "bin", binaryName),
 			filepath.Join(home, ".npm", "bin", binaryName),
 		)
-		candidates = append(candidates, nvmNodeBinCandidates(home, binaryName)...)
+		nodeManagerCandidates, err := binaryutil.UnixNodeManagerBinCandidates(ctx, home, binaryName)
+		if err != nil {
+			return "", err
+		}
+		candidates = append(candidates, nodeManagerCandidates...)
 	}
 
 	for _, candidate := range candidates {
@@ -516,14 +538,6 @@ func ResolveAgentBinary(ctx context.Context, binaryName string) (string, error) 
 	return "", fmt.Errorf("%s: %w", binaryName, ports.ErrAgentBinaryNotFound)
 }
 
-func nvmNodeBinCandidates(home, binary string) []string {
-	matches, err := filepath.Glob(filepath.Join(home, ".nvm", "versions", "node", "*", "bin", binary))
-	if err != nil || len(matches) == 0 {
-		return nil
-	}
-	sort.Sort(sort.Reverse(sort.StringSlice(matches)))
-	return matches
-}
 func resolveNativeWindowsCodex(path string) string {
 	if runtime.GOOS != "windows" || !strings.EqualFold(filepath.Ext(path), ".cmd") {
 		return path

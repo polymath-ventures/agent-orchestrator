@@ -89,6 +89,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/dev/import-projects": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Run the developer project-registry import through the daemon store */
+        post: operations["runDevImportProjects"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/events": {
         parameters: {
             query?: never;
@@ -513,6 +530,40 @@ export interface paths {
         /** Resolve review threads on a pull request */
         post: operations["resolveComments"];
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/push/devices": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Register (upsert) a phone's Expo push token */
+        post: operations["registerPushDevice"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/push/devices/{token}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Unregister a phone's Expo push token */
+        delete: operations["unregisterPushDevice"];
         options?: never;
         head?: never;
         patch?: never;
@@ -973,6 +1024,29 @@ export interface components {
             path: string;
             resolveError: string;
         };
+        DevImportProjectsConflict: {
+            path: string;
+            projectId: string;
+            reason: string;
+            targetId?: string;
+            targetPath?: string;
+        };
+        DevImportProjectsReport: {
+            conflicts?: components["schemas"]["DevImportProjectsConflict"][];
+            dryRun: boolean;
+            inserted: number;
+            skipped: number;
+            sourceDataDir: string;
+            targetDataDir: string;
+            updated: number;
+        };
+        DevImportProjectsRequest: {
+            dryRun: boolean;
+            sourceDataDir: string;
+        };
+        DevImportProjectsResponse: {
+            report: components["schemas"]["DevImportProjectsReport"];
+        };
         DomainActivity: {
             /** Format: date-time */
             lastActivityAt: string;
@@ -1245,6 +1319,18 @@ export interface components {
             resolveError?: string;
             sessionPrefix: string;
         };
+        PushDeviceEnvelope: {
+            device: components["schemas"]["PushDeviceResponse"];
+        };
+        PushDeviceResponse: {
+            /** Format: date-time */
+            createdAt: string;
+            deviceName?: string;
+            /** Format: date-time */
+            lastSeenAt: string;
+            platform?: string;
+            token: string;
+        };
         QuotaSnapshot: {
             accountId: string;
             basis?: string;
@@ -1262,6 +1348,17 @@ export interface components {
             windowEnd?: string;
             /** Format: date-time */
             windowStart?: string;
+        };
+        RegisterPushDeviceRequest: {
+            /** @description Human-friendly device label. */
+            deviceName?: string;
+            /**
+             * @description Device platform.
+             * @enum {string}
+             */
+            platform?: "ios" | "android";
+            /** @description Expo push token, e.g. ExponentPushToken[...]. */
+            token: string;
         };
         RemoveProjectResult: {
             projectId: string;
@@ -1511,6 +1608,10 @@ export interface components {
             reviewerHandleId: string;
             reviews: components["schemas"]["PRReviewState"][];
         };
+        UnregisterPushDeviceResponse: {
+            deleted: boolean;
+            token: string;
+        };
         WorkerMix: components["schemas"]["WorkerMixEntry"][];
         WorkerMixEntry: {
             agent: string;
@@ -1741,6 +1842,57 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ListAgentsResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    runDevImportProjects: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DevImportProjectsRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DevImportProjectsResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
                 };
             };
             /** @description Internal Server Error */
@@ -3010,6 +3162,98 @@ export interface operations {
             };
             /** @description Unprocessable Entity */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    registerPushDevice: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RegisterPushDeviceRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PushDeviceEnvelope"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    unregisterPushDevice: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Expo push token (URL-encoded) identifying the device. */
+                token: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnregisterPushDeviceResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -161,6 +161,7 @@ The CLI and daemon share the same environment-driven config:
 | `AO_REQUEST_TIMEOUT`        | `60s`                | REST request timeout.                                                                                                                                                                                                                   |
 | `AO_SHUTDOWN_TIMEOUT`       | `10s`                | Graceful shutdown cap.                                                                                                                                                                                                                  |
 | `AO_MOBILE_ADVERTISED_HOST` | _(autopick)_         | Host (IP or DNS name) advertised in the Connect Mobile pairing status/QR, for daemons reached on an address that interface autopick cannot discover (e.g. a tailnet name). Advertise-only; does not change what the LAN listener binds. |
+| `AO_KEEP_DAEMON`            | unset (off)          | Keep the desktop app's daemon running after the window closes; stop only via `ao stop`.                                                                                                                                                 |
 
 `ao notify slack` additionally reads `AO_SLACK_WEBHOOK_URL` (the Slack incoming
 webhook to post to), falling back to the conventional un-prefixed

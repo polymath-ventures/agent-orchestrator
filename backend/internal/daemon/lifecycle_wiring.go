@@ -158,6 +158,7 @@ func startSession(cfg config.Config, runtime runtimeselect.Runtime, store *sqlit
 		Store:            store,
 		PRClaimer:        store,
 		SCM:              scmProvider,
+		DataDir:          cfg.DataDir,
 		Tracker:          tracker,
 		Telemetry:        telemetry,
 		PrimeDisplayName: cfg.PrimeDisplayName,
