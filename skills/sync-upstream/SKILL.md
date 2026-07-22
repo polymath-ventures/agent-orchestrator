@@ -20,9 +20,17 @@ BEHIND=$(git rev-list --count origin/main..upstream/main)
 
 If `BEHIND` is 0: report "already up to date" and STOP. Also stop (report, don't queue) if an open PR titled `chore(sync): upstream` already exists — one sync in flight at a time.
 
-### 2. Merge branch
+### 2. Merge worktree
 
-Branch `sync/upstream-<YYYYMMDD>` from `origin/main`; `git merge upstream/main` (**merge, not rebase** — preserve both histories).
+Never mutate the shared checkout. Create an isolated worktree and merge there:
+
+```bash
+git worktree add .claude/worktrees/sync-upstream-<YYYYMMDD> -b sync/upstream-<YYYYMMDD> origin/main
+cd .claude/worktrees/sync-upstream-<YYYYMMDD>
+git merge upstream/main   # merge, not rebase — preserve both histories
+```
+
+Remove the worktree in cleanup after landing or parking.
 
 ### 3. Conflict resolution defaults (document EVERY file in the PR body: ours/theirs/blend + one line why)
 
@@ -42,6 +50,8 @@ Full backend suite + `go vet` + `gofmt -l`, frontend typecheck + tests, `npx pre
 ### 6. Land
 
 Open PR `chore(sync): upstream <short-sha-range>` with the conflict table in the body. Run the repo's standard final-review loop (independent reviewer, different family from the executor); post the SHA-pinned `final-review`/`review-passed` statuses only on a clean verdict; merge through the status gate. Then `cleanup-merge`.
+
+**Merge authorization**: the operator granted standing authorization (2026-07-22, recorded here and reviewed into the repo) for landing **clean, fully-gated** sync merges when this skill runs — scheduled or interactive. That grant covers ONLY the clean path: any STOP condition, unresolved finding, or gate failure parks (step 7); the standing grant never extends to merging past an ambiguous gate.
 
 ### 7. Park (instead of landing)
 
