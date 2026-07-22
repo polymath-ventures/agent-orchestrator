@@ -29,7 +29,10 @@ jobs:
       - name: Check out merged smoke harness
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.repository.default_branch }}
+          # Match the harness to the workflow revision being invoked. On a
+          # pre-merge branch test this is that branch head; after merge it is
+          # the selected default-branch revision.
+          ref: ${{ github.sha }}
           path: harness
 
       - name: Check out requested target ref

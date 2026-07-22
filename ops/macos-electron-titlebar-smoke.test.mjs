@@ -29,7 +29,7 @@ test("workflow packages the real Electron app and uploads evidence", () => {
 
 test("workflow keeps the merged harness separate from the requested target ref", () => {
 	assert.equal((workflow.match(/actions\/checkout@v4/g) ?? []).length, 2);
-	assert.match(workflow, /ref:\s*\$\{\{\s*github\.event\.repository\.default_branch\s*\}\}[\s\S]*?path:\s*harness/);
+	assert.match(workflow, /ref:\s*\$\{\{\s*github\.sha\s*\}\}[\s\S]*?path:\s*harness/);
 	assert.match(workflow, /ref:\s*\$\{\{\s*inputs\.ref\s*\}\}[\s\S]*?path:\s*target/);
 	assert.match(workflow, /go-version-file:\s*target\/backend\/go\.mod/);
 	assert.match(workflow, /working-directory:\s*target\/frontend[\s\S]*?npm run package/);
