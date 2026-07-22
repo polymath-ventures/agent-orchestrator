@@ -46,5 +46,5 @@
       TOCTOU-resistant size checks.
 - [x] 5.3 Run focused backend/frontend tests after each phase and update this task list only when
       behavior is verified.
-- [ ] 5.4 Run the repository's full CI commands, rebase on fresh `origin/main`, push, open the PR,
+- [x] 5.4 Run the repository's full CI commands, rebase on fresh `origin/main`, push, open the PR,
       and complete independent final review before declaring merge-ready.
