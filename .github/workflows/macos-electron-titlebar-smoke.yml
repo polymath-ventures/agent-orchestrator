@@ -122,13 +122,38 @@ jobs:
           set +e
           mkdir -p "$HOME/.ao/electron" "$AO_MAC_SMOKE_OUTPUT_DIR"
           executable="$AO_MAC_SMOKE_APP_PATH/Contents/MacOS/agent-orchestrator"
-          open -n "$AO_MAC_SMOKE_APP_PATH" --args \
-            --remote-debugging-port=9222 --enable-logging=stderr --v=1 \
-            >"$AO_MAC_SMOKE_OUTPUT_DIR/direct-app-stdout.log" \
-            2>"$AO_MAC_SMOKE_OUTPUT_DIR/direct-app-stderr.log"
-          sleep 2
-          pgrep -f "$executable" > "$AO_MAC_SMOKE_OUTPUT_DIR/direct-app.pid"
-          app_pid="$(head -1 "$AO_MAC_SMOKE_OUTPUT_DIR/direct-app.pid")"
+          process_pattern="^${executable}( |$)"
+          open -n \
+            --stdout "$AO_MAC_SMOKE_OUTPUT_DIR/direct-app-stdout.log" \
+            --stderr "$AO_MAC_SMOKE_OUTPUT_DIR/direct-app-stderr.log" \
+            "$AO_MAC_SMOKE_APP_PATH" --args \
+            --remote-debugging-port=9222 --enable-logging=stderr --v=1
+
+          bundle_id="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' \
+            "$AO_MAC_SMOKE_APP_PATH/Contents/Info.plist")"
+          app_pid=""
+          for _ in $(seq 1 20); do
+            app_pid="$(osascript - "$bundle_id" <<'APPLESCRIPT'
+          on run argv
+            set bundleId to item 1 of argv
+            tell application "System Events"
+              try
+                return unix id of first application process whose bundle identifier is bundleId
+              on error
+                return ""
+              end try
+            end tell
+          end run
+          APPLESCRIPT
+          )"
+            [[ "$app_pid" =~ ^[0-9]+$ ]] && break
+            sleep 1
+          done
+          printf '%s\n' "$app_pid" > "$AO_MAC_SMOKE_OUTPUT_DIR/direct-app.pid"
+          if [[ ! "$app_pid" =~ ^[0-9]+$ ]]; then
+            echo "AO_MAC_SMOKE_NO_DIRECT_TARGET=1" >> "$GITHUB_ENV"
+            exit 0
+          fi
           sleep 3
           osascript - "$app_pid" \
             > "$AO_MAC_SMOKE_OUTPUT_DIR/direct-app-modal.txt" 2>&1 <<'APPLESCRIPT'
@@ -164,9 +189,9 @@ jobs:
             > "$AO_MAC_SMOKE_OUTPUT_DIR/direct-app-unified.log"
           if ! grep -q '"type": *"page"' "$AO_MAC_SMOKE_OUTPUT_DIR/direct-app-targets.json"; then
             echo "AO_MAC_SMOKE_NO_DIRECT_TARGET=1" >> "$GITHUB_ENV"
-            pkill -TERM -f "$executable" 2>/dev/null
+            pkill -TERM -f "$process_pattern" 2>/dev/null
             sleep 3
-            pkill -KILL -f "$executable" 2>/dev/null
+            pkill -KILL -f "$process_pattern" 2>/dev/null
           else
             echo "AO_MAC_SMOKE_CDP_URL=http://127.0.0.1:9222" >> "$GITHUB_ENV"
             echo "AO_MAC_SMOKE_APP_PID=$app_pid" >> "$GITHUB_ENV"
@@ -181,6 +206,18 @@ jobs:
         shell: bash
         run: |
           npm run test:electron-titlebar
+
+      - name: Stop staged app
+        if: always()
+        shell: bash
+        run: |
+          if [[ -n "${AO_MAC_SMOKE_APP_PATH:-}" ]]; then
+            executable="$AO_MAC_SMOKE_APP_PATH/Contents/MacOS/agent-orchestrator"
+            process_pattern="^${executable}( |$)"
+            pkill -TERM -f "$process_pattern" 2>/dev/null || true
+            sleep 3
+            pkill -KILL -f "$process_pattern" 2>/dev/null || true
+          fi
 
       - name: Upload smoke evidence
         if: always()

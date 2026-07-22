@@ -52,6 +52,17 @@ test("workflow waits for a real CDP page target before running Playwright", () =
 	assert.doesNotMatch(workflow, /if \[\[ ! -s "\$AO_MAC_SMOKE_OUTPUT_DIR\/direct-app-targets\.json" \]\]/);
 });
 
+test("workflow captures launched-app logs, resolves its main PID, and always stops it", () => {
+	assert.match(workflow, /--stdout "\$AO_MAC_SMOKE_OUTPUT_DIR\/direct-app-stdout\.log"/);
+	assert.match(workflow, /--stderr "\$AO_MAC_SMOKE_OUTPUT_DIR\/direct-app-stderr\.log"/);
+	assert.match(workflow, /CFBundleIdentifier/);
+	assert.match(workflow, /bundle identifier is bundleId/);
+	assert.doesNotMatch(workflow, /pgrep -f "\$executable"/);
+	assert.match(workflow, /name: Stop staged app/);
+	assert.match(workflow, /pkill -TERM -f "\$process_pattern"/);
+	assert.match(workflow, /pkill -KILL -f "\$process_pattern"/);
+});
+
 test("Playwright output cannot erase dispatch or native evidence", () => {
 	assert.match(playwrightConfig, /path\.join\(evidenceDir,\s*"playwright"\)/);
 	assert.doesNotMatch(playwrightConfig, /outputDir:\s*process\.env\.AO_MAC_SMOKE_OUTPUT_DIR/);
