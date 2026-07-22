@@ -52,7 +52,7 @@ func TestConfiguredProjectModelsProjectsPinsOnceAndSortsAcrossProjects(t *testin
 	if !reflect.DeepEqual(pins, wantPins) {
 		t.Fatalf("pins = %#v, want %#v", pins, wantPins)
 	}
-	wantHarnesses := []string{"amp", "codex", "opencode"}
+	wantHarnesses := []string{"amp", "claude-code", "codex", "opencode"}
 	if got := models.ConfiguredHarnesses(context.Background()); !reflect.DeepEqual(got, wantHarnesses) {
 		t.Fatalf("harnesses = %#v, want %#v", got, wantHarnesses)
 	}
@@ -67,6 +67,18 @@ func TestConfiguredProjectModelsProjectsPinsOnceAndSortsAcrossProjects(t *testin
 	}
 	if !reflect.DeepEqual(healthPins, wantHealthPins) {
 		t.Fatalf("health pins = %#v, want %#v", healthPins, wantHealthPins)
+	}
+}
+
+func TestConfiguredProjectModelsIncludesResolvedDefaultReviewerHarness(t *testing.T) {
+	source := fakeConfiguredProjects{projects: []domain.ProjectRecord{
+		{ID: "codex-worker", Config: domain.ProjectConfig{Worker: domain.RoleOverride{Harness: domain.HarnessCodex}}},
+	}}
+	models := newConfiguredProjectModels(source, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	want := []string{"claude-code", "codex"}
+	if got := models.ConfiguredHarnesses(context.Background()); !reflect.DeepEqual(got, want) {
+		t.Fatalf("configured harnesses = %#v, want %#v", got, want)
 	}
 }
 

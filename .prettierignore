@@ -2,6 +2,7 @@
 frontend/src/api/schema.ts
 frontend/src/renderer/routeTree.gen.ts
 backend/internal/httpd/apispec/openapi.yaml
+agent-instructions/standard-set.json
 
 # Build outputs
 frontend/dist

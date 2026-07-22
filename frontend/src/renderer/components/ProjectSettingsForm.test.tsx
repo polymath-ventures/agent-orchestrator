@@ -293,15 +293,20 @@ describe("ProjectSettingsForm", () => {
 				worker: { agent: "codex" },
 				orchestrator: { agent: "claude-code" },
 				reviewerRulesFile: "docs/review-rules.md",
+				primeRules: "Prime the next task.",
+				primeRulesFile: "docs/prime-rules.md",
 			},
 		});
 
 		renderSettings();
 
-		const reviewerFile = await screen.findByLabelText("Reviewer rules file (repo-relative)");
+		const reviewerFile = await screen.findByLabelText("Reviewer rules file (repo-relative or absolute)");
 		expect(reviewerFile).toHaveValue("docs/review-rules.md");
+		expect(screen.getByLabelText("Prime rules")).toHaveValue("Prime the next task.");
+		expect(screen.getByLabelText("Prime rules file (repo-relative or absolute)")).toHaveValue("docs/prime-rules.md");
 
 		await userEvent.type(screen.getByLabelText("Orchestrator rules"), "Coordinate through workers.");
+		await userEvent.type(screen.getByLabelText("Prime rules"), " Keep context hot.");
 
 		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
 
@@ -309,13 +314,16 @@ describe("ProjectSettingsForm", () => {
 		const body = putMock.mock.calls[0][1].body.config;
 		expect(body.reviewerRulesFile).toBe("docs/review-rules.md");
 		expect(body.orchestratorRules).toBe("Coordinate through workers.");
+		expect(body.primeRules).toBe("Prime the next task. Keep context hot.");
+		expect(body.primeRulesFile).toBe("docs/prime-rules.md");
 	}, 20_000);
 
-	it("renders the assembled prompt in the inspector", async () => {
-		getMock.mockImplementation(async (path: string) => {
+	it("renders the selected role's assembled prompt in the inspector", async () => {
+		getMock.mockImplementation(async (path: string, options?: { params?: { path?: { role?: string } } }) => {
 			if (path === "/api/v1/agents") return agentCatalogResponse;
 			if (path === "/api/v1/projects/{id}/roles/{role}/prompt") {
-				return { data: { role: "worker", prompt: "ASSEMBLED WORKER PROMPT" }, error: undefined };
+				const role = options?.params?.path?.role ?? "worker";
+				return { data: { role, prompt: `ASSEMBLED ${role.toUpperCase()} PROMPT` }, error: undefined };
 			}
 			return {
 				data: {
@@ -337,7 +345,27 @@ describe("ProjectSettingsForm", () => {
 		renderSettings();
 
 		expect(await screen.findByText("ASSEMBLED WORKER PROMPT")).toBeInTheDocument();
+		await chooseOption(screen.getByRole("combobox", { name: "Role" }), "prime");
+		expect(await screen.findByText("ASSEMBLED PRIME PROMPT")).toBeInTheDocument();
 	}, 20_000);
+
+	it("labels the unconfigured reviewer as the cross-family default", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "",
+			defaultBranch: "main",
+			config: { worker: { agent: "codex" }, orchestrator: { agent: "claude-code" } },
+		});
+
+		renderSettings();
+
+		expect(await screen.findByRole("combobox", { name: "Default reviewer agent" })).toHaveTextContent(
+			"Cross-family default",
+		);
+	});
 
 	it("surfaces a fail-closed inspector error instead of a prompt", async () => {
 		getMock.mockImplementation(async (path: string) => {

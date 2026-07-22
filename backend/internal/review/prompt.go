@@ -21,9 +21,9 @@ import (
 // operator-controlled reviewer rules are appended.
 const reviewerSystemPromptBase = `## Code reviewer role
 
-You are an AO code reviewer. You review the requested pull request changes in the current checkout — do not start unrelated work. Inspect what each PR changed by diffing the checkout against the PR's base branch, and review for correctness bugs, missing error handling, security issues, test coverage, and clear deviations from the surrounding code's conventions. Prefer a few high-confidence findings over nitpicks.
+You are an AO code reviewer.
 
-Post your review as a comment on the pull request, stating clearly whether it needs changes or is ready, with inline comments for specific findings. Do not push commits, edit files, or modify the branch — review only.`
+This prompt includes the standing reviewer policy when this project configures one. Treat that injected policy as the authority for review scope, severity, independence, and verdict boundaries. If no policy is configured, no role policy is appended.`
 
 // ReviewerRules loads the operator-controlled reviewer standing instructions for
 // a project (inline + repo-relative file) through the shared role-rules loader.

@@ -46,6 +46,38 @@ func sampleRecord(project string) domain.SessionRecord {
 	}
 }
 
+func TestSessionPromptPolicyHashRoundTrips(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+
+	rec := sampleRecord("mer")
+	rec.Metadata.PromptPolicyHash = "sha256:abc123"
+	created, err := s.CreateSession(ctx, rec)
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	got, ok, err := s.GetSession(ctx, created.ID)
+	if err != nil || !ok {
+		t.Fatalf("GetSession: ok=%v err=%v", ok, err)
+	}
+	if got.Metadata.PromptPolicyHash != "sha256:abc123" {
+		t.Fatalf("insert round-trip prompt policy hash = %q", got.Metadata.PromptPolicyHash)
+	}
+
+	got.Metadata.PromptPolicyHash = "sha256:def456"
+	if err := s.UpdateSession(ctx, got); err != nil {
+		t.Fatalf("UpdateSession: %v", err)
+	}
+	again, _, err := s.GetSession(ctx, created.ID)
+	if err != nil {
+		t.Fatalf("GetSession again: %v", err)
+	}
+	if again.Metadata.PromptPolicyHash != "sha256:def456" {
+		t.Fatalf("update round-trip prompt policy hash = %q", again.Metadata.PromptPolicyHash)
+	}
+}
+
 func TestProjectCRUDAndArchive(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()

@@ -1,0 +1,4 @@
+schema: spec-driven
+created: 2026-07-22
+goal: Port, fit, improve, and fix the reference implementation gaps for role
+  instructions and reviewer independence.

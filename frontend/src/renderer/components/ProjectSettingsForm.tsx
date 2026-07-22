@@ -43,7 +43,7 @@ const PERMISSION_MODE_OPTIONS = [
 	{ value: "bypass-permissions", label: "Bypass permissions" },
 ] as const;
 
-const ROLE_PROMPT_OPTIONS = ["worker", "orchestrator", "reviewer"] as const;
+const ROLE_PROMPT_OPTIONS = ["worker", "orchestrator", "prime", "reviewer"] as const;
 type RolePromptRole = (typeof ROLE_PROMPT_OPTIONS)[number];
 
 const projectQueryKey = (id: string) => ["project", id] as const;
@@ -121,6 +121,8 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 		agentRulesFile: config.agentRulesFile ?? "",
 		orchestratorRules: config.orchestratorRules ?? "",
 		orchestratorRulesFile: config.orchestratorRulesFile ?? "",
+		primeRules: config.primeRules ?? "",
+		primeRulesFile: config.primeRulesFile ?? "",
 		reviewerRules: config.reviewerRules ?? "",
 		reviewerRulesFile: config.reviewerRulesFile ?? "",
 		intakeEnabled: intake.enabled ?? false,
@@ -218,6 +220,8 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 				agentRulesFile: form.agentRulesFile.trim() || undefined,
 				orchestratorRules: form.orchestratorRules.trim() || undefined,
 				orchestratorRulesFile: form.orchestratorRulesFile.trim() || undefined,
+				primeRules: form.primeRules.trim() || undefined,
+				primeRulesFile: form.primeRulesFile.trim() || undefined,
 				reviewerRules: form.reviewerRules.trim() || undefined,
 				reviewerRulesFile: form.reviewerRulesFile.trim() || undefined,
 				trackerIntake: buildIntake(intakeForm),
@@ -448,7 +452,7 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 						agentCatalog={agentCatalog}
 						availability={effectiveModelAvailability}
 						allowDefaultHarness
-						defaultHarnessLabel="Project default"
+						defaultHarnessLabel="Cross-family default"
 						reviewerOnly
 						isRefreshingModels={isRefreshingModels || modelAvailabilityQuery.isFetching}
 						onRefreshModels={refreshModels}
@@ -503,13 +507,13 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 				<CardContent className="flex flex-col gap-4">
 					<p className="text-xs leading-row text-muted-foreground">
 						Operator-controlled standing instructions injected into each role's prompt on the next spawn,
-						content-preserving (only surrounding whitespace is normalized). A rules file is a repo-relative path; a
-						configured-but-missing, empty, or oversized file fails the spawn loudly rather than silently dropping the
-						instructions.
+						content-preserving (only surrounding whitespace is normalized). A rules file may be repo-relative or
+						absolute; a configured-but-missing, empty, or oversized file fails the spawn loudly rather than silently
+						dropping the instructions.
 					</p>
 					<RulesField
 						label="Worker rules"
-						fileLabel="Worker rules file (repo-relative)"
+						fileLabel="Worker rules file (repo-relative or absolute)"
 						idPrefix="agentRules"
 						rules={form.agentRules}
 						file={form.agentRulesFile}
@@ -518,7 +522,7 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 					/>
 					<RulesField
 						label="Orchestrator rules"
-						fileLabel="Orchestrator rules file (repo-relative)"
+						fileLabel="Orchestrator rules file (repo-relative or absolute)"
 						idPrefix="orchestratorRules"
 						rules={form.orchestratorRules}
 						file={form.orchestratorRulesFile}
@@ -526,8 +530,17 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 						onFile={(v) => setForm((f) => ({ ...f, orchestratorRulesFile: v }))}
 					/>
 					<RulesField
+						label="Prime rules"
+						fileLabel="Prime rules file (repo-relative or absolute)"
+						idPrefix="primeRules"
+						rules={form.primeRules}
+						file={form.primeRulesFile}
+						onRules={(v) => setForm((f) => ({ ...f, primeRules: v }))}
+						onFile={(v) => setForm((f) => ({ ...f, primeRulesFile: v }))}
+					/>
+					<RulesField
 						label="Reviewer rules"
-						fileLabel="Reviewer rules file (repo-relative)"
+						fileLabel="Reviewer rules file (repo-relative or absolute)"
 						idPrefix="reviewerRules"
 						rules={form.reviewerRules}
 						file={form.reviewerRulesFile}

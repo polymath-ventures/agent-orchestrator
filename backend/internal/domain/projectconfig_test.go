@@ -29,15 +29,16 @@ func TestProjectConfigValidate(t *testing.T) {
 		{"symlink embedded parent", ProjectConfig{Symlinks: []string{"a/../../b"}}, true},
 		{"symlink bare ..", ProjectConfig{Symlinks: []string{".."}}, true},
 		{"good prompt rules", ProjectConfig{AgentRules: "Run tests.", AgentRulesFile: "docs/agent-rules.md", OrchestratorRules: "Delegate work."}, false},
-		{"agent rules file absolute path", ProjectConfig{AgentRulesFile: "/etc/passwd"}, true},
+		{"agent rules file absolute path", ProjectConfig{AgentRulesFile: "/etc/passwd"}, false},
+		{"agent rules file leading backslash", ProjectConfig{AgentRulesFile: `\policy.md`}, true},
 		{"agent rules file parent escape", ProjectConfig{AgentRulesFile: "../rules.md"}, true},
 		{"agent rules file cleans to dot", ProjectConfig{AgentRulesFile: "docs/.."}, true},
 		{"agent rules file bare dot", ProjectConfig{AgentRulesFile: "."}, true},
 		{"good orchestrator rules file", ProjectConfig{OrchestratorRulesFile: "docs/orch-rules.md"}, false},
-		{"orchestrator rules file absolute path", ProjectConfig{OrchestratorRulesFile: "/etc/passwd"}, true},
+		{"orchestrator rules file absolute path", ProjectConfig{OrchestratorRulesFile: "/etc/passwd"}, false},
 		{"orchestrator rules file parent escape", ProjectConfig{OrchestratorRulesFile: "../rules.md"}, true},
 		{"good reviewer rules", ProjectConfig{ReviewerRules: "Focus on data isolation.", ReviewerRulesFile: "docs/review-rules.md"}, false},
-		{"reviewer rules file absolute path", ProjectConfig{ReviewerRulesFile: "/etc/passwd"}, true},
+		{"reviewer rules file absolute path", ProjectConfig{ReviewerRulesFile: "/etc/passwd"}, false},
 		{"reviewer rules file parent escape", ProjectConfig{ReviewerRulesFile: "../rules.md"}, true},
 		{"good reviewers", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: ReviewerClaudeCode}}}, false},
 		{"good codex reviewer", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: ReviewerCodex}}}, false},
@@ -142,19 +143,28 @@ func TestResolveReviewerHarness(t *testing.T) {
 		t.Fatalf("configured reviewer = %q, want claude-code", got)
 	}
 
-	// No reviewer configured: reuse the worker's harness when it is itself a
-	// supported reviewer.
-	if got := (ProjectConfig{}).ResolveReviewerHarness(HarnessClaudeCode); got != ReviewerClaudeCode {
-		t.Fatalf("claude-code worker = %q, want reviewer claude-code", got)
+	// No reviewer configured: default to a reviewer of a DIFFERENT family than
+	// the worker, so an unconfigured project still gets an independent review.
+	if got := (ProjectConfig{}).ResolveReviewerHarness(HarnessClaudeCode); got != ReviewerCodex {
+		t.Fatalf("claude-code worker = %q, want cross-family reviewer codex", got)
 	}
-	if got := (ProjectConfig{}).ResolveReviewerHarness(HarnessCodex); got != ReviewerCodex {
-		t.Fatalf("codex worker = %q, want reviewer codex", got)
+	if got := (ProjectConfig{}).ResolveReviewerHarness(HarnessCodex); got != ReviewerClaudeCode {
+		t.Fatalf("codex worker = %q, want cross-family reviewer claude-code", got)
 	}
-	if got := (ProjectConfig{}).ResolveReviewerHarness(HarnessOpenCode); got != ReviewerOpenCode {
-		t.Fatalf("opencode worker = %q, want reviewer opencode", got)
+	if got := (ProjectConfig{}).ResolveReviewerHarness(HarnessCodexFugu); got != ReviewerClaudeCode {
+		t.Fatalf("codex-fugu worker = %q, want cross-family reviewer claude-code", got)
+	}
+	if got := (ProjectConfig{}).ResolveReviewerHarness(HarnessOpenCode); got != ReviewerClaudeCode {
+		t.Fatalf("opencode worker = %q, want cross-family reviewer claude-code", got)
+	}
+	for _, worker := range []AgentHarness{HarnessClaudeCode, HarnessCodex, HarnessCodexFugu, HarnessOpenCode} {
+		reviewer := (ProjectConfig{}).ResolveReviewerHarness(worker)
+		if reviewer.AgentHarness().Family() == worker.Family() {
+			t.Fatalf("worker %q got same-family reviewer %q", worker, reviewer)
+		}
 	}
 
-	// A worker harness that is not itself a reviewer (e.g. crush, aider) falls
+	// A worker harness with no established family (e.g. crush, aider) falls
 	// back to claude-code.
 	if got := (ProjectConfig{}).ResolveReviewerHarness(HarnessCrush); got != FallbackReviewerHarness {
 		t.Fatalf("crush worker = %q, want %q", got, FallbackReviewerHarness)

@@ -116,6 +116,7 @@ func (p *configuredProjectModels) ConfiguredHarnesses(ctx context.Context) []str
 		add(cfg.Worker.Harness)
 		add(cfg.Orchestrator.Harness)
 		add(cfg.Prime.Harness)
+		add(cfg.ResolveReviewerHarness(cfg.Worker.Harness).AgentHarness())
 		for _, reviewer := range cfg.Reviewers {
 			add(reviewer.Harness.AgentHarness())
 		}

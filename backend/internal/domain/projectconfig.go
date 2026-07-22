@@ -64,7 +64,7 @@ type ProjectConfig struct {
 
 	// Reviewers names the agent(s) that review a worker's PR when a review is
 	// triggered. It is configured independently of the Worker override; an empty
-	// list falls back to claude-code (see ResolveReviewerHarness).
+	// list resolves to a cross-family default (see ResolveReviewerHarness).
 	Reviewers []ReviewerConfig `json:"reviewers,omitempty"`
 
 	// TrackerIntake controls issue-driven worker spawning. It is opt-in and
@@ -94,21 +94,30 @@ type ReviewerConfig struct {
 }
 
 // FallbackReviewerHarness is the reviewer used when a project configures none
-// and the worker's harness is not itself a supported reviewer.
+// and the worker's family has no defined cross-family default.
 const FallbackReviewerHarness = ReviewerClaudeCode
 
 // ResolveReviewerHarness picks the reviewer harness for a worker. A configured
-// reviewer wins. Otherwise the worker's own harness is reused when it is itself
-// a supported reviewer (e.g. a codex worker is reviewed by codex); a worker
-// whose harness is not a reviewer (e.g. crush) falls back to claude-code.
+// reviewer wins. Otherwise the default is a reviewer of a different family than
+// the worker, so an unconfigured project still gets an independent review.
 func (c ProjectConfig) ResolveReviewerHarness(worker AgentHarness) ReviewerHarness {
 	if len(c.Reviewers) > 0 {
 		return c.Reviewers[0].Harness
 	}
-	if rh := ReviewerHarness(worker); rh.IsKnown() {
-		return rh
+	return crossFamilyReviewer(worker)
+}
+
+func crossFamilyReviewer(worker AgentHarness) ReviewerHarness {
+	switch worker.Family() {
+	case AgentFamilyClaude:
+		return ReviewerCodex
+	case AgentFamilyCodex, AgentFamilyFugu:
+		return ReviewerClaudeCode
+	case AgentFamilyOpenCode:
+		return ReviewerClaudeCode
+	default:
+		return FallbackReviewerHarness
 	}
-	return FallbackReviewerHarness
 }
 
 // RoleOverride overrides the harness and/or agent config for a session role.
@@ -171,16 +180,16 @@ func (c ProjectConfig) Validate() error {
 			return fmt.Errorf("symlink %q: %w", s, err)
 		}
 	}
-	if err := validateRepoRelative(c.AgentRulesFile); err != nil {
+	if err := validateRoleRulesFilePath(c.AgentRulesFile); err != nil {
 		return fmt.Errorf("agentRulesFile %q: %w", c.AgentRulesFile, err)
 	}
-	if err := validateRepoRelative(c.OrchestratorRulesFile); err != nil {
+	if err := validateRoleRulesFilePath(c.OrchestratorRulesFile); err != nil {
 		return fmt.Errorf("orchestratorRulesFile %q: %w", c.OrchestratorRulesFile, err)
 	}
-	if err := validateRepoRelative(c.ReviewerRulesFile); err != nil {
+	if err := validateRoleRulesFilePath(c.ReviewerRulesFile); err != nil {
 		return fmt.Errorf("reviewerRulesFile %q: %w", c.ReviewerRulesFile, err)
 	}
-	if err := validateRepoRelative(c.PrimeRulesFile); err != nil {
+	if err := validateRoleRulesFilePath(c.PrimeRulesFile); err != nil {
 		return fmt.Errorf("primeRulesFile %q: %w", c.PrimeRulesFile, err)
 	}
 	for i, rv := range c.Reviewers {
@@ -255,4 +264,15 @@ func validateRepoRelative(p string) error {
 		}
 	}
 	return nil
+}
+
+func validateRoleRulesFilePath(p string) error {
+	trimmed := strings.TrimSpace(p)
+	if trimmed == "" {
+		return nil
+	}
+	if filepath.IsAbs(trimmed) || strings.HasPrefix(trimmed, "/") {
+		return nil
+	}
+	return validateRepoRelative(trimmed)
 }

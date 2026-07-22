@@ -268,6 +268,8 @@ func TestProjectSetConfig_RulesFlags(t *testing.T) {
 		"--orchestrator-rules-file", "docs/orch.md",
 		"--reviewer-rules", "Check isolation.",
 		"--reviewer-rules-file", "docs/review.md",
+		"--prime-rules", "Keep the queue warm.",
+		"--prime-rules-file", "docs/prime.md",
 	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v\nstderr=%s", err, errOut)
@@ -284,6 +286,9 @@ func TestProjectSetConfig_RulesFlags(t *testing.T) {
 	}
 	if got.Config.OrchestratorRulesFile != "docs/orch.md" || got.Config.ReviewerRules != "Check isolation." || got.Config.ReviewerRulesFile != "docs/review.md" {
 		t.Fatalf("new rules config = %#v", got.Config)
+	}
+	if got.Config.PrimeRules != "Keep the queue warm." || got.Config.PrimeRulesFile != "docs/prime.md" {
+		t.Fatalf("prime rules config = %#v", got.Config)
 	}
 	if !strings.Contains(out, "updated config for project demo") {
 		t.Fatalf("output missing update message:\n%s", out)

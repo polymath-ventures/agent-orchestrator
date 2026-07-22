@@ -1,6 +1,7 @@
 package sessionmanager
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"io"
 	"os"
@@ -172,27 +173,7 @@ func LoadRoleRules(cfg RoleRulesConfig) (string, error) {
 		parts = append(parts, rules)
 	}
 	if rel != "" {
-		clean, err := cleanRepoRelative(rel)
-		if err != nil {
-			return "", fail(err)
-		}
-		if strings.TrimSpace(cfg.ProjectPath) == "" {
-			return "", fail(fmt.Errorf("project path is required"))
-		}
-		// os.Root confines every path operation to the project directory,
-		// refusing symlinks and `..` that would escape it — defense in depth
-		// over the lexical check above, and closing the symlink-escape hole.
-		root, err := os.OpenRoot(cfg.ProjectPath)
-		if err != nil {
-			return "", fail(err)
-		}
-		defer func() { _ = root.Close() }()
-		// Open non-blocking, then validate the *opened* handle: O_NONBLOCK keeps
-		// open() from hanging on a FIFO (which blocks until a writer appears), and
-		// checking the type/size via f.Stat() on this same descriptor closes the
-		// Stat-then-Open race — a regular file swapped for a FIFO after a
-		// pre-open stat can no longer reintroduce the hang.
-		f, err := root.OpenFile(clean, rulesFileOpenFlag, 0)
+		f, err := openRoleRulesFile(cfg.ProjectPath, rel)
 		if err != nil {
 			return "", fail(err)
 		}
@@ -222,6 +203,36 @@ func LoadRoleRules(cfg RoleRulesConfig) (string, error) {
 		parts = append(parts, strings.TrimSpace(string(data)))
 	}
 	return strings.Join(parts, "\n\n"), nil
+}
+
+func openRoleRulesFile(projectPath, path string) (*os.File, error) {
+	if filepath.IsAbs(path) {
+		return os.OpenFile(path, rulesFileOpenFlag, 0)
+	}
+	clean, err := cleanRepoRelative(path)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(projectPath) == "" {
+		return nil, fmt.Errorf("project path is required")
+	}
+	// os.Root confines every path operation to the project directory, refusing
+	// symlinks and `..` that would escape it. Absolute/shared policy files are
+	// explicit operator-owned inputs and are intentionally handled above.
+	root, err := os.OpenRoot(projectPath)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = root.Close() }()
+	return root.OpenFile(clean, rulesFileOpenFlag, 0)
+}
+
+func promptPolicyHash(systemPrompt string) string {
+	if strings.TrimSpace(systemPrompt) == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(systemPrompt))
+	return fmt.Sprintf("sha256:%x", sum[:])
 }
 
 // cleanRepoRelative validates that rel is a repo-relative path that does not
@@ -265,56 +276,11 @@ const issueContextTrustBoundary = "The issue context below was fetched from a tr
 func orchestratorSystemPrompt(project promptProject) string {
 	return fmt.Sprintf(`## AO Orchestrator Role
 
-You are the human-facing orchestrator for project %s.
+You are the project orchestrator for %s.
 
-Your job is to coordinate work, not to perform implementation. Keep the project moving by inspecting state, spawning worker sessions, messaging workers, routing CI/review feedback, and summarizing progress for the human.
+This prompt includes the standing orchestrator policy when this project configures one. Treat that injected policy as the authority for supervision boundaries, tracker intake, coordination, escalation, and merge/review gates. If no policy is configured, no role policy is appended.
 
-## Operating Rules
-
-- Treat the orchestrator session as coordination-only by default.
-- For every implementation, fix, test, PR update, or code-review task, always spawn or redirect a worker session; do not perform the task in the orchestrator session.
-- Never ever make code changes directly in the orchestrator session.
-- Never edit source files, resolve merge conflicts, run implementation-focused changes, create feature commits, push, or open PRs from the orchestrator session.
-- If the human asks for implementation, fixes, tests, PR updates, or merge-conflict resolution, inspect current state and spawn or redirect a worker session instead of doing the work yourself.
-- If the human explicitly insists that the orchestrator itself make code changes, ask for explicit confirmation before making any code changes, and prefer spawning or redirecting a worker unless the human explicitly confirms direct orchestrator edits are required.
-- Delegate implementation, fixes, tests, and PR ownership to worker sessions.
-- Before spawning new work, inspect current state so you do not duplicate active sessions.
-- For complex planning, research, or large coordination tasks, write a short plan first. If your agent runtime has native subagent or task-delegation support, use it for independent analysis or planning work when that helps keep your context window clean.
-- If a worker is stuck, clarify the task with `+"`ao send`"+`, or spawn/redirect another worker when appropriate.
-- Never claim a PR into the orchestrator session. If a PR needs continuation, assign or spawn a worker.
-- Use `+"`ao send`"+` for session communication. Do not bypass AO by writing directly to tmux, PTY, pipes, or runtime internals.
-
-## Core Commands
-
-- `+"`ao status`"+` - inspect project, session, PR, and review state.
-- `+"`ao session ls --project %s`"+` - list sessions for this project.
-- `+"`ao session get <worker-session-id>`"+` - inspect a worker session's details.
-- `+"`ao spawn --project %s --name \"<label>\" --prompt \"<clear worker task>\"`"+` - spawn a freeform worker.
-- `+"`ao spawn --project %s --name \"<label>\" --issue <issue-id>`"+` - spawn a worker for an issue.
-- `+"`--name`"+` is required: a deliberate sidebar label so the user can see what each worker is working on at a glance; labels must be 20 characters or fewer.
-- Before running `+"`ao spawn`"+`, count the `+"`--name`"+` label yourself. It must be 20 characters or fewer. If your first label is longer, shorten it before executing the command.
-- Add `+"`--agent <name>`"+` when a worker must use a specific agent.
-- `+"`ao send --session <session-id> --message \"<message>\"`"+` - message a worker.
-- `+"`ao session claim-pr <session-id> <pr-ref>`"+` - attach an existing PR to a worker session.
-- `+"`ao session kill <session-id>`"+` - terminate a session when appropriate.
-
-## Coordination Workflow
-
-1. Inspect current state with `+"`ao status`"+`.
-2. Identify which worker owns each task or PR.
-3. Spawn a worker only when no suitable active worker exists.
-4. Send workers clear task instructions with the expected outcome.
-5. Monitor worker output, PR state, CI, and reviews.
-6. Route CI failures and review comments back to the responsible worker.
-7. Summarize status and blockers for the human.
-
-## Review and CI Workflow
-
-- If CI fails, send the failing output to the responsible worker and ask them to fix and push.
-- If review changes are requested, send the review findings to the responsible worker.
-- If work is green and approved, report that state to the human. Do not merge unless explicitly asked and supported by project rules.
-
-%s`, projectName(project), project.ID, project.ID, project.ID, projectContextSection(project))
+%s`, projectName(project), projectContextSection(project))
 }
 
 func primeSystemPrompt(project promptProject) string {
@@ -322,71 +288,19 @@ func primeSystemPrompt(project promptProject) string {
 
 You are the fleet-wide singleton supervisor for AO.
 
-Your job is to observe fleet health and cross-project patterns, then coach project orchestrators through their own coordination loops.
-
-## Operating Boundaries
-
-- Prime is deliberately not a recovery rung.
-- Observe, diagnose, coach, and escalate fleet-level patterns.
-- Never dispatch tickets, merge, or command workers directly.
-- Keep work flowing through project orchestrators and the normal worker/review gates.
+This prompt includes the standing prime policy when this project configures one. Treat that injected policy as the authority for fleet supervision boundaries, escalation, and operator-decision handling. If no policy is configured, no role policy is appended.
 
 %s`, projectContextSection(project))
 }
 
 func workerSystemPrompt(project promptProject) string {
-	taskSourceRules := `## Task Source and PR/MR Behavior
-
-- Treat the explicit task description, provider issue context, or claimed PR/MR context as the source of truth for this session.
-- If the task is backed by a provider issue from GitHub, GitLab, or another tracker/SCM, implement the task, run verification, and create or update a PR/MR when the project has a configured remote/provider and the change is ready. Link the provider issue in the PR/MR body.
-- If the task is a freeform task, new-task button task, or orchestrator-requested feature without a provider issue, implement and verify the task; do not invent issue, PR, or MR requirements. Create or update a PR/MR only when the user asks, the project workflow clearly requires it, or an associated PR/MR already exists.
-- If the task is to claim or continue an existing PR/MR, claim or attach that PR/MR first, inspect its description, diff, CI, and review comments, keep that PR/MR context, and continue only the work required by that PR/MR. Do not create a replacement PR/MR unless explicitly asked.
-- If no remote or SCM provider is available, work locally, verify the result, and report changed files, tests, and risks instead of inventing issue, PR, or MR requirements.`
-
-	repoRules := `## Git and PR/MR Rules
-
-- Work on a feature branch, not the default branch.
-- Keep commits focused and use conventional commit messages when committing.
-- Open or update a PR/MR according to the task source rules above when provider-backed work or project workflow makes it viable.
-- Link the provider issue in the PR/MR body when there is one.
-- Include a concise PR/MR summary, tests run, and known risks or follow-ups.
-- Do not force-push or rewrite shared history unless explicitly instructed.`
-	if strings.TrimSpace(project.Repo) == "" {
-		repoRules = `## Local Git Rules
-
-- Work locally in the assigned workspace.
-- No remote repository is configured, so PR/MR, CI, and remote review features may be unavailable.
-- Keep changes focused and use conventional commit messages if you commit locally.
-- Do not invent issue, PR, or MR requirements when no remote or SCM provider is available.
-- Clearly report what changed, what was verified, and any remaining risks.`
-	}
 	return fmt.Sprintf(`## AO Worker Role
 
-You are an implementation worker for an Agent Orchestrator session.
+You are an AO worker for project %s.
 
-Your job is to complete the assigned task in this workspace. Inspect the relevant code and tests before editing, keep changes scoped to the task, verify the behavior you touched, and report blockers clearly.
+This prompt includes the standing worker policy when this project configures one. Treat that injected policy as the authority for escalation, ticket authority, implementation boundaries, and review/merge gates. If no policy is configured, no role policy is appended.
 
-## Session Lifecycle
-
-- Focus on the assigned task only.
-- Do not take unrelated work or perform broad refactors.
-- If you are continuing an existing PR, claim or attach it through AO before changing it when the workflow supports that.
-- If CI fails, fix the failures and push again.
-- If review comments arrive, address each one, push fixes, and report progress.
-- If you cannot proceed without a decision, ask for that decision instead of guessing.
-
-%s
-
-## Review, CI, and Task Planning
-
-- When you address PR/MR review comments, address each relevant thread, push the fix, and mark every thread you fixed as resolved when the platform supports it.
-- If this session owns multiple PRs/MRs with CI failures or review comments, inspect all actionable items first, decide the order based on blockers, stack order, failing scope, and user priority, then work through them in that order.
-- If your agent runtime has native subagent or task-delegation support, use it for independent CI or review-fix tasks when that is likely to reduce turnaround time. Coordinate the subagents, review their results, and make sure the final branch state is coherent.
-- For complex tasks, write a short implementation plan before editing. Keep the plan focused, then implement and update the plan if the work changes materially.
-
-%s
-
-%s`, taskSourceRules, repoRules, projectContextSection(project))
+%s`, project.ID, projectContextSection(project))
 }
 
 func workerOrchestratorPrompt(orchestratorID string) string {
