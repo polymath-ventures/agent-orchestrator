@@ -30,6 +30,7 @@ func TestProjectConfigValidate(t *testing.T) {
 		{"symlink bare ..", ProjectConfig{Symlinks: []string{".."}}, true},
 		{"good prompt rules", ProjectConfig{AgentRules: "Run tests.", AgentRulesFile: "docs/agent-rules.md", OrchestratorRules: "Delegate work."}, false},
 		{"agent rules file absolute path", ProjectConfig{AgentRulesFile: "/etc/passwd"}, false},
+		{"agent rules file leading backslash", ProjectConfig{AgentRulesFile: `\policy.md`}, true},
 		{"agent rules file parent escape", ProjectConfig{AgentRulesFile: "../rules.md"}, true},
 		{"agent rules file cleans to dot", ProjectConfig{AgentRulesFile: "docs/.."}, true},
 		{"agent rules file bare dot", ProjectConfig{AgentRulesFile: "."}, true},

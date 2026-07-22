@@ -271,7 +271,7 @@ func validateRoleRulesFilePath(p string) error {
 	if trimmed == "" {
 		return nil
 	}
-	if filepath.IsAbs(trimmed) || strings.HasPrefix(trimmed, "/") || strings.HasPrefix(trimmed, `\`) {
+	if filepath.IsAbs(trimmed) || strings.HasPrefix(trimmed, "/") {
 		return nil
 	}
 	return validateRepoRelative(trimmed)

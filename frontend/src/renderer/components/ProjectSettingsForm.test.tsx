@@ -300,10 +300,10 @@ describe("ProjectSettingsForm", () => {
 
 		renderSettings();
 
-		const reviewerFile = await screen.findByLabelText("Reviewer rules file (repo-relative)");
+		const reviewerFile = await screen.findByLabelText("Reviewer rules file (repo-relative or absolute)");
 		expect(reviewerFile).toHaveValue("docs/review-rules.md");
 		expect(screen.getByLabelText("Prime rules")).toHaveValue("Prime the next task.");
-		expect(screen.getByLabelText("Prime rules file (repo-relative)")).toHaveValue("docs/prime-rules.md");
+		expect(screen.getByLabelText("Prime rules file (repo-relative or absolute)")).toHaveValue("docs/prime-rules.md");
 
 		await userEvent.type(screen.getByLabelText("Orchestrator rules"), "Coordinate through workers.");
 		await userEvent.type(screen.getByLabelText("Prime rules"), " Keep context hot.");

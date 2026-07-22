@@ -353,6 +353,33 @@ describe("autonomous merge evaluation", () => {
 		);
 	});
 
+	it("rejects merge park markers that omit the reviewed head", () => {
+		assert.deepEqual(
+			evaluateAutonomousMergeStatuses(
+				[
+					{
+						context: "final-review",
+						state: "success",
+						description: `verdict=clean reviewer_family=codex head=${HEAD}`,
+					},
+					{
+						context: "merge-park",
+						state: "success",
+						description: "reason=human-required reviewer_family=codex",
+					},
+				],
+				HEAD,
+				[],
+			),
+			{
+				ok: false,
+				reason: "invalid-merge-park-status",
+				head: HEAD,
+				state: "success",
+			},
+		);
+	});
+
 	it("rejects malformed merge park markers on the current head", () => {
 		assert.deepEqual(
 			evaluateAutonomousMergeStatuses(

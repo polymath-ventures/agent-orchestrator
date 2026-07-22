@@ -302,7 +302,7 @@ export function evaluateAutonomousMergeStatuses(statuses, expectedHead, linkedIs
 	if (!park) return review;
 
 	const parsed = parseHumanMergeRequiredDescription(park.description);
-	if (parsed.head && parsed.head !== review.head) {
+	if (!parsed.head || parsed.head !== review.head) {
 		return {
 			ok: false,
 			reason: "invalid-merge-park-status",

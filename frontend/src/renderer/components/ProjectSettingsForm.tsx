@@ -507,13 +507,13 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 				<CardContent className="flex flex-col gap-4">
 					<p className="text-xs leading-row text-muted-foreground">
 						Operator-controlled standing instructions injected into each role's prompt on the next spawn,
-						content-preserving (only surrounding whitespace is normalized). A rules file is a repo-relative path; a
-						configured-but-missing, empty, or oversized file fails the spawn loudly rather than silently dropping the
-						instructions.
+						content-preserving (only surrounding whitespace is normalized). A rules file may be
+						repo-relative or absolute; a configured-but-missing, empty, or oversized file fails the spawn
+						loudly rather than silently dropping the instructions.
 					</p>
 					<RulesField
 						label="Worker rules"
-						fileLabel="Worker rules file (repo-relative)"
+						fileLabel="Worker rules file (repo-relative or absolute)"
 						idPrefix="agentRules"
 						rules={form.agentRules}
 						file={form.agentRulesFile}
@@ -522,7 +522,7 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 					/>
 					<RulesField
 						label="Orchestrator rules"
-						fileLabel="Orchestrator rules file (repo-relative)"
+						fileLabel="Orchestrator rules file (repo-relative or absolute)"
 						idPrefix="orchestratorRules"
 						rules={form.orchestratorRules}
 						file={form.orchestratorRulesFile}
@@ -531,7 +531,7 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 					/>
 					<RulesField
 						label="Prime rules"
-						fileLabel="Prime rules file (repo-relative)"
+						fileLabel="Prime rules file (repo-relative or absolute)"
 						idPrefix="primeRules"
 						rules={form.primeRules}
 						file={form.primeRulesFile}
@@ -540,7 +540,7 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 					/>
 					<RulesField
 						label="Reviewer rules"
-						fileLabel="Reviewer rules file (repo-relative)"
+						fileLabel="Reviewer rules file (repo-relative or absolute)"
 						idPrefix="reviewerRules"
 						rules={form.reviewerRules}
 						file={form.reviewerRulesFile}
