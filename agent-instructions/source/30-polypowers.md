@@ -24,7 +24,7 @@ Durable work lives in **two places on purpose**:
 
 The pairing rules:
 
-1. **New bug/feature/task → `/capture`**, which files the GitHub issue *and*
+1. **New bug/feature/task → `/capture`**, which files the GitHub issue _and_
    the linked bead (`Tracks GH #N`) together. Never one without the other.
 2. Issues filed outside `/capture` (bulk filings, web UI) get beads backfilled
    via `/sync-issues-to-beads`. Audit before ending a filing or queue session:
@@ -119,6 +119,7 @@ Non-negotiable. Violating any of these is a bug in your behavior.
    a supplied worktree that may contain active work; use it only as launch
    context and create the required task worktree from the freshly fetched
    remote ref as above.
+
 3. **Test gates.** Fast loop per commit. Before push: full CI (build, format, and tests), then rebase against the default branch — clean → push
    (`--force-with-lease` if rewritten); conflicted → park. Never push a stale
    stack.
@@ -144,6 +145,7 @@ Non-negotiable. Violating any of these is a bug in your behavior.
    paths** — when the PR diff touches a marked path, autonomous mode parks the
    merge-ready PR for a human instead of merging, stating which path triggered
    it. Fragments may never grant autonomy implicitly.
+
 7. **Specs go through the OpenSpec tooling.** Canonical `openspec/specs/` is
    read-only outside checkbox/date/gap-note edits. Most new features can
    benefit from using `/opsx:explore` to explore and plan out the feature
@@ -276,7 +278,7 @@ foreground/attached. Do not background reviewer or diagnostic agents.
 
 ## The identity contract — what skills defer to your agent identity
 
-Shared skills describe *process* and resolve the *who/how* from this contract:
+Shared skills describe _process_ and resolve the _who/how_ from this contract:
 
 - **Subagents**, by capability tier: lightweight for triage and monitoring;
   standard for reproduction, implementation, and verification; deep reasoning
