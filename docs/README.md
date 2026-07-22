@@ -10,15 +10,16 @@ Start with [architecture.md](architecture.md) for the current backend model and
 
 ## Reference docs
 
-| Doc                                                    | What it covers                                                                                                        |
-| ------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------- |
-| [architecture.md](architecture.md)                     | Current backend model, package layout, status derivation, persistence/CDC, and load-bearing rules.                    |
-| [backend-code-structure.md](backend-code-structure.md) | Package ownership rules for the Go backend: domain, services, ports, adapters, storage, HTTP, CLI, and daemon wiring. |
-| [cli/README.md](cli/README.md)                         | CLI commands and daemon control surface.                                                                              |
-| [fork.md](fork.md)                                     | Fork goals, port tracking, and conventions for upstreamable versus fork-only work.                                    |
-| [prime-supervisor.md](prime-supervisor.md)             | Optional daemon-gated fleet prime role, env switches, lifecycle, and project config.                                  |
-| [STATUS.md](STATUS.md)                                 | What is shipped on `main` today and what is still in flight.                                                          |
-| [stack.md](stack.md)                                   | Accepted library/runtime choices, pending stack decisions, and dependencies explicitly avoided for V1.                |
+| Doc                                                                  | What it covers                                                                                                        |
+| -------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| [architecture.md](architecture.md)                                   | Current backend model, package layout, status derivation, persistence/CDC, and load-bearing rules.                    |
+| [backend-code-structure.md](backend-code-structure.md)               | Package ownership rules for the Go backend: domain, services, ports, adapters, storage, HTTP, CLI, and daemon wiring. |
+| [cli/README.md](cli/README.md)                                       | CLI commands and daemon control surface.                                                                              |
+| [fork.md](fork.md)                                                   | Fork goals, port tracking, and conventions for upstreamable versus fork-only work.                                    |
+| [prime-supervisor.md](prime-supervisor.md)                           | Optional daemon-gated fleet prime role, env switches, lifecycle, and project config.                                  |
+| [macos-electron-titlebar-smoke.md](macos-electron-titlebar-smoke.md) | Manual hosted macOS Electron launch and native traffic-light/titlebar-cluster geometry verification.                  |
+| [STATUS.md](STATUS.md)                                               | What is shipped on `main` today and what is still in flight.                                                          |
+| [stack.md](stack.md)                                                 | Accepted library/runtime choices, pending stack decisions, and dependencies explicitly avoided for V1.                |
 
 ## Mental model
 

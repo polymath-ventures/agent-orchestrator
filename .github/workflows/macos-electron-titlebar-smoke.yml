@@ -1,0 +1,90 @@
+name: macOS Electron titlebar smoke
+
+# Manual-only native smoke for GH #76 / the Electron-only chrome boundary from
+# GH #54. This packages and launches the REAL macOS Electron app, measures the
+# renderer TitlebarNav against BrowserWindow.getWindowButtonPosition(), and
+# uploads the renderer screenshot + geometry JSON.
+#
+# Dispatch from Actions → "macOS Electron titlebar smoke" and provide a branch
+# or full commit SHA in `ref` (for example, the head SHA of a merge-ready PR).
+# The workflow intentionally does not run on pull_request and uses no secrets.
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch or full commit SHA to package and verify
+        required: true
+        default: main
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  electron-titlebar-smoke:
+    runs-on: blacksmith-6vcpu-macos-15
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - name: Check out requested ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Package unsigned macOS Electron app
+        run: npm run package
+
+      - name: Stage app in Applications
+        shell: bash
+        run: |
+          set -euo pipefail
+          packaged_app="$(find out -type d -name 'Agent Orchestrator.app' -print -quit)"
+          if [[ -z "$packaged_app" ]]; then
+            echo "::error::electron-forge package did not produce Agent Orchestrator.app"
+            exit 1
+          fi
+
+          smoke_app="/Applications/Agent Orchestrator Smoke ${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.app"
+          sudo rm -rf "$smoke_app"
+          sudo ditto "$packaged_app" "$smoke_app"
+          sudo chown -R "$(id -un):staff" "$smoke_app"
+
+          echo "AO_MAC_SMOKE_APP_PATH=$smoke_app" >> "$GITHUB_ENV"
+          echo "AO_MAC_SMOKE_OUTPUT_DIR=$RUNNER_TEMP/electron-titlebar-smoke" >> "$GITHUB_ENV"
+
+      - name: Run native Electron titlebar smoke
+        run: npm run test:electron-titlebar
+
+      - name: Upload smoke evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: electron-titlebar-smoke-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/electron-titlebar-smoke
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Remove staged app
+        if: always()
+        shell: bash
+        working-directory: .
+        run: |
+          if [[ -n "${AO_MAC_SMOKE_APP_PATH:-}" ]]; then
+            sudo rm -rf "$AO_MAC_SMOKE_APP_PATH"
+          fi

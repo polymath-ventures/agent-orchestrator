@@ -25,6 +25,7 @@
 		"typecheck": "tsc --noEmit",
 		"test": "vitest run --config vite.renderer.config.ts",
 		"test:e2e": "playwright test",
+		"test:electron-titlebar": "playwright test --config playwright.electron.config.ts",
 		"api:ts": "openapi-typescript ../backend/internal/httpd/apispec/openapi.yaml -o src/api/schema.ts"
 	},
 	"devDependencies": {
