@@ -264,7 +264,7 @@ func TestTriggerSpawnsNewReviewerAndRecordsRunAfterLaunch(t *testing.T) {
 	if !launcher.spawned || launcher.notified {
 		t.Fatalf("expected spawn (no live reviewer): %+v", launcher)
 	}
-	if res.Run.TargetSHA != "sha1" || res.Run.Status != domain.ReviewRunRunning || res.Run.Harness != domain.ReviewerClaudeCode {
+	if res.Run.TargetSHA != "sha1" || res.Run.Status != domain.ReviewRunRunning || res.Run.Harness != domain.ReviewerCodex {
 		t.Fatalf("run = %+v", res.Run)
 	}
 	if launcher.gotSpec.RunID != res.Run.ID {
@@ -753,6 +753,25 @@ func TestTriggerPassesResolvedReviewerAgentConfig(t *testing.T) {
 	}
 	if launcher.gotSpec.AgentConfig.Model != "gpt-5-codex" || launcher.gotSpec.AgentConfig.Permissions != domain.PermissionModeAcceptEdits {
 		t.Fatalf("reviewer agent config = %#v, want reviewer model plus base permissions", launcher.gotSpec.AgentConfig)
+	}
+}
+
+func TestTriggerFailsOnInvalidConfiguredReviewerAgentConfig(t *testing.T) {
+	store := &fakeStore{}
+	projects := fakeProjects{cfg: domain.ProjectConfig{
+		Reviewers: []domain.ReviewerConfig{{
+			Harness:     domain.ReviewerCodex,
+			AgentConfig: domain.AgentConfig{Model: "claude-opus-4-5"},
+		}},
+	}}
+	launcher := &fakeLauncher{handle: "review-mer-1"}
+	eng := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), projects, launcher)
+
+	if _, err := eng.Trigger(context.Background(), "mer-1"); err == nil {
+		t.Fatal("expected invalid reviewer model to fail loudly")
+	}
+	if launcher.spawned {
+		t.Fatal("reviewer must not spawn with a zero-value replacement for an invalid configured model")
 	}
 }
 

@@ -142,19 +142,28 @@ func TestResolveReviewerHarness(t *testing.T) {
 		t.Fatalf("configured reviewer = %q, want claude-code", got)
 	}
 
-	// No reviewer configured: reuse the worker's harness when it is itself a
-	// supported reviewer.
-	if got := (ProjectConfig{}).ResolveReviewerHarness(HarnessClaudeCode); got != ReviewerClaudeCode {
-		t.Fatalf("claude-code worker = %q, want reviewer claude-code", got)
+	// No reviewer configured: default to a reviewer of a DIFFERENT family than
+	// the worker, so an unconfigured project still gets an independent review.
+	if got := (ProjectConfig{}).ResolveReviewerHarness(HarnessClaudeCode); got != ReviewerCodex {
+		t.Fatalf("claude-code worker = %q, want cross-family reviewer codex", got)
 	}
-	if got := (ProjectConfig{}).ResolveReviewerHarness(HarnessCodex); got != ReviewerCodex {
-		t.Fatalf("codex worker = %q, want reviewer codex", got)
+	if got := (ProjectConfig{}).ResolveReviewerHarness(HarnessCodex); got != ReviewerClaudeCode {
+		t.Fatalf("codex worker = %q, want cross-family reviewer claude-code", got)
 	}
-	if got := (ProjectConfig{}).ResolveReviewerHarness(HarnessOpenCode); got != ReviewerOpenCode {
-		t.Fatalf("opencode worker = %q, want reviewer opencode", got)
+	if got := (ProjectConfig{}).ResolveReviewerHarness(HarnessCodexFugu); got != ReviewerClaudeCode {
+		t.Fatalf("codex-fugu worker = %q, want cross-family reviewer claude-code", got)
+	}
+	if got := (ProjectConfig{}).ResolveReviewerHarness(HarnessOpenCode); got != ReviewerClaudeCode {
+		t.Fatalf("opencode worker = %q, want cross-family reviewer claude-code", got)
+	}
+	for _, worker := range []AgentHarness{HarnessClaudeCode, HarnessCodex, HarnessCodexFugu, HarnessOpenCode} {
+		reviewer := (ProjectConfig{}).ResolveReviewerHarness(worker)
+		if reviewer.AgentHarness().Family() == worker.Family() {
+			t.Fatalf("worker %q got same-family reviewer %q", worker, reviewer)
+		}
 	}
 
-	// A worker harness that is not itself a reviewer (e.g. crush, aider) falls
+	// A worker harness with no established family (e.g. crush, aider) falls
 	// back to claude-code.
 	if got := (ProjectConfig{}).ResolveReviewerHarness(HarnessCrush); got != FallbackReviewerHarness {
 		t.Fatalf("crush worker = %q, want %q", got, FallbackReviewerHarness)

@@ -455,10 +455,14 @@ func (e *Engine) reviewerLaunchConfig(ctx stdctx.Context, worker domain.SessionR
 		}
 	}
 	harness := cfg.ResolveReviewerHarness(worker.Harness)
-	return harness, resolvedReviewerAgentConfig(cfg, harness), nil
+	config, err := resolvedReviewerAgentConfig(cfg, harness)
+	if err != nil {
+		return "", ports.AgentConfig{}, err
+	}
+	return harness, config, nil
 }
 
-func resolvedReviewerAgentConfig(cfg domain.ProjectConfig, harness domain.ReviewerHarness) ports.AgentConfig {
+func resolvedReviewerAgentConfig(cfg domain.ProjectConfig, harness domain.ReviewerHarness) (ports.AgentConfig, error) {
 	var override domain.AgentConfig
 	for _, rv := range cfg.Reviewers {
 		if rv.Harness == harness {
@@ -466,11 +470,20 @@ func resolvedReviewerAgentConfig(cfg domain.ProjectConfig, harness domain.Review
 			break
 		}
 	}
+	if err := override.Validate(); err != nil {
+		return ports.AgentConfig{}, fmt.Errorf("reviewer %s agent config: %w", harness, err)
+	}
+	if model := override.Model; model != "" {
+		provider := harness.AgentHarness().ModelProvider()
+		if !domain.ClassifyModelProvider(model).CompatibleWith(provider) {
+			return ports.AgentConfig{}, fmt.Errorf("reviewer %s agent config model: %q is not a %s model", harness, model, provider)
+		}
+	}
 	resolved, err := agentconfig.EffectiveFromConfigs(cfg.AgentConfig, override, "", harness.AgentHarness())
 	if err != nil {
-		return ports.AgentConfig{}
+		return ports.AgentConfig{}, err
 	}
-	return resolved
+	return resolved, nil
 }
 
 func (e *Engine) upsertReview(ctx stdctx.Context, worker domain.SessionRecord, harness domain.ReviewerHarness, handleID string, now time.Time) (domain.Review, error) {
