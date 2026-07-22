@@ -826,7 +826,7 @@ func (m *Manager) warnSpawnSelectionUnavailable(harness domain.AgentHarness, mod
 	)
 }
 
-func spawnModelSource(explicitModel bool, mixSelected bool) string {
+func spawnModelSource(explicitModel, mixSelected bool) string {
 	if explicitModel {
 		return "explicit spawn model"
 	}

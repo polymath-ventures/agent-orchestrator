@@ -755,7 +755,9 @@ describe("ProjectSettingsForm", () => {
 		await userEvent.type(screen.getAllByLabelText("Weight")[1], "100");
 		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
 
-		expect(await screen.findByText("Worker mix bucket 1 weight must be a whole number from 1 to 100.")).toBeInTheDocument();
+		expect(
+			await screen.findByText("Worker mix bucket 1 weight must be a whole number from 1 to 100."),
+		).toBeInTheDocument();
 		expect(putMock).not.toHaveBeenCalled();
 	}, 20_000);
 
