@@ -21,14 +21,15 @@ import (
 var ctx = context.Background()
 
 type fakeStore struct {
-	sessions      map[domain.SessionID]domain.SessionRecord
-	pr            map[domain.SessionID]domain.PRFacts
-	projects      map[string]domain.ProjectRecord
-	workspaceRepo map[string][]domain.WorkspaceRepoRecord
-	fleetPaused   bool
-	num           int
-	deleteErr     error
-	upsertWTErr   error
+	sessions       map[domain.SessionID]domain.SessionRecord
+	pr             map[domain.SessionID]domain.PRFacts
+	projects       map[string]domain.ProjectRecord
+	workspaceRepo  map[string][]domain.WorkspaceRepoRecord
+	fleetPaused    bool
+	fleetPausedErr error
+	num            int
+	deleteErr      error
+	upsertWTErr    error
 	// worktrees maps session ID to its saved worktree rows (shutdown-saved marker).
 	worktrees map[domain.SessionID][]domain.SessionWorktreeRecord
 	// sharedLog, when non-nil, receives an ordered call entry for each
@@ -50,7 +51,7 @@ func (f *fakeStore) GetProject(_ context.Context, id string) (domain.ProjectReco
 	return r, ok, nil
 }
 func (f *fakeStore) GetFleetPaused(context.Context) (bool, error) {
-	return f.fleetPaused, nil
+	return f.fleetPaused, f.fleetPausedErr
 }
 func (f *fakeStore) ListWorkspaceRepos(_ context.Context, projectID string) ([]domain.WorkspaceRepoRecord, error) {
 	return f.workspaceRepo[projectID], nil

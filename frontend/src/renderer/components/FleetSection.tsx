@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
-import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
+import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { ConfirmDialog } from "./ConfirmDialog";
@@ -26,7 +26,9 @@ export function FleetSection() {
 	const query = useQuery({
 		queryKey: fleetStatusQueryKey,
 		queryFn: fetchFleetStatus,
+		refetchInterval: 15_000,
 	});
+	const workspaces = useWorkspaceQuery();
 
 	const invalidate = () => {
 		void queryClient.invalidateQueries({ queryKey: fleetStatusQueryKey });
@@ -59,6 +61,10 @@ export function FleetSection() {
 	});
 
 	const paused = query.data ?? false;
+	const drainingWorkers = (workspaces.data ?? []).reduce(
+		(sum, workspace) => sum + (workspace.pauseState === "draining" ? (workspace.drainingWorkers ?? 0) : 0),
+		0,
+	);
 	// Until the status is known (loading or errored), disable the actions rather
 	// than defaulting to "Running" — acting on an unknown state could pause/resume
 	// the wrong way.
@@ -75,7 +81,8 @@ export function FleetSection() {
 				<CardContent className="flex flex-col gap-4">
 					<p className="text-xs leading-row text-muted-foreground">
 						Pause the whole fleet to stop new work across every project. A soft pause lets live workers finish and drain
-						at idle; a hard pause terminates them immediately and loses mid-flight work.
+						at idle; a hard fleet pause terminates workers, orchestrators, and prime sessions immediately and loses
+						mid-flight work.
 					</p>
 
 					<div className="flex flex-col gap-2 text-xs">
@@ -87,7 +94,9 @@ export function FleetSection() {
 								) : query.isError ? (
 									<span className="text-error">Unknown (daemon unreachable)</span>
 								) : paused ? (
-									<span className="text-muted-foreground">Paused</span>
+									<span className="text-muted-foreground">
+										{drainingWorkers > 0 ? `Draining (${drainingWorkers})` : "Paused"}
+									</span>
 								) : (
 									<span className="text-success">Running</span>
 								)}
@@ -108,22 +117,20 @@ export function FleetSection() {
 								Resume
 							</Button>
 						) : (
-							<>
-								<Button type="button" variant="primary" onClick={() => pause.mutate()} disabled={busy}>
-									{pause.isPending && <Loader2 className="mr-2 size-icon-base animate-spin" />}
-									Pause
-								</Button>
-								<Button
-									type="button"
-									variant="outline"
-									onClick={() => setConfirmHardOpen(true)}
-									disabled={busy}
-									className="border-destructive text-destructive hover:bg-destructive/10"
-								>
-									Pause now (hard)
-								</Button>
-							</>
+							<Button type="button" variant="primary" onClick={() => pause.mutate()} disabled={busy}>
+								{pause.isPending && <Loader2 className="mr-2 size-icon-base animate-spin" />}
+								Pause
+							</Button>
 						)}
+						<Button
+							type="button"
+							variant="outline"
+							onClick={() => setConfirmHardOpen(true)}
+							disabled={busy}
+							className="border-destructive text-destructive hover:bg-destructive/10"
+						>
+							Pause now (hard)
+						</Button>
 					</div>
 				</CardContent>
 			</Card>
@@ -132,7 +139,8 @@ export function FleetSection() {
 				title="Hard pause the fleet?"
 				description={
 					<p className="text-sm text-muted-foreground">
-						Hard pause terminates all live workers immediately. Mid-flight work is lost. Continue?
+						This immediately terminates every live worker, orchestrator, and prime session across all projects.
+						In-flight, uncommitted work is discarded. Use a normal pause to let workers drain instead.
 					</p>
 				}
 				confirmLabel={pauseHard.isPending ? "Pausing…" : "Pause now"}

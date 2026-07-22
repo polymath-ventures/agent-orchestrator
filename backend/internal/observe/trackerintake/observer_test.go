@@ -97,6 +97,26 @@ func TestPollSkipsSessionScanWhenIntakeDisabled(t *testing.T) {
 	}
 }
 
+// Fleet pause is an authoritative safety gate: a storage read failure must
+// abort the tick before tracker discovery or spawning rather than failing open.
+func TestPollFleetPauseReadErrorFailsClosed(t *testing.T) {
+	readErr := errors.New("pause store unavailable")
+	store := &fakeStore{fleetPausedErr: readErr}
+	tracker := &fakeTracker{}
+	spawner := &fakeSpawner{}
+
+	err := New(singleResolver(tracker), store, spawner, Config{Logger: discardLogger()}).Poll(context.Background())
+	if !errors.Is(err, readErr) {
+		t.Fatalf("Poll() error = %v, want %v", err, readErr)
+	}
+	if len(tracker.repos) != 0 {
+		t.Fatalf("tracker calls = %v, want none after fail-closed pause read", tracker.repos)
+	}
+	if len(spawner.calls) != 0 {
+		t.Fatalf("spawn calls = %d, want 0", len(spawner.calls))
+	}
+}
+
 func TestPollSkipsIneligibleAndInvalidProjects(t *testing.T) {
 	store := &fakeStore{
 		projects: []domain.ProjectRecord{
@@ -377,10 +397,11 @@ func singleResolver(tracker ports.Tracker) TrackerResolver {
 }
 
 type fakeStore struct {
-	projects    []domain.ProjectRecord
-	sessions    []domain.SessionRecord
-	sessionsErr error
-	fleetPaused bool
+	projects       []domain.ProjectRecord
+	sessions       []domain.SessionRecord
+	sessionsErr    error
+	fleetPaused    bool
+	fleetPausedErr error
 }
 
 func (f *fakeStore) ListProjects(context.Context) ([]domain.ProjectRecord, error) {
@@ -388,7 +409,7 @@ func (f *fakeStore) ListProjects(context.Context) ([]domain.ProjectRecord, error
 }
 
 func (f *fakeStore) GetFleetPaused(context.Context) (bool, error) {
-	return f.fleetPaused, nil
+	return f.fleetPaused, f.fleetPausedErr
 }
 
 func (f *fakeStore) ListAllSessions(context.Context) ([]domain.SessionRecord, error) {

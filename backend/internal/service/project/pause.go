@@ -75,9 +75,10 @@ func (m *Service) FleetPaused(ctx context.Context) (bool, error) {
 }
 
 // SetFleetPaused sets or clears the daemon-global fleet pause flag. When pausing
-// hard, it fans out an immediate worker termination across every project
-// (orchestrators stay alive; best-effort — reports failure if any project's
-// drain errored).
+// hard, it fans out an immediate termination across every project. A fleet-wide
+// hard pause is the deliberate emergency stop, so it terminates privileged
+// supervisor sessions (orchestrators and prime) as well as workers
+// (best-effort — reports failure if any project's drain errored).
 func (m *Service) SetFleetPaused(ctx context.Context, paused, hard bool) error {
 	if err := m.store.SetFleetPaused(ctx, paused); err != nil {
 		return apierr.Internal("FLEET_PAUSE_FAILED", "Failed to update fleet pause state")
@@ -91,12 +92,13 @@ func (m *Service) SetFleetPaused(ctx context.Context, paused, hard bool) error {
 	}
 	failed := 0
 	for _, row := range projects {
-		if err := m.hardDrain(ctx, domain.ProjectID(row.ID)); err != nil {
+		// Fleet-wide emergency stop: include orchestrators.
+		if err := m.hardDrain(ctx, domain.ProjectID(row.ID), true); err != nil {
 			failed++
 		}
 	}
 	if failed > 0 {
-		return apierr.Internal("FLEET_HARD_PAUSE_FAILED", "Failed to terminate live workers for some projects")
+		return apierr.Internal("FLEET_HARD_PAUSE_FAILED", "Failed to terminate live sessions for some projects")
 	}
 	return nil
 }
@@ -120,7 +122,9 @@ func (m *Service) SetProjectPaused(ctx context.Context, id domain.ProjectID, pau
 	}
 	row.Paused = paused
 	if paused && hard {
-		if err := m.hardDrain(ctx, id); err != nil {
+		// Per-project hard pause spares the orchestrator so it keeps supervising
+		// the rest of the fleet.
+		if err := m.hardDrain(ctx, id, false); err != nil {
 			return Project{}, apierr.Internal("PROJECT_HARD_PAUSE_FAILED", "Failed to terminate live workers")
 		}
 	}
@@ -129,12 +133,14 @@ func (m *Service) SetProjectPaused(ctx context.Context, id domain.ProjectID, pau
 	return p, nil
 }
 
-// hardDrain terminates a project's live worker sessions through the clean
-// session-teardown Kill path. Orchestrators are never drained — they stay alive
-// and idle under any pause so supervision and alerting keep running. A nil
-// session collaborator is a no-op. Best-effort: every eligible worker is
-// attempted and failures are aggregated.
-func (m *Service) hardDrain(ctx context.Context, id domain.ProjectID) error {
+// hardDrain terminates a project's live sessions through the clean
+// session-teardown Kill path. Workers are always drained. Privileged supervisor
+// sessions (orchestrator and prime) are drained only when includeOrchestrators is
+// set — this is reserved for the fleet-wide hard pause (the emergency stop); a
+// per-project hard pause passes false so those supervisors stay alive and idle to
+// keep supervision and alerting running. A nil session collaborator is a no-op.
+// Best-effort: every eligible session is attempted and failures are aggregated.
+func (m *Service) hardDrain(ctx context.Context, id domain.ProjectID, includeOrchestrators bool) error {
 	if m.sessions == nil {
 		return nil
 	}
@@ -147,7 +153,7 @@ func (m *Service) hardDrain(ctx context.Context, id domain.ProjectID) error {
 		if string(s.ProjectID) != string(id) || s.IsTerminated {
 			continue
 		}
-		if s.Kind != domain.KindWorker {
+		if (s.Kind == domain.KindOrchestrator || s.Kind == domain.KindPrime) && !includeOrchestrators {
 			continue
 		}
 		// Best-effort: one worker's Kill failure must not leave the rest of the

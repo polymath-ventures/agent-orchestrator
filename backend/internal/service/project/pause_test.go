@@ -113,6 +113,7 @@ func TestSetProjectPausedHardKillsWorkersNotOrchestrators(t *testing.T) {
 	seedPauseProject(t, store, "proj")
 	w := seedSession(t, store, "proj", domain.KindWorker)
 	seedSession(t, store, "proj", domain.KindOrchestrator)
+	seedSession(t, store, "proj", domain.KindPrime)
 	sessions := &fakePauseSessions{}
 	m := project.NewWithDeps(project.Deps{Store: store, Sessions: sessions})
 
@@ -120,7 +121,7 @@ func TestSetProjectPausedHardKillsWorkersNotOrchestrators(t *testing.T) {
 		t.Fatalf("SetProjectPaused hard: %v", err)
 	}
 	if len(sessions.killed) != 1 || sessions.killed[0] != w {
-		t.Fatalf("hard pause killed %v, want only worker %s", sessions.killed, w)
+		t.Fatalf("hard pause killed %v, want only worker %s (orchestrator and prime spared)", sessions.killed, w)
 	}
 }
 
@@ -177,22 +178,28 @@ func TestFleetPauseReflectedInProjectState(t *testing.T) {
 	}
 }
 
-// A hard fleet pause fans out worker termination across all projects but leaves
-// orchestrators alive (they stay up so supervision/alerting keeps running).
-func TestSetFleetPausedHardDrainsWorkersNotOrchestrators(t *testing.T) {
+// A hard FLEET pause is the deliberate emergency stop: it fans out termination
+// across all projects and also terminates orchestrators (unlike a per-project
+// hard pause, which spares them so supervision keeps running).
+func TestSetFleetPausedHardDrainsWorkersAndOrchestrators(t *testing.T) {
 	ctx := context.Background()
 	store := newPauseStore(t)
 	seedPauseProject(t, store, "p1")
 	seedPauseProject(t, store, "p2")
 	w := seedSession(t, store, "p1", domain.KindWorker)
-	seedSession(t, store, "p2", domain.KindOrchestrator)
+	o := seedSession(t, store, "p2", domain.KindOrchestrator)
+	pr := seedSession(t, store, "p1", domain.KindPrime)
 	sessions := &fakePauseSessions{}
 	m := project.NewWithDeps(project.Deps{Store: store, Sessions: sessions})
 
 	if err := m.SetFleetPaused(ctx, true, true); err != nil {
 		t.Fatalf("SetFleetPaused hard: %v", err)
 	}
-	if len(sessions.killed) != 1 || sessions.killed[0] != w {
-		t.Fatalf("fleet hard pause killed %v, want only the worker %s (orchestrators stay alive)", sessions.killed, w)
+	killed := map[domain.SessionID]bool{}
+	for _, id := range sessions.killed {
+		killed[id] = true
+	}
+	if len(sessions.killed) != 3 || !killed[w] || !killed[o] || !killed[pr] {
+		t.Fatalf("fleet hard pause killed %v, want worker %s, orchestrator %s, and prime %s (emergency stop terminates every session)", sessions.killed, w, o, pr)
 	}
 }
