@@ -755,6 +755,10 @@ func toAPIError(err error) error {
 		// Every configured bucket is down. Distinct from a launch failure and
 		// retryable once a bucket recovers, so a conflict rather than a 500.
 		return apierr.Conflict("WORKER_MIX_EXHAUSTED", err.Error(), nil)
+	case errors.Is(err, sessionmanager.ErrWorkerMixBucketDown):
+		// A selected worker-mix bucket is currently marked down. It is retryable
+		// once the candidate recovers, so surface it as a conflict.
+		return apierr.Conflict("WORKER_MIX_BUCKET_DOWN", err.Error(), nil)
 	case errors.Is(err, ports.ErrWorkspaceBranchCheckedOutElsewhere):
 		return apierr.Conflict("BRANCH_CHECKED_OUT_ELSEWHERE", err.Error(), nil)
 	case errors.Is(err, ports.ErrWorkspaceBranchNotFetched):

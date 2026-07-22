@@ -49,6 +49,11 @@ var (
 	// unavailable, so no bucket could be selected. The mix never substitutes a
 	// harness it does not list, so an exhausted mix fails loudly instead.
 	ErrWorkerMixExhausted = errors.New("session: no worker mix bucket available")
+	// ErrWorkerMixBucketDown means the weighted worker mix selected an exact
+	// bucket that candidate health currently marks down. The spawn refuses that
+	// bucket instead of silently substituting another one, and candidate health
+	// debits the skipped slot so the bucket's share is preserved in later census.
+	ErrWorkerMixBucketDown = errors.New("session: worker mix bucket is down")
 	// ErrWorkerConcurrencyCap means the project already has as many live workers
 	// as its configured cap allows, so a further worker spawn is refused. It is a
 	// capacity condition, not a launch failure: Spawn returns it before creating
@@ -713,13 +718,12 @@ func (m *Manager) rollbackPreparedSpawnWorkspace(ctx context.Context, rec domain
 // resolveSpawnTarget resolves the (harness, model) pair a spawn launches with,
 // and reports whether the worker mix is what chose it.
 //
-// A request that pins a harness, a model, or both is honored as given and the
-// worker mix is never consulted for it. Otherwise a configured mix owns the
-// choice for worker spawns, and the selected bucket supplies both halves of the
-// pair — including an empty model, which launches the adapter's own default.
-// Letting the bucket rather than the project agent config decide the model is
-// what keeps the persisted model equal to the bucket key, and so what lets the
-// next census see this selection. With no mix configured the resolution is the
+// A request that pins a harness is honored as given and the worker mix is never
+// consulted for it. A request that pins only a model still lets the mix choose
+// the harness, then overlays the explicit model onto that selected bucket. When
+// no harness is pinned and a configured mix owns the choice for worker spawns,
+// the selected bucket supplies the harness/effort and, unless an explicit spawn
+// model overrides it, the model. With no mix configured the resolution is the
 // pre-existing role/project fallback, unchanged.
 //
 // The mixSelected result is returned rather than re-derived downstream because
@@ -727,8 +731,8 @@ func (m *Manager) rollbackPreparedSpawnWorkspace(ctx context.Context, rec domain
 // bucket yields the same pair as a selection, so nothing on the resulting row
 // distinguishes the two after the fact.
 func (m *Manager) resolveSpawnTarget(ctx context.Context, cfg ports.SpawnConfig, project domain.ProjectRecord) (harness domain.AgentHarness, model string, effort domain.Effort, mixSelected bool, err error) {
-	pinned := cfg.Harness != "" || strings.TrimSpace(cfg.Model) != ""
-	if !pinned && cfg.Kind == domain.KindWorker && len(project.Config.WorkerMix) > 0 {
+	pinnedHarness := cfg.Harness != ""
+	if !pinnedHarness && cfg.Kind == domain.KindWorker && len(project.Config.WorkerMix) > 0 {
 		mix, err := effectiveWorkerMix(project.Config)
 		if err != nil {
 			return "", "", "", false, err
@@ -738,7 +742,11 @@ func (m *Manager) resolveSpawnTarget(ctx context.Context, cfg ports.SpawnConfig,
 			return "", "", "", false, err
 		}
 		bucket := entry.BucketKey()
-		return bucket.Harness, bucket.Model, bucket.Effort, true, nil
+		model := bucket.Model
+		if explicitModel := strings.TrimSpace(cfg.Model); explicitModel != "" {
+			model = explicitModel
+		}
+		return bucket.Harness, model, bucket.Effort, true, nil
 	}
 	// A per-project role override picks the harness when the spawn names none,
 	// so a project can default workers to one agent and orchestrators to another.
@@ -816,34 +824,22 @@ func (m *Manager) warnSpawnSelectionUnavailable(harness domain.AgentHarness, mod
 
 // selectMixBucket picks the bucket the next unpinned worker spawn launches on.
 //
-// The candidate set is the configured mix. Candidate health narrows it here —
-// a bucket marked down is dropped from the candidates so its share redistributes
-// across the rest by weight, which is why exhausting the candidates is an error
-// rather than a fallback to some harness the mix does not list.
+// The candidate set is the configured mix. Candidate health does not narrow it
+// before selection: skip debit is folded into the census so a down bucket's share
+// is preserved instead of silently reallocated to healthy buckets.
 func (m *Manager) selectMixBucket(ctx context.Context, project domain.ProjectID, mix domain.WorkerMix) (domain.WorkerMixEntry, error) {
-	// Drop every bucket whose candidate is currently down. RecordSkipIfDown is
-	// the API the "Skipping a down candidate" contract calls for: it reports the
-	// down state so the caller can refuse the bucket, debits the skip count, and
-	// logs — without emitting an event, so a persistent outage does not flood the
-	// sink. A healthy bucket is left untouched. Narrowing before the census means
-	// a down bucket's share redistributes across the survivors by weight, and an
-	// all-down mix yields no candidate — the loud ErrWorkerMixExhausted below
-	// rather than a silent substitution onto a harness the mix never listed.
-	candidates := make(domain.WorkerMix, 0, len(mix))
-	for _, e := range mix {
-		bk := e.BucketKey()
-		if m.health.RecordSkipIfDown(workerMixCandidate(bk.Harness, bk.Model, bk.Effort)) {
-			continue
-		}
-		candidates = append(candidates, e)
-	}
-	census, err := m.mixCensus(ctx, project, candidates)
+	census, err := m.mixCensus(ctx, project, mix)
 	if err != nil {
 		return domain.WorkerMixEntry{}, err
 	}
-	entry, ok := candidates.Select(census)
+	m.applyWorkerMixSkipped(census)
+	entry, ok := mix.Select(census)
 	if !ok {
 		return domain.WorkerMixEntry{}, fmt.Errorf("%w: project %s configures %d bucket(s), none selectable", ErrWorkerMixExhausted, project, len(mix))
+	}
+	bk := entry.BucketKey()
+	if m.health.RecordSkipIfDown(workerMixCandidate(bk.Harness, bk.Model, bk.Effort)) {
+		return domain.WorkerMixEntry{}, fmt.Errorf("worker mix selected %s: %w", bucketKeyString(bk), ErrWorkerMixBucketDown)
 	}
 	return entry, nil
 }
@@ -852,11 +848,9 @@ func (m *Manager) selectMixBucket(ctx context.Context, project domain.ProjectID,
 // apportionment step consumes. It reuses the existing list-and-filter scan (as
 // activeOrchestratorSessionID does) rather than a dedicated aggregate query.
 //
-// Only mix-selected live workers in a configured bucket are counted. Selection
-// reads no other key, so restricting the tally here is what makes a pinned
-// spawn leave the unpinned sequence alone — including a pin that names exactly a
-// configured bucket, which is indistinguishable from a selection on
-// (harness, model, effort) but carries MixSelected false.
+// Every live worker in a configured bucket is counted. Selection balances the
+// actual live fleet, not only rows that the mix itself selected; a pinned worker
+// occupying a bucket consumes that bucket's share too.
 func (m *Manager) mixCensus(ctx context.Context, project domain.ProjectID, mix domain.WorkerMix) (map[domain.BucketKey]int, error) {
 	recs, err := m.store.ListSessions(ctx, project)
 	if err != nil {
@@ -867,7 +861,7 @@ func (m *Manager) mixCensus(ctx context.Context, project domain.ProjectID, mix d
 		counts[e.BucketKey()] = 0
 	}
 	for _, rec := range recs {
-		if rec.IsTerminated || rec.Kind != domain.KindWorker || !rec.MixSelected {
+		if rec.IsTerminated || rec.Kind != domain.KindWorker {
 			continue
 		}
 		key := domain.BucketKey{Harness: rec.Harness, Model: rec.Model, Effort: rec.Effort}
@@ -877,6 +871,31 @@ func (m *Manager) mixCensus(ctx context.Context, project domain.ProjectID, mix d
 		counts[key]++
 	}
 	return counts, nil
+}
+
+func (m *Manager) applyWorkerMixSkipped(counts map[domain.BucketKey]int) {
+	m.health.ForEachSkipped(func(c candidatehealth.Candidate, skipped int) {
+		if c.Surface != candidateSurfaceWorkerMix {
+			return
+		}
+		key := domain.BucketKey{
+			Harness: domain.AgentHarness(c.Harness),
+			Model:   strings.TrimSpace(c.Model),
+			Effort:  domain.NormalizeEffortForHarness(domain.AgentHarness(c.Harness), domain.Effort(c.Effort)),
+		}
+		counts[key] += skipped
+	})
+}
+
+func bucketKeyString(key domain.BucketKey) string {
+	parts := []string{string(key.Harness)}
+	if key.Model != "" {
+		parts = append(parts, key.Model)
+	}
+	if key.Effort != "" {
+		parts = append(parts, "effort="+string(key.Effort))
+	}
+	return strings.Join(parts, ":")
 }
 
 // liveWorkerCount counts the project's non-terminated worker sessions — the

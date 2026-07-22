@@ -208,9 +208,9 @@ func TestSpawn_PinnedSpawnBypassesMix(t *testing.T) {
 	}
 }
 
-// Pinning only a model also bypasses the mix: the mix cannot honor a model it
-// did not choose the harness for, so the request falls to config resolution.
-func TestSpawn_PinnedModelAloneBypassesMix(t *testing.T) {
+// Pinning only a model still leaves harness selection to the mix. The explicit
+// model overlays the selected bucket after the mix chooses the harness.
+func TestSpawn_ModelOnlyPinUsesMixSelectedHarness(t *testing.T) {
 	m, _ := mixManager(domain.ProjectConfig{
 		WorkerMix: testMix(),
 		Worker:    domain.RoleOverride{Harness: domain.HarnessGrok},
@@ -220,52 +220,32 @@ func TestSpawn_PinnedModelAloneBypassesMix(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rec.Harness != domain.HarnessGrok || rec.Model != "grok-4" {
-		t.Fatalf("model-pinned spawn = (%q, %q), want the configured worker harness and the pinned model", rec.Harness, rec.Model)
+	if rec.Harness != domain.HarnessClaudeCode || rec.Model != "grok-4" {
+		t.Fatalf("model-only spawn = (%q, %q), want mix-selected claude-code and pinned model", rec.Harness, rec.Model)
+	}
+	if !rec.MixSelected {
+		t.Fatal("model-only worker spawn on a mix project must record mixSelected")
 	}
 }
 
-// The spec's "pinned spawns do not consume mix share": interleaving pinned
-// spawns must leave the unpinned selection sequence byte-identical to the
-// sequence the same project produces with no pinned spawns at all.
-//
-// Both pin shapes matter, and only the second is load-bearing. A pin naming a
-// harness outside the mix is invisible to a census that filters on bucket keys
-// alone; a pin naming exactly a configured bucket is not, so it is the case
-// that forces the mix-selected flag to exist rather than the census inferring
-// attribution from (harness, model).
-func TestSpawn_PinnedSpawnsDoNotPerturbMixSequence(t *testing.T) {
-	pins := map[string]ports.SpawnConfig{
-		"harness outside the mix": {ProjectID: "mer", Kind: domain.KindWorker, Harness: domain.HarnessGrok},
-		"exactly a configured bucket": {
-			ProjectID: "mer", Kind: domain.KindWorker, Harness: domain.HarnessClaudeCode,
-		},
+// A pinned worker in a configured bucket consumes actual live capacity for that
+// bucket. The selector balances the real fleet, not only rows selected by the
+// mix itself.
+func TestSpawn_PinnedWorkersInConfiguredBucketsConsumeMixShare(t *testing.T) {
+	m, st := mixManager(domain.ProjectConfig{WorkerMix: testMix()})
+
+	// Ten pinned claude-code workers. Counting them computes 60/(10+1) against
+	// 30/(0+1), so the first unpinned spawn should select codex.
+	for i := 0; i < 10; i++ {
+		id := domain.SessionID("mer-pinned-" + string(rune('a'+i)))
+		st.sessions[id] = domain.SessionRecord{
+			ID: id, ProjectID: "mer", Kind: domain.KindWorker,
+			Harness: domain.HarnessClaudeCode,
+		}
 	}
-	for name, pin := range pins {
-		t.Run(name, func(t *testing.T) {
-			baselineManager, _ := mixManager(domain.ProjectConfig{WorkerMix: testMix()})
-			var baseline []domain.AgentHarness
-			for i := 0; i < 6; i++ {
-				baseline = append(baseline, spawnUnpinnedWorker(t, baselineManager).Harness)
-			}
 
-			m, _ := mixManager(domain.ProjectConfig{WorkerMix: testMix()})
-			var interleaved []domain.AgentHarness
-			for i := 0; i < 6; i++ {
-				// A pinned spawn before every unpinned one.
-				if _, err := m.Spawn(ctx, pin); err != nil {
-					t.Fatal(err)
-				}
-				interleaved = append(interleaved, spawnUnpinnedWorker(t, m).Harness)
-			}
-
-			for i := range baseline {
-				if baseline[i] != interleaved[i] {
-					t.Fatalf("selection %d = %q with pinned spawns, want %q (baseline %v, interleaved %v)",
-						i, interleaved[i], baseline[i], baseline, interleaved)
-				}
-			}
-		})
+	if got := spawnUnpinnedWorker(t, m).Harness; got != domain.HarnessCodex {
+		t.Fatalf("first selection = %q, want codex because pinned claude-code workers consume share", got)
 	}
 }
 
@@ -297,24 +277,21 @@ func TestSpawn_MixSelectionIsRecordedOnSession(t *testing.T) {
 	}
 }
 
-// A live, non-terminated worker sitting in a configured bucket must still be
-// invisible to the census when a user pinned it: only the mix's own selections
-// consume mix share.
-func TestSpawn_MixCensusIgnoresPinnedSessionsInConfiguredBuckets(t *testing.T) {
+// A live worker outside the configured mix is ignored by the census: it has no
+// bucket whose share can be debited.
+func TestSpawn_MixCensusIgnoresWorkersOutsideConfiguredBuckets(t *testing.T) {
 	m, st := mixManager(domain.ProjectConfig{WorkerMix: testMix()})
 
-	// Ten pinned claude-code workers. Counting them would compute
-	// 60/(10+1) = 5.45 against 30/(0+1) and starve the 60%% bucket.
 	for i := 0; i < 10; i++ {
-		id := domain.SessionID("mer-pinned-" + string(rune('a'+i)))
+		id := domain.SessionID("mer-outside-" + string(rune('a'+i)))
 		st.sessions[id] = domain.SessionRecord{
 			ID: id, ProjectID: "mer", Kind: domain.KindWorker,
-			Harness: domain.HarnessClaudeCode,
+			Harness: domain.HarnessGrok,
 		}
 	}
 
 	if got := spawnUnpinnedWorker(t, m).Harness; got != domain.HarnessClaudeCode {
-		t.Fatalf("first selection = %q, want claude-code — pinned rows must not consume mix share", got)
+		t.Fatalf("first selection = %q, want claude-code because outside-mix rows do not consume bucket share", got)
 	}
 }
 

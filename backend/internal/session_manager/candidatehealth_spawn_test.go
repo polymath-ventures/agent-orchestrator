@@ -234,25 +234,29 @@ func TestSpawn_MixSelectedCallerCanceledDoesNotMarkDown(t *testing.T) {
 	}
 }
 
-// A down bucket is excluded from selection and its share redistributes onto the
-// surviving healthy buckets: with the 60%% bucket down, every unpinned spawn goes
-// to the 40%% bucket rather than substituting a harness the mix never listed.
-func TestSpawn_DownBucketExcludedAndRedistributes(t *testing.T) {
+// A down bucket's share is debit-preserved, not removed from the mix. The first
+// spawn can go to the healthy survivor while the down bucket's debit is lower,
+// but once D'Hondt selects the down bucket's slot the spawn fails loudly instead
+// of silently redistributing that share forever.
+func TestSpawn_DownBucketDebitPreservedAndFailsWhenSelected(t *testing.T) {
 	tr := candidatehealth.New(candidatehealth.Config{Source: "session_manager"})
 	m, _, _ := healthMixManager(t, domain.ProjectConfig{WorkerMix: twoBucketMix()}, tr, nil)
 	tr.MarkDown(workerMixCandidate(domain.HarnessClaudeCode, "", ""), errors.New("binary gone"))
 
-	for i := 0; i < 10; i++ {
-		rec := spawnUnpinnedWorker(t, m)
-		if rec.Harness != domain.HarnessCodex {
-			t.Fatalf("selection %d = %q, want codex — the 60%% bucket is down and excluded", i, rec.Harness)
-		}
+	first := spawnUnpinnedWorker(t, m)
+	if first.Harness != domain.HarnessCodex {
+		t.Fatalf("first selection = %q, want codex while down bucket carries one skip debit", first.Harness)
+	}
+
+	_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	if !errors.Is(err, ErrWorkerMixBucketDown) {
+		t.Fatalf("second spawn err = %v, want ErrWorkerMixBucketDown when down bucket's slot is selected", err)
 	}
 }
 
-// When every bucket in the mix is down, selection has no candidate and the spawn
-// fails loudly with ErrWorkerMixExhausted rather than falling back to a harness
-// outside the mix.
+// When every bucket in the mix is down, selection still picks the highest-debit
+// configured bucket and refuses that exact down bucket rather than falling back
+// to a harness outside the mix.
 func TestSpawn_AllBucketsDownFailsLoudly(t *testing.T) {
 	tr := candidatehealth.New(candidatehealth.Config{Source: "session_manager"})
 	m, _, _ := healthMixManager(t, domain.ProjectConfig{WorkerMix: twoBucketMix()}, tr, nil)
@@ -260,8 +264,8 @@ func TestSpawn_AllBucketsDownFailsLoudly(t *testing.T) {
 	tr.MarkDown(workerMixCandidate(domain.HarnessCodex, "", ""), errors.New("runtime refused"))
 
 	_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
-	if !errors.Is(err, ErrWorkerMixExhausted) {
-		t.Fatalf("spawn err = %v, want ErrWorkerMixExhausted", err)
+	if !errors.Is(err, ErrWorkerMixBucketDown) {
+		t.Fatalf("spawn err = %v, want ErrWorkerMixBucketDown", err)
 	}
 }
 

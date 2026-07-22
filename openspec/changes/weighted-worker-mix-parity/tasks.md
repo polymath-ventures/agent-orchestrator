@@ -6,13 +6,13 @@
 
 ## 2. Worker Mix Census And Down-Bucket Debit
 
-- [ ] 2.1 Add failing tests proving census counts all live workers by persisted `(harness, model, effort)`, including pinned workers in configured buckets (ref `agent-orchestrator-fscked/backend/internal/session_manager/manager.go:1062-1080`; current `backend/internal/session_manager/manager.go:831-859`).
-- [ ] 2.2 Add failing tests proving down-bucket skip debit is folded into the census instead of removing the bucket before selection (ref `agent-orchestrator-fscked/backend/internal/session_manager/manager.go:582,1082-1090`; current `backend/internal/session_manager/manager.go:797-820`).
-- [ ] 2.3 Port/adapt census and skip-debit behavior without changing `domain/workermix.go` unless a regression test proves the core selector itself is wrong.
+- [x] 2.1 Add failing tests proving census counts all live workers by persisted `(harness, model, effort)`, including pinned workers in configured buckets (ref `agent-orchestrator-fscked/backend/internal/session_manager/manager.go:1062-1080`; current `backend/internal/session_manager/manager.go:831-859`).
+- [x] 2.2 Add failing tests proving down-bucket skip debit is folded into the census instead of removing the bucket before selection (ref `agent-orchestrator-fscked/backend/internal/session_manager/manager.go:582,1082-1090`; current `backend/internal/session_manager/manager.go:797-820`).
+- [x] 2.3 Port/adapt census and skip-debit behavior without changing `domain/workermix.go` unless a regression test proves the core selector itself is wrong.
 
 ## 3. Spawn Model Selection Parity
 
-- [ ] 3.1 Add failing tests proving a model-only worker spawn on a mix project uses the mix to select a harness, then launches the explicit model (ref `agent-orchestrator-fscked/backend/internal/session_manager/manager.go:577-592`; current `backend/internal/session_manager/manager.go:696-733`).
+- [x] 3.1 Add failing tests proving a model-only worker spawn on a mix project uses the mix to select a harness, then launches the explicit model (ref `agent-orchestrator-fscked/backend/internal/session_manager/manager.go:577-592`; current `backend/internal/session_manager/manager.go:696-733`).
 - [ ] 3.2 Add failing tests proving spawn-time validation rejects definitive unreachable resolved tuples before durable state and names the selection source (ref `agent-orchestrator-fscked/backend/internal/session_manager/manager.go:626,1005-1045`; current `backend/internal/session_manager/manager.go:762-785`).
 - [ ] 3.3 Adapt the current #4 validation engine rather than porting the old validator interface, preserving fail-open for unknown/probe-unavailable verdicts.
 
@@ -25,7 +25,7 @@
 ## 5. Tracker Intake Deferrals
 
 - [ ] 5.1 Add failing tests proving worker cap deferral memoizes `workerPoolFull` for the rest of the poll pass (ref `agent-orchestrator-fscked/backend/internal/observe/trackerintake/observer.go:232-299`; current `backend/internal/observe/trackerintake/observer.go:221-242`).
-- [ ] 5.2 Add failing tests proving `WORKER_MIX_EXHAUSTED` is treated as a retryable deferral rather than a genuine spawn failure/backoff.
+- [x] 5.2 Add failing tests proving `WORKER_MIX_EXHAUSTED` is treated as a retryable deferral rather than a genuine spawn failure/backoff.
 - [ ] 5.3 Implement the intake deferral changes without restoring ruled-out tracker label routing.
 
 ## 6. Config And UI Validation
