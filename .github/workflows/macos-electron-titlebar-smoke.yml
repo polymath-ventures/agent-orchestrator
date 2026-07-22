@@ -173,7 +173,36 @@ jobs:
         working-directory: harness/frontend
         env:
           DEBUG: pw:browser*
-        run: npm run test:electron-titlebar
+        shell: bash
+        run: |
+          # Fresh installs show the app-owned "Enable auto-updates / Not now"
+          # modal before the shell window is available. Dismiss it exactly as a
+          # user would so Playwright's Electron handshake can complete.
+          (
+            executable="$AO_MAC_SMOKE_APP_PATH/Contents/MacOS/agent-orchestrator"
+            for _ in $(seq 1 30); do
+              sleep 1
+              app_pid="$(pgrep -f "$executable" | head -1)"
+              if [[ -n "$app_pid" ]]; then
+                osascript - "$app_pid" <<'APPLESCRIPT' && exit 0
+                on run argv
+                  set appPid to (item 1 of argv) as integer
+                  tell application "System Events"
+                    set appProcess to first application process whose unix id is appPid
+                    tell appProcess to key code 53
+                  end tell
+                end run
+          APPLESCRIPT
+              fi
+            done
+          ) &
+          modal_watcher=$!
+          set +e
+          npm run test:electron-titlebar
+          smoke_rc=$?
+          kill -TERM "$modal_watcher" 2>/dev/null
+          wait "$modal_watcher" 2>/dev/null
+          exit "$smoke_rc"
 
       - name: Upload smoke evidence
         if: always()
