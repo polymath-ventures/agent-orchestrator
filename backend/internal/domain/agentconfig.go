@@ -52,6 +52,16 @@ func (e Effort) Valid() bool {
 	}
 }
 
+// NormalizeEffortForHarness converts compatibility aliases into the native
+// vocabulary of the selected harness. Fugu documents max as an alias for
+// xhigh, while ordinary Codex and other harnesses keep their configured value.
+func NormalizeEffortForHarness(h AgentHarness, effort Effort) Effort {
+	if h == HarnessCodexFugu && effort == EffortMax {
+		return EffortXHigh
+	}
+	return effort
+}
+
 // DefaultClaudeCodeModel is AO's cheap default for unpinned claude-code
 // launches. Explicit model choices are honored; this only fills an otherwise
 // empty resolution result.

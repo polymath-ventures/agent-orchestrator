@@ -13,7 +13,6 @@ import (
 	"syscall"
 	"time"
 
-	agentregistry "github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/registry"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/runtimeselect"
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/daemon/supervisor"
@@ -21,7 +20,6 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/controllers"
 	"github.com/aoagents/agent-orchestrator/backend/internal/mobilebridge"
-	"github.com/aoagents/agent-orchestrator/backend/internal/modelhealth"
 	"github.com/aoagents/agent-orchestrator/backend/internal/notify"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	"github.com/aoagents/agent-orchestrator/backend/internal/preview"
@@ -116,14 +114,6 @@ func Run() error {
 	notifier := notificationsvc.New(notificationsvc.Deps{Store: store})
 	notificationWriter := notify.New(notify.Deps{Store: store, Publisher: notificationHub})
 	metricsObserver, metricsDone := startMetricsObserver(ctx, cfg, store, telemetrySink, notificationWriter, log)
-	modelHealthSvc := modelhealth.New(modelhealth.Deps{
-		Store:          store,
-		Agents:         modelHealthAgents(),
-		Notifier:       notificationWriter,
-		DefaultHarness: domain.AgentHarness(cfg.Agent),
-		Logger:         log,
-	})
-	modelHealthDone := modelHealthSvc.Start(ctx, modelhealth.DefaultRefreshInterval)
 
 	// Bring up the Lifecycle Manager and the reaper first: it makes the session
 	// lifecycle write path live (reducer write -> store -> DB trigger ->
@@ -135,7 +125,12 @@ func Run() error {
 	// selected runtime, a gitworktree workspace, the per-session agent resolver
 	// (AO_AGENT validated here for compatibility), and the agent messenger, then mount it
 	// on the API.
-	sessionSvc, reviewSvc, sessMgr, err := startSession(cfg, runtimeAdapter, store, lcStack.LCM, messenger, telemetrySink, log)
+	agentSvc := agentsvc.New()
+	configuredModels := newConfiguredProjectModels(store, log)
+	agentHealthMonitor := newAgentHealthMonitor(agentSvc, configuredModels, log)
+	modelHealthMonitor := newModelHealthMonitor(agentSvc, configuredModels, log)
+	modelHealthView := newModelHealthProjection(modelHealthMonitor, configuredModels.ListModelHealthPins)
+	sessionSvc, reviewSvc, sessMgr, err := startSession(cfg, runtimeAdapter, store, lcStack.LCM, messenger, agentSvc, telemetrySink, log)
 	if err != nil {
 		stop()
 		lcStack.Stop()
@@ -145,7 +140,6 @@ func Run() error {
 		return fmt.Errorf("wire session service: %w", err)
 	}
 	lcStack.trackerDone = startTrackerIntake(ctx, store, sessionSvc, log)
-	agentSvc := agentsvc.New()
 	go func() {
 		if _, err := agentSvc.Refresh(ctx); err != nil {
 			log.Warn("initial agent catalog refresh failed", "err", err)
@@ -166,9 +160,12 @@ func Run() error {
 	mc := &controllers.MobileController{Bridge: bs}
 
 	srv, err := httpd.NewWithDeps(cfg, log, termMgr, httpd.APIDeps{
-		Projects:           projectsvc.NewWithDeps(projectsvc.Deps{Store: store, Sessions: sessionSvc, ModelHealth: modelHealthSvc, DefaultHarness: domain.AgentHarness(cfg.Agent), Telemetry: telemetrySink}),
+		Projects:           projectsvc.NewWithDeps(projectsvc.Deps{Store: store, Sessions: sessionSvc, ModelHealth: modelHealthView, ModelValidator: agentSvc, DefaultHarness: domain.AgentHarness(cfg.Agent), Telemetry: telemetrySink, Logger: log}),
 		RolePrompt:         roleprompt.New(sessMgr, store),
 		Agents:             agentSvc,
+		AgentModels:        agentSvc,
+		AgentModelPins:     configuredModels,
+		AgentHealth:        agentHealthMonitor,
 		Sessions:           sessionSvc,
 		Reviews:            reviewSvc,
 		Notifications:      notifier,
@@ -189,6 +186,8 @@ func Run() error {
 		}
 		return err
 	}
+	agentHealthDone := startAgentHealthMonitor(ctx, agentHealthMonitor, cfg.AgentHealthInterval, log)
+	modelHealthDone := startModelHealthMonitor(ctx, modelHealthMonitor, cfg.ModelRevalidationInterval, log)
 	previewDone := preview.NewPoller(store, sessionSvc, "http://"+srv.Addr().String(), preview.PollerConfig{Logger: log}).Start(ctx)
 
 	// Late-bind: the LAN listener shares the exact loopback router instance so
@@ -253,6 +252,7 @@ func Run() error {
 	<-primeDone
 	<-metricsDone
 	<-modelHealthDone
+	<-agentHealthDone
 	lcStack.Stop()
 	lanStopCtx, lanCancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 	defer lanCancel()
@@ -269,13 +269,4 @@ func Run() error {
 // can capture it separately from any structured stdout protocol added later.
 func newLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug}))
-}
-
-func modelHealthAgents() []modelhealth.AgentEntry {
-	items := agentregistry.Harnessed()
-	out := make([]modelhealth.AgentEntry, 0, len(items))
-	for _, item := range items {
-		out = append(out, modelhealth.AgentEntry{Harness: item.Harness, Agent: item.Agent})
-	}
-	return out
 }

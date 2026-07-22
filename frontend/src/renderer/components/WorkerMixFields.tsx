@@ -1,19 +1,36 @@
 import { Plus, Trash2 } from "lucide-react";
 import type { components } from "../../api/schema";
+import type { AgentModelAvailabilityResponse } from "../hooks/useModelAvailabilityQuery";
 import { RequiredAgentField } from "./CreateProjectAgentSheet";
+import { ModelAvailabilityField, type ModelSelection } from "./ModelAvailabilityField";
 import { Button } from "./ui/button";
 import { Label } from "./ui/label";
 
 type AgentInfo = components["schemas"]["AgentInfo"];
 type WorkerMixEntry = components["schemas"]["WorkerMixEntry"];
 
-// WorkerMixBucket is the flat, string-backed row the settings form edits. Weight
-// is kept as a string so the number input stays controlled while a field is
-// mid-edit or empty; it's parsed to an integer only for the live total and the
-// save payload.
-export type WorkerMixBucket = { agent: string; model: string; weight: string };
+type WorkerMixModelPair = { model: string; effort: string };
+
+// WorkerMixBucket is the string-backed editor row. id is editor-only stable
+// identity, and selectionsByAgent remembers native model/effort pairs while the
+// operator switches harnesses. Neither field is serialized by buildWorkerMix.
+// Weight remains a string while mid-edit and is parsed only for totals/payloads.
+export type WorkerMixBucket = {
+	id: string;
+	agent: string;
+	model: string;
+	effort: string;
+	weight: string;
+	selectionsByAgent: Record<string, WorkerMixModelPair>;
+};
 
 const REQUIRED_TOTAL = 100;
+let nextWorkerMixBucketID = 0;
+
+function newWorkerMixBucketID() {
+	nextWorkerMixBucketID += 1;
+	return `bucket-${nextWorkerMixBucketID}`;
+}
 
 // parseWeight reads the numeric value of a weight field. Number(), not
 // parseInt: a number input can legally hold exponent notation like "5e1", and
@@ -28,11 +45,19 @@ function parseWeight(weight: string): number {
 
 // toWorkerMixForm hydrates the flat editor rows from the persisted config array.
 export function toWorkerMixForm(mix: WorkerMixEntry[] | undefined): WorkerMixBucket[] {
-	return (mix ?? []).map((entry) => ({
-		agent: entry.agent ?? "",
-		model: entry.model ?? "",
-		weight: entry.weight != null ? String(entry.weight) : "",
-	}));
+	return (mix ?? []).map((entry) => {
+		const agent = entry.agent ?? "";
+		const model = entry.model ?? "";
+		const effort = entry.effort ?? "";
+		return {
+			id: newWorkerMixBucketID(),
+			agent,
+			model,
+			effort,
+			weight: entry.weight != null ? String(entry.weight) : "",
+			selectionsByAgent: agent ? { [agent]: { model, effort } } : {},
+		};
+	});
 }
 
 // buildWorkerMix produces the payload field, scrubbing an empty editor to
@@ -45,6 +70,8 @@ export function buildWorkerMix(buckets: WorkerMixBucket[]): WorkerMixEntry[] | u
 		const entry: WorkerMixEntry = { agent: bucket.agent, weight: parseWeight(bucket.weight) };
 		const model = bucket.model.trim();
 		if (model) entry.model = model;
+		const effort = bucket.effort.trim();
+		if (effort) entry.effort = effort;
 		return entry;
 	});
 }
@@ -87,12 +114,18 @@ export function WorkerMixFields({
 	buckets,
 	onChange,
 	agentCatalog,
+	availability,
 	disabled = false,
+	isRefreshing = false,
+	onRefresh,
 }: {
 	buckets: WorkerMixBucket[];
 	onChange: (next: WorkerMixBucket[]) => void;
 	agentCatalog?: AgentCatalog;
+	availability?: AgentModelAvailabilityResponse;
 	disabled?: boolean;
+	isRefreshing?: boolean;
+	onRefresh?: () => void | Promise<unknown>;
 }) {
 	const total = workerMixTotal(buckets);
 	const invalid = workerMixInvalid(buckets);
@@ -100,7 +133,30 @@ export function WorkerMixFields({
 	const patchBucket = (index: number, patch: Partial<WorkerMixBucket>) =>
 		onChange(buckets.map((bucket, i) => (i === index ? { ...bucket, ...patch } : bucket)));
 	const removeBucket = (index: number) => onChange(buckets.filter((_, i) => i !== index));
-	const addBucket = () => onChange([...buckets, { agent: "", model: "", weight: "" }]);
+	const addBucket = () =>
+		onChange([
+			...buckets,
+			{ id: newWorkerMixBucketID(), agent: "", model: "", effort: "", weight: "", selectionsByAgent: {} },
+		]);
+	const rememberedSelections = (bucket: WorkerMixBucket) => {
+		const selections = { ...bucket.selectionsByAgent };
+		if (bucket.agent) selections[bucket.agent] = { model: bucket.model, effort: bucket.effort };
+		return selections;
+	};
+	const changeAgent = (index: number, agent: string) => {
+		const bucket = buckets[index];
+		const selectionsByAgent = rememberedSelections(bucket);
+		const remembered = selectionsByAgent[agent] ?? { model: "", effort: "" };
+		patchBucket(index, { agent, ...remembered, selectionsByAgent });
+	};
+	const changeModelSelection = (index: number, selection: ModelSelection) => {
+		const bucket = buckets[index];
+		const selectionsByAgent = {
+			...rememberedSelections(bucket),
+			[selection.harness]: { model: selection.model, effort: selection.effort },
+		};
+		patchBucket(index, { model: selection.model, effort: selection.effort, selectionsByAgent });
+	};
 
 	return (
 		<div className="flex flex-col gap-4">
@@ -113,12 +169,7 @@ export function WorkerMixFields({
 			) : (
 				<div className="flex flex-col gap-3">
 					{buckets.map((bucket, index) => (
-						<div
-							// Buckets are an ordered, index-addressed list with no stable id; the
-							// index is the identity the editor mutates against.
-							key={index}
-							className="flex flex-col gap-3 rounded-md border border-border p-3"
-						>
+						<div key={bucket.id} className="flex flex-col gap-3 rounded-md border border-border p-3">
 							<div className="flex items-center justify-between">
 								<span className="text-xs text-muted-foreground">Bucket {index + 1}</span>
 								<Button
@@ -133,7 +184,7 @@ export function WorkerMixFields({
 								</Button>
 							</div>
 							<RequiredAgentField
-								id={`workerMixAgent-${index}`}
+								id={`workerMix-${bucket.id}-agent`}
 								label="Agent"
 								placeholder="Select agent"
 								value={bucket.agent}
@@ -141,22 +192,31 @@ export function WorkerMixFields({
 								installed={agentCatalog?.installed}
 								supported={agentCatalog?.supported}
 								disabled={disabled}
-								onChange={(value) => patchBucket(index, { agent: value })}
+								onChange={(value) => changeAgent(index, value)}
 							/>
-							<div className="grid grid-cols-2 gap-3">
-								<MixField label="Model (optional)" htmlFor={`workerMixModel-${index}`}>
+							<ModelAvailabilityField
+								id={`workerMix-${bucket.id}`}
+								label="Model and effort"
+								value={{ harness: bucket.agent, model: bucket.model, effort: bucket.effort }}
+								onChange={(selection) => changeModelSelection(index, selection)}
+								availability={availability}
+								configuredPins={Object.entries(rememberedSelections(bucket)).map(([harness, pair]) => ({
+									harness,
+									...pair,
+								}))}
+								disabled={disabled || !bucket.agent}
+								isRefreshing={isRefreshing}
+								onRefresh={onRefresh}
+								showHarness={false}
+								emptyLabel="Default / inherit"
+							/>
+							<p className="text-[11px] text-passive">
+								Blank model uses the agent default; blank effort inherits worker configuration.
+							</p>
+							<div className="max-w-40">
+								<MixField label="Weight" htmlFor={`workerMix-${bucket.id}-weight`}>
 									<input
-										id={`workerMixModel-${index}`}
-										className="h-control-form w-full rounded-md border border-input bg-transparent px-2.5 text-control text-foreground placeholder:text-passive focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-weak"
-										value={bucket.model}
-										disabled={disabled}
-										onChange={(e) => patchBucket(index, { model: e.target.value })}
-										placeholder="(agent default)"
-									/>
-								</MixField>
-								<MixField label="Weight" htmlFor={`workerMixWeight-${index}`}>
-									<input
-										id={`workerMixWeight-${index}`}
+										id={`workerMix-${bucket.id}-weight`}
 										type="number"
 										min={1}
 										max={100}

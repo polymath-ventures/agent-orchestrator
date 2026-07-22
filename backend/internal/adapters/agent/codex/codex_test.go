@@ -109,7 +109,7 @@ func TestGetLaunchCommandAppliesModelAndReasoningEffort(t *testing.T) {
 	}
 }
 
-func TestGetLaunchCommandClampsUnsupportedReasoningEffort(t *testing.T) {
+func TestGetLaunchCommandPreservesNativeReasoningEffort(t *testing.T) {
 	plugin := &Plugin{resolvedBinary: "codex"}
 
 	for _, effort := range []domain.Effort{domain.EffortXHigh, domain.EffortMax} {
@@ -119,8 +119,8 @@ func TestGetLaunchCommandClampsUnsupportedReasoningEffort(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !containsSubsequence(cmd, []string{"-c", `model_reasoning_effort="high"`}) {
-			t.Fatalf("effort %q: command %#v did not clamp to high", effort, cmd)
+		if !containsSubsequence(cmd, []string{"-c", `model_reasoning_effort="` + string(effort) + `"`}) {
+			t.Fatalf("effort %q: command %#v did not preserve the native value", effort, cmd)
 		}
 	}
 }
@@ -709,9 +709,14 @@ func countCodexHookCommand(entries []codexMatcherGroup, command string) int {
 }
 
 func TestModelProbeResultClassifiesUnsupportedModel(t *testing.T) {
-	got := modelProbeResultFromOutput([]byte("error: unknown model gpt-404"), errors.New("exit 1"))
+	got := modelProbeResultFromOutput([]byte(`ERROR: {"status":404,"error":{"message":"unknown model gpt-404"}}`), errors.New("exit 1"))
 	if got.Status != ports.ModelValidationUnreachable {
 		t.Fatalf("status = %q, want unreachable", got.Status)
+	}
+
+	got = modelProbeResultFromOutput([]byte("error: unknown model gpt-404"), errors.New("exit 1"))
+	if got.Status != ports.ModelValidationProbeUnavailable {
+		t.Fatalf("status without provider verdict = %q, want probe-unavailable", got.Status)
 	}
 
 	got = modelProbeResultFromOutput([]byte("rate limit exceeded"), errors.New("exit 1"))

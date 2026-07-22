@@ -57,8 +57,13 @@ type SessionRecord struct {
 	// rather than re-derived so the worker-mix census stays correct after the
 	// project config that produced it changes.
 	Model string `json:"model,omitempty"`
+	// Effort is the normalized effort the session was launched with. Empty means
+	// no effort was resolved (or the session predates the column). Persisting the
+	// launched value keeps restore and worker-mix census identity stable when
+	// project configuration changes later.
+	Effort Effort `json:"effort,omitempty"`
 	// MixSelected reports that the worker mix chose this session's
-	// (harness, model) pair, as opposed to a caller pinning it. Only mix-selected
+	// (harness, model, effort) tuple, as opposed to a caller pinning it. Only mix-selected
 	// sessions consume mix share, so the census counts these rows alone; without
 	// the flag a pinned spawn naming a configured bucket would be
 	// indistinguishable from a selection and would skew apportionment. Set once

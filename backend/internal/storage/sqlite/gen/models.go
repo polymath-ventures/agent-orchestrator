@@ -219,6 +219,7 @@ type Session struct {
 	MixSelected     bool
 	RuntimeToken    string
 	LaunchCommand   string
+	Effort          string
 }
 
 type SessionWorktree struct {

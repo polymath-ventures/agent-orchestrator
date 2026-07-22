@@ -72,6 +72,65 @@ paths:
       summary: Run a fresh local readiness probe for one agent adapter
       tags:
       - agents
+  /api/v1/agents/health:
+    get:
+      operationId: getAgentHealth
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentHealthSnapshot'
+          description: OK
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Return the cached install and authentication health snapshot
+      tags:
+      - agents
+  /api/v1/agents/models:
+    get:
+      operationId: listAgentModels
+      parameters:
+      - description: Bypass the five-minute request cache and refresh native harness
+          catalogs.
+        in: query
+        name: force
+        schema:
+          description: Bypass the five-minute request cache and refresh native harness
+            catalogs.
+          type: boolean
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentModelAvailabilityResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Return harness-native model catalogs and configured-pin availability
+      tags:
+      - agents
   /api/v1/agents/refresh:
     post:
       operationId: refreshAgents
@@ -2072,6 +2131,78 @@ components:
         permissions:
           type: string
       type: object
+    AgentHarnessHealth:
+      properties:
+        authStatus:
+          type: string
+        changedAt:
+          format: date-time
+          type: string
+        checkedAt:
+          format: date-time
+          type: string
+        health:
+          type: string
+        id:
+          type: string
+        label:
+          type: string
+        reason:
+          type: string
+        remedy:
+          type: string
+      required:
+      - id
+      - label
+      - health
+      - changedAt
+      - checkedAt
+      type: object
+    AgentHarnessModels:
+      properties:
+        catalogReason:
+          type: string
+        catalogSource:
+          enum:
+          - adapter
+          - cached-adapter
+          - known-set
+          - configured-pins
+          - none
+          type: string
+        catalogVerified:
+          type: boolean
+        id:
+          type: string
+        label:
+          type: string
+        models:
+          items:
+            $ref: '#/components/schemas/AgentModelAvailability'
+          type: array
+        reviewerCapable:
+          type: boolean
+      required:
+      - id
+      - label
+      - reviewerCapable
+      - catalogSource
+      - catalogVerified
+      - models
+      type: object
+    AgentHealthSnapshot:
+      properties:
+        checkedAt:
+          format: date-time
+          type: string
+        harnesses:
+          items:
+            $ref: '#/components/schemas/AgentHarnessHealth'
+          type: array
+      required:
+      - harnesses
+      - checkedAt
+      type: object
     AgentInfo:
       properties:
         authStatus:
@@ -2086,9 +2217,61 @@ components:
           type: string
         label:
           type: string
+        reviewerCapable:
+          type: boolean
       required:
       - id
       - label
+      - reviewerCapable
+      type: object
+    AgentModelAvailability:
+      properties:
+        defaultEffort:
+          type: string
+        dynamic:
+          type: boolean
+        efforts:
+          items:
+            type: string
+          type: array
+        label:
+          type: string
+        model:
+          type: string
+        reason:
+          type: string
+        reasonCode:
+          enum:
+          - not-probed
+          - probe-unavailable
+          - no-capability
+          type: string
+        status:
+          enum:
+          - reachable
+          - unreachable
+          - unknown
+          type: string
+        verified:
+          type: boolean
+      required:
+      - model
+      - label
+      - verified
+      - status
+      type: object
+    AgentModelAvailabilityResponse:
+      properties:
+        checkedAt:
+          format: date-time
+          type: string
+        harnesses:
+          items:
+            $ref: '#/components/schemas/AgentHarnessModels'
+          type: array
+      required:
+      - harnesses
+      - checkedAt
       type: object
     CancelReviewResponse:
       properties:
@@ -2191,6 +2374,8 @@ components:
           format: date-time
           type: string
         displayName:
+          type: string
+        effort:
           type: string
         harness:
           type: string
@@ -3671,6 +3856,8 @@ components:
     WorkerMixEntry:
       properties:
         agent:
+          type: string
+        effort:
           type: string
         model:
           type: string

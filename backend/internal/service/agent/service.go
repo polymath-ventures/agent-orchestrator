@@ -8,6 +8,7 @@ import (
 	"time"
 
 	agentregistry "github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/registry"
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -32,9 +33,10 @@ type ProbeResult struct {
 
 // Info is the user-facing identity for an agent adapter.
 type Info struct {
-	ID         string                `json:"id"`
-	Label      string                `json:"label"`
-	AuthStatus ports.AgentAuthStatus `json:"authStatus,omitempty" enum:"authorized,unauthorized,unknown" description:"Advisory local auth probe result. authorized means a recent local probe passed; spawn remains the authoritative validation point."`
+	ID              string                `json:"id"`
+	Label           string                `json:"label"`
+	ReviewerCapable bool                  `json:"reviewerCapable"`
+	AuthStatus      ports.AgentAuthStatus `json:"authStatus,omitempty" enum:"authorized,unauthorized,unknown" description:"Advisory local auth probe result. authorized means a recent local probe passed; spawn remains the authoritative validation point."`
 }
 
 // Inventory describes all daemon-supported agents and best-effort local probe
@@ -52,10 +54,15 @@ type Inventory struct {
 type Service struct {
 	agents []agentregistry.HarnessAgent
 
-	mu          sync.RWMutex
-	inventory   Inventory
-	lastRefresh time.Time
-	refreshMu   sync.Mutex
+	mu             sync.RWMutex
+	inventory      Inventory
+	lastRefresh    time.Time
+	refreshMu      sync.Mutex
+	modelMu        sync.Mutex
+	modelRefreshMu sync.Mutex
+	modelCache     modelAvailabilityCache
+	catalogCache   map[domain.AgentHarness]cachedModelCatalog
+	pinVerdicts    map[string]pinVerdict
 }
 
 // New returns an agent inventory service backed by the daemon's shipped
@@ -67,11 +74,16 @@ func New() *Service {
 // NewWithAgents returns an inventory service over a caller-provided adapter
 // slice. It is used by focused tests.
 func NewWithAgents(agents []agentregistry.HarnessAgent) *Service {
-	return &Service{agents: agents, inventory: Inventory{
-		Supported:  supportedInfos(agents),
-		Installed:  []Info{},
-		Authorized: []Info{},
-	}}
+	return &Service{
+		agents:       agents,
+		catalogCache: make(map[domain.AgentHarness]cachedModelCatalog),
+		pinVerdicts:  make(map[string]pinVerdict),
+		inventory: Inventory{
+			Supported:  supportedInfos(agents),
+			Installed:  []Info{},
+			Authorized: []Info{},
+		},
+	}
 }
 
 // List returns the cached agent inventory without running probes. Installed and
@@ -155,10 +167,7 @@ func (s *Service) Probe(ctx context.Context, agentID string) (ProbeResult, error
 		return ProbeResult{}, err
 	}
 	for _, item := range s.agents {
-		info := Info{ID: string(item.Harness), Label: item.Manifest.Name}
-		if info.Label == "" {
-			info.Label = info.ID
-		}
+		info := infoForAgent(item)
 		if info.ID != agentID {
 			continue
 		}
@@ -175,11 +184,7 @@ func (s *Service) Probe(ctx context.Context, agentID string) (ProbeResult, error
 func supportedInfos(agents []agentregistry.HarnessAgent) []Info {
 	supported := make([]Info, 0, len(agents))
 	for _, item := range agents {
-		info := Info{ID: string(item.Harness), Label: item.Manifest.Name}
-		if info.Label == "" {
-			info.Label = info.ID
-		}
-		supported = append(supported, info)
+		supported = append(supported, infoForAgent(item))
 	}
 	sortInfos(supported)
 	return supported
@@ -200,10 +205,7 @@ func cloneInfos(in []Info) []Info {
 }
 
 func probeAgent(ctx context.Context, item agentregistry.HarnessAgent) probeResult {
-	info := Info{ID: string(item.Harness), Label: item.Manifest.Name}
-	if info.Label == "" {
-		info.Label = info.ID
-	}
+	info := infoForAgent(item)
 	probeCtx, cancel := context.WithTimeout(ctx, agentInstallProbeTimeout)
 	defer cancel()
 	resolver, ok := item.Agent.(ports.AgentBinaryResolver)
@@ -217,6 +219,18 @@ func probeAgent(ctx context.Context, item agentregistry.HarnessAgent) probeResul
 	defer authCancel()
 	info.AuthStatus = authStatus(authCtx, item.Agent)
 	return probeResult{info: info, installed: true, authorized: info.AuthStatus == ports.AgentAuthStatusAuthorized}
+}
+
+func infoForAgent(item agentregistry.HarnessAgent) Info {
+	info := Info{
+		ID:              string(item.Harness),
+		Label:           item.Manifest.Name,
+		ReviewerCapable: domain.ReviewerHarness(item.Harness).IsKnown(),
+	}
+	if info.Label == "" {
+		info.Label = info.ID
+	}
+	return info
 }
 
 func authStatus(ctx context.Context, a ports.Agent) ports.AgentAuthStatus {

@@ -6,6 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Sidebar } from "./Sidebar";
 import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 import { agentsQueryKey } from "../hooks/useAgentsQuery";
+import { modelAvailabilityQueryKey } from "../hooks/useModelAvailabilityQuery";
+import type { ModelSelection } from "./ModelAvailabilityField";
 import { useUiStore } from "../stores/ui-store";
 
 const { getMock, navigateMock, mockParams, renameSessionMock, updateStatusMock } = vi.hoisted(() => ({
@@ -74,6 +76,7 @@ type CreateProjectInput = {
 	path: string;
 	workerAgent: string;
 	orchestratorAgent: string;
+	modelOverride: ModelSelection;
 	trackerIntake?: unknown;
 	asWorkspace?: boolean;
 };
@@ -113,6 +116,10 @@ function renderSidebar({
 			],
 		});
 	}
+	queryClient.setQueryData(modelAvailabilityQueryKey, {
+		checkedAt: "2026-07-22T03:04:05Z",
+		harnesses: [],
+	});
 	render(
 		<QueryClientProvider client={queryClient}>
 			<SidebarProvider>
@@ -353,7 +360,9 @@ describe("Sidebar", () => {
 
 	it("returns browser users to host path entry when create fails", async () => {
 		const user = userEvent.setup();
-		const onCreateProject = vi.fn().mockRejectedValueOnce(new Error("Repository path is invalid")) as CreateProjectHandler;
+		const onCreateProject = vi
+			.fn()
+			.mockRejectedValueOnce(new Error("Repository path is invalid")) as CreateProjectHandler;
 		const bridge = window.ao;
 		delete window.ao;
 		try {
@@ -515,6 +524,7 @@ describe("Sidebar", () => {
 				path: "/repo/workspace",
 				workerAgent: "codex",
 				orchestratorAgent: "claude-code",
+				modelOverride: { harness: "", model: "", effort: "" },
 				asWorkspace: true,
 			}),
 		);
@@ -715,6 +725,7 @@ describe("Sidebar", () => {
 				path: "/repo/new-project",
 				workerAgent: "claude-code",
 				orchestratorAgent: "claude-code",
+				modelOverride: { harness: "", model: "", effort: "" },
 				trackerIntake: undefined,
 				asWorkspace: false,
 			}),

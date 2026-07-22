@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -114,6 +115,20 @@ func TestFuguLaunchCommandPlacesWrapperFlagFirstAndUsesFuguHookToken(t *testing.
 	)
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("fugu launch cmd\nwant: %#v\n got: %#v", want, cmd)
+	}
+}
+
+func TestFuguLaunchCommandUsesNativeXHighForMaxAlias(t *testing.T) {
+	plugin := NewFugu()
+	plugin.resolvedBinary = "codex-fugu"
+	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		Config: ports.AgentConfig{Effort: domain.EffortMax},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsSubsequence(cmd, []string{"-c", `model_reasoning_effort="xhigh"`}) {
+		t.Fatalf("fugu max alias was not normalized to native xhigh: %#v", cmd)
 	}
 }
 

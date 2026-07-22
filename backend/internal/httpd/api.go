@@ -21,6 +21,9 @@ import (
 // APIDeps bundles every service the API layer's controllers depend on.
 type APIDeps struct {
 	Agents             controllers.AgentCatalog
+	AgentModels        controllers.AgentModels
+	AgentModelPins     controllers.AgentModelPinProvider
+	AgentHealth        controllers.AgentHealthSnapshotProvider
 	Projects           projectsvc.Manager
 	RolePrompt         controllers.RolePromptService
 	Sessions           controllers.SessionService
@@ -61,7 +64,10 @@ func NewAPI(cfg config.Config, deps APIDeps) *API {
 	return &API{
 		cfg: cfg,
 		agents: &controllers.AgentsController{
-			Catalog: deps.Agents,
+			Catalog:   deps.Agents,
+			Models:    deps.AgentModels,
+			ModelPins: deps.AgentModelPins,
+			Health:    deps.AgentHealth,
 		},
 		projects: &controllers.ProjectsController{
 			Mgr: deps.Projects,

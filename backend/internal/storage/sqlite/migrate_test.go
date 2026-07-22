@@ -240,3 +240,34 @@ func TestMigrateReadsPreMixSelectedSessionRowsAsFalse(t *testing.T) {
 		t.Fatal("pre-existing session mix_selected = true, want false")
 	}
 }
+
+func TestMigrateReadsPreEffortSessionRowsAsEmpty(t *testing.T) {
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "ao.db")+pragmas)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	if err := migrate(db); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	if _, err := db.Exec(
+		`INSERT INTO projects (id, path, registered_at) VALUES ('mer', '/tmp/mer', CURRENT_TIMESTAMP)`,
+	); err != nil {
+		t.Fatalf("seed project: %v", err)
+	}
+	if _, err := db.Exec(
+		`INSERT INTO sessions (id, project_id, num, activity_last_at, created_at, updated_at)
+		 VALUES ('mer-1', 'mer', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+	); err != nil {
+		t.Fatalf("insert pre-effort session row: %v", err)
+	}
+
+	var effort string
+	if err := db.QueryRow(`SELECT effort FROM sessions WHERE id = 'mer-1'`).Scan(&effort); err != nil {
+		t.Fatalf("read effort of pre-existing row: %v", err)
+	}
+	if effort != "" {
+		t.Fatalf("pre-existing session effort = %q, want empty", effort)
+	}
+}

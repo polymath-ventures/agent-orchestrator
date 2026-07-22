@@ -19,6 +19,7 @@ const (
 	ProviderUnknown   ModelProvider = ""
 	ProviderAnthropic ModelProvider = "anthropic"
 	ProviderOpenAI    ModelProvider = "openai"
+	ProviderFugu      ModelProvider = "fugu"
 )
 
 // ClassifyModelProvider infers the vendor family of a model string from
@@ -33,6 +34,8 @@ func ClassifyModelProvider(model string) ModelProvider {
 		return ProviderUnknown
 	}
 	switch {
+	case hasModelFamily(m, "fugu"):
+		return ProviderFugu
 	case hasModelFamily(m, "claude"),
 		hasModelFamily(m, "opus"),
 		hasModelFamily(m, "sonnet"),

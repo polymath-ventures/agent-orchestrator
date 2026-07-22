@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/hookutil"
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -325,6 +326,29 @@ func TestGetLaunchCommandBuildsArgv(t *testing.T) {
 	agent := config.Agent["ao-sess-1"]
 	if agent.Mode != "primary" || agent.Prompt != "follow AO rules" {
 		t.Fatalf("agent config = %#v, want primary inline prompt", agent)
+	}
+}
+
+func TestGetLaunchCommandPassesOpenCodeModelAndVariant(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "opencode"}
+
+	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		Config: domain.AgentConfig{
+			Model:  "anthropic/claude-sonnet-4-5",
+			Effort: domain.EffortHigh,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := []string{
+		"opencode",
+		"--model", "anthropic/claude-sonnet-4-5",
+		"--variant", "high",
+	}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("unexpected command\nwant: %#v\n got: %#v", want, cmd)
 	}
 }
 
@@ -710,6 +734,36 @@ func TestGetRestoreCommandReadsAgentSessionID(t *testing.T) {
 	}
 	if contains(cmd, "--continue") || contains(cmd, "--fork") {
 		t.Fatalf("restore cmd must target the captured session directly, got %#v", cmd)
+	}
+}
+
+func TestGetRestoreCommandReappliesOpenCodeModelAndVariant(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "opencode"}
+
+	cmd, ok, err := plugin.GetRestoreCommand(context.Background(), ports.RestoreConfig{
+		Config: domain.AgentConfig{
+			Model:  "openai/gpt-5.4",
+			Effort: domain.EffortMax,
+		},
+		Session: ports.SessionRef{
+			Metadata: map[string]string{opencodeAgentSessionIDMetadataKey: "ses_abc123"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("err = %v, want nil", err)
+	}
+	if !ok {
+		t.Fatal("ok = false, want true")
+	}
+
+	want := []string{
+		"opencode",
+		"--model", "openai/gpt-5.4",
+		"--variant", "max",
+		"--session", "ses_abc123",
+	}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("restore cmd\nwant: %#v\n got: %#v", want, cmd)
 	}
 }
 

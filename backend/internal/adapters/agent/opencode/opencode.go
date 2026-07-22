@@ -68,6 +68,7 @@ func New() *Plugin {
 var _ adapters.Adapter = (*Plugin)(nil)
 var _ ports.Agent = (*Plugin)(nil)
 var _ ports.AgentAuthChecker = (*Plugin)(nil)
+var _ ports.AgentModelCatalog = (*Plugin)(nil)
 
 // Manifest returns the adapter's static self-description.
 func (p *Plugin) Manifest() adapters.Manifest {
@@ -85,7 +86,7 @@ func (p *Plugin) Manifest() adapters.Manifest {
 // GetLaunchCommand builds the argv to start a new interactive opencode session.
 // Shape:
 //
-//	[env OPENCODE_CONFIG=<ao-config>] opencode [--dangerously-skip-permissions] [--agent <ao-agent>] [--prompt <prompt>]
+//	[env OPENCODE_CONFIG=<ao-config>] opencode [--dangerously-skip-permissions] [--model <provider/model>] [--variant <variant>] [--agent <ao-agent>] [--prompt <prompt>]
 //
 // The session runs in the worktree (cwd is set by the runtime, as for Claude
 // Code and Codex). opencode has no CLI flag to set a system prompt, so AO writes
@@ -105,6 +106,7 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 	cmd = envPrefix
 	cmd = append(cmd, binary)
 	appendPermissionFlags(&cmd, cfg.Permissions)
+	appendModelFlags(&cmd, cfg.Config)
 	if agentName != "" {
 		cmd = append(cmd, "--agent", agentName)
 	}
@@ -115,7 +117,7 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 }
 
 // GetRestoreCommand rebuilds the argv that continues an existing opencode
-// session: `[env OPENCODE_CONFIG=<ao-config>] opencode [--dangerously-skip-permissions] [--agent <ao-agent>] --session <agentSessionId>`.
+// session: `[env OPENCODE_CONFIG=<ao-config>] opencode [--dangerously-skip-permissions] [--model <provider/model>] [--variant <variant>] [--agent <ao-agent>] --session <agentSessionId>`.
 // It re-applies the permission flag and the generated AO agent config (resume
 // otherwise reverts to configured defaults). ok is false when the plugin-derived
 // native session id has not landed yet, so callers fall back to fresh launch
@@ -141,6 +143,7 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 	cmd = envPrefix
 	cmd = append(cmd, binary)
 	appendPermissionFlags(&cmd, cfg.Permissions)
+	appendModelFlags(&cmd, cfg.Config)
 	if agentName != "" {
 		cmd = append(cmd, "--agent", agentName)
 	}
@@ -349,6 +352,15 @@ func opencodeDBCount(ctx context.Context, db *sql.DB, query string) (int, error)
 func appendPermissionFlags(cmd *[]string, permissions ports.PermissionMode) {
 	if ports.NormalizePermissionMode(permissions) == ports.PermissionModeBypassPermissions {
 		*cmd = append(*cmd, "--dangerously-skip-permissions")
+	}
+}
+
+func appendModelFlags(cmd *[]string, cfg ports.AgentConfig) {
+	if model := strings.TrimSpace(cfg.Model); model != "" {
+		*cmd = append(*cmd, "--model", model)
+	}
+	if variant := strings.TrimSpace(string(cfg.Effort)); variant != "" {
+		*cmd = append(*cmd, "--variant", variant)
 	}
 }
 

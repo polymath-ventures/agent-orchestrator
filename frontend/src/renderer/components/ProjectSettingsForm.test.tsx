@@ -25,6 +25,7 @@ vi.mock("../lib/api-client", () => ({
 }));
 
 import { ProjectSettingsForm } from "./ProjectSettingsForm";
+import { modelAvailabilityQueryKey } from "../hooks/useModelAvailabilityQuery";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import type { WorkspaceSummary } from "../types/workspace";
 
@@ -54,24 +55,84 @@ async function chooseOption(trigger: HTMLElement, optionName: string) {
 const agentCatalogResponse = {
 	data: {
 		supported: [
-			{ id: "claude-code", label: "Claude Code" },
-			{ id: "codex", label: "Codex" },
-			{ id: "goose", label: "Goose" },
-			{ id: "kiro", label: "Kiro" },
-			{ id: "opencode", label: "OpenCode" },
+			{ id: "claude-code", label: "Claude Code", reviewerCapable: true },
+			{ id: "codex", label: "Codex", reviewerCapable: true },
+			{ id: "codex-fugu", label: "Codex Fugu", reviewerCapable: false },
+			{ id: "goose", label: "Goose", reviewerCapable: false },
+			{ id: "kiro", label: "Kiro", reviewerCapable: false },
+			{ id: "opencode", label: "OpenCode", reviewerCapable: true },
 		],
 		installed: [
-			{ id: "claude-code", label: "Claude Code", authStatus: "authorized" },
-			{ id: "codex", label: "Codex", authStatus: "authorized" },
-			{ id: "goose", label: "Goose", authStatus: "authorized" },
-			{ id: "kiro", label: "Kiro", authStatus: "unknown" },
-			{ id: "opencode", label: "OpenCode", authStatus: "authorized" },
+			{ id: "claude-code", label: "Claude Code", authStatus: "authorized", reviewerCapable: true },
+			{ id: "codex", label: "Codex", authStatus: "authorized", reviewerCapable: true },
+			{ id: "codex-fugu", label: "Codex Fugu", authStatus: "authorized", reviewerCapable: false },
+			{ id: "goose", label: "Goose", authStatus: "authorized", reviewerCapable: false },
+			{ id: "kiro", label: "Kiro", authStatus: "unknown", reviewerCapable: false },
+			{ id: "opencode", label: "OpenCode", authStatus: "authorized", reviewerCapable: true },
 		],
 		authorized: [
-			{ id: "claude-code", label: "Claude Code", authStatus: "authorized" },
-			{ id: "codex", label: "Codex", authStatus: "authorized" },
-			{ id: "goose", label: "Goose", authStatus: "authorized" },
-			{ id: "opencode", label: "OpenCode", authStatus: "authorized" },
+			{ id: "claude-code", label: "Claude Code", authStatus: "authorized", reviewerCapable: true },
+			{ id: "codex", label: "Codex", authStatus: "authorized", reviewerCapable: true },
+			{ id: "codex-fugu", label: "Codex Fugu", authStatus: "authorized", reviewerCapable: false },
+			{ id: "goose", label: "Goose", authStatus: "authorized", reviewerCapable: false },
+			{ id: "opencode", label: "OpenCode", authStatus: "authorized", reviewerCapable: true },
+		],
+	},
+	error: undefined,
+};
+
+const modelCatalogResponse = {
+	data: {
+		checkedAt: "2026-07-22T00:00:00Z",
+		harnesses: [
+			{
+				id: "claude-code",
+				label: "Claude Code",
+				reviewerCapable: true,
+				catalogSource: "known-set",
+				catalogVerified: false,
+				models: [{ model: "opus", label: "Opus", efforts: ["high"], verified: false, status: "unknown" }],
+			},
+			{
+				id: "codex",
+				label: "Codex",
+				reviewerCapable: true,
+				catalogSource: "adapter",
+				catalogVerified: true,
+				models: [
+					{
+						model: "gpt-5-codex",
+						label: "GPT-5 Codex",
+						efforts: ["medium", "high"],
+						verified: true,
+						status: "reachable",
+					},
+				],
+			},
+			{
+				id: "codex-fugu",
+				label: "Codex Fugu",
+				reviewerCapable: false,
+				catalogSource: "adapter",
+				catalogVerified: true,
+				models: [{ model: "fugu", label: "Fugu", efforts: ["xhigh"], verified: true, status: "reachable" }],
+			},
+			{
+				id: "opencode",
+				label: "OpenCode",
+				reviewerCapable: true,
+				catalogSource: "adapter",
+				catalogVerified: true,
+				models: [
+					{
+						model: "openai/gpt-5.4",
+						label: "GPT-5.4",
+						efforts: ["high", "turbo"],
+						verified: true,
+						status: "reachable",
+					},
+				],
+			},
 		],
 	},
 	error: undefined,
@@ -80,6 +141,7 @@ const agentCatalogResponse = {
 function mockProject(project: Record<string, unknown>) {
 	getMock.mockImplementation(async (path: string) => {
 		if (path === "/api/v1/agents") return agentCatalogResponse;
+		if (path === "/api/v1/agents/models") return modelCatalogResponse;
 		return {
 			data: {
 				status: "ok",
@@ -147,12 +209,10 @@ describe("ProjectSettingsForm", () => {
 		expect(await screen.findByText("git@github.com:acme/project-one.git")).toBeInTheDocument();
 		expect(screen.getByLabelText("Default branch")).toHaveValue("develop");
 		expect(screen.getByLabelText("Session prefix")).toHaveValue("po");
-		expect(screen.getByLabelText("Model override")).toHaveValue("claude-opus-4-5");
-		expect(screen.getByLabelText("claude-code model")).toHaveValue("opus");
-		expect(screen.getByLabelText("codex model")).toHaveValue("gpt-5-codex");
-		expect(screen.getByLabelText("Reviewer model")).toHaveValue("claude-review");
-		expect(screen.getByText("codex/gpt-5-codex")).toBeInTheDocument();
-		expect(screen.getByText("not probed")).toBeInTheDocument();
+		const projectHarness = screen.getByRole("combobox", { name: "Project model harness" });
+		expect(projectHarness).toHaveTextContent("claude-code");
+		expect(document.getElementById("project-model-model")).toHaveValue("opus");
+		expect(document.getElementById("reviewer-model-model")).toHaveValue("claude-review");
 
 		const workerAgent = screen.getByRole("combobox", { name: "Default worker agent" });
 		const orchestratorAgent = screen.getByRole("combobox", { name: "Default orchestrator agent" });
@@ -167,12 +227,15 @@ describe("ProjectSettingsForm", () => {
 		await userEvent.type(screen.getByLabelText("Default branch"), "release");
 		await userEvent.clear(screen.getByLabelText("Session prefix"));
 		await userEvent.type(screen.getByLabelText("Session prefix"), "rel");
-		await userEvent.clear(screen.getByLabelText("Model override"));
-		await userEvent.type(screen.getByLabelText("Model override"), "  gpt-5-codex  ");
-		await userEvent.clear(screen.getByLabelText("codex model"));
-		await userEvent.type(screen.getByLabelText("codex model"), "gpt-5.1-codex");
-		await userEvent.clear(screen.getByLabelText("Reviewer model"));
-		await userEvent.type(screen.getByLabelText("Reviewer model"), "  claude-reviewer  ");
+		await chooseOption(projectHarness, "Scalar fallback");
+		expect(document.getElementById("project-model-model")).toHaveValue("claude-opus-4-5");
+		await userEvent.clear(document.getElementById("project-model-model")!);
+		await userEvent.type(document.getElementById("project-model-model")!, "  gpt-5-codex  ");
+		await chooseOption(projectHarness, "Codex");
+		await userEvent.clear(document.getElementById("project-model-model")!);
+		await userEvent.type(document.getElementById("project-model-model")!, "gpt-5.1-codex");
+		await userEvent.clear(document.getElementById("reviewer-model-model")!);
+		await userEvent.type(document.getElementById("reviewer-model-model")!, "  claude-reviewer  ");
 		await chooseOption(workerAgent, "OpenCode");
 		await chooseOption(orchestratorAgent, "Goose");
 		await chooseOption(permissionMode, "Bypass permissions");
@@ -191,7 +254,7 @@ describe("ProjectSettingsForm", () => {
 					postCreate: ["npm install"],
 					worker: {
 						agent: "opencode",
-						agentConfig: { model: "worker-model" },
+						agentConfig: { modelByHarness: { codex: { model: "worker-model" } } },
 					},
 					orchestrator: { agent: "goose" },
 					agentConfig: {
@@ -202,7 +265,12 @@ describe("ProjectSettingsForm", () => {
 						},
 						permissions: "bypass-permissions",
 					},
-					reviewers: [{ harness: "claude-code", agentConfig: { model: "claude-reviewer" } }],
+					reviewers: [
+						{
+							harness: "claude-code",
+							agentConfig: { modelByHarness: { "claude-code": { model: "claude-reviewer" } } },
+						},
+					],
 				},
 			},
 		});
@@ -340,9 +408,11 @@ describe("ProjectSettingsForm", () => {
 		renderSettings();
 
 		expect(await screen.findByText("Worker and orchestrator agents are required.")).toBeInTheDocument();
-		expect(screen.getByRole("combobox", { name: "Default worker agent" })).toHaveTextContent("Select worker agent");
+		expect(screen.getByRole("combobox", { name: "Default worker agent" })).toHaveTextContent(
+			"Select default worker agent",
+		);
 		expect(screen.getByRole("combobox", { name: "Default orchestrator agent" })).toHaveTextContent(
-			"Select orchestrator agent",
+			"Select default orchestrator agent",
 		);
 
 		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
@@ -375,10 +445,11 @@ describe("ProjectSettingsForm", () => {
 			"Claude Code",
 			"Codex",
 			"OpenCode",
+			"Codex Fugu",
 			"Goose",
 			"KiroAuth unknown",
 		]);
-		expect(options[4]).not.toHaveAttribute("aria-disabled", "true");
+		expect(options[5]).not.toHaveAttribute("aria-disabled", "true");
 	});
 
 	it("saves GitHub tracker intake settings, deriving the repo from the project's git origin", async () => {
@@ -510,23 +581,17 @@ describe("ProjectSettingsForm", () => {
 	});
 
 	it("keeps the config save successful when orchestrator replacement fails", async () => {
-		getMock.mockResolvedValue({
-			data: {
-				status: "ok",
-				project: {
-					id: "proj-1",
-					name: "Project One",
-					kind: "single_repo",
-					path: "/repo/project-one",
-					repo: "",
-					defaultBranch: "main",
-					config: {
-						worker: { agent: "codex" },
-						orchestrator: { agent: "claude-code" },
-					},
-				},
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "",
+			defaultBranch: "main",
+			config: {
+				worker: { agent: "codex" },
+				orchestrator: { agent: "claude-code" },
 			},
-			error: undefined,
 		});
 		postMock.mockResolvedValue({
 			data: undefined,
@@ -538,7 +603,7 @@ describe("ProjectSettingsForm", () => {
 		const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
 
 		const orchestratorAgent = await screen.findByRole("combobox", { name: "Default orchestrator agent" });
-		await chooseOption(orchestratorAgent, "goose");
+		await chooseOption(orchestratorAgent, "Goose");
 		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
 
 		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
@@ -547,6 +612,7 @@ describe("ProjectSettingsForm", () => {
 		expect(await screen.findByText("Orchestrator restart failed: missing goose binary")).toBeInTheDocument();
 		expect(screen.queryByText("Save failed")).not.toBeInTheDocument();
 		expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["project", "proj-1"] });
+		expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: modelAvailabilityQueryKey });
 		expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: workspaceQueryKey });
 	});
 
@@ -679,6 +745,208 @@ describe("ProjectSettingsForm", () => {
 		expect(body.config.maxLiveWorkers).toBe(4);
 	}, 20_000);
 
+	it("renders dynamic model tuples for every settings scope and preserves hidden nested config", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "",
+			defaultBranch: "main",
+			config: {
+				env: { HIDDEN: "yes" },
+				agentConfig: {
+					permissions: "auto",
+					modelByHarness: { "codex-fugu": { model: "fugu", effort: "xhigh" } },
+				},
+				worker: {
+					agent: "codex",
+					agentConfig: {
+						permissions: "accept-edits",
+						modelByHarness: { codex: { model: "gpt-5-codex", effort: "high" } },
+					},
+				},
+				orchestrator: {
+					agent: "claude-code",
+					agentConfig: {
+						permissions: "bypass-permissions",
+						modelByHarness: { "claude-code": { model: "opus", effort: "high" } },
+					},
+				},
+				prime: {
+					agent: "opencode",
+					agentConfig: {
+						permissions: "auto",
+						modelByHarness: { opencode: { model: "openai/gpt-5.4", effort: "turbo" } },
+					},
+				},
+				reviewers: [
+					{
+						harness: "codex",
+						agentConfig: { permissions: "auto", modelByHarness: { codex: { model: "gpt-5-codex", effort: "medium" } } },
+					},
+					{ harness: "opencode", agentConfig: { model: "hidden-reviewer" } },
+				],
+			},
+		});
+
+		renderSettings();
+
+		expect(await screen.findByRole("combobox", { name: "Project model harness" })).toHaveTextContent("codex-fugu");
+		expect(screen.getByRole("combobox", { name: "Default worker agent" })).toHaveTextContent("codex");
+		expect(screen.getByRole("combobox", { name: "Default orchestrator agent" })).toHaveTextContent("claude-code");
+		expect(screen.getByRole("combobox", { name: "Prime agent" })).toHaveTextContent("opencode");
+		expect(screen.getByRole("combobox", { name: "Default reviewer agent" })).toHaveTextContent("codex");
+		expect(document.getElementById("project-model-model")).toHaveValue("fugu");
+		expect(document.getElementById("worker-model-model")).toHaveValue("gpt-5-codex");
+		expect(document.getElementById("orchestrator-model-model")).toHaveValue("opus");
+		expect(document.getElementById("prime-model-model")).toHaveValue("openai/gpt-5.4");
+		expect(document.getElementById("reviewer-model-model")).toHaveValue("gpt-5-codex");
+
+		const projectHarness = screen.getByRole("combobox", { name: "Project model harness" });
+		await userEvent.click(projectHarness);
+		expect(await screen.findByRole("option", { name: "Codex Fugu" })).toBeInTheDocument();
+		await userEvent.keyboard("{Escape}");
+		const reviewerHarness = screen.getByRole("combobox", { name: "Default reviewer agent" });
+		await userEvent.click(reviewerHarness);
+		expect(screen.queryByRole("option", { name: "Codex Fugu" })).not.toBeInTheDocument();
+		await userEvent.keyboard("{Escape}");
+
+		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
+		const saved = putMock.mock.calls[0]?.[1]?.body.config;
+		expect(saved.env).toEqual({ HIDDEN: "yes" });
+		expect(saved.agentConfig).toEqual({
+			permissions: "auto",
+			modelByHarness: { "codex-fugu": { model: "fugu", effort: "xhigh" } },
+		});
+		expect(saved.worker.agentConfig).toEqual({
+			permissions: "accept-edits",
+			modelByHarness: { codex: { model: "gpt-5-codex", effort: "high" } },
+		});
+		expect(saved.orchestrator.agentConfig).toEqual({
+			permissions: "bypass-permissions",
+			modelByHarness: { "claude-code": { model: "opus", effort: "high" } },
+		});
+		expect(saved.prime.agentConfig).toEqual({
+			permissions: "auto",
+			modelByHarness: { opencode: { model: "openai/gpt-5.4", effort: "turbo" } },
+		});
+		expect(saved.reviewers).toEqual([
+			{
+				harness: "codex",
+				agentConfig: { permissions: "auto", modelByHarness: { codex: { model: "gpt-5-codex", effort: "medium" } } },
+			},
+			{ harness: "opencode", agentConfig: { model: "hidden-reviewer" } },
+		]);
+	}, 20_000);
+
+	it("filters reviewer inventory fallback by server capability while preserving the current legacy reviewer", async () => {
+		getMock.mockImplementation(async (path: string) => {
+			if (path === "/api/v1/agents") return agentCatalogResponse;
+			if (path === "/api/v1/agents/models") {
+				return { data: undefined, error: { message: "model catalog offline" } };
+			}
+			if (path === "/api/v1/projects/{id}/roles/{role}/prompt") {
+				return { data: { prompt: "assembled prompt" }, error: undefined };
+			}
+			return {
+				data: {
+					status: "ok",
+					project: {
+						id: "proj-1",
+						name: "Project One",
+						kind: "single_repo",
+						path: "/repo/project-one",
+						repo: "",
+						defaultBranch: "main",
+						config: {
+							worker: { agent: "codex" },
+							orchestrator: { agent: "claude-code" },
+							reviewers: [{ harness: "goose" }],
+						},
+					},
+				},
+				error: undefined,
+			};
+		});
+
+		renderSettings();
+		const reviewerHarness = await screen.findByRole("combobox", { name: "Default reviewer agent" });
+		expect(reviewerHarness).toHaveTextContent("goose");
+		expect(
+			await screen.findByText(/model catalogs are unavailable.*agent inventory remain usable/i, undefined, {
+				timeout: 4_000,
+			}),
+		).toBeInTheDocument();
+
+		await userEvent.click(reviewerHarness);
+		expect(await screen.findByRole("option", { name: "Codex" })).toBeInTheDocument();
+		expect(screen.getByRole("option", { name: "OpenCode" })).toBeInTheDocument();
+		expect(screen.getByRole("option", { name: "Goose" })).toBeInTheDocument();
+		expect(screen.queryByRole("option", { name: "Codex Fugu" })).not.toBeInTheDocument();
+	});
+
+	it("restores each worker harness pair and clears a harness with no saved pair", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "",
+			defaultBranch: "main",
+			config: {
+				worker: {
+					agent: "codex",
+					agentConfig: {
+						modelByHarness: {
+							codex: { model: "gpt-5-codex", effort: "high" },
+							opencode: { model: "openai/gpt-5.4", effort: "turbo" },
+						},
+					},
+				},
+				orchestrator: { agent: "claude-code" },
+			},
+		});
+
+		renderSettings();
+		const workerHarness = await screen.findByRole("combobox", { name: "Default worker agent" });
+		const model = document.getElementById("worker-model-model");
+		const effort = document.getElementById("worker-model-effort");
+		expect(model).toHaveValue("gpt-5-codex");
+		expect(effort).toHaveValue("high");
+
+		await chooseOption(workerHarness, "OpenCode");
+		expect(model).toHaveValue("openai/gpt-5.4");
+		expect(effort).toHaveValue("turbo");
+		await chooseOption(workerHarness, "Codex Fugu");
+		expect(model).toHaveValue("");
+		expect(effort).toHaveValue("");
+		await chooseOption(workerHarness, "Codex");
+		expect(model).toHaveValue("gpt-5-codex");
+		expect(effort).toHaveValue("high");
+	}, 20_000);
+
+	it("keeps a synthetic configured project pin visible when no catalog row exists", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "",
+			defaultBranch: "main",
+			config: {
+				worker: { agent: "codex" },
+				orchestrator: { agent: "claude-code" },
+				agentConfig: { modelByHarness: { goose: { model: "custom/goose", effort: "high" } } },
+			},
+		});
+
+		renderSettings();
+		expect(await screen.findByRole("combobox", { name: "Project model harness" })).toHaveTextContent("goose");
+		expect(document.getElementById("project-model-model")).toHaveValue("custom/goose");
+	}, 20_000);
+
 	it("preserves per-harness effort when saving a model edit", async () => {
 		mockProject({
 			id: "proj-1",
@@ -700,22 +968,23 @@ describe("ProjectSettingsForm", () => {
 
 		renderSettings();
 
-		expect(await screen.findByLabelText("codex model")).toHaveValue("gpt-5-codex");
-		await userEvent.clear(screen.getByLabelText("codex model"));
-		await userEvent.type(screen.getByLabelText("codex model"), "gpt-5.1-codex");
+		expect(await screen.findByRole("combobox", { name: "Project model harness" })).toHaveTextContent("codex");
+		expect(document.getElementById("project-model-model")).toHaveValue("gpt-5-codex");
+		await userEvent.clear(document.getElementById("project-model-model")!);
+		await userEvent.type(document.getElementById("project-model-model")!, "gpt-5.1-codex");
 
 		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
 
 		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
 		const body = putMock.mock.calls[0]?.[1]?.body;
-		// The form has no effort input; a model edit must round-trip the
-		// persisted effort untouched instead of silently wiping it.
+		// An uncatalogued model cannot safely inherit an effort that was only
+		// advertised for the old model.
 		expect(body.config.agentConfig.modelByHarness).toEqual({
-			codex: { model: "gpt-5.1-codex", effort: "high" },
+			codex: { model: "gpt-5.1-codex" },
 		});
 	}, 20_000);
 
-	it("keeps effort-only entries and clearing a model preserves its effort", async () => {
+	it("keeps an untouched effort-only entry when another model is cleared", async () => {
 		mockProject({
 			id: "proj-1",
 			name: "Project One",
@@ -737,17 +1006,19 @@ describe("ProjectSettingsForm", () => {
 
 		renderSettings();
 
-		expect(await screen.findByLabelText("codex model")).toHaveValue("gpt-5-codex");
-		await userEvent.clear(screen.getByLabelText("codex model"));
+		expect(await screen.findByRole("combobox", { name: "Project model harness" })).toHaveTextContent("claude-code");
+		const projectHarness = screen.getByRole("combobox", { name: "Project model harness" });
+		await chooseOption(projectHarness, "Codex");
+		expect(document.getElementById("project-model-model")).toHaveValue("gpt-5-codex");
+		await userEvent.clear(document.getElementById("project-model-model")!);
 
 		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
 
 		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
 		const body = putMock.mock.calls[0]?.[1]?.body;
-		// Clearing the model unpins it but must not delete the effort; the
-		// untouched effort-only entry must survive the save verbatim.
+		// Clearing a selected model clears its stale effort, while a different
+		// untouched effort-only entry survives the save verbatim.
 		expect(body.config.agentConfig.modelByHarness).toEqual({
-			codex: { effort: "high" },
 			"claude-code": { effort: "low" },
 		});
 	}, 20_000);

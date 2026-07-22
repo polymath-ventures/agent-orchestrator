@@ -153,7 +153,7 @@ func TestWiring_StartSessionBuildsSessionService(t *testing.T) {
 
 	rt := runtimeselect.New(nil)
 	messenger := newSessionMessenger(store, rt, log)
-	svc, reviewSvc, lc, err := startSession(cfg, rt, store, lcm, messenger, telemetryadapter.NoopSink{}, log)
+	svc, reviewSvc, lc, err := startSession(cfg, rt, store, lcm, messenger, nil, telemetryadapter.NoopSink{}, log)
 	if err != nil {
 		t.Fatalf("startSession: %v", err)
 	}
@@ -194,7 +194,7 @@ func TestStartSession_SpawnDoesNotPanicWhenNoTrackerToken(t *testing.T) {
 	cfg := config.Config{DataDir: t.TempDir()}
 	rt := runtimeselect.New(nil)
 	messenger := newSessionMessenger(store, rt, log)
-	svc, _, _, err := startSession(cfg, rt, store, lcm, messenger, telemetryadapter.NoopSink{}, log)
+	svc, _, _, err := startSession(cfg, rt, store, lcm, messenger, nil, telemetryadapter.NoopSink{}, log)
 	if err != nil {
 		t.Fatalf("startSession: %v", err)
 	}
@@ -223,7 +223,7 @@ func TestStartTrackerIntake_RunsEvenWithoutEnabledProjects(t *testing.T) {
 	cfg := config.Config{DataDir: t.TempDir()}
 	rt := runtimeselect.New(nil)
 	messenger := newSessionMessenger(store, rt, log)
-	svc, _, _, err := startSession(cfg, rt, store, lcm, messenger, telemetryadapter.NoopSink{}, log)
+	svc, _, _, err := startSession(cfg, rt, store, lcm, messenger, nil, telemetryadapter.NoopSink{}, log)
 	if err != nil {
 		t.Fatalf("startSession: %v", err)
 	}
@@ -242,6 +242,51 @@ func TestStartTrackerIntake_RunsEvenWithoutEnabledProjects(t *testing.T) {
 	case <-done:
 	case <-time.After(2 * time.Second):
 		t.Fatal("observer did not stop after context cancellation")
+	}
+}
+
+type rejectingSpawnModelValidator struct {
+	calls int
+}
+
+func (v *rejectingSpawnModelValidator) ValidateSpawnSelection(_ context.Context, harness domain.AgentHarness, model string, effort domain.Effort) (ports.ModelValidationResult, error) {
+	v.calls++
+	return ports.ModelValidationResult{Status: ports.ModelValidationUnreachable, Message: "cached provider rejection"}, nil
+}
+
+func TestStartSessionInjectsSharedSpawnModelValidator(t *testing.T) {
+	ctx := context.Background()
+	store, err := sqlite.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	if err := store.UpsertProject(ctx, domain.ProjectRecord{
+		ID: "models", Path: "/repo/models", RegisteredAt: time.Now(),
+		Config: domain.ProjectConfig{Worker: domain.RoleOverride{
+			Harness:     domain.HarnessCodex,
+			AgentConfig: domain.AgentConfig{Model: "gpt-5-codex", Effort: domain.EffortHigh},
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	lcm := lifecycle.New(store, nil)
+	rt := runtimeselect.New(nil)
+	messenger := newSessionMessenger(store, rt, log)
+	validator := &rejectingSpawnModelValidator{}
+	svc, _, _, err := startSession(config.Config{DataDir: t.TempDir()}, rt, store, lcm, messenger, validator, telemetryadapter.NoopSink{}, log)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = svc.Spawn(ctx, ports.SpawnConfig{ProjectID: "models", Kind: domain.KindWorker, Prompt: "test"})
+	if !errors.Is(err, sessionmanager.ErrModelUnreachable) {
+		t.Fatalf("Spawn error = %v, want ErrModelUnreachable", err)
+	}
+	if validator.calls != 1 {
+		t.Fatalf("validator calls = %d, want 1", validator.calls)
 	}
 }
 

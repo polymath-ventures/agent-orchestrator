@@ -1,8 +1,10 @@
 package project_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -107,6 +109,25 @@ type fakeProjectTeardowner struct {
 
 type fakeModelAvailabilityReader struct {
 	rows []domain.ModelAvailability
+}
+
+type fakeProjectModelValidator struct {
+	result ports.ModelValidationResult
+	err    error
+	calls  []struct {
+		harness domain.AgentHarness
+		model   string
+		effort  domain.Effort
+	}
+}
+
+func (f *fakeProjectModelValidator) ValidateModelSelection(_ context.Context, harness domain.AgentHarness, model string, effort domain.Effort) (ports.ModelValidationResult, error) {
+	f.calls = append(f.calls, struct {
+		harness domain.AgentHarness
+		model   string
+		effort  domain.Effort
+	}{harness: harness, model: model, effort: effort})
+	return f.result, f.err
 }
 
 func (f fakeModelAvailabilityReader) ListProject(_ context.Context, _ domain.ProjectID) ([]domain.ModelAvailability, error) {
@@ -489,6 +510,236 @@ func TestManager_SetConfig(t *testing.T) {
 	// Setting on an unknown project is a clean not-found.
 	_, err = m.SetConfig(ctx, "ghost", project.SetConfigInput{Config: cfg})
 	wantCode(t, err, "PROJECT_NOT_FOUND")
+}
+
+func TestManager_SetConfigRejectsUnreachableModelBeforePersistence(t *testing.T) {
+	ctx := context.Background()
+	store, err := sqlite.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	validator := &fakeProjectModelValidator{result: ports.ModelValidationResult{
+		Status:  ports.ModelValidationUnreachable,
+		Message: "provider rejected this model",
+	}}
+	m := project.NewWithDeps(project.Deps{Store: store, ModelValidator: validator})
+	repo := gitRepo(t)
+	if _, err := m.Add(ctx, project.AddInput{Path: repo, ProjectID: ptr("ao")}); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+
+	_, err = m.SetConfig(ctx, "ao", project.SetConfigInput{Config: domain.ProjectConfig{
+		Worker: domain.RoleOverride{
+			Harness:     domain.HarnessCodex,
+			AgentConfig: domain.AgentConfig{Model: "gpt-5-codex"},
+		},
+	}})
+	wantCode(t, err, "MODEL_UNREACHABLE")
+	if len(validator.calls) != 1 || validator.calls[0].harness != domain.HarnessCodex || validator.calls[0].model != "gpt-5-codex" {
+		t.Fatalf("validator calls = %#v, want codex/gpt-5-codex once", validator.calls)
+	}
+	got, getErr := m.Get(ctx, "ao")
+	if getErr != nil {
+		t.Fatalf("Get: %v", getErr)
+	}
+	if got.Project == nil || got.Project.Config != nil {
+		t.Fatalf("stored config = %#v, want unchanged empty config", got.Project)
+	}
+}
+
+func TestManager_SetConfigChecksStaticProviderCompatibilityBeforeModelValidation(t *testing.T) {
+	ctx := context.Background()
+	store, err := sqlite.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	validator := &fakeProjectModelValidator{result: ports.ModelValidationResult{Status: ports.ModelValidationReachable}}
+	m := project.NewWithDeps(project.Deps{Store: store, ModelValidator: validator})
+	repo := gitRepo(t)
+	if _, err := m.Add(ctx, project.AddInput{Path: repo, ProjectID: ptr("ao")}); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+
+	_, err = m.SetConfig(ctx, "ao", project.SetConfigInput{Config: domain.ProjectConfig{
+		Worker: domain.RoleOverride{
+			Harness:     domain.HarnessCodex,
+			AgentConfig: domain.AgentConfig{Model: "claude-opus-4-5"},
+		},
+	}})
+	wantCode(t, err, "INVALID_PROJECT_CONFIG")
+	if len(validator.calls) != 0 {
+		t.Fatalf("validator calls = %#v, want none before static rejection", validator.calls)
+	}
+
+	_, err = m.SetConfig(ctx, "ghost", project.SetConfigInput{Config: domain.ProjectConfig{
+		Worker: domain.RoleOverride{
+			Harness:     domain.HarnessCodex,
+			AgentConfig: domain.AgentConfig{Model: "gpt-5-codex"},
+		},
+	}})
+	wantCode(t, err, "PROJECT_NOT_FOUND")
+	if len(validator.calls) != 0 {
+		t.Fatalf("validator calls = %#v, want none for an unknown project", validator.calls)
+	}
+}
+
+func TestManager_SetConfigFailsOpenWhenModelValidationIsUnknown(t *testing.T) {
+	ctx := context.Background()
+	store, err := sqlite.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	validator := &fakeProjectModelValidator{result: ports.ModelValidationResult{
+		Status:  ports.ModelValidationProbeUnavailable,
+		Message: "provider timed out",
+	}}
+	var logs bytes.Buffer
+	m := project.NewWithDeps(project.Deps{
+		Store:          store,
+		ModelValidator: validator,
+		Logger:         slog.New(slog.NewTextHandler(&logs, nil)),
+	})
+	repo := gitRepo(t)
+	if _, err := m.Add(ctx, project.AddInput{Path: repo, ProjectID: ptr("ao")}); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+
+	updated, err := m.SetConfig(ctx, "ao", project.SetConfigInput{Config: domain.ProjectConfig{
+		Worker: domain.RoleOverride{
+			Harness:     domain.HarnessCodex,
+			AgentConfig: domain.AgentConfig{Model: "gpt-5-codex"},
+		},
+	}})
+	if err != nil {
+		t.Fatalf("SetConfig: %v", err)
+	}
+	if updated.Config == nil || updated.Config.Worker.AgentConfig.Model != "gpt-5-codex" {
+		t.Fatalf("saved config = %#v", updated.Config)
+	}
+	if got := logs.String(); !strings.Contains(got, "model validation unavailable") || !strings.Contains(got, "provider timed out") {
+		t.Fatalf("logs = %q, want loud fail-open warning", got)
+	}
+}
+
+func TestManager_SetConfigRejectsUnsupportedModelEffortPair(t *testing.T) {
+	ctx := context.Background()
+	store, err := sqlite.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	validator := &fakeProjectModelValidator{result: ports.ModelValidationResult{
+		Status:  ports.ModelValidationUnreachable,
+		Message: "effort xhigh is not supported (supported: high)",
+	}}
+	m := project.NewWithDeps(project.Deps{Store: store, ModelValidator: validator})
+	if _, err := m.Add(ctx, project.AddInput{Path: gitRepo(t), ProjectID: ptr("ao")}); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+
+	_, err = m.SetConfig(ctx, "ao", project.SetConfigInput{Config: domain.ProjectConfig{
+		Worker: domain.RoleOverride{
+			Harness: domain.HarnessCodex,
+			AgentConfig: domain.AgentConfig{
+				Model: "gpt-5-codex", Effort: domain.EffortXHigh,
+			},
+		},
+	}})
+	wantCode(t, err, "MODEL_UNREACHABLE")
+	if len(validator.calls) != 1 || validator.calls[0].effort != domain.EffortXHigh {
+		t.Fatalf("validator calls = %#v, want xhigh selection", validator.calls)
+	}
+}
+
+func TestManager_SetConfigAcceptsSupportedModelEffortPair(t *testing.T) {
+	ctx := context.Background()
+	store, err := sqlite.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	validator := &fakeProjectModelValidator{result: ports.ModelValidationResult{Status: ports.ModelValidationReachable}}
+	m := project.NewWithDeps(project.Deps{Store: store, ModelValidator: validator})
+	if _, err := m.Add(ctx, project.AddInput{Path: gitRepo(t), ProjectID: ptr("ao")}); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+
+	updated, err := m.SetConfig(ctx, "ao", project.SetConfigInput{Config: domain.ProjectConfig{
+		Worker: domain.RoleOverride{
+			Harness: domain.HarnessCodex,
+			AgentConfig: domain.AgentConfig{
+				Model: "gpt-5-codex", Effort: domain.EffortXHigh,
+			},
+		},
+	}})
+	if err != nil {
+		t.Fatalf("SetConfig: %v", err)
+	}
+	if updated.Config == nil || updated.Config.Worker.AgentConfig.Effort != domain.EffortXHigh {
+		t.Fatalf("saved config = %#v, want xhigh", updated.Config)
+	}
+}
+
+func TestManager_SetConfigValidatesExplicitWorkerMixEffort(t *testing.T) {
+	ctx := context.Background()
+	store, err := sqlite.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	validator := &fakeProjectModelValidator{result: ports.ModelValidationResult{Status: ports.ModelValidationReachable}}
+	m := project.NewWithDeps(project.Deps{Store: store, ModelValidator: validator})
+	if _, err := m.Add(ctx, project.AddInput{Path: gitRepo(t), ProjectID: ptr("ao")}); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+
+	_, err = m.SetConfig(ctx, "ao", project.SetConfigInput{Config: domain.ProjectConfig{
+		Worker: domain.RoleOverride{AgentConfig: domain.AgentConfig{Effort: domain.EffortLow}},
+		WorkerMix: domain.WorkerMix{{
+			Harness: domain.HarnessCodex, Model: "gpt-5-codex", Effort: domain.EffortHigh, Weight: 100,
+		}},
+	}})
+	if err != nil {
+		t.Fatalf("SetConfig: %v", err)
+	}
+	found := false
+	for _, call := range validator.calls {
+		if call.harness == domain.HarnessCodex && call.model == "gpt-5-codex" && call.effort == domain.EffortHigh {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("validator calls = %#v, want explicit worker-mix high effort rather than inherited low", validator.calls)
+	}
+}
+
+func TestManager_SetConfigRejectsWorkerMixDuplicateAfterEffortInheritance(t *testing.T) {
+	ctx := context.Background()
+	store, err := sqlite.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	validator := &fakeProjectModelValidator{result: ports.ModelValidationResult{Status: ports.ModelValidationReachable}}
+	m := project.NewWithDeps(project.Deps{Store: store, ModelValidator: validator})
+	if _, err := m.Add(ctx, project.AddInput{Path: gitRepo(t), ProjectID: ptr("ao")}); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+
+	_, err = m.SetConfig(ctx, "ao", project.SetConfigInput{Config: domain.ProjectConfig{
+		Worker: domain.RoleOverride{AgentConfig: domain.AgentConfig{Effort: domain.EffortHigh}},
+		WorkerMix: domain.WorkerMix{
+			{Harness: domain.HarnessCodex, Model: "gpt-5-codex", Weight: 50},
+			{Harness: domain.HarnessCodex, Model: "gpt-5-codex", Effort: domain.EffortHigh, Weight: 50},
+		},
+	}})
+	wantCode(t, err, "INVALID_PROJECT_CONFIG")
+	if len(validator.calls) != 0 {
+		t.Fatalf("validator calls = %#v, want static duplicate rejection first", validator.calls)
+	}
 }
 
 func TestManager_ListIncludesOnlySummarySafeProjectConfig(t *testing.T) {

@@ -64,6 +64,8 @@ func (h AgentHarness) ModelProvider() ModelProvider {
 		return ProviderAnthropic
 	case HarnessCodex:
 		return ProviderOpenAI
+	case HarnessCodexFugu:
+		return ProviderFugu
 	default:
 		return ProviderUnknown
 	}

@@ -4,9 +4,15 @@ import { TriangleAlert, X } from "lucide-react";
 import { memo, useEffect, useState } from "react";
 import type { components } from "../../api/schema";
 import { agentsQueryKey, agentsQueryOptions, refreshAgents } from "../hooks/useAgentsQuery";
+import {
+	type AgentModelAvailabilityResponse,
+	useModelAvailabilityQuery,
+	useRefreshModelAvailability,
+} from "../hooks/useModelAvailabilityQuery";
 import { AGENT_OPTIONS } from "../lib/agent-options";
 import { buildIntake, type IntakeForm, IntakeFields, intakeNeedsRule } from "./IntakeFields";
 import type { ProjectKind } from "../types/workspace";
+import { ModelAvailabilityField, type ConfiguredModelPin, type ModelSelection } from "./ModelAvailabilityField";
 import { Button } from "./ui/button";
 import { Label } from "./ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
@@ -14,14 +20,21 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 type TrackerIntakeConfig = components["schemas"]["TrackerIntakeConfig"];
 
 type AgentInfo = components["schemas"]["AgentInfo"];
+type AgentInventory = {
+	authorized?: AgentInfo[];
+	installed?: AgentInfo[];
+	supported?: AgentInfo[];
+};
 
 export type CreateProjectAgentSelection = {
 	workerAgent: string;
 	orchestratorAgent: string;
+	modelOverride: ModelSelection;
 	trackerIntake?: TrackerIntakeConfig;
 };
 
 const EMPTY_INTAKE: IntakeForm = { enabled: false, repo: "", assignee: "" };
+const EMPTY_MODEL_OVERRIDE: ModelSelection = { harness: "", model: "", effort: "" };
 const DEFAULT_AGENT_PRIORITY = ["claude-code", "codex", "cursor", "opencode", "aider"] as const;
 const DEFAULT_AGENT_PRIORITY_RANK = new Map<string, number>(
 	DEFAULT_AGENT_PRIORITY.map((agent, index) => [agent, index]),
@@ -99,6 +112,8 @@ export function CreateProjectAgentSheet({
 		...agentsQueryOptions,
 		enabled: open,
 	});
+	const modelAvailabilityQuery = useModelAvailabilityQuery(open);
+	const { refresh: refreshModels, isRefreshing: isRefreshingModels } = useRefreshModelAvailability();
 	const refreshAgentsMutation = useMutation({
 		mutationFn: refreshAgents,
 		onSuccess: (next) => queryClient.setQueryData(agentsQueryKey, next),
@@ -122,11 +137,17 @@ export function CreateProjectAgentSheet({
 	const [orchestratorAgent, setOrchestratorAgent] = useState("");
 	const [workerAgentTouched, setWorkerAgentTouched] = useState(false);
 	const [orchestratorAgentTouched, setOrchestratorAgentTouched] = useState(false);
+	const [modelOverride, setModelOverride] = useState<ModelSelection>(EMPTY_MODEL_OVERRIDE);
+	const [configuredModelPins, setConfiguredModelPins] = useState<Record<string, ConfiguredModelPin>>({});
 	const isBusy = isCreating || isInitializing;
 	const [intake, setIntake] = useState<IntakeForm>(EMPTY_INTAKE);
 	const intakeIncomplete = intakeNeedsRule(intake);
 	const canSubmit = workerAgent !== "" && orchestratorAgent !== "" && !intakeIncomplete && !isBusy && !isLoadingAgents;
 	const sheetError = error ? projectSheetError(error) : null;
+	const inventoryModelAvailability = modelAvailabilityFromAgentInventory(agents);
+	const effectiveModelAvailability = modelAvailabilityQuery.data ?? inventoryModelAvailability;
+	const usingInventoryModelFallback =
+		modelAvailabilityQuery.isError && !modelAvailabilityQuery.data && inventoryModelAvailability !== undefined;
 
 	useEffect(() => {
 		if (!open) return;
@@ -141,6 +162,8 @@ export function CreateProjectAgentSheet({
 			setOrchestratorAgent("");
 			setWorkerAgentTouched(false);
 			setOrchestratorAgentTouched(false);
+			setModelOverride(EMPTY_MODEL_OVERRIDE);
+			setConfiguredModelPins({});
 			setIntake(EMPTY_INTAKE);
 		}
 	}, [open, path]);
@@ -149,7 +172,7 @@ export function CreateProjectAgentSheet({
 		<Dialog.Root open={open} onOpenChange={(next) => !isBusy && onOpenChange(next)}>
 			<Dialog.Portal>
 				<Dialog.Overlay className="fixed inset-0 z-overlay bg-scrim data-[state=open]:animate-overlay-in" />
-				<Dialog.Content className="fixed left-1/2 top-1/2 z-overlay w-dialog-md -translate-x-1/2 -translate-y-1/2 rounded-lg border border-border bg-popover p-0 text-popover-foreground shadow-xl data-[state=open]:animate-modal-in">
+				<Dialog.Content className="fixed left-1/2 top-1/2 z-overlay max-h-[calc(100vh-32px)] w-dialog-md -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-lg border border-border bg-popover p-0 text-popover-foreground shadow-xl data-[state=open]:animate-modal-in">
 					<div className="flex items-start justify-between gap-4 border-b border-border px-5 py-4">
 						<div className="min-w-0">
 							<Dialog.Title className="text-subtitle font-semibold text-foreground">
@@ -175,7 +198,7 @@ export function CreateProjectAgentSheet({
 						onSubmit={(event) => {
 							event.preventDefault();
 							if (!canSubmit) return;
-							void onSubmit({ workerAgent, orchestratorAgent, trackerIntake: buildIntake(intake) });
+							void onSubmit({ workerAgent, orchestratorAgent, modelOverride, trackerIntake: buildIntake(intake) });
 						}}
 					>
 						<div className="grid gap-3 sm:grid-cols-2">
@@ -207,6 +230,35 @@ export function CreateProjectAgentSheet({
 									setOrchestratorAgentTouched(true);
 								}}
 							/>
+						</div>
+
+						<div className="border-t border-border pt-4">
+							<ModelAvailabilityField
+								id="newProjectModel"
+								label="Optional model override"
+								value={modelOverride}
+								onChange={(next) => {
+									setModelOverride(next);
+									if (!next.harness) return;
+									setConfiguredModelPins((current) => {
+										const updated = { ...current };
+										if (next.model || next.effort) updated[next.harness] = next;
+										else delete updated[next.harness];
+										return updated;
+									});
+								}}
+								availability={effectiveModelAvailability}
+								configuredPins={Object.values(configuredModelPins)}
+								disabled={isBusy}
+								isRefreshing={isRefreshingModels || modelAvailabilityQuery.isFetching}
+								onRefresh={() => refreshModels().catch(() => undefined)}
+							/>
+							{usingInventoryModelFallback && (
+								<p className="mt-2 text-xs leading-row text-warning">
+									Model catalogs are unavailable. Choose a harness from the agent inventory and enter a model ID
+									manually.
+								</p>
+							)}
 						</div>
 
 						{isLoadingAgents && <p className="text-xs leading-row text-muted-foreground">Loading agents...</p>}
@@ -321,7 +373,11 @@ export const RequiredAgentField = memo(function RequiredAgentField({
 	supported?: AgentInfo[];
 	value: string;
 }) {
-	const fallbackAgents: AgentInfo[] = AGENT_OPTIONS.map((agent) => ({ id: agent, label: agent }));
+	const fallbackAgents: AgentInfo[] = AGENT_OPTIONS.map((agent) => ({
+		id: agent,
+		label: agent,
+		reviewerCapable: false,
+	}));
 	const supportedAgents = supported ?? fallbackAgents;
 	const installedAgents = installed ?? supportedAgents;
 	const authorizedAgents = authorized ?? supportedAgents;
@@ -385,4 +441,35 @@ export function defaultAuthorizedAgent(authorizedAgents: AgentInfo[]): string {
 	const prioritized = DEFAULT_AGENT_PRIORITY.find((agent) => authorizedIds.has(agent));
 	if (prioritized) return prioritized;
 	return [...authorizedAgents].sort(agentLabelCompare)[0]?.id ?? "";
+}
+
+export function modelAvailabilityFromAgentInventory(
+	catalog: AgentInventory | undefined,
+): AgentModelAvailabilityResponse | undefined {
+	const agentsByID = new Map<string, AgentInfo>();
+	for (const agents of [catalog?.supported, catalog?.installed, catalog?.authorized]) {
+		for (const agent of agents ?? []) {
+			const current = agentsByID.get(agent.id);
+			agentsByID.set(agent.id, {
+				...current,
+				...agent,
+				reviewerCapable: agent.reviewerCapable,
+			});
+		}
+	}
+	if (agentsByID.size === 0) return undefined;
+	return {
+		checkedAt: "",
+		harnesses: [...agentsByID.values()]
+			.map((agent) => ({
+				id: agent.id,
+				label: agent.label,
+				reviewerCapable: agent.reviewerCapable,
+				catalogSource: "none" as const,
+				catalogVerified: false,
+				catalogReason: "Model catalogs are unavailable; this harness comes from the agent inventory.",
+				models: [],
+			}))
+			.sort((a, b) => a.label.localeCompare(b.label) || a.id.localeCompare(b.id)),
+	};
 }
