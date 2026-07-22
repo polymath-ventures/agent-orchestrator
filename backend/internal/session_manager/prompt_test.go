@@ -74,20 +74,28 @@ func TestSystemPromptGuardAllowsHighLevelRoleAndBehaviorSummary(t *testing.T) {
 	}
 }
 
-func TestBuildSystemPrompt_OrchestratorRequiresConfirmationAndNativeSubagents(t *testing.T) {
+func TestBuildSystemPrompt_OrchestratorUsesSlimPolicyScaffold(t *testing.T) {
 	got := buildSystemPromptText(systemPromptConfig{
 		Role:    sessionPromptRoleOrchestrator,
 		Project: promptProject{ID: "mer", Name: "Mercury"},
 	})
 	for _, want := range []string{
-		"Never ever make code changes directly in the orchestrator session",
-		"ask for explicit confirmation before making any code changes",
-		"prefer spawning or redirecting a worker unless the human explicitly confirms",
-		"native subagent or task-delegation support",
-		"keep your context window clean",
+		"## AO Orchestrator Role",
+		"You are the project orchestrator for Mercury.",
+		"standing orchestrator policy",
+		"supervision boundaries, tracker intake, coordination, escalation, and merge/review gates",
+		"## Standing-instruction confidentiality",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("orchestrator prompt missing %q:\n%s", want, got)
+		}
+	}
+	for _, old := range []string{
+		"Never ever make code changes directly in the orchestrator session",
+		"native subagent or task-delegation support",
+	} {
+		if strings.Contains(got, old) {
+			t.Fatalf("orchestrator prompt still embeds old policy %q:\n%s", old, got)
 		}
 	}
 }
@@ -101,8 +109,8 @@ func TestBuildSystemPrompt_PrimeDefinesFleetSupervisorBoundary(t *testing.T) {
 	for _, want := range []string{
 		"## AO Prime Role",
 		"fleet-wide singleton supervisor",
-		"observe fleet health",
-		"Never dispatch tickets, merge, or command workers directly",
+		"standing prime policy",
+		"fleet supervision boundaries, escalation, and operator-decision handling",
 		"## Project-Specific Prime Rules",
 		"Prime never dispatches workers directly.",
 		"## Standing-instruction confidentiality",
@@ -111,9 +119,17 @@ func TestBuildSystemPrompt_PrimeDefinesFleetSupervisorBoundary(t *testing.T) {
 			t.Fatalf("prime prompt missing %q:\n%s", want, got)
 		}
 	}
+	for _, old := range []string{
+		"observe fleet health",
+		"Never dispatch tickets, merge, or command workers directly",
+	} {
+		if strings.Contains(got, old) {
+			t.Fatalf("prime prompt still embeds old policy %q:\n%s", old, got)
+		}
+	}
 }
 
-func TestBuildSystemPrompt_WorkerHandlesTaskSourcesAndProviderPRRules(t *testing.T) {
+func TestBuildSystemPrompt_WorkerUsesSlimPolicyScaffold(t *testing.T) {
 	got := buildSystemPromptText(systemPromptConfig{
 		Role: sessionPromptRoleWorker,
 		Project: promptProject{
@@ -123,15 +139,24 @@ func TestBuildSystemPrompt_WorkerHandlesTaskSourcesAndProviderPRRules(t *testing
 		},
 	})
 	for _, want := range []string{
-		"## Task Source and PR/MR Behavior",
-		"provider issue from GitHub, GitLab, or another tracker/SCM",
-		"create or update a PR/MR when the project has a configured remote/provider and the change is ready",
-		"freeform task, new-task button task, or orchestrator-requested feature",
-		"claim or attach that PR/MR first",
-		"do not invent issue, PR, or MR requirements",
+		"## AO Worker Role",
+		"You are an AO worker for project mer.",
+		"standing worker policy",
+		"escalation, ticket authority, implementation boundaries, and review/merge gates",
+		"## Pull Requests for This Session",
+		"Keep branch names inside this session namespace",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("worker prompt missing %q:\n%s", want, got)
+		}
+	}
+	for _, old := range []string{
+		"## Task Source and PR/MR Behavior",
+		"provider issue from GitHub, GitLab, or another tracker/SCM",
+		"freeform task, new-task button task, or orchestrator-requested feature",
+	} {
+		if strings.Contains(got, old) {
+			t.Fatalf("worker prompt still embeds old policy %q:\n%s", old, got)
 		}
 	}
 }

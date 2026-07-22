@@ -1420,6 +1420,54 @@ func TestFetchReviewThreadsUsesLatestWindowWithoutFallbackWhenOldestResolved(t *
 	}
 }
 
+func TestFetchReviewThreadsDecisionDoesNotDependOnMalformedReviewSummaryTimestamp(t *testing.T) {
+	fake := newFakeGH(t)
+	fake.on(http.MethodPost, "/graphql", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": map[string]any{"repo": map[string]any{"pullRequest": map[string]any{
+				"reviewDecision": "CHANGES_REQUESTED",
+				"reviewSummaries": map[string]any{"nodes": []any{
+					map[string]any{
+						"id":          "old-approval",
+						"state":       "APPROVED",
+						"url":         "https://github.com/o/r/pull/1#pullrequestreview-1",
+						"submittedAt": "not-a-time",
+						"author":      map[string]any{"login": "alice", "__typename": "User"},
+					},
+					map[string]any{
+						"id":          "new-change-request",
+						"state":       "CHANGES_REQUESTED",
+						"url":         "https://github.com/o/r/pull/1#pullrequestreview-2",
+						"submittedAt": "2026-06-16T00:00:00Z",
+						"author":      map[string]any{"login": "bob", "__typename": "User"},
+					},
+				}},
+				"reviewThreads": map[string]any{
+					"nodes":    []any{},
+					"pageInfo": map[string]any{"hasPreviousPage": false},
+				},
+			}}},
+		})
+	})
+	p := newProviderForTest(t, fake)
+
+	review, err := p.FetchReviewThreads(ctx(), ports.SCMPRRef{Repo: ports.SCMRepo{Provider: "github", Host: "github.com", Owner: "o", Name: "r", Repo: "o/r"}, Number: 1})
+	if err != nil {
+		t.Fatalf("FetchReviewThreads: %v", err)
+	}
+
+	if review.Decision != string(domain.ReviewChangesRequest) {
+		t.Fatalf("Decision = %q, want GitHub aggregate changes_requested", review.Decision)
+	}
+	if len(review.Reviews) != 2 {
+		t.Fatalf("reviews = %#v, want both summaries retained for diagnostics", review.Reviews)
+	}
+	if !review.Reviews[0].SubmittedAt.IsZero() {
+		t.Fatalf("malformed review timestamp = %s, want zero diagnostic timestamp", review.Reviews[0].SubmittedAt)
+	}
+}
+
 func TestFetchReviewThreadsFetchesOneOlderPageWhenOldestUnresolved(t *testing.T) {
 	fake := newFakeGH(t)
 	fake.on(http.MethodPost, "/graphql", func(w http.ResponseWriter, r *http.Request) {

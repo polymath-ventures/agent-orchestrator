@@ -1,11 +1,11 @@
 ## 1. Freeze the port boundary
 
-- [ ] 1.1 Record the reference-to-current file map for every reopened #6 gap in the implementation
+- [x] 1.1 Record the reference-to-current file map for every reopened #6 gap in the implementation
       plan and PR body, citing exact reference `file:line` evidence.
-- [ ] 1.2 Identify and preserve current verified-better behavior: fail-closed role rules loading,
+- [x] 1.2 Identify and preserve current verified-better behavior: fail-closed role rules loading,
       `os.Root` repo-relative confinement, `ao role prompt`, HTTP/UI prompt inspection, and existing
       SSE/drain/prime hardening outside this issue's scope.
-- [ ] 1.3 Confirm the ruled-dead reference features stay out of the diff: label routing,
+- [x] 1.3 Confirm the ruled-dead reference features stay out of the diff: label routing,
       behavior-version convergence, attention/capacity dashboards, usage-based scheduling, and
       unrelated notification delivery.
 
@@ -22,7 +22,7 @@
 
 ## 3. Complete role policy control and provenance
 
-- [ ] 3.1 Adopt the slim-scaffold prompt pattern for worker, orchestrator, reviewer, and prime where
+- [x] 3.1 Adopt the slim-scaffold prompt pattern for worker, orchestrator, reviewer, and prime where
       prompt assembly is owned by AO.
 - [x] 3.2 Support intentional absolute/shared role instruction files while preserving fail-closed
       loading and repo-relative confinement for repo policy files.
@@ -36,15 +36,15 @@
       advisory state semantics as worker harnesses.
 - [x] 4.2 Replace reviewer model-pin free text/stale scalar behavior with the dynamic model picker
       and harness-local saved pairs.
-- [ ] 4.3 Regenerate OpenAPI and TypeScript schema output for any changed DTOs or routes.
+- [x] 4.3 Regenerate OpenAPI and TypeScript schema output for any changed DTOs or routes.
 
 ## 5. Verify incident lessons and prepare review
 
-- [ ] 5.1 Add regression coverage for status-context literal drift, merge-park vs failed-review
+- [x] 5.1 Add regression coverage for status-context literal drift, merge-park vs failed-review
       state, stale PR lookup, malformed review timestamps, and foreground reviewer execution.
 - [x] 5.2 Add prompt-loader coverage for missing/empty/oversized files, absolute paths, and
       TOCTOU-resistant size checks.
-- [ ] 5.3 Run focused backend/frontend tests after each phase and update this task list only when
+- [x] 5.3 Run focused backend/frontend tests after each phase and update this task list only when
       behavior is verified.
 - [ ] 5.4 Run the repository's full CI commands, rebase on fresh `origin/main`, push, open the PR,
       and complete independent final review before declaring merge-ready.
