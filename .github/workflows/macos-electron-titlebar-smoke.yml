@@ -22,7 +22,8 @@ permissions:
 
 jobs:
   electron-titlebar-smoke:
-    runs-on: blacksmith-6vcpu-macos-15
+    # Standard GitHub-hosted macOS runners are free for public repositories.
+    runs-on: macos-15
     timeout-minutes: 30
     defaults:
       run:

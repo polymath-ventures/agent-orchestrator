@@ -10,7 +10,7 @@ test("macOS Electron titlebar smoke stays manual, hosted, and read-only", () => 
 	assert.match(workflow, /workflow_dispatch:/);
 	assert.doesNotMatch(workflow, /^\s*pull_request:/m);
 	assert.match(workflow, /ref:/);
-	assert.match(workflow, /runs-on:\s*blacksmith-6vcpu-macos-15/);
+	assert.match(workflow, /runs-on:\s*macos-15/);
 	assert.match(workflow, /permissions:\s*\n\s*contents:\s*read/);
 	assert.doesNotMatch(workflow, /\$\{\{\s*secrets\./);
 });
@@ -36,7 +36,7 @@ test("smoke verifies bridge, native buttons, cluster geometry, and screenshots",
 
 test("docs include dispatch instructions and isolated ARM64 self-hosted fallback", () => {
 	assert.match(docs, /workflow_dispatch/);
-	assert.match(docs, /blacksmith-6vcpu-macos-15/);
+	assert.match(docs, /macos-15/);
 	assert.match(docs, /self-hosted,\s*macOS,\s*ARM64,\s*ao-mac-ui/);
 	assert.match(docs, /public repository/i);
 	assert.match(docs, /isolated/i);

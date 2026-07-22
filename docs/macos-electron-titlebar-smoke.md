@@ -11,9 +11,9 @@ chrome that only exists inside the real macOS Electron window:
 - renderer and best-effort whole-desktop screenshots plus `geometry.json` are
   uploaded as workflow artifacts.
 
-It runs on the hosted `blacksmith-6vcpu-macos-15` runner and is
-`workflow_dispatch`-only. It does not run on pull requests and has only
-`contents: read` permission.
+It runs on the standard GitHub-hosted `macos-15` runner, which is free for this
+public repository, and is `workflow_dispatch`-only. It does not run on pull
+requests and has only `contents: read` permission.
 
 ## Run it
 
