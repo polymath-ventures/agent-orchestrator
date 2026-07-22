@@ -128,6 +128,25 @@ jobs:
             2>"$AO_MAC_SMOKE_OUTPUT_DIR/direct-app-stderr.log"
           sleep 2
           pgrep -f "$executable" > "$AO_MAC_SMOKE_OUTPUT_DIR/direct-app.pid"
+          app_pid="$(head -1 "$AO_MAC_SMOKE_OUTPUT_DIR/direct-app.pid")"
+          sleep 3
+          osascript - "$app_pid" \
+            > "$AO_MAC_SMOKE_OUTPUT_DIR/direct-app-modal.txt" 2>&1 <<'APPLESCRIPT'
+          on run argv
+            set appPid to (item 1 of argv) as integer
+            tell application "System Events"
+              set appProcess to first application process whose unix id is appPid
+              set modalDescription to "windows=" & (name of windows of appProcess as text)
+              repeat with appWindow in windows of appProcess
+                try
+                  set modalDescription to modalDescription & "; buttons=" & (name of buttons of appWindow as text)
+                end try
+              end repeat
+              tell appProcess to key code 53
+              return modalDescription
+            end tell
+          end run
+          APPLESCRIPT
           for _ in $(seq 1 10); do
             sleep 2
             curl -sS --max-time 5 http://127.0.0.1:9222/json/list \
@@ -135,7 +154,6 @@ jobs:
           done
           curl -sS --max-time 5 http://127.0.0.1:9222/json/version \
             -o "$AO_MAC_SMOKE_OUTPUT_DIR/direct-app-cdp-version.json"
-          app_pid="$(head -1 "$AO_MAC_SMOKE_OUTPUT_DIR/direct-app.pid")"
           ps -p "$app_pid" -o pid,ppid,state,etime,command \
             > "$AO_MAC_SMOKE_OUTPUT_DIR/direct-app-ps.txt"
           sample "$app_pid" 5 -file "$AO_MAC_SMOKE_OUTPUT_DIR/direct-app-sample.txt"
