@@ -126,9 +126,12 @@ type projectConfig struct {
 	OrchestratorRulesFile string              `json:"orchestratorRulesFile,omitempty"`
 	ReviewerRules         string              `json:"reviewerRules,omitempty"`
 	ReviewerRulesFile     string              `json:"reviewerRulesFile,omitempty"`
+	PrimeRules            string              `json:"primeRules,omitempty"`
+	PrimeRulesFile        string              `json:"primeRulesFile,omitempty"`
 	AgentConfig           agentConfig         `json:"agentConfig,omitempty"`
 	Worker                roleOverride        `json:"worker,omitempty"`
 	Orchestrator          roleOverride        `json:"orchestrator,omitempty"`
+	Prime                 roleOverride        `json:"prime,omitempty"`
 	Reviewers             []reviewerConfig    `json:"reviewers,omitempty"`
 	TrackerIntake         trackerIntakeConfig `json:"trackerIntake,omitempty"`
 }
@@ -146,12 +149,15 @@ type projectSetConfigOptions struct {
 	permission            string
 	workerAgent           string
 	orchestratorAgent     string
+	primeAgent            string
 	agentRules            string
 	agentRulesFile        string
 	orchestratorRules     string
 	orchestratorRulesFile string
 	reviewerRules         string
 	reviewerRulesFile     string
+	primeRules            string
+	primeRulesFile        string
 	env                   []string
 	symlink               []string
 	postCreate            []string
@@ -341,12 +347,15 @@ func newProjectSetConfigCommand(ctx *commandContext) *cobra.Command {
 	f.StringVar(&opts.permission, "permission", "", "Permission mode: default, accept-edits, auto, bypass-permissions")
 	f.StringVar(&opts.workerAgent, "worker-agent", "", "Harness override for worker sessions")
 	f.StringVar(&opts.orchestratorAgent, "orchestrator-agent", "", "Harness override for orchestrator sessions")
+	f.StringVar(&opts.primeAgent, "prime-agent", "", "Harness override for prime sessions")
 	f.StringVar(&opts.agentRules, "agent-rules", "", "Project-specific standing instructions for worker sessions")
 	f.StringVar(&opts.agentRulesFile, "agent-rules-file", "", "Repo-relative file containing worker standing instructions")
 	f.StringVar(&opts.orchestratorRules, "orchestrator-rules", "", "Project-specific standing instructions for orchestrator sessions")
 	f.StringVar(&opts.orchestratorRulesFile, "orchestrator-rules-file", "", "Repo-relative file containing orchestrator standing instructions")
 	f.StringVar(&opts.reviewerRules, "reviewer-rules", "", "Project-specific standing instructions for reviewer sessions")
 	f.StringVar(&opts.reviewerRulesFile, "reviewer-rules-file", "", "Repo-relative file containing reviewer standing instructions")
+	f.StringVar(&opts.primeRules, "prime-rules", "", "Project-specific standing instructions for prime sessions")
+	f.StringVar(&opts.primeRulesFile, "prime-rules-file", "", "Repo-relative file containing prime standing instructions")
 	f.StringArrayVar(&opts.env, "env", nil, "Env var KEY=VALUE forwarded into sessions (repeatable)")
 	f.StringArrayVar(&opts.symlink, "symlink", nil, "Repo-relative path to symlink into workspaces (repeatable)")
 	f.StringArrayVar(&opts.postCreate, "post-create", nil, "Command to run after workspace creation (repeatable)")
@@ -391,9 +400,12 @@ func buildProjectConfig(opts projectSetConfigOptions) (projectConfig, error) {
 		OrchestratorRulesFile: opts.orchestratorRulesFile,
 		ReviewerRules:         opts.reviewerRules,
 		ReviewerRulesFile:     opts.reviewerRulesFile,
+		PrimeRules:            opts.primeRules,
+		PrimeRulesFile:        opts.primeRulesFile,
 		AgentConfig:           agentConfig{Model: opts.model, Permissions: opts.permission},
 		Worker:                roleOverride{Agent: opts.workerAgent},
 		Orchestrator:          roleOverride{Agent: opts.orchestratorAgent},
+		Prime:                 roleOverride{Agent: opts.primeAgent},
 		TrackerIntake: trackerIntakeConfig{
 			Enabled:  opts.trackerIntake,
 			Provider: trackerProviderForFlags(opts),

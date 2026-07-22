@@ -13,7 +13,7 @@
 
 - [x] 2.1 Port/adapt the `AgentFamily` taxonomy and make reviewer resolution choose a different
       family than the worker by default.
-- [ ] 2.2 Replace the "Project default" sentinel/label with resolved cross-family default behavior
+- [x] 2.2 Replace the "Project default" sentinel/label with resolved cross-family default behavior
       across API, CLI, and UI.
 - [x] 2.3 Propagate reviewer agent-config/model resolution errors instead of dropping configured
       pins to zero values.
@@ -28,13 +28,13 @@
       loading and repo-relative confinement for repo policy files.
 - [x] 3.3 Record per-session injected policy provenance, at least by stable hash, and expose it where
       session diagnostics need it.
-- [ ] 3.4 Add prime role configuration and prompt-inspector coverage.
+- [x] 3.4 Add prime role configuration and prompt-inspector coverage.
 
 ## 4. Fit reviewer health and UI model pins
 
-- [ ] 4.1 Include reviewer harnesses in install/auth health monitoring with the same actionable vs
+- [x] 4.1 Include reviewer harnesses in install/auth health monitoring with the same actionable vs
       advisory state semantics as worker harnesses.
-- [ ] 4.2 Replace reviewer model-pin free text/stale scalar behavior with the dynamic model picker
+- [x] 4.2 Replace reviewer model-pin free text/stale scalar behavior with the dynamic model picker
       and harness-local saved pairs.
 - [ ] 4.3 Regenerate OpenAPI and TypeScript schema output for any changed DTOs or routes.
 
