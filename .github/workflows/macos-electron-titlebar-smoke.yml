@@ -189,8 +189,16 @@ jobs:
                   set appPid to (item 1 of argv) as integer
                   tell application "System Events"
                     set appProcess to first application process whose unix id is appPid
-                    tell appProcess to key code 53
+                    tell appProcess
+                      repeat with appWindow in windows
+                        if exists button "Not now" of appWindow then
+                          click button "Not now" of appWindow
+                          return "dismissed"
+                        end if
+                      end repeat
+                    end tell
                   end tell
+                  error "updates modal not ready"
                 end run
           APPLESCRIPT
               fi
