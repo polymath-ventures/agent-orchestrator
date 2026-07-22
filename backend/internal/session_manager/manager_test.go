@@ -1119,6 +1119,7 @@ func TestSpawn_PrePromptLivenessDetectsImmediateExitBeforePromptInjection(t *tes
 		Messenger: msg, Lifecycle: lcm,
 		LookPath: func(string) (string, error) { return "/bin/true", nil },
 	})
+	m.launchProbe = launchProbeConfig{retryDelay: time.Millisecond, attempts: 3}
 
 	if _, err := m.Spawn(ctx, ports.SpawnConfig{
 		ProjectID: "mer", Kind: domain.KindWorker, Prompt: "task",
@@ -1149,6 +1150,7 @@ func TestSpawn_RetriesTransientFalseLaunchProcessProbe(t *testing.T) {
 		Messenger: &fakeMessenger{}, Lifecycle: lcm,
 		LookPath: func(string) (string, error) { return "/bin/true", nil },
 	})
+	m.launchProbe = launchProbeConfig{retryDelay: time.Millisecond, attempts: 3}
 
 	if _, err := m.Spawn(ctx, ports.SpawnConfig{
 		ProjectID: "mer", Kind: domain.KindWorker, Prompt: "task",
@@ -1176,6 +1178,7 @@ func TestSpawn_LateExitAfterProbeRollsBack(t *testing.T) {
 		Messenger: &fakeMessenger{}, Lifecycle: lcm,
 		LookPath: func(string) (string, error) { return "/bin/true", nil },
 	})
+	m.launchProbe = launchProbeConfig{retryDelay: time.Millisecond, attempts: 3}
 
 	if _, err := m.Spawn(ctx, ports.SpawnConfig{
 		ProjectID: "mer", Kind: domain.KindWorker, Prompt: "task",
