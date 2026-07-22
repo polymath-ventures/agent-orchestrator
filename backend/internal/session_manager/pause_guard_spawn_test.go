@@ -2,6 +2,7 @@ package sessionmanager
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -46,6 +47,23 @@ func TestSpawn_FleetPausedRefusesWorker(t *testing.T) {
 	_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
 	if !errors.Is(err, ErrProjectPaused) {
 		t.Fatalf("spawn err = %v, want ErrProjectPaused", err)
+	}
+}
+
+// The pause guard is an authoritative safety gate. If the fleet flag cannot be
+// read, a worker spawn must fail closed instead of proceeding as though the fleet
+// were running.
+func TestSpawn_FleetPauseReadErrorRefusesWorker(t *testing.T) {
+	m, st := pauseManager()
+	st.fleetPausedErr = errors.New("pause store unavailable")
+	before := len(st.sessions)
+
+	_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	if err == nil || !strings.Contains(err.Error(), "get fleet paused") {
+		t.Fatalf("spawn err = %v, want fleet-pause read error", err)
+	}
+	if got := len(st.sessions); got != before {
+		t.Fatalf("session count = %d, want %d — fail-closed refusal must create no row", got, before)
 	}
 }
 

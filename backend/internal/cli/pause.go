@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"strings"
 
 	"github.com/spf13/cobra"
 )
@@ -18,13 +19,21 @@ func newPauseCommand(ctx *commandContext) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "pause [project]",
 		Short: "Pause a project (or the whole fleet with --all): gate new work and drain workers at idle",
+		Long: "Pause stops dispatching new work. In-flight workers keep running to " +
+			"completion; tracker intake and new spawns are gated, and each worker is " +
+			"drained as it reaches idle. Config is left untouched, so `ao resume` " +
+			"restores the prior behavior exactly.\n\n" +
+			"Pass a project id to pause one project, or --all to pause the whole fleet " +
+			"(a distinct global flag, so a project registered while paused starts paused).\n\n" +
+			"--hard terminates the project's live workers immediately instead of " +
+			"draining at idle; --hard --all also terminates orchestrators (emergency stop).",
 		Args:  pauseTargetArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runPauseResume(ctx, cmd, args, all, true, hard)
 		},
 	}
 	cmd.Flags().BoolVar(&all, "all", false, "Pause the whole fleet (daemon-global)")
-	cmd.Flags().BoolVar(&hard, "hard", false, "Terminate live workers now instead of draining at idle (orchestrators stay alive)")
+	cmd.Flags().BoolVar(&hard, "hard", false, "Terminate live workers now instead of draining at idle (with --all, orchestrators too)")
 	return cmd
 }
 
@@ -48,6 +57,9 @@ func pauseTargetArgs(_ *cobra.Command, args []string) error {
 	if len(args) > 1 {
 		return usageError{errors.New("expected at most one project id")}
 	}
+	if len(args) == 1 && strings.TrimSpace(args[0]) == "" {
+		return usageError{errors.New("project id must not be empty")}
+	}
 	return nil
 }
 
@@ -70,7 +82,7 @@ func runPauseResume(ctx *commandContext, cmd *cobra.Command, args []string, all,
 	if len(args) == 0 {
 		return usageError{errors.New("expected a project id, or --all for the whole fleet")}
 	}
-	id := args[0]
+	id := strings.TrimSpace(args[0])
 	var res projectResult
 	if err := ctx.postJSON(cmd.Context(), "projects/"+url.PathEscape(id)+"/"+verb+hardQuery(hard), nil, &res); err != nil {
 		return err

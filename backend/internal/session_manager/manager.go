@@ -544,9 +544,11 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 // every field falls back to its default.
 // guardPaused refuses a worker spawn when the project or the fleet is paused.
 // Orchestrator spawns and forced spawns are exempt so supervision keeps running
-// and an operator retains a manual override. The fleet-flag read fails open: a
-// storage blip must not wedge spawning (the same fail-open posture the read
-// model uses).
+// and an operator retains a manual override. As an authoritative safety gate the
+// fleet-flag read fails CLOSED: if the persisted flag cannot be read the spawn is
+// refused (surfacing the error) rather than proceeding as though the fleet were
+// running. Only the read-only display paths fail open, so a storage blip cannot
+// silently un-pause work.
 func (m *Manager) guardPaused(ctx context.Context, project domain.ProjectRecord, cfg ports.SpawnConfig) error {
 	if cfg.Force || cfg.Kind == domain.KindOrchestrator || cfg.Kind == domain.KindPrime {
 		return nil
@@ -554,8 +556,14 @@ func (m *Manager) guardPaused(ctx context.Context, project domain.ProjectRecord,
 	scope := ""
 	if project.Paused {
 		scope = "project"
-	} else if fleetPaused, err := m.store.GetFleetPaused(ctx); err == nil && fleetPaused {
-		scope = "fleet"
+	} else {
+		fleetPaused, err := m.store.GetFleetPaused(ctx)
+		if err != nil {
+			return fmt.Errorf("get fleet paused: %w", err)
+		}
+		if fleetPaused {
+			scope = "fleet"
+		}
 	}
 	if scope == "" {
 		return nil

@@ -26,6 +26,7 @@ type fakeStore struct {
 	projects      map[string]domain.ProjectRecord
 	workspaceRepo map[string][]domain.WorkspaceRepoRecord
 	fleetPaused   bool
+	fleetPausedErr error
 	num           int
 	deleteErr     error
 	upsertWTErr   error
@@ -50,7 +51,7 @@ func (f *fakeStore) GetProject(_ context.Context, id string) (domain.ProjectReco
 	return r, ok, nil
 }
 func (f *fakeStore) GetFleetPaused(context.Context) (bool, error) {
-	return f.fleetPaused, nil
+	return f.fleetPaused, f.fleetPausedErr
 }
 func (f *fakeStore) ListWorkspaceRepos(_ context.Context, projectID string) ([]domain.WorkspaceRepoRecord, error) {
 	return f.workspaceRepo[projectID], nil

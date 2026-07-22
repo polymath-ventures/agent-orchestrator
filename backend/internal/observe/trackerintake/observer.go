@@ -130,9 +130,11 @@ func (o *Observer) Poll(ctx context.Context) error {
 	}
 	now := o.clock().UTC()
 	// A fleet pause gates every project: skip the whole tick before touching any
-	// tracker. Fail open on a read error so a storage blip cannot silently wedge
-	// intake.
-	if paused, err := o.store.GetFleetPaused(ctx); err == nil && paused {
+	// tracker. This is an authoritative safety gate, so a read error FAILS CLOSED
+	// — abort the tick rather than dispatch work while the fleet may be paused.
+	if paused, err := o.store.GetFleetPaused(ctx); err != nil {
+		return err
+	} else if paused {
 		o.logger.Debug("tracker intake: fleet paused, skipping tick")
 		return nil
 	}

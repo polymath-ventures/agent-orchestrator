@@ -177,22 +177,27 @@ func TestFleetPauseReflectedInProjectState(t *testing.T) {
 	}
 }
 
-// A hard fleet pause fans out worker termination across all projects but leaves
-// orchestrators alive (they stay up so supervision/alerting keeps running).
-func TestSetFleetPausedHardDrainsWorkersNotOrchestrators(t *testing.T) {
+// A hard FLEET pause is the deliberate emergency stop: it fans out termination
+// across all projects and also terminates orchestrators (unlike a per-project
+// hard pause, which spares them so supervision keeps running).
+func TestSetFleetPausedHardDrainsWorkersAndOrchestrators(t *testing.T) {
 	ctx := context.Background()
 	store := newPauseStore(t)
 	seedPauseProject(t, store, "p1")
 	seedPauseProject(t, store, "p2")
 	w := seedSession(t, store, "p1", domain.KindWorker)
-	seedSession(t, store, "p2", domain.KindOrchestrator)
+	o := seedSession(t, store, "p2", domain.KindOrchestrator)
 	sessions := &fakePauseSessions{}
 	m := project.NewWithDeps(project.Deps{Store: store, Sessions: sessions})
 
 	if err := m.SetFleetPaused(ctx, true, true); err != nil {
 		t.Fatalf("SetFleetPaused hard: %v", err)
 	}
-	if len(sessions.killed) != 1 || sessions.killed[0] != w {
-		t.Fatalf("fleet hard pause killed %v, want only the worker %s (orchestrators stay alive)", sessions.killed, w)
+	killed := map[domain.SessionID]bool{}
+	for _, id := range sessions.killed {
+		killed[id] = true
+	}
+	if len(sessions.killed) != 2 || !killed[w] || !killed[o] {
+		t.Fatalf("fleet hard pause killed %v, want both the worker %s and orchestrator %s (emergency stop)", sessions.killed, w, o)
 	}
 }

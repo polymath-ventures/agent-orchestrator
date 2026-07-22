@@ -113,3 +113,37 @@ func TestPause_ProjectAndAllConflict(t *testing.T) {
 		t.Fatalf("exit code = %d, want 2 (usage error)", ExitCode(err))
 	}
 }
+
+// A blank/whitespace project id is a usage error (exit 2) rejected before the
+// daemon is contacted.
+func TestPause_BlankProjectIDRejected(t *testing.T) {
+	cfg := setConfigEnv(t)
+	srv, capture := pauseServer(t)
+	writeRunFileFor(t, cfg, srv)
+
+	_, _, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "pause", "   ")
+	if err == nil {
+		t.Fatalf("expected a usage error for a blank project id")
+	}
+	if ExitCode(err) != 2 {
+		t.Fatalf("exit code = %d, want 2 (usage error)", ExitCode(err))
+	}
+	if capture.path != "" {
+		t.Fatalf("daemon was contacted (%s); a blank id must be rejected locally", capture.path)
+	}
+}
+
+// The pause command documents its drain semantics in its long help text.
+func TestPause_HelpDocumentsDrainSemantics(t *testing.T) {
+	cfg := setConfigEnv(t)
+	srv, _ := pauseServer(t)
+	writeRunFileFor(t, cfg, srv)
+
+	out, _, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "pause", "--help")
+	if err != nil {
+		t.Fatalf("pause --help error: %v", err)
+	}
+	if !strings.Contains(out, "drain") || !strings.Contains(out, "emergency stop") {
+		t.Fatalf("pause --help = %q, want drain + emergency-stop semantics", out)
+	}
+}
