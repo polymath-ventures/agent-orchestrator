@@ -16,6 +16,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/agentconfig"
@@ -225,6 +226,11 @@ type Manager struct {
 	health *candidatehealth.Tracker
 	// modelValidator consumes only previously cached model/catalog verdicts.
 	modelValidator SpawnModelSelectionValidator
+	// spawnMu serializes spawn admission: live cap check, worker-mix census and
+	// selection, resolved model validation, and seed-row creation. It is released
+	// once the seed row exists so runtime launch and workspace work do not serialize
+	// unnecessarily.
+	spawnMu sync.Mutex
 }
 
 // sendConfirmConfig bounds the best-effort activity-confirmation loop run after
@@ -352,6 +358,16 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	}
 	requestedHarness := cfg.Harness
 	requestedModel := strings.TrimSpace(cfg.Model)
+	spawnLocked := false
+	if cfg.Kind == domain.KindWorker {
+		m.spawnMu.Lock()
+		spawnLocked = true
+		defer func() {
+			if spawnLocked {
+				m.spawnMu.Unlock()
+			}
+		}()
+	}
 	// Enforce the per-project live-worker cap before anything else: no durable
 	// row, no workspace, no mix or candidate-health consultation. Placed ahead
 	// of resolveSpawnTarget so a refusal at capacity leaves nothing to roll back
@@ -412,6 +428,10 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	rec, err := m.store.CreateSession(ctx, seedRecord(cfg, agentConfig.Effort, mixSelected, m.clock()))
 	if err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("spawn: create: %w", err)
+	}
+	if spawnLocked {
+		spawnLocked = false
+		m.spawnMu.Unlock()
 	}
 	id := rec.ID
 	systemPromptFile, err := m.prepareSystemPromptFile(id, cfg.Harness, systemPrompt)

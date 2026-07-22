@@ -12,6 +12,7 @@ import (
 	"reflect"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -22,6 +23,7 @@ import (
 var ctx = context.Background()
 
 type fakeStore struct {
+	mu             sync.Mutex
 	sessions       map[domain.SessionID]domain.SessionRecord
 	pr             map[domain.SessionID]domain.PRFacts
 	projects       map[string]domain.ProjectRecord
@@ -35,7 +37,8 @@ type fakeStore struct {
 	worktrees map[domain.SessionID][]domain.SessionWorktreeRecord
 	// sharedLog, when non-nil, receives an ordered call entry for each
 	// UpsertSessionWorktree invocation so ordering tests can compare across fakes.
-	sharedLog *[]string
+	sharedLog    *[]string
+	beforeCreate func()
 }
 
 func newFakeStore() *fakeStore {
@@ -58,20 +61,31 @@ func (f *fakeStore) ListWorkspaceRepos(_ context.Context, projectID string) ([]d
 	return f.workspaceRepo[projectID], nil
 }
 func (f *fakeStore) CreateSession(_ context.Context, rec domain.SessionRecord) (domain.SessionRecord, error) {
+	if f.beforeCreate != nil {
+		f.beforeCreate()
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.num++
 	rec.ID = domain.SessionID(fmt.Sprintf("%s-%d", rec.ProjectID, f.num))
 	f.sessions[rec.ID] = rec
 	return rec, nil
 }
 func (f *fakeStore) UpdateSession(_ context.Context, rec domain.SessionRecord) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.sessions[rec.ID] = rec
 	return nil
 }
 func (f *fakeStore) GetSession(_ context.Context, id domain.SessionID) (domain.SessionRecord, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	r, ok := f.sessions[id]
 	return r, ok, nil
 }
 func (f *fakeStore) ListSessions(_ context.Context, p domain.ProjectID) ([]domain.SessionRecord, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	var out []domain.SessionRecord
 	for _, r := range f.sessions {
 		if r.ProjectID == p {
@@ -81,6 +95,8 @@ func (f *fakeStore) ListSessions(_ context.Context, p domain.ProjectID) ([]domai
 	return out, nil
 }
 func (f *fakeStore) ListAllSessions(context.Context) ([]domain.SessionRecord, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	var out []domain.SessionRecord
 	for _, r := range f.sessions {
 		out = append(out, r)
@@ -88,6 +104,8 @@ func (f *fakeStore) ListAllSessions(context.Context) ([]domain.SessionRecord, er
 	return out, nil
 }
 func (f *fakeStore) DeleteSession(_ context.Context, id domain.SessionID) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if f.deleteErr != nil {
 		return false, f.deleteErr
 	}
@@ -146,6 +164,8 @@ type fakeLCM struct {
 
 func (l *fakeLCM) MarkSpawned(_ context.Context, id domain.SessionID, metadata domain.SessionMetadata) error {
 	l.completed++
+	l.store.mu.Lock()
+	defer l.store.mu.Unlock()
 	rec := l.store.sessions[id]
 	rec.IsTerminated = false
 	rec.Activity = domain.Activity{State: domain.ActivityIdle, LastActivityAt: time.Now()}
@@ -158,6 +178,8 @@ func (l *fakeLCM) MarkTerminated(_ context.Context, id domain.SessionID) error {
 		l.terminated = map[domain.SessionID]int{}
 	}
 	l.terminated[id]++
+	l.store.mu.Lock()
+	defer l.store.mu.Unlock()
 	rec := l.store.sessions[id]
 	rec.IsTerminated = true
 	rec.Activity = domain.Activity{State: domain.ActivityExited, LastActivityAt: time.Now()}

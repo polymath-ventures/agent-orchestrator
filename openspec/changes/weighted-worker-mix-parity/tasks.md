@@ -1,8 +1,8 @@
 ## 1. Spawn Admission Serialization
 
-- [ ] 1.1 Add failing concurrency tests proving cap check, worker-mix selection, and seed-row creation are serialized under concurrent worker spawns (ref `agent-orchestrator-fscked/backend/internal/session_manager/manager.go:548-663`; current `backend/internal/session_manager/manager.go:341-412`).
-- [ ] 1.2 Port/adapt the reference spawn admission lock so expensive runtime launch remains outside the lock when safe, but admission state cannot race.
-- [ ] 1.3 Verify pinned/orchestrator behavior is unchanged and capacity refusals create no session rows or workspaces.
+- [x] 1.1 Add failing concurrency tests proving cap check, worker-mix selection, and seed-row creation are serialized under concurrent worker spawns (ref `agent-orchestrator-fscked/backend/internal/session_manager/manager.go:548-663`; current `backend/internal/session_manager/manager.go:341-412`).
+- [x] 1.2 Port/adapt the reference spawn admission lock so expensive runtime launch remains outside the lock when safe, but admission state cannot race.
+- [x] 1.3 Verify pinned/orchestrator behavior is unchanged and capacity refusals create no session rows or workspaces.
 
 ## 2. Worker Mix Census And Down-Bucket Debit
 

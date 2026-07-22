@@ -2,7 +2,9 @@ package sessionmanager
 
 import (
 	"errors"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/candidatehealth"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -144,5 +146,67 @@ func TestSpawn_ZeroCapIsUnbounded(t *testing.T) {
 
 	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); err != nil {
 		t.Fatalf("spawn with no cap and 5 live workers = %v, want admitted", err)
+	}
+}
+
+func TestSpawn_ConcurrentWorkerSpawnsSerializeCapAndSeedRow(t *testing.T) {
+	m, st := capManager(domain.ProjectConfig{
+		MaxLiveWorkers: 1,
+		Worker:         domain.RoleOverride{Harness: domain.HarnessClaudeCode},
+	})
+	firstCreateEntered := make(chan struct{})
+	releaseFirstCreate := make(chan struct{})
+	secondCreateEntered := make(chan struct{})
+	var createMu sync.Mutex
+	createCalls := 0
+	st.beforeCreate = func() {
+		createMu.Lock()
+		createCalls++
+		call := createCalls
+		createMu.Unlock()
+		switch call {
+		case 1:
+			close(firstCreateEntered)
+			<-releaseFirstCreate
+		case 2:
+			close(secondCreateEntered)
+		}
+	}
+
+	firstErr := make(chan error, 1)
+	go func() {
+		_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+		firstErr <- err
+	}()
+
+	select {
+	case <-firstCreateEntered:
+	case <-time.After(time.Second):
+		t.Fatal("first spawn did not reach CreateSession")
+	}
+
+	secondErr := make(chan error, 1)
+	go func() {
+		_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+		secondErr <- err
+	}()
+
+	select {
+	case <-secondCreateEntered:
+		close(releaseFirstCreate)
+	case <-time.After(100 * time.Millisecond):
+		close(releaseFirstCreate)
+	}
+
+	err1 := <-firstErr
+	err2 := <-secondErr
+	if err1 != nil && err2 != nil {
+		t.Fatalf("both concurrent spawns failed: %v / %v", err1, err2)
+	}
+	if !errors.Is(err1, ErrWorkerConcurrencyCap) && !errors.Is(err2, ErrWorkerConcurrencyCap) {
+		t.Fatalf("spawn errors = %v / %v, want one ErrWorkerConcurrencyCap", err1, err2)
+	}
+	if len(st.sessions) != 1 {
+		t.Fatalf("sessions = %#v, want exactly one admitted row", st.sessions)
 	}
 }
