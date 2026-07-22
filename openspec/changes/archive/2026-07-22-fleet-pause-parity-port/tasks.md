@@ -27,5 +27,5 @@
 ## 5. History verification + gate
 
 - [x] 5.1 Re-confirm the 8 HOLDS history-mined lessons still pass after the edits (build + full backend test); confirm lesson #5 is addressed by the D5 rejection
-- [ ] 5.2 Full CI gate: `go build ./...`, `go test -race ./...`, `go vet ./...`, `npm run lint`, `npm run frontend:typecheck`, frontend build, sqlc/api drift check
-- [ ] 5.3 Fold the OpenSpec archive of `fleet-pause-parity-port` into this same PR (updates canonical `specs/fleet-pause`), then re-validate
+- [x] 5.2 Full CI gate: `go build ./...`, `go test -race ./...`, `go vet ./...`, `npm run lint`, `npm run frontend:typecheck`, frontend build, sqlc/api drift check
+- [x] 5.3 Fold the OpenSpec archive of `fleet-pause-parity-port` into this same PR (updates canonical `specs/fleet-pause`), then re-validate
