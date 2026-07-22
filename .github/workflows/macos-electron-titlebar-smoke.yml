@@ -112,6 +112,8 @@ jobs:
 
       - name: Run native Electron titlebar smoke
         working-directory: harness/frontend
+        env:
+          DEBUG: pw:browser*
         run: npm run test:electron-titlebar
 
       - name: Upload smoke evidence

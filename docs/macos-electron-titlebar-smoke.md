@@ -41,6 +41,11 @@ Every run writes `dispatch.json` before installing or packaging. It records the
 harness SHA, requested ref, and resolved target SHA, so the always-uploaded
 artifact identifies exactly what was attempted even on an early failure.
 
+The uploaded evidence directory is separate from Playwright's own output
+directory. Native launch failures include `app-stdout.log`, `app-stderr.log`,
+`launch-failure.json`, and the retained Playwright trace. Electron cleanup is
+bounded so a failed launch cannot hold the runner until the job timeout.
+
 ## Why the app is staged in `/Applications`
 
 Packaged macOS builds call Electron's `moveToApplicationsFolder()` at startup.

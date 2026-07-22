@@ -1,7 +1,9 @@
 import { _electron as electron, expect, test } from "@playwright/test";
 import { execFile } from "node:child_process";
+import { createWriteStream } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
@@ -33,9 +35,16 @@ test("macOS Electron titlebar cluster clears the native traffic lights", async (
 			AO_RUN_FILE: path.join(dataDir, "running.json"),
 		},
 	});
+	const appProcess = electronApp.process();
+	const stdoutLog = path.join(outputDir, "app-stdout.log");
+	const stderrLog = path.join(outputDir, "app-stderr.log");
+	const stdoutStream = createWriteStream(stdoutLog);
+	const stderrStream = createWriteStream(stderrLog);
+	appProcess.stdout?.pipe(stdoutStream);
+	appProcess.stderr?.pipe(stderrStream);
 
 	try {
-		const appWindow = await electronApp.firstWindow();
+		const appWindow = await electronApp.firstWindow({ timeout: 60_000 });
 		await appWindow.waitForLoadState("domcontentloaded");
 
 		const readEnvironment = () =>
@@ -113,7 +122,38 @@ test("macOS Electron titlebar cluster clears the native traffic lights", async (
 				2,
 			)}\n`,
 		);
+	} catch (error) {
+		await writeFile(
+			path.join(outputDir, "launch-failure.json"),
+			`${JSON.stringify(
+				{
+					error: error instanceof Error ? { message: error.message, stack: error.stack } : String(error),
+					executablePath,
+					pid: appProcess.pid,
+					exitCode: appProcess.exitCode,
+					signalCode: appProcess.signalCode,
+					stdoutLog,
+					stderrLog,
+				},
+				null,
+				2,
+			)}\n`,
+		);
+		throw error;
 	} finally {
-		await electronApp.close();
+		const closed = await Promise.race([
+			electronApp
+				.close()
+				.then(() => true)
+				.catch(() => true),
+			delay(10_000).then(() => false),
+		]);
+		if (!closed && !appProcess.killed) {
+			appProcess.kill("SIGTERM");
+		}
+		appProcess.stdout?.unpipe(stdoutStream);
+		appProcess.stderr?.unpipe(stderrStream);
+		stdoutStream.end();
+		stderrStream.end();
 	}
 });
