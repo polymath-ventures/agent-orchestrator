@@ -108,8 +108,10 @@ describe("QuotaPanel", () => {
 		expect(screen.getByText(/45% used/)).toBeInTheDocument();
 		// The reset renders on its own line (so the narrow sidebar can't clip it).
 		expect(screen.getAllByText(/^resets /).length).toBeGreaterThan(0);
-		// The session window renders as the smaller secondary line.
-		expect(screen.getByText(/session 12% used/)).toBeInTheDocument();
+		// The session window renders as the smaller secondary line — name and metric
+		// are separate spans (the name truncates; the % metric never does).
+		expect(screen.getByText("session")).toBeInTheDocument();
+		expect(screen.getByText(/12% used/)).toBeInTheDocument();
 	});
 
 	it("names the headline window and renders a dated reset (weekday, month, date, tz) — not a bare clock time", async () => {
@@ -140,9 +142,11 @@ describe("QuotaPanel", () => {
 
 		renderWithClient(<QuotaPanel />);
 
-		const headline = await screen.findByText(/46% used/);
 		// The prominent line must NAME its window — no longer an anonymous "46% used".
-		expect(headline.textContent).toMatch(/weekly \(all models\)/);
+		// Name and metric are sibling spans; the metric is `shrink-0` so a long name
+		// can never truncate it away.
+		expect(await screen.findByText("weekly (all models)")).toBeInTheDocument();
+		expect(screen.getByText(/46% used/)).toBeInTheDocument();
 		// Reset must be dated: "3CharWeekday 3CharMonth DD HH:MM TZ" (24-hour), e.g. "Mon Jul 27 14:00 UTC",
 		// and rendered on its own line so the sidebar can't truncate the date away.
 		// TZ-robust: assert the SHAPE, so the runner's timezone doesn't pin the exact day/time.
@@ -152,7 +156,84 @@ describe("QuotaPanel", () => {
 		expect(reset.textContent).not.toMatch(/\d{1,2}:\d{2}\s?(AM|PM)/i);
 	});
 
-	it("omits the reset clause when windowEnd is missing or zero-valued — no 'Invalid Date'", async () => {
+	it("keeps the low-quota warning colour on the usage and reset lines when ≥90% used", async () => {
+		// Regression guard: colour lives on the spans, not the container. A container-
+		// level warning class would be overridden by each span's own colour, silently
+		// dropping the "warn once ≤10% remains" signal.
+		seed({
+			probeStatuses: [
+				{
+					harness: "claude-code",
+					state: "ok",
+					hasData: true,
+					probedAt: "2026-07-20T19:00:00Z",
+					snapshots: [
+						{
+							harness: "claude-code",
+							accountId: "acct",
+							windowName: "weekly (all models)",
+							used: 95,
+							limit: 100,
+							signalQuality: "exact",
+							source: "probe",
+							windowEnd: "2026-07-27T14:00:00Z",
+							observedAt: "2026-07-20T19:00:00Z",
+						},
+					],
+				},
+			],
+		});
+
+		renderWithClient(<QuotaPanel />);
+
+		// The usage line (parent of the "95% used" span) carries the warning colour.
+		const usage = (await screen.findByText(/95% used/)).parentElement;
+		expect(usage?.className).toMatch(/text-warning/);
+		expect(screen.getByText(/^resets /).className).toMatch(/text-warning/);
+	});
+
+	it("renders a midnight reset as 00:00, never the ambiguous 24:00", async () => {
+		// hourCycle:"h23" guard — `hour12:false` alone can resolve to h24 and print
+		// "24:00" for midnight. (Runs under the suite's UTC env, so a UTC-midnight
+		// windowEnd is local midnight.)
+		seed({
+			probeStatuses: [
+				{
+					harness: "claude-code",
+					state: "ok",
+					hasData: true,
+					probedAt: "2026-07-20T19:00:00Z",
+					snapshots: [
+						{
+							harness: "claude-code",
+							accountId: "acct",
+							windowName: "weekly (all models)",
+							used: 46,
+							limit: 100,
+							signalQuality: "exact",
+							source: "probe",
+							windowEnd: "2026-07-27T00:00:00Z",
+							observedAt: "2026-07-20T19:00:00Z",
+						},
+					],
+				},
+			],
+		});
+
+		renderWithClient(<QuotaPanel />);
+
+		const reset = await screen.findByText(/^resets /);
+		expect(reset.textContent).toMatch(/\b00:00\b/);
+		expect(reset.textContent).not.toMatch(/24:\d{2}/);
+	});
+
+	// Each of the three degenerate windowEnd forms the guard handles must omit the
+	// reset clause entirely — never render "Invalid Date" or a reset line.
+	it.each([
+		["missing", undefined],
+		["year-one sentinel", "0001-01-01T00:00:00Z"],
+		["unparseable", "not-a-date"],
+	])("omits the reset clause when windowEnd is %s", async (_label, windowEnd) => {
 		seed({
 			probeStatuses: [
 				{
@@ -169,7 +250,7 @@ describe("QuotaPanel", () => {
 							limit: 100,
 							signalQuality: "exact",
 							source: "probe",
-							// No windowEnd at all — the reset clause must simply be omitted.
+							...(windowEnd === undefined ? {} : { windowEnd }),
 							observedAt: "2026-07-20T19:00:00Z",
 						},
 					],
@@ -177,11 +258,11 @@ describe("QuotaPanel", () => {
 			],
 		});
 
-		renderWithClient(<QuotaPanel />);
+		const { container } = renderWithClient(<QuotaPanel />);
 
-		const headline = await screen.findByText(/21% used/);
-		expect(headline.textContent).not.toMatch(/resets/);
-		expect(headline.textContent).not.toMatch(/Invalid Date/i);
+		expect(await screen.findByText(/21% used/)).toBeInTheDocument();
+		expect(screen.queryByText(/^resets /)).toBeNull();
+		expect(container.textContent).not.toMatch(/Invalid Date/i);
 	});
 
 	it("renders not_probed inline with a Probe button that triggers a POST", async () => {
