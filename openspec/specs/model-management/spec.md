@@ -180,6 +180,35 @@ values, catalog provenance, and availability state through the daemon API,
 worker-mix configuration without requiring clients to duplicate provider or
 effort compatibility rules.
 
+#### Scenario: Project creation shows defaults for selected harnesses
+
+- **WHEN** the operator selects worker, orchestrator, or reviewer harnesses in
+  first-run project setup
+- **THEN** the setup dialog shows one default model and effort row for each
+  selected concrete harness
+- **AND** duplicate selected harnesses appear once
+
+#### Scenario: Project creation stores selected harness defaults
+
+- **WHEN** the operator creates a project with default model or effort values
+  for selected harnesses
+- **THEN** project creation persists those values in `agentConfig.modelByHarness`
+- **AND** unselected harnesses and blank harness defaults are omitted
+
+#### Scenario: Manual first-run model entry remains possible
+
+- **WHEN** the operator types a model id that is not present in the current
+  model catalog during first-run setup
+- **THEN** the value remains editable and submittable
+- **AND** the dialog shows an inline notice that launch may fail if the harness
+  rejects the model
+
+#### Scenario: First-run refresh controls distinguish scope
+
+- **WHEN** the first-run setup dialog renders model and harness controls
+- **THEN** the model catalog refresh affordance is labeled separately from
+  harness availability refresh
+
 #### Scenario: CLI spawn accepts a model pin
 
 - **WHEN** the operator runs `ao spawn --model gpt-5-codex`

@@ -125,6 +125,20 @@ unconfigured project reviewer default to a reviewer from a different family than
 a classified different-family reviewer is available. Unknown or unclassified harness families SHALL
 remain advisory and SHALL NOT hard-block review status evaluation by themselves.
 
+#### Scenario: First-run setup can keep the automatic reviewer
+
+- **WHEN** the operator creates a project without selecting an explicit reviewer
+  harness
+- **THEN** project creation omits reviewer configuration
+- **AND** the UI labels the reviewer choice as an automatic independent reviewer
+
+#### Scenario: First-run setup can store an explicit reviewer
+
+- **WHEN** the operator selects a concrete reviewer harness during first-run
+  setup
+- **THEN** project creation persists that harness as the first reviewer
+  configuration
+
 #### Scenario: Unconfigured reviewer default avoids the worker family
 
 - **WHEN** a project has no explicit reviewer harness configured and the worker harness belongs to a
