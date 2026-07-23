@@ -199,19 +199,25 @@ func rolloutRateLimits(ctx context.Context, path string, observedAt time.Time) (
 	}
 	var start int64
 	if info.Size() > maxRolloutScanBytes {
-		start = info.Size() - maxRolloutScanBytes
+		// Seek to one byte BEFORE the tail window so the first readLine below
+		// consumes exactly the record boundary: if that preceding byte is the
+		// newline that ends the prior record, the discarded "line" is empty and
+		// the first whole record survives; if it is mid-record, the discarded line
+		// is that record's partial tail. Seeking to the window start itself would
+		// wrongly drop a complete record whenever the tail began on a boundary.
+		start = info.Size() - maxRolloutScanBytes - 1
 	}
 	if start > 0 {
 		if _, err := f.Seek(start, io.SeekStart); err != nil {
 			return nil, false
 		}
 	}
-	// LimitReader hard-bounds the total bytes read to the tail window, so no
-	// single line (up to lineCap) can pull the scan past the cap.
-	br := bufio.NewReaderSize(io.LimitReader(f, maxRolloutScanBytes), 1<<20)
+	// LimitReader hard-bounds the total bytes read to the tail window (+1 for the
+	// boundary byte), so no single line (up to lineCap) can pull the scan past the
+	// cap.
+	br := bufio.NewReaderSize(io.LimitReader(f, maxRolloutScanBytes+1), 1<<20)
 	if start > 0 {
-		// A non-zero seek almost certainly landed mid-record; drop the partial
-		// first line so we only parse whole JSONL records.
+		// Drop the boundary/partial first line (see the seek comment above).
 		_, _ = readLine(br)
 	}
 

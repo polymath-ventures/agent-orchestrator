@@ -125,47 +125,43 @@ func newTestProber(enum Enumerator, store Store) *Prober {
 	})
 }
 
-// TestProbeDoesNotResurrectEvictedHarness covers the GH #97 cycle-2 race: a probe
-// in flight for a harness that a concurrent reconcile evicts (harness uninstalled)
-// must NOT record its result afterwards and resurrect a stale chip.
-func TestProbeDoesNotResurrectEvictedHarness(t *testing.T) {
-	hold := make(chan struct{})
+// TestGatedProbeDoesNotResurrectEvictedHarness covers the GH #97 straggler race:
+// a GATED (scheduled) probe that completes after a reconcile evicted its harness
+// must NOT record and resurrect the stale chip. A force-probe (gated=false) is an
+// explicit request and DOES record. Exercised deterministically at the
+// probe/record layer since scheduled probes cannot overlap across ticks.
+func TestGatedProbeDoesNotResurrectEvictedHarness(t *testing.T) {
 	px := &fakeProber{
 		result:  ports.QuotaProbeResult{State: domain.QuotaProbeOK, Snapshots: []domain.QuotaSnapshot{snap(domain.HarnessCodex)}},
 		harness: domain.HarnessCodex,
-		hold:    hold,
 	}
+	hp := ports.HarnessQuotaProber{Harness: domain.HarnessCodex, Prober: px}
 	enum := &swapEnumerator{}
-	enum.set([]ports.HarnessQuotaProber{{Harness: domain.HarnessCodex, Prober: px}})
+	enum.set([]ports.HarnessQuotaProber{hp})
 	p := newTestProber(enum, &fakeStore{})
 
-	// Force-probe codex: it marks live[codex], then blocks in ProbeQuota on hold.
-	done := make(chan struct{})
-	go func() {
-		p.ProbeHarness(context.Background(), domain.HarnessCodex)
-		close(done)
-	}()
-	// Wait until the probe is actually in flight.
-	deadline := time.Now().Add(2 * time.Second)
-	for px.callCount() == 0 {
-		if time.Now().After(deadline) {
-			t.Fatal("probe never started")
-		}
-		time.Sleep(time.Millisecond)
-	}
-
-	// Uninstall codex and reconcile via ProbeAll (empty enumeration evicts it).
+	p.reconcile(context.Background()) // codex enumerated → live + seeded not_probed
 	enum.set(nil)
-	p.ProbeAll(context.Background())
+	p.reconcile(context.Background()) // codex uninstalled → evicted from live + statuses
 
-	// Release the blocked probe; it now calls record(codex) after eviction.
-	close(hold)
-	<-done
-
+	// A gated straggler probe for the now-evicted harness must be dropped.
+	p.probe(context.Background(), hp, true)
 	for _, s := range p.Statuses() {
 		if s.Harness == domain.HarnessCodex {
-			t.Fatalf("evicted harness codex was resurrected by a straggler probe: %+v", s)
+			t.Fatalf("gated straggler resurrected evicted harness: %+v", s)
 		}
+	}
+
+	// A force-probe (explicit user request) records unconditionally.
+	p.probe(context.Background(), hp, false)
+	found := false
+	for _, s := range p.Statuses() {
+		if s.Harness == domain.HarnessCodex && s.State == domain.QuotaProbeOK {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("force-probe result was not recorded")
 	}
 }
 

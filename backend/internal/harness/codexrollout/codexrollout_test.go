@@ -339,3 +339,40 @@ func TestNewestRateLimits_TailScanReturnsNewestBeyondCap(t *testing.T) {
 		t.Fatalf("Used = %v, want 80 (the tail event), not the stale 10 from before the cap", got)
 	}
 }
+
+// TestNewestRateLimits_TailBoundaryKeepsWholeRecord locks in the GH #97 cycle-3
+// boundary fix: when the tail window begins EXACTLY at a record boundary (the
+// byte before it is the newline ending the prior record), the first whole record
+// must survive. Seeking to the window start and discarding a line would wrongly
+// drop it; seeking to start-1 discards only the empty boundary line.
+func TestNewestRateLimits_TailBoundaryKeepsWholeRecord(t *testing.T) {
+	newEvent := `{"type":"event_msg","payload":{"type":"token_count","rate_limits":{"limit_id":"codex","primary":{"used_percent":77,"window_minutes":10080,"resets_at":2000000000}}}}`
+
+	orig := maxRolloutScanBytes
+	// Cap == the tail event's byte length (incl. its trailing newline), so the tail
+	// window starts precisely where newEvent begins.
+	maxRolloutScanBytes = int64(len(newEvent) + 1)
+	defer func() { maxRolloutScanBytes = orig }()
+
+	home := t.TempDir()
+	dir := filepath.Join(home, "sessions", "2026", "07", "18")
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	// prefix ends with a newline; file = prefix + newEvent + "\n", so the byte at
+	// (size - cap - 1) is prefix's final newline — a clean boundary.
+	prefix := `{"type":"session_meta","payload":{"cwd":"/w"}}` + "\n" +
+		`{"type":"event_msg","payload":{"type":"token_count","info":{}}}` + "\n"
+	path := filepath.Join(dir, "rollout-boundary.jsonl")
+	if err := os.WriteFile(path, []byte(prefix+newEvent+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	snaps, found := NewestRateLimits(context.Background(), home, time.Unix(1000, 0).UTC())
+	if !found || len(snaps) != 1 {
+		t.Fatalf("found=%v snaps=%+v, want the boundary-aligned tail record kept", found, snaps)
+	}
+	if got := *snaps[0].Used; got != 77 {
+		t.Fatalf("Used = %v, want 77 — the whole boundary record was dropped", got)
+	}
+}

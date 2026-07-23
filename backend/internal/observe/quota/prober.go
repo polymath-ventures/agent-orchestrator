@@ -117,7 +117,7 @@ func (p *Prober) ProbeAll(ctx context.Context) []domain.HarnessQuotaStatus {
 		wg.Add(1)
 		go func(hp ports.HarnessQuotaProber) {
 			defer wg.Done()
-			p.probe(ctx, hp)
+			p.probe(ctx, hp, true) // gated: record only if still enumerated
 		}(hp)
 	}
 	wg.Wait()
@@ -138,6 +138,8 @@ func (p *Prober) reconcile(ctx context.Context) []ports.HarnessQuotaProber {
 	}
 
 	p.mu.Lock()
+	// reconcile is the SOLE writer of live, so a gated record() reads a consistent
+	// snapshot and no concurrent force-probe can clobber the set.
 	p.live = present
 	for h := range present {
 		if _, ok := p.statuses[h]; !ok {
@@ -159,13 +161,14 @@ func (p *Prober) reconcile(ctx context.Context) []ports.HarnessQuotaProber {
 func (p *Prober) ProbeHarness(ctx context.Context, harness domain.AgentHarness) (domain.HarnessQuotaStatus, bool) {
 	for _, hp := range p.enumerate(ctx) {
 		if hp.Harness == harness {
-			// The harness is enumerated (installed + probe-capable) right now, so
-			// mark it live before probing — otherwise record() would drop a
-			// force-probe result for a harness no reconcile has seen yet.
-			p.mu.Lock()
-			p.live[harness] = struct{}{}
-			p.mu.Unlock()
-			return p.probe(ctx, hp), true
+			// A force-probe is an explicit request for a harness that is enumerated
+			// (installed + probe-capable) right now, so it records unconditionally
+			// (gated=false). It deliberately does not touch the `live` set — keeping
+			// reconcile the sole writer of `live` avoids clobbering races with a
+			// concurrent reconcile. Worst case, a harness uninstalled during this
+			// probe shows its result for one cycle before the next reconcile evicts
+			// it, which is harmless.
+			return p.probe(ctx, hp, false), true
 		}
 	}
 	return domain.HarnessQuotaStatus{}, false
@@ -195,7 +198,12 @@ func (p *Prober) enumerate(ctx context.Context) []ports.HarnessQuotaProber {
 // snapshots, records the resulting status, and returns it. A returned Go error
 // (or a panic) is turned into a failed status rather than propagated, so a
 // misbehaving adapter never wedges the prober.
-func (p *Prober) probe(ctx context.Context, hp ports.HarnessQuotaProber) domain.HarnessQuotaStatus {
+// probe runs one harness probe under its single-flight lock, persists ok
+// snapshots, records the resulting status, and returns it. When gated is true
+// (scheduled ProbeAll), the status is recorded only if the harness is still
+// enumerated, so a straggler can't resurrect an evicted chip; a force-probe
+// passes gated=false to record its explicit result unconditionally.
+func (p *Prober) probe(ctx context.Context, hp ports.HarnessQuotaProber, gated bool) domain.HarnessQuotaStatus {
 	lock := p.flightLock(hp.Harness)
 	if !lock.TryLock() {
 		// A probe for this harness is already in flight. Probing costs a real
@@ -213,7 +221,7 @@ func (p *Prober) probe(ctx context.Context, hp ports.HarnessQuotaProber) domain.
 			State:    domain.QuotaProbeFailed,
 			Reason:   err.Error(),
 			ProbedAt: now,
-		})
+		}, gated)
 	}
 
 	if result.State == domain.QuotaProbeOK {
@@ -234,7 +242,7 @@ func (p *Prober) probe(ctx context.Context, hp ports.HarnessQuotaProber) domain.
 		ProbedAt:  now,
 		HasData:   len(result.Snapshots) > 0,
 		Snapshots: result.Snapshots,
-	})
+	}, gated)
 }
 
 // callProbe invokes the adapter, converting a panic into an error so a
@@ -249,12 +257,14 @@ func (p *Prober) callProbe(ctx context.Context, prober ports.AgentQuotaProber, n
 	return prober.ProbeQuota(ctx, now)
 }
 
-func (p *Prober) record(status domain.HarnessQuotaStatus) domain.HarnessQuotaStatus {
+func (p *Prober) record(status domain.HarnessQuotaStatus, gated bool) domain.HarnessQuotaStatus {
 	p.mu.Lock()
-	// Only store the result if the harness is still live. A reconcile may have
-	// evicted it while this probe was in flight (harness uninstalled), in which
-	// case recording would resurrect a stale chip.
-	if _, ok := p.live[status.Harness]; ok {
+	// A gated (scheduled) probe stores only if the harness is still live, so a
+	// straggler cannot resurrect a chip a concurrent reconcile just evicted. A
+	// force-probe (gated=false) stores unconditionally — it is an explicit request.
+	if !gated {
+		p.statuses[status.Harness] = status
+	} else if _, ok := p.live[status.Harness]; ok {
 		p.statuses[status.Harness] = status
 	}
 	p.mu.Unlock()
