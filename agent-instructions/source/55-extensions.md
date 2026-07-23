@@ -24,6 +24,15 @@ daemon status fields such as a discovered port, or desktop packaging behavior
 unless the ticket explicitly targets Electron. For frontend changes, include or
 preserve web-mode coverage when the behavior can run in a browser.
 
+## Deploy
+
+This fork deploys with `ops/deploy.sh [ref]`. After landing a PR, deploy the
+merged default-branch commit with `ops/deploy.sh <merged-sha>` and trust the
+script's built-in verification for the daemon, web supervisor, public URL, and
+fresh boot log. Do not rediscover deploy targets during routine
+`land-and-deploy`; only inspect deployment configuration when this script is
+missing, fails, or the ticket explicitly changes deployment.
+
 ## Commands
 
 From the repo root unless noted:
