@@ -189,7 +189,7 @@ func Run() error {
 	}
 
 	srv, err := httpd.NewWithDeps(cfg, log, termMgr, httpd.APIDeps{
-		Prime:              primesvc.New(primesvc.Deps{Store: store, Prompts: sessMgr, Config: cfg}),
+		Prime:              primesvc.New(primesvc.Deps{Store: store, Prompts: sessMgr}),
 		Projects:           projectsvc.NewWithDeps(projectsvc.Deps{Store: store, Sessions: sessionSvc, ModelHealth: modelHealthView, ModelValidator: agentSvc, DefaultHarness: domain.AgentHarness(cfg.Agent), Telemetry: telemetrySink, Logger: log}),
 		RolePrompt:         roleprompt.New(sessMgr, store),
 		Agents:             agentSvc,

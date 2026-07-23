@@ -221,8 +221,7 @@ func ensurePrime(ctx context.Context, cfg primeSupervisorConfig, state *primeSup
 		allowed, capped := state.reserveRestart(now, cfg)
 		if capped {
 			// A prime that has NEVER spawned still deserves the cap alert —
-			// a permanently failing SpawnPrime (e.g. a mistyped
-			// AO_PRIME_PROJECT_ID) would otherwise cap in total silence.
+			// a permanently failing SpawnPrime would otherwise cap in total silence.
 			// The fallback intent carries NO session or project reference:
 			// the configured project may not exist (that misconfig is what
 			// the alert surfaces), and a dangling id would be rejected by

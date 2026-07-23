@@ -4,7 +4,6 @@ package prime
 import (
 	"context"
 
-	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
 )
@@ -20,42 +19,26 @@ type PromptAssembler interface {
 	RoleSystemPrompt(ctx context.Context, kind domain.SessionKind, projectID domain.ProjectID) (string, error)
 }
 
-// LegacyEnvironment reports legacy environment variables that previously
-// activated Prime. They are read-only migration hints and never seed settings.
-type LegacyEnvironment struct {
-	Configured  bool   `json:"configured"`
-	ProjectID   string `json:"projectId,omitempty"`
-	DisplayName string `json:"displayName,omitempty"`
-}
-
 // SettingsView is the wire-ready settings read model.
 type SettingsView struct {
-	Settings          domain.PrimeSettings `json:"settings"`
-	LegacyEnvironment LegacyEnvironment    `json:"legacyEnvironment"`
+	Settings domain.PrimeSettings `json:"settings"`
 }
 
 // Service implements fleet Prime settings and prompt inspection.
 type Service struct {
 	store   Store
 	prompts PromptAssembler
-	legacy  LegacyEnvironment
 }
 
 // Deps captures Service collaborators.
 type Deps struct {
 	Store   Store
 	Prompts PromptAssembler
-	Config  config.Config
 }
 
 // New builds a Service.
 func New(d Deps) *Service {
-	legacy := LegacyEnvironment{
-		Configured:  d.Config.PrimeProjectID != "" || d.Config.PrimeDisplayName != "",
-		ProjectID:   d.Config.PrimeProjectID,
-		DisplayName: d.Config.PrimeDisplayName,
-	}
-	return &Service{store: d.Store, prompts: d.Prompts, legacy: legacy}
+	return &Service{store: d.Store, prompts: d.Prompts}
 }
 
 // GetSettings returns the persisted fleet Prime settings with defaults.
@@ -94,5 +77,5 @@ func (s *Service) Prompt(ctx context.Context) (string, error) {
 }
 
 func (s *Service) view(settings domain.PrimeSettings) SettingsView {
-	return SettingsView{Settings: settings.WithDefaults(), LegacyEnvironment: s.legacy}
+	return SettingsView{Settings: settings.WithDefaults()}
 }

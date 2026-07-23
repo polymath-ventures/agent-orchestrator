@@ -2,6 +2,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { components } from "../../api/schema";
+import type { AgentModelAvailabilityResponse } from "../hooks/useModelAvailabilityQuery";
 import { PrimeSection } from "./PrimeSection";
 
 const { getMock, putMock } = vi.hoisted(() => ({
@@ -25,38 +27,74 @@ function renderPrimeSection() {
 	return queryClient;
 }
 
-beforeEach(() => {
-	getMock.mockReset().mockResolvedValue({
-		data: {
-			settings: {
-				enabled: false,
-				displayName: "AO Prime",
-				agent: "codex",
-				agentConfig: { model: "gpt-5-codex", effort: "high" },
-				rules: "Keep watch.",
-				wakeInterval: "15m",
-			},
-			legacyEnvironment: { configured: true, projectId: "ao" },
+const modelAvailability: AgentModelAvailabilityResponse = {
+	checkedAt: "2026-07-23T01:02:03Z",
+	harnesses: [
+		{
+			id: "codex",
+			label: "Codex",
+			reviewerCapable: true,
+			catalogSource: "adapter",
+			catalogVerified: true,
+			models: [
+				{
+					model: "gpt-5-codex",
+					label: "GPT-5 Codex",
+					efforts: ["medium", "high"],
+					defaultEffort: "medium",
+					verified: true,
+					status: "reachable",
+				},
+			],
 		},
-		error: undefined,
+	],
+};
+
+let primeSettings: components["schemas"]["DomainPrimeSettings"];
+
+beforeEach(() => {
+	primeSettings = {
+		enabled: false,
+		displayName: "AO Prime",
+		agent: "codex",
+		agentConfig: { model: "gpt-5-codex", effort: "high" },
+		rules: "Keep watch.",
+		rulesFile: "/etc/ao/prime.md",
+		wakeInterval: "15m",
+	};
+	getMock.mockReset().mockImplementation((path: string) => {
+		if (path === "/api/v1/prime/settings") {
+			return Promise.resolve({
+				data: { settings: primeSettings },
+				error: undefined,
+			});
+		}
+		if (path === "/api/v1/agents/models") {
+			return Promise.resolve({ data: modelAvailability, error: undefined });
+		}
+		return Promise.resolve({ data: undefined, error: { message: `unexpected GET ${path}` } });
 	});
 	putMock.mockReset().mockResolvedValue({
 		data: {
 			settings: { enabled: true, displayName: "Fleet Lead", agent: "codex", agentConfig: {}, wakeInterval: "20m" },
-			legacyEnvironment: { configured: true, projectId: "ao" },
 		},
 		error: undefined,
 	});
 });
 
 describe("PrimeSection", () => {
-	it("loads global Prime settings and legacy env state", async () => {
+	it("loads global Prime settings with harness, model, minutes, and instructions fields", async () => {
 		renderPrimeSection();
 
 		expect(await screen.findByLabelText("Enable fleet Prime")).not.toBeChecked();
 		expect(screen.getByLabelText("Display name")).toHaveValue("AO Prime");
-		await waitFor(() => expect(screen.getByLabelText("Agent")).toHaveValue("codex"));
-		expect(screen.getByText("Legacy Prime environment is configured for ao.")).toBeInTheDocument();
+		await waitFor(() => expect(screen.getByLabelText("Harness")).toHaveValue("codex"));
+		expect(screen.getByLabelText("Model")).toHaveValue("gpt-5-codex");
+		expect(screen.getByLabelText("Effort")).toHaveValue("high");
+		expect(screen.getByLabelText("Wake interval minutes")).toHaveValue(15);
+		expect(screen.getByLabelText("Instructions file path")).toHaveValue("/etc/ao/prime.md");
+		expect(screen.getByText(/Inline instructions are loaded first/i)).toBeInTheDocument();
+		expect(screen.queryByText(/Legacy Prime environment/i)).not.toBeInTheDocument();
 	});
 
 	it("saves edited global Prime settings", async () => {
@@ -66,8 +104,8 @@ describe("PrimeSection", () => {
 		await user.click(await screen.findByLabelText("Enable fleet Prime"));
 		await user.clear(screen.getByLabelText("Display name"));
 		await user.type(screen.getByLabelText("Display name"), "Fleet Lead");
-		await user.clear(screen.getByLabelText("Wake interval"));
-		await user.type(screen.getByLabelText("Wake interval"), "20m");
+		await user.clear(screen.getByLabelText("Wake interval minutes"));
+		await user.type(screen.getByLabelText("Wake interval minutes"), "20");
 		await user.click(screen.getByRole("button", { name: "Save Prime" }));
 
 		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
@@ -81,5 +119,38 @@ describe("PrimeSection", () => {
 				}),
 			},
 		});
+	});
+
+	it("rejects wake intervals outside the supported minute range before saving", async () => {
+		const user = userEvent.setup();
+		renderPrimeSection();
+
+		await user.clear(await screen.findByLabelText("Wake interval minutes"));
+		await user.type(screen.getByLabelText("Wake interval minutes"), "361");
+		await user.click(screen.getByRole("button", { name: "Save Prime" }));
+
+		expect(await screen.findByText("Wake interval must be between 1 and 360 minutes.")).toBeInTheDocument();
+		expect(putMock).not.toHaveBeenCalled();
+	});
+
+	it("does not coerce persisted non-minute wake durations into a valid minute value", async () => {
+		const user = userEvent.setup();
+		primeSettings = { ...primeSettings, wakeInterval: "30s" };
+		renderPrimeSection();
+
+		const wakeInterval = await screen.findByLabelText("Wake interval minutes");
+		await waitFor(() => expect(wakeInterval).toHaveValue(null));
+		await user.click(screen.getByRole("button", { name: "Save Prime" }));
+
+		expect(await screen.findByText("Wake interval must be between 1 and 360 minutes.")).toBeInTheDocument();
+		expect(putMock).not.toHaveBeenCalled();
+	});
+
+	it("parses persisted decimal duration values without dropping characters", async () => {
+		primeSettings = { ...primeSettings, wakeInterval: "1.5h" };
+		renderPrimeSection();
+
+		const wakeInterval = await screen.findByLabelText("Wake interval minutes");
+		await waitFor(() => expect(wakeInterval).toHaveValue(90));
 	});
 });

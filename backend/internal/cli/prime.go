@@ -10,14 +10,7 @@ import (
 )
 
 type primeSettingsView struct {
-	Settings          domain.PrimeSettings `json:"settings"`
-	LegacyEnvironment primeLegacyEnv       `json:"legacyEnvironment"`
-}
-
-type primeLegacyEnv struct {
-	Configured  bool   `json:"configured"`
-	ProjectID   string `json:"projectId,omitempty"`
-	DisplayName string `json:"displayName,omitempty"`
+	Settings domain.PrimeSettings `json:"settings"`
 }
 
 type primeSettingsRequest struct {
@@ -140,7 +133,7 @@ type primeSettingsFlags struct {
 
 func (f *primeSettingsFlags) bind(cmd *cobra.Command) {
 	cmd.Flags().StringVar(&f.name, "name", "", "Fleet Prime display name")
-	cmd.Flags().StringVar(&f.agent, "agent", "", "Agent harness for Prime")
+	cmd.Flags().StringVar(&f.agent, "agent", "", "Harness for Prime")
 	cmd.Flags().StringVar(&f.model, "model", "", "Model pin for Prime")
 	cmd.Flags().StringVar(&f.effort, "effort", "", "Effort pin for Prime")
 	cmd.Flags().StringVar(&f.rules, "rules", "", "Inline standing instructions for Prime")
@@ -203,10 +196,6 @@ func printPrimeSettings(cmd *cobra.Command, view primeSettingsView) {
 	if effort == "" {
 		effort = "-"
 	}
-	legacyProject := "-"
-	if view.LegacyEnvironment.ProjectID != "" {
-		legacyProject = view.LegacyEnvironment.ProjectID
-	}
-	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Prime enabled=%v name=%q agent=%s model=%s effort=%s wakeInterval=%s legacyEnv=%v legacyProject=%s\n",
-		s.Enabled, s.DisplayName, agent, model, effort, s.WakeInterval, view.LegacyEnvironment.Configured, legacyProject)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Prime enabled=%v name=%q agent=%s model=%s effort=%s wakeInterval=%s\n",
+		s.Enabled, s.DisplayName, agent, model, effort, s.WakeInterval)
 }
