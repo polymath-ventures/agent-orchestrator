@@ -237,6 +237,57 @@ describe("CreateProjectAgentSheet", () => {
 		});
 	});
 
+	it("hides advisory setup model probe status but keeps actionable warnings", async () => {
+		const setupAvailability: AgentModelAvailabilityResponse = {
+			...modelAvailability,
+			harnesses: [
+				...modelAvailability.harnesses,
+				{
+					id: "codex",
+					label: "Codex",
+					reviewerCapable: true,
+					catalogSource: "adapter",
+					catalogVerified: true,
+					models: [
+						{
+							model: "gpt-5.5",
+							label: "GPT-5.5",
+							efforts: ["high"],
+							defaultEffort: "high",
+							verified: false,
+							status: "unknown",
+							reason: "not probed; only configured pins are live-validated",
+							reasonCode: "not-probed",
+						},
+						{
+							model: "retired-model",
+							label: "Retired model",
+							efforts: ["high"],
+							defaultEffort: "high",
+							verified: false,
+							status: "unreachable",
+							reason: "model rejected by provider",
+						},
+					],
+				},
+			],
+		};
+		renderSheetContext(vi.fn(), { availability: setupAvailability });
+
+		await chooseOption(screen.getByRole("combobox", { name: "Worker harness" }), "codex");
+		await userEvent.type(document.getElementById("newProjectModel-codex-model")!, "gpt-5.5");
+
+		expect(screen.queryByText(/Status: unknown/i)).not.toBeInTheDocument();
+		expect(screen.queryByText(/not probed/i)).not.toBeInTheDocument();
+		expect(screen.getAllByText(/launch may fail if the harness rejects/i).length).toBeGreaterThan(0);
+
+		await userEvent.clear(document.getElementById("newProjectModel-codex-model")!);
+		await userEvent.type(document.getElementById("newProjectModel-codex-model")!, "retired-model");
+
+		expect(screen.getByText(/Status: unreachable/i)).toBeInTheDocument();
+		expect(screen.getByText(/model rejected by provider/i)).toBeInTheDocument();
+	});
+
 	it("restores an edited harness tuple and clears a harness with no edit", async () => {
 		renderSheet();
 

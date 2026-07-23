@@ -294,6 +294,7 @@ export function CreateProjectAgentSheet({
 											isRefreshing={isRefreshingModels || modelAvailabilityQuery.isFetching}
 											onRefresh={() => refreshModels().catch(() => undefined)}
 											showHarness={false}
+											statusVisibility="actionable"
 											emptyLabel="Harness default"
 										/>
 										<p className="mt-2 flex items-start gap-1.5 text-[12px] text-muted-foreground">

@@ -36,6 +36,7 @@ export type ModelAvailabilityFieldProps = {
 	onRefresh?: () => void | Promise<unknown>;
 	showHarness?: boolean;
 	showEffort?: boolean;
+	statusVisibility?: "all" | "actionable";
 	allowEmpty?: boolean;
 	emptyLabel?: string;
 };
@@ -55,6 +56,7 @@ export function ModelAvailabilityField({
 	onRefresh,
 	showHarness = true,
 	showEffort = true,
+	statusVisibility = "all",
 	allowEmpty = true,
 	emptyLabel = "Agent default",
 }: ModelAvailabilityFieldProps) {
@@ -66,6 +68,7 @@ export function ModelAvailabilityField({
 	const model = harness?.models.find((option) => option.model === value.model);
 	const efforts = model?.efforts ?? (value.effort ? [value.effort] : []);
 	const provenance = harness ? catalogProvenanceLabel(harness) : "";
+	const showModelStatus = model && (statusVisibility === "all" || model.status === "unreachable");
 	const columnClass = showHarness && showEffort ? "sm:grid-cols-3" : showHarness || showEffort ? "sm:grid-cols-2" : "";
 
 	const selectHarness = (nextHarnessID: string) => {
@@ -185,7 +188,7 @@ export function ModelAvailabilityField({
 				)}
 			</div>
 
-			{model && (
+			{showModelStatus && (
 				<p
 					className={`flex items-start gap-1.5 text-[12px] ${model.status === "unreachable" ? "text-warning" : "text-muted-foreground"}`}
 				>
