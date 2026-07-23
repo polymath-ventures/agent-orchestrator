@@ -392,6 +392,16 @@ func TestDestroyIsIdempotentWhenNoServer(t *testing.T) {
 	}
 }
 
+func TestDestroyIsIdempotentWhenNoCurrentTarget(t *testing.T) {
+	r, fr := newTestRuntime(0)
+	fr.outputs = [][]byte{[]byte("no current target")}
+	fr.err = &exec.ExitError{}
+
+	if err := r.Destroy(context.Background(), ports.RuntimeHandle{ID: "sess-1"}); err != nil {
+		t.Fatalf("Destroy no-current-target: %v", err)
+	}
+}
+
 func TestDestroyReportsUnexpectedFailures(t *testing.T) {
 	r, fr := newTestRuntime(0)
 	fr.outputs = [][]byte{[]byte("permission denied")}
@@ -475,6 +485,11 @@ func TestIsAliveReturnsFalseNilOnErrorConnecting(t *testing.T) {
 	}
 }
 
+// Some tmux versions report a missing exact-match target as "no current target"
+// (from cmd-find target resolution) rather than "can't find session". Both mean
+// the named session is gone, so IsAlive must read it as a definitive false, nil
+// and not a transient probe error — otherwise the boot reap pass logs an ERROR
+// for every already-terminated session whose tmux target is gone (GH #57).
 func TestIsAliveReturnsFalseNilOnNoCurrentTarget(t *testing.T) {
 	r, fr := newTestRuntime(0)
 	fr.outputs = [][]byte{[]byte("no current target")}

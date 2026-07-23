@@ -441,6 +441,10 @@ func handleID(handle ports.RuntimeHandle) (string, error) {
 // sessionMissingOutput reports whether a non-zero `tmux has-session` or
 // `tmux kill-session` exit is definitively "session does not exist" rather
 // than a transient probe failure.
+//
+// Both callers pass an explicit exact target (`-t =<id>`), so tmux's generic
+// cmd-find "no current target" message here means the named session did not
+// resolve — i.e. it is gone — not that a fallback current target was needed.
 func sessionMissingOutput(out string) bool {
 	s := strings.ToLower(out)
 	return strings.Contains(s, "can't find session") ||
