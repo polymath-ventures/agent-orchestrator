@@ -26,11 +26,12 @@ const (
 type primeSessionService interface {
 	SpawnPrime(ctx context.Context, projectID domain.ProjectID, clean bool) (domain.Session, error)
 	ActivePrime(ctx context.Context) (domain.Session, bool, error)
+	RetirePrime(ctx context.Context, id domain.SessionID) error
 	Send(ctx context.Context, id domain.SessionID, message string) error
 }
 
-type primeProjectConfigSource interface {
-	GetProject(ctx context.Context, id string) (domain.ProjectRecord, bool, error)
+type primeSettingsSource interface {
+	GetPrimeSettings(ctx context.Context) (domain.PrimeSettings, error)
 }
 
 type primeFleetPauseSource interface {
@@ -38,7 +39,6 @@ type primeFleetPauseSource interface {
 }
 
 type primeSupervisorConfig struct {
-	ProjectID               domain.ProjectID
 	Interval                time.Duration
 	UnhealthyAfter          time.Duration
 	RestartWindow           time.Duration
@@ -49,7 +49,7 @@ type primeSupervisorConfig struct {
 	IdleWakeBackoff         time.Duration
 	IdleWakeMaxBack         time.Duration
 	IdleWakeBackoffDisabled bool
-	ResolveProject          func(context.Context) (domain.ProjectRecord, bool)
+	PrimeSettings           func(context.Context) (domain.PrimeSettings, bool)
 	FleetPaused             func(context.Context) bool
 	Now                     func() time.Time
 	Logger                  *slog.Logger
@@ -65,18 +65,11 @@ type primeSupervisorState struct {
 	idleWakeBackoff time.Duration
 }
 
-func startPrimeSupervisor(ctx context.Context, cfg config.Config, projects primeProjectConfigSource, sessions primeSessionService, notifier notificationSink, logger *slog.Logger) <-chan struct{} {
-	projectID := domain.ProjectID(cfg.PrimeProjectID)
-	if projectID == "" {
-		done := make(chan struct{})
-		close(done)
-		return done
-	}
+func startPrimeSupervisor(ctx context.Context, cfg config.Config, settings primeSettingsSource, sessions primeSessionService, notifier notificationSink, logger *slog.Logger) <-chan struct{} {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	return startPrimeSupervisorWithConfig(ctx, primeSupervisorConfig{
-		ProjectID:       projectID,
 		Interval:        defaultPrimeSupervisorInterval,
 		UnhealthyAfter:  defaultPrimeUnhealthyAfter,
 		RestartWindow:   defaultPrimeRestartWindow,
@@ -86,28 +79,28 @@ func startPrimeSupervisor(ctx context.Context, cfg config.Config, projects prime
 		IdleWakeAfter:   defaultPrimeIdleWakeAfter,
 		IdleWakeBackoff: defaultPrimeIdleWakeBackoff,
 		IdleWakeMaxBack: defaultPrimeIdleWakeMaxBackoff,
-		ResolveProject: func(ctx context.Context) (domain.ProjectRecord, bool) {
-			if projects == nil {
-				return domain.ProjectRecord{}, false
+		PrimeSettings: func(ctx context.Context) (domain.PrimeSettings, bool) {
+			if settings == nil {
+				return domain.PrimeSettings{}, false
 			}
-			project, ok, err := projects.GetProject(ctx, string(projectID))
+			primeSettings, err := settings.GetPrimeSettings(ctx)
 			if err != nil {
-				logger.Warn("prime supervisor: project lookup failed", "project", projectID, "err", err)
-				return domain.ProjectRecord{}, false
+				logger.Warn("prime supervisor: settings lookup failed", "err", err)
+				return domain.PrimeSettings{}, false
 			}
-			return project, ok
+			return primeSettings, true
 		},
 		FleetPaused: func(ctx context.Context) bool {
-			if projects == nil {
+			if settings == nil {
 				return false
 			}
-			fleetPause, ok := projects.(primeFleetPauseSource)
+			fleetPause, ok := settings.(primeFleetPauseSource)
 			if !ok {
 				return false
 			}
 			paused, err := fleetPause.GetFleetPaused(ctx)
 			if err != nil {
-				logger.Warn("prime supervisor: fleet pause lookup failed", "project", projectID, "err", err)
+				logger.Warn("prime supervisor: fleet pause lookup failed", "err", err)
 				return false
 			}
 			return paused
@@ -119,10 +112,6 @@ func startPrimeSupervisor(ctx context.Context, cfg config.Config, projects prime
 
 func startPrimeSupervisorWithConfig(ctx context.Context, cfg primeSupervisorConfig, sessions primeSessionService, notifier notificationSink) <-chan struct{} {
 	done := make(chan struct{})
-	if cfg.ProjectID == "" {
-		close(done)
-		return done
-	}
 	cfg = cfg.withDefaults()
 	go func() {
 		defer close(done)
@@ -179,13 +168,10 @@ func (c primeSupervisorConfig) withDefaults() primeSupervisorConfig {
 	return c
 }
 
-func (c primeSupervisorConfig) withProjectWakePolicy(project domain.ProjectRecord, ok bool) primeSupervisorConfig {
-	if !ok {
-		return c
-	}
-	policy, err := project.Config.WithDefaults().Prime.WakeBackoffPolicy()
+func (c primeSupervisorConfig) withPrimeSettings(settings domain.PrimeSettings) primeSupervisorConfig {
+	policy, err := settings.WithDefaults().WakeBackoffPolicy()
 	if err != nil {
-		c.Logger.Warn("prime supervisor: invalid prime wake config; using daemon defaults", "project", c.ProjectID, "err", err)
+		c.Logger.Warn("prime supervisor: invalid prime wake config; using daemon defaults", "err", err)
 		return c
 	}
 	c.IdleWakeAfter = policy.Base
@@ -193,6 +179,17 @@ func (c primeSupervisorConfig) withProjectWakePolicy(project domain.ProjectRecor
 	c.IdleWakeMaxBack = policy.Max
 	c.IdleWakeBackoffDisabled = !policy.Enabled
 	return c
+}
+
+func (c primeSupervisorConfig) currentPrimeSettings(ctx context.Context) (domain.PrimeSettings, bool) {
+	if c.PrimeSettings == nil {
+		return domain.PrimeSettings{}, false
+	}
+	settings, ok := c.PrimeSettings(ctx)
+	if !ok {
+		return domain.PrimeSettings{}, false
+	}
+	return settings.WithDefaults(), true
 }
 
 func ensurePrime(ctx context.Context, cfg primeSupervisorConfig, state *primeSupervisorState, sessions primeSessionService, notifier notificationSink) {
@@ -204,6 +201,17 @@ func ensurePrime(ctx context.Context, cfg primeSupervisorConfig, state *primeSup
 	active, ok, err := sessions.ActivePrime(ctx)
 	if err != nil {
 		cfg.Logger.Warn("prime supervisor: active lookup failed", "err", err)
+		return
+	}
+	settings, settingsOK := cfg.currentPrimeSettings(ctx)
+	if !settingsOK || !settings.Enabled {
+		if ok {
+			if err := sessions.RetirePrime(ctx, active.ID); err != nil {
+				cfg.Logger.Warn("prime supervisor: disable retire failed", "session", active.ID, "err", err)
+			}
+		}
+		state.resetRestart()
+		state.resetIdleWake()
 		return
 	}
 	if !ok {
@@ -222,12 +230,12 @@ func ensurePrime(ctx context.Context, cfg primeSupervisorConfig, state *primeSup
 				capSubject = domain.Session{}
 				capSubject.DisplayName = "Prime (never spawned)"
 			}
-			notifyPrimeRestartCapped(ctx, notifier, capSubject, cfg.ProjectID, now)
+			notifyPrimeRestartCapped(ctx, notifier, capSubject, now)
 		}
 		if !allowed {
 			return
 		}
-		if _, err := sessions.SpawnPrime(ctx, cfg.ProjectID, false); err != nil {
+		if _, err := sessions.SpawnPrime(ctx, "", false); err != nil {
 			cfg.Logger.Warn("prime supervisor: spawn failed", "err", err)
 		}
 		state.resetIdleWake()
@@ -237,27 +245,23 @@ func ensurePrime(ctx context.Context, cfg primeSupervisorConfig, state *primeSup
 	if primeNeedsReplacement(active, now, cfg.UnhealthyAfter) {
 		allowed, capped := state.reserveRestart(now, cfg)
 		if capped {
-			notifyPrimeRestartCapped(ctx, notifier, active, cfg.ProjectID, now)
+			notifyPrimeRestartCapped(ctx, notifier, active, now)
 		}
 		if !allowed {
 			return
 		}
-		if _, err := sessions.SpawnPrime(ctx, cfg.ProjectID, true); err != nil {
+		if _, err := sessions.SpawnPrime(ctx, "", true); err != nil {
 			cfg.Logger.Warn("prime supervisor: replacement failed", "session", active.ID, "err", err)
 		}
 		state.resetIdleWake()
 		return
 	}
 	state.resetRestart()
-	project, projectOK := domain.ProjectRecord{}, false
-	if cfg.ResolveProject != nil {
-		project, projectOK = cfg.ResolveProject(ctx)
-	}
-	if primeProjectPaused(ctx, cfg, project, projectOK) {
+	if cfg.FleetPaused != nil && cfg.FleetPaused(ctx) {
 		state.resetIdleWake()
 		return
 	}
-	cfg = cfg.withProjectWakePolicy(project, projectOK)
+	cfg = cfg.withPrimeSettings(settings)
 	if primeShouldWake(active, now, cfg.IdleWakeAfter) {
 		if state.reserveIdleWake(now, cfg) {
 			if err := sessions.Send(ctx, active.ID, primeIdleWakeMessage); err != nil {
@@ -267,13 +271,6 @@ func ensurePrime(ctx context.Context, cfg primeSupervisorConfig, state *primeSup
 		return
 	}
 	state.resetIdleWake()
-}
-
-func primeProjectPaused(ctx context.Context, cfg primeSupervisorConfig, project domain.ProjectRecord, projectOK bool) bool {
-	if projectOK && project.Paused {
-		return true
-	}
-	return cfg.FleetPaused != nil && cfg.FleetPaused(ctx)
 }
 
 func primeNeedsReplacement(sess domain.Session, now time.Time, unhealthyAfter time.Duration) bool {
@@ -365,19 +362,19 @@ func (s *primeSupervisorState) resetRestart() {
 	s.restartBackoff = 0
 }
 
-func notifyPrimeRestartCapped(ctx context.Context, notifier notificationSink, sess domain.Session, configuredProject domain.ProjectID, now time.Time) {
+func notifyPrimeRestartCapped(ctx context.Context, notifier notificationSink, sess domain.Session, now time.Time) {
 	if notifier == nil {
 		return
 	}
 	message := "AO tried to replace the unhealthy prime three times in the last hour and paused automatic replacement. Inspect the active prime before restarting it."
 	if sess.ID == "" {
-		message = fmt.Sprintf("AO could not start the fleet prime for configured project %q after three attempts in the last hour and paused automatic retries. Check AO_PRIME_PROJECT_ID and the project's prime configuration.", configuredProject)
+		message = "AO could not start the fleet prime after three attempts in the last hour and paused automatic retries. Check fleet Prime settings."
 	}
 	err := notifier.Notify(ctx, ports.NotificationIntent{
 		Type:               domain.NotificationPrimeRestartCapped,
 		SessionID:          sess.ID,
 		ProjectID:          sess.ProjectID,
-		DedupeKey:          fmt.Sprintf("prime:restart-capped:%s:%s", configuredProject, sess.ID),
+		DedupeKey:          fmt.Sprintf("prime:restart-capped:%s", sess.ID),
 		CreatedAt:          now,
 		SessionDisplayName: sess.DisplayName,
 		Message:            message,

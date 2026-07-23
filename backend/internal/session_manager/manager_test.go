@@ -30,6 +30,7 @@ type fakeStore struct {
 	workspaceRepo  map[string][]domain.WorkspaceRepoRecord
 	fleetPaused    bool
 	fleetPausedErr error
+	prime          domain.PrimeSettings
 	num            int
 	deleteErr      error
 	upsertWTErr    error
@@ -47,6 +48,7 @@ func newFakeStore() *fakeStore {
 		pr:            map[domain.SessionID]domain.PRFacts{},
 		projects:      map[string]domain.ProjectRecord{},
 		workspaceRepo: map[string][]domain.WorkspaceRepoRecord{},
+		prime:         domain.DefaultPrimeSettings(),
 		worktrees:     map[domain.SessionID][]domain.SessionWorktreeRecord{},
 	}
 }
@@ -56,6 +58,9 @@ func (f *fakeStore) GetProject(_ context.Context, id string) (domain.ProjectReco
 }
 func (f *fakeStore) GetFleetPaused(context.Context) (bool, error) {
 	return f.fleetPaused, f.fleetPausedErr
+}
+func (f *fakeStore) GetPrimeSettings(context.Context) (domain.PrimeSettings, error) {
+	return f.prime, nil
 }
 func (f *fakeStore) ListWorkspaceRepos(_ context.Context, projectID string) ([]domain.WorkspaceRepoRecord, error) {
 	return f.workspaceRepo[projectID], nil
@@ -67,7 +72,11 @@ func (f *fakeStore) CreateSession(_ context.Context, rec domain.SessionRecord) (
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.num++
-	rec.ID = domain.SessionID(fmt.Sprintf("%s-%d", rec.ProjectID, f.num))
+	if rec.ProjectID == "" && rec.Kind == domain.KindPrime {
+		rec.ID = domain.SessionID(fmt.Sprintf("prime-%d", f.num))
+	} else {
+		rec.ID = domain.SessionID(fmt.Sprintf("%s-%d", rec.ProjectID, f.num))
+	}
 	f.sessions[rec.ID] = rec
 	return rec, nil
 }
@@ -3008,6 +3017,62 @@ func TestDefaultSessionBranch_PrimeUsesStableProjectPrefix(t *testing.T) {
 	got := defaultSessionBranch("ao-99", domain.KindPrime, "ao", "")
 	if got != "ao/ao-prime" {
 		t.Fatalf("prime branch = %q, want ao/ao-prime", got)
+	}
+}
+
+func TestDefaultSessionBranch_ProjectlessPrimeUsesFleetBranch(t *testing.T) {
+	got := defaultSessionBranch("prime-1", domain.KindPrime, "", "")
+	if got != "ao/prime" {
+		t.Fatalf("projectless prime branch = %q, want ao/prime", got)
+	}
+}
+
+func TestSpawn_ProjectlessPrimeUsesFleetWorkspaceAndSettings(t *testing.T) {
+	st := newFakeStore()
+	st.prime = domain.PrimeSettings{
+		Enabled:     true,
+		DisplayName: "Fleet Lead",
+		Harness:     domain.HarnessCodex,
+		AgentConfig: domain.AgentConfig{Model: "gpt-5-codex", Effort: domain.EffortHigh},
+		Rules:       "watch every project",
+	}.WithDefaults()
+	agent := &recordingAgent{}
+	ws := &fakeWorkspace{}
+	rt := &fakeRuntime{}
+	m := New(Deps{
+		Runtime:   rt,
+		Agents:    singleAgent{agent: agent},
+		Workspace: ws,
+		Store:     st,
+		Messenger: &fakeMessenger{},
+		Lifecycle: &fakeLCM{store: st},
+		LookPath:  func(string) (string, error) { return "/bin/true", nil },
+	})
+
+	rec, err := m.Spawn(ctx, ports.SpawnConfig{
+		Kind:        domain.KindPrime,
+		Harness:     domain.HarnessCodex,
+		Model:       "gpt-5-codex",
+		Effort:      domain.EffortHigh,
+		DisplayName: "Fleet Lead",
+	})
+	if err != nil {
+		t.Fatalf("Spawn projectless Prime: %v", err)
+	}
+	if rec.ProjectID != "" || rec.ID != "prime-1" || rec.Kind != domain.KindPrime {
+		t.Fatalf("spawned projectless prime = %+v", rec)
+	}
+	if ws.lastCfg.ProjectID != "" || ws.lastCfg.SessionPrefix != "prime" || ws.lastCfg.Branch != "ao/prime" {
+		t.Fatalf("workspace cfg = %+v, want projectless prime branch", ws.lastCfg)
+	}
+	if agent.lastConfig.Model != "gpt-5-codex" || agent.lastConfig.Effort != domain.EffortHigh {
+		t.Fatalf("launch config = %+v, want fleet model/effort", agent.lastConfig)
+	}
+	if !strings.Contains(agent.lastLaunch.SystemPrompt, "watch every project") {
+		t.Fatalf("system prompt missing fleet Prime rules:\n%s", agent.lastLaunch.SystemPrompt)
+	}
+	if rt.lastCfg.Env[EnvProjectID] != "" {
+		t.Fatalf("runtime AO_PROJECT_ID = %q, want empty for projectless Prime", rt.lastCfg.Env[EnvProjectID])
 	}
 }
 

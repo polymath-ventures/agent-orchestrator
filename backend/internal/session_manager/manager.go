@@ -166,6 +166,7 @@ type Store interface {
 	// GetFleetPaused reads the daemon-global fleet pause flag so the spawn guard
 	// can refuse new worker sessions fleet-wide, independent of any project bit.
 	GetFleetPaused(ctx context.Context) (bool, error)
+	GetPrimeSettings(ctx context.Context) (domain.PrimeSettings, error)
 	ListWorkspaceRepos(ctx context.Context, projectID string) ([]domain.WorkspaceRepoRecord, error)
 	CreateSession(ctx context.Context, rec domain.SessionRecord) (domain.SessionRecord, error)
 	UpdateSession(ctx context.Context, rec domain.SessionRecord) error
@@ -371,9 +372,14 @@ func New(d Deps) *Manager {
 // materialization fails the still-seed row is deleted outright; a later failure
 // parks the row as terminated and rolls back what was built.
 func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.SessionRecord, error) {
-	project, err := m.loadProject(ctx, cfg.ProjectID)
-	if err != nil {
-		return domain.SessionRecord{}, fmt.Errorf("spawn: %w", err)
+	projectlessPrime := cfg.Kind == domain.KindPrime && cfg.ProjectID == ""
+	project := domain.ProjectRecord{}
+	var err error
+	if !projectlessPrime {
+		project, err = m.loadProject(ctx, cfg.ProjectID)
+		if err != nil {
+			return domain.SessionRecord{}, fmt.Errorf("spawn: %w", err)
+		}
 	}
 	// Refuse new work when the project or the fleet is paused, before any durable
 	// state is created. This is the authoritative spawn-side gate that also covers
@@ -431,9 +437,21 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	// validated as part of the exact native selection. This is the same resolver
 	// result used later for adapter launch; only the already-resolved model is
 	// overlaid for explicit pins and worker-mix buckets.
-	agentConfig, err := agentconfig.Effective(cfg.Kind, project.Config, "", cfg.Harness)
-	if err != nil {
-		return domain.SessionRecord{}, fmt.Errorf("spawn: agent config: %w", err)
+	agentConfig := domain.AgentConfig{}
+	if projectlessPrime {
+		settings, err := m.store.GetPrimeSettings(ctx)
+		if err != nil {
+			return domain.SessionRecord{}, fmt.Errorf("spawn: prime settings: %w", err)
+		}
+		agentConfig = settings.WithDefaults().AgentConfig
+		if agentConfig.Effort == "" {
+			agentConfig.Effort = target.effort
+		}
+	} else {
+		agentConfig, err = agentconfig.Effective(cfg.Kind, project.Config, "", cfg.Harness)
+		if err != nil {
+			return domain.SessionRecord{}, fmt.Errorf("spawn: agent config: %w", err)
+		}
 	}
 	if target.mixSelected {
 		agentConfig.Effort = target.effort
@@ -481,10 +499,12 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 
 	// Per-project workspace provisioning: symlink shared files, then run any
 	// post-create commands (e.g. `pnpm install`) before the agent launches.
-	if err := m.provisionWorkspace(ctx, project, ws.Path); err != nil {
-		m.destroySpawnWorkspace(ctx, ws, workspaceProject)
-		m.rollbackSpawnSeedRow(ctx, id)
-		return domain.SessionRecord{}, fmt.Errorf("spawn %s: provision: %w", id, err)
+	if !projectlessPrime {
+		if err := m.provisionWorkspace(ctx, project, ws.Path); err != nil {
+			m.destroySpawnWorkspace(ctx, ws, workspaceProject)
+			m.rollbackSpawnSeedRow(ctx, id)
+			return domain.SessionRecord{}, fmt.Errorf("spawn %s: provision: %w", id, err)
+		}
 	}
 
 	agent, ok := m.agents.Agent(cfg.Harness)
@@ -651,6 +671,17 @@ func (m *Manager) loadProject(ctx context.Context, projectID domain.ProjectID) (
 }
 
 func (m *Manager) createSessionWorkspace(ctx context.Context, project domain.ProjectRecord, cfg ports.SpawnConfig, id domain.SessionID, branch string) (ports.WorkspaceInfo, *ports.WorkspaceProjectInfo, error) {
+	if cfg.Kind == domain.KindPrime && cfg.ProjectID == "" {
+		ws, err := m.workspace.Create(ctx, ports.WorkspaceConfig{
+			ProjectID:     "",
+			SessionID:     id,
+			Kind:          cfg.Kind,
+			SessionPrefix: "prime",
+			Branch:        branch,
+			BaseBranch:    domain.DefaultBranchName,
+		})
+		return ws, nil, err
+	}
 	if project.Kind.WithDefault() != domain.ProjectKindWorkspace {
 		ws, err := m.workspace.Create(ctx, ports.WorkspaceConfig{
 			ProjectID:     cfg.ProjectID,
@@ -753,6 +784,29 @@ type resolvedSpawnTarget struct {
 // bucket yields the same pair as a selection, so nothing on the resulting row
 // distinguishes the two after the fact.
 func (m *Manager) resolveSpawnTarget(ctx context.Context, cfg ports.SpawnConfig, project domain.ProjectRecord) (resolvedSpawnTarget, error) {
+	if cfg.Kind == domain.KindPrime && cfg.ProjectID == "" {
+		settings, err := m.store.GetPrimeSettings(ctx)
+		if err != nil {
+			return resolvedSpawnTarget{}, err
+		}
+		settings = settings.WithDefaults()
+		harness := cfg.Harness
+		if harness == "" {
+			harness = settings.Harness
+		}
+		if harness == "" {
+			return resolvedSpawnTarget{}, fmt.Errorf("%w: configure fleet prime agent or pass --harness", ErrMissingHarness)
+		}
+		model := strings.TrimSpace(cfg.Model)
+		if model == "" {
+			model = strings.TrimSpace(settings.AgentConfig.Model)
+		}
+		effort := cfg.Effort
+		if effort == "" {
+			effort = settings.AgentConfig.Effort
+		}
+		return resolvedSpawnTarget{harness: harness, model: model, effort: effort}, nil
+	}
 	pinnedHarness := cfg.Harness != ""
 	if !pinnedHarness && cfg.Kind == domain.KindWorker && len(project.Config.WorkerMix) > 0 {
 		mix, err := effectiveWorkerMix(project.Config)
@@ -2465,6 +2519,9 @@ func defaultSessionBranch(id domain.SessionID, kind domain.SessionKind, prefix, 
 	case domain.KindOrchestrator:
 		return aoBranch(branchNamespace, prefix+"-orchestrator")
 	case domain.KindPrime:
+		if strings.TrimSpace(prefix) == "" {
+			return aoBranch(branchNamespace, "prime")
+		}
 		return aoBranch(branchNamespace, prefix+"-prime")
 	}
 	// A fresh, unique branch per worker session: gitworktree can't add a worktree
@@ -2488,6 +2545,12 @@ func DefaultSpawnBranch(id domain.SessionID, kind domain.SessionKind, prefix str
 // for a project in the current data-dir namespace.
 func DefaultOrchestratorBranch(prefix, dataDir string) string {
 	return defaultSessionBranch("", domain.KindOrchestrator, prefix, generatedBranchNamespace(dataDir))
+}
+
+// DefaultPrimeBranch returns the generated canonical branch for the projectless
+// fleet Prime singleton in the current data-dir namespace.
+func DefaultPrimeBranch(dataDir string) string {
+	return defaultSessionBranch("", domain.KindPrime, "", generatedBranchNamespace(dataDir))
 }
 
 func aoBranch(namespace string, parts ...string) string {
@@ -2591,6 +2654,28 @@ func (m *Manager) RoleSystemPrompt(ctx context.Context, kind domain.SessionKind,
 // rather than persisting them, so a restored worker points at the orchestrator
 // that is active now, not the one from its original spawn.
 func (m *Manager) buildSystemPrompt(ctx context.Context, kind domain.SessionKind, projectID domain.ProjectID) (string, error) {
+	if kind == domain.KindPrime && projectID == "" {
+		settings, err := m.store.GetPrimeSettings(ctx)
+		if err != nil {
+			return "", err
+		}
+		cfg := systemPromptConfig{
+			Role:    sessionPromptRolePrime,
+			Project: promptProject{ID: "fleet", Name: "AO Fleet"},
+		}
+		rules, err := LoadRoleRules(RoleRulesConfig{
+			Role:        "prime",
+			ProjectID:   "",
+			ProjectPath: "",
+			InlineRules: settings.Rules,
+			RulesFile:   settings.RulesFile,
+		})
+		if err != nil {
+			return "", err
+		}
+		cfg.PrimeRules = rules
+		return buildSystemPromptText(cfg), nil
+	}
 	project, err := m.loadProject(ctx, projectID)
 	if err != nil {
 		return "", err

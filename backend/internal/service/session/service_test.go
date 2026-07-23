@@ -29,6 +29,7 @@ type fakeStore struct {
 	sessions map[domain.SessionID]domain.SessionRecord
 	pr       map[domain.SessionID]domain.PRFacts
 	projects map[string]domain.ProjectRecord
+	prime    domain.PrimeSettings
 	checks   map[string][]domain.PullRequestCheck
 	reviews  map[string][]domain.PullRequestReview
 	threads  map[string][]domain.PullRequestReviewThread
@@ -41,6 +42,7 @@ func newFakeStore() *fakeStore {
 		sessions: map[domain.SessionID]domain.SessionRecord{},
 		pr:       map[domain.SessionID]domain.PRFacts{},
 		projects: map[string]domain.ProjectRecord{},
+		prime:    domain.DefaultPrimeSettings(),
 		checks:   map[string][]domain.PullRequestCheck{},
 		reviews:  map[string][]domain.PullRequestReview{},
 		threads:  map[string][]domain.PullRequestReviewThread{},
@@ -125,6 +127,10 @@ func (f *fakeStore) ListAllSessions(_ context.Context) ([]domain.SessionRecord, 
 		out = append(out, r)
 	}
 	return out, nil
+}
+
+func (f *fakeStore) GetPrimeSettings(context.Context) (domain.PrimeSettings, error) {
+	return f.prime, nil
 }
 
 func (f *fakeStore) RenameSession(_ context.Context, id domain.SessionID, displayName string, updatedAt time.Time) (bool, error) {
@@ -1040,10 +1046,9 @@ func TestSpawnPrimeCleanRetiresAllActivePrimesBeforeSpawn(t *testing.T) {
 	st.sessions["dead-prime"] = domain.SessionRecord{ID: "dead-prime", ProjectID: "ao", Kind: domain.KindPrime, IsTerminated: true}
 
 	fc := &fakeCommander{spawnRecord: domain.SessionRecord{
-		ID:        "ao-prime-new",
-		ProjectID: "ao",
-		Kind:      domain.KindPrime,
-		Metadata:  domain.SessionMetadata{Branch: "ao/ao-prime"},
+		ID:       "prime-1",
+		Kind:     domain.KindPrime,
+		Metadata: domain.SessionMetadata{Branch: "ao/prime"},
 	}}
 	svc := &Service{manager: fc, store: st}
 
@@ -1051,8 +1056,8 @@ func TestSpawnPrimeCleanRetiresAllActivePrimesBeforeSpawn(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SpawnPrime: %v", err)
 	}
-	if got.Kind != domain.KindPrime || got.ProjectID != "ao" {
-		t.Fatalf("spawned prime = %#v, want ao prime", got.SessionRecord)
+	if got.Kind != domain.KindPrime || got.ProjectID != "" {
+		t.Fatalf("spawned prime = %#v, want projectless prime", got.SessionRecord)
 	}
 	if len(fc.retired) != 2 {
 		t.Fatalf("retired = %v, want two active primes", fc.retired)
@@ -1062,6 +1067,40 @@ func TestSpawnPrimeCleanRetiresAllActivePrimesBeforeSpawn(t *testing.T) {
 	}
 	if fc.spawnedCfg.Kind != domain.KindPrime {
 		t.Fatalf("spawn kind = %q, want prime", fc.spawnedCfg.Kind)
+	}
+}
+
+func TestSpawnPrimeUsesFleetSettingsWithoutProject(t *testing.T) {
+	st := newFakeStore()
+	st.prime = domain.PrimeSettings{
+		Enabled:     true,
+		DisplayName: "Fleet Lead",
+		Harness:     domain.HarnessCodex,
+		AgentConfig: domain.AgentConfig{Model: "gpt-5-codex", Effort: domain.EffortHigh},
+	}.WithDefaults()
+	fc := &fakeCommander{spawnRecord: domain.SessionRecord{
+		ID:        "prime-1",
+		Kind:      domain.KindPrime,
+		Harness:   domain.HarnessCodex,
+		Model:     "gpt-5-codex",
+		Effort:    domain.EffortHigh,
+		Metadata:  domain.SessionMetadata{Branch: "ao/prime"},
+		CreatedAt: time.Now(),
+	}}
+	svc := &Service{manager: fc, store: st}
+
+	got, err := svc.SpawnPrime(context.Background(), "", true)
+	if err != nil {
+		t.Fatalf("SpawnPrime projectless: %v", err)
+	}
+	if got.ProjectID != "" || got.ID != "prime-1" {
+		t.Fatalf("projectless prime = id %q project %q, want prime-1 with no project", got.ID, got.ProjectID)
+	}
+	if fc.spawnedCfg.ProjectID != "" || fc.spawnedCfg.DisplayName != "Fleet Lead" || fc.spawnedCfg.Harness != domain.HarnessCodex {
+		t.Fatalf("spawn cfg = %+v, want projectless Fleet Lead codex", fc.spawnedCfg)
+	}
+	if fc.spawnedCfg.Model != "gpt-5-codex" || fc.spawnedCfg.Effort != domain.EffortHigh {
+		t.Fatalf("spawn model/effort = %q/%q, want gpt-5-codex/high", fc.spawnedCfg.Model, fc.spawnedCfg.Effort)
 	}
 }
 
@@ -1088,23 +1127,19 @@ func TestSpawnPrimeUsesProjectDisplayNameFallback(t *testing.T) {
 	if _, err := svc.SpawnPrime(context.Background(), "ao", true); err != nil {
 		t.Fatalf("SpawnPrime: %v", err)
 	}
-	if fc.spawnedCfg.DisplayName != "Agent Orchestr Prime" {
-		t.Fatalf("prime display name = %q, want Agent Orchestr Prime", fc.spawnedCfg.DisplayName)
+	if fc.spawnedCfg.DisplayName != "AO Prime" {
+		t.Fatalf("prime display name = %q, want AO Prime", fc.spawnedCfg.DisplayName)
 	}
 }
 
 func TestSpawnPrimeVerifiesReplacementHarnessAndBranch(t *testing.T) {
 	st := newFakeStore()
-	st.projects["ao"] = domain.ProjectRecord{
-		ID:     "ao",
-		Config: domain.ProjectConfig{Prime: domain.RoleOverride{Harness: domain.HarnessCodex}},
-	}
+	st.prime = domain.PrimeSettings{Harness: domain.HarnessCodex}.WithDefaults()
 	fc := &fakeCommander{spawnRecord: domain.SessionRecord{
-		ID:        "ao-prime",
-		ProjectID: "ao",
-		Kind:      domain.KindPrime,
-		Harness:   domain.HarnessClaudeCode,
-		Metadata:  domain.SessionMetadata{Branch: "ao/ao-prime"},
+		ID:       "prime-1",
+		Kind:     domain.KindPrime,
+		Harness:  domain.HarnessClaudeCode,
+		Metadata: domain.SessionMetadata{Branch: "ao/prime"},
 	}}
 	svc := &Service{manager: fc, store: st}
 
@@ -1116,7 +1151,7 @@ func TestSpawnPrimeVerifiesReplacementHarnessAndBranch(t *testing.T) {
 	fc.spawnRecord.Harness = domain.HarnessCodex
 	fc.spawnRecord.Metadata.Branch = "ao/wrong-prime"
 	_, err = svc.SpawnPrime(context.Background(), "ao", true)
-	if err == nil || !strings.Contains(err.Error(), `uses branch "ao/wrong-prime", want "ao/ao-prime"`) {
+	if err == nil || !strings.Contains(err.Error(), `uses branch "ao/wrong-prime", want "ao/prime"`) {
 		t.Fatalf("SpawnPrime err = %v, want branch verification failure", err)
 	}
 }
@@ -1455,16 +1490,12 @@ func TestToAPIError_RulesLoadError(t *testing.T) {
 // not left live for the next ensure tick to adopt.
 func TestSpawnPrimeRetiresUnverifiedReplacement(t *testing.T) {
 	st := newFakeStore()
-	st.projects["ao"] = domain.ProjectRecord{
-		ID:     "ao",
-		Config: domain.ProjectConfig{Prime: domain.RoleOverride{Harness: domain.HarnessCodex}},
-	}
+	st.prime = domain.PrimeSettings{Harness: domain.HarnessCodex}.WithDefaults()
 	fc := &fakeCommander{spawnRecord: domain.SessionRecord{
-		ID:        "ao-prime",
-		ProjectID: "ao",
-		Kind:      domain.KindPrime,
-		Harness:   domain.HarnessClaudeCode, // mismatch → verification failure
-		Metadata:  domain.SessionMetadata{Branch: "ao/ao-prime"},
+		ID:       "prime-1",
+		Kind:     domain.KindPrime,
+		Harness:  domain.HarnessClaudeCode, // mismatch → verification failure
+		Metadata: domain.SessionMetadata{Branch: "ao/prime"},
 	}}
 	svc := &Service{manager: fc, store: st}
 
@@ -1472,7 +1503,7 @@ func TestSpawnPrimeRetiresUnverifiedReplacement(t *testing.T) {
 	if err == nil {
 		t.Fatal("want verification failure")
 	}
-	if len(fc.retired) != 1 || fc.retired[0] != "ao-prime" {
+	if len(fc.retired) != 1 || fc.retired[0] != "prime-1" {
 		t.Fatalf("retired = %v, want the unverified prime retired", fc.retired)
 	}
 }

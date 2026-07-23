@@ -12,16 +12,16 @@
 
 ## 2. Prime Supervisor and Session Launch
 
-- [ ] 2.1 Refactor the Prime supervisor to read persisted settings on each
+- [x] 2.1 Refactor the Prime supervisor to read persisted settings on each
       reconcile tick instead of using `AO_PRIME_PROJECT_ID` as the activation
       gate.
-- [ ] 2.2 Change `SpawnPrime` and session-manager launch paths to use an
+- [x] 2.2 Change `SpawnPrime` and session-manager launch paths to use an
       AO-managed projectless fleet workspace, with no hidden project row.
-- [ ] 2.3 Resolve Prime harness/model/effort, display name, prompt rules, and
+- [x] 2.3 Resolve Prime harness/model/effort, display name, prompt rules, and
       wake policy from `PrimeSettings`.
-- [ ] 2.4 Implement live disable retirement and ensure that disabled Prime stops
+- [x] 2.4 Implement live disable retirement and ensure that disabled Prime stops
       ensure, replacement, and wake attempts immediately.
-- [ ] 2.5 Add regression tests for zero-project enable, live enable/disable,
+- [x] 2.5 Add regression tests for zero-project enable, live enable/disable,
       singleton enforcement, project pause/removal independence, restart
       persistence, and replacement/wake behavior.
 

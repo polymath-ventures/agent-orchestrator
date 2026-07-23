@@ -30,6 +30,7 @@ type Store interface {
 	ListPRReviewThreads(ctx context.Context, prURL string) ([]domain.PullRequestReviewThread, error)
 	ListPRComments(ctx context.Context, prURL string) ([]domain.PullRequestComment, error)
 	GetProject(ctx context.Context, id string) (domain.ProjectRecord, bool, error)
+	GetPrimeSettings(ctx context.Context) (domain.PrimeSettings, error)
 }
 
 // ListFilter captures API-facing session list query filters.
@@ -166,25 +167,32 @@ func (s *Service) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 
 func (s *Service) spawn(ctx context.Context, cfg ports.SpawnConfig, allowPrime bool) (domain.Session, error) {
 	if cfg.Kind == domain.KindPrime && !allowPrime {
-		return domain.Session{}, apierr.Forbidden("PRIME_MANUAL_SPAWN_FORBIDDEN", "Prime sessions are started only by the env-gated supervisor", nil)
+		return domain.Session{}, apierr.Forbidden("PRIME_MANUAL_SPAWN_FORBIDDEN", "Prime sessions are started only by the fleet Prime supervisor", nil)
 	}
-	project, err := s.requireProject(ctx, cfg.ProjectID)
-	if err != nil {
-		return domain.Session{}, err
+	projectlessPrime := allowPrime && cfg.Kind == domain.KindPrime && cfg.ProjectID == ""
+	project := domain.ProjectRecord{}
+	var err error
+	if !projectlessPrime {
+		project, err = s.requireProject(ctx, cfg.ProjectID)
+		if err != nil {
+			return domain.Session{}, err
+		}
 	}
 	start := s.now()
 	firstSession, err := s.isFirstSession(ctx)
 	if err != nil {
 		return domain.Session{}, fmt.Errorf("count sessions: %w", err)
 	}
-	cfg = s.withIssueContext(ctx, cfg, project)
+	if !projectlessPrime {
+		cfg = s.withIssueContext(ctx, cfg, project)
+	}
 	rec, err := s.manager.Spawn(ctx, cfg)
 	if err != nil {
 		s.emitSpawnFailed(cfg, err, s.now().Sub(start).Milliseconds())
 		return domain.Session{}, toAPIError(err)
 	}
 	s.emitSpawned(rec, s.now().Sub(start).Milliseconds())
-	if firstSession {
+	if firstSession && !projectlessPrime {
 		s.emitFirstSessionSpawned(rec, project)
 	}
 	return s.toSession(ctx, rec)
@@ -345,8 +353,9 @@ func (s *Service) SpawnOrchestrator(ctx context.Context, projectID domain.Projec
 	return sess, nil
 }
 
-// SpawnPrime spawns or returns the optional global prime supervisor. The host
-// project supplies the workspace/config, but singleton semantics are fleet-wide.
+// SpawnPrime spawns or returns the optional global prime supervisor. Prime
+// settings are fleet-owned; projectID is accepted only for compatibility and no
+// longer owns launch configuration.
 func (s *Service) SpawnPrime(ctx context.Context, projectID domain.ProjectID, clean bool) (domain.Session, error) {
 	// Prime is a fleet-wide singleton; serialize under a fixed key so two
 	// concurrent ensure calls cannot race check-then-spawn (the DB partial
@@ -354,10 +363,11 @@ func (s *Service) SpawnPrime(ctx context.Context, projectID domain.ProjectID, cl
 	unlock := s.lockOrchestratorProject("__fleet_prime__")
 	defer unlock()
 
-	project, err := s.requireProject(ctx, projectID)
+	settings, err := s.store.GetPrimeSettings(ctx)
 	if err != nil {
 		return domain.Session{}, err
 	}
+	settings = settings.WithDefaults()
 	existing, err := s.activePrimeSessions(ctx)
 	if err != nil {
 		return domain.Session{}, err
@@ -372,15 +382,27 @@ func (s *Service) SpawnPrime(ctx context.Context, projectID domain.ProjectID, cl
 	} else if len(existing) > 0 {
 		return newestSession(existing), nil
 	}
-	displayName := strings.TrimSpace(s.primeDisplayName)
+	displayName := strings.TrimSpace(settings.DisplayName)
 	if displayName == "" {
-		displayName = domain.ComposePrimeDisplayName(projectDisplayName(project))
+		displayName = domain.DefaultPrimeSettings().DisplayName
 	}
-	sess, err := s.spawn(ctx, ports.SpawnConfig{ProjectID: projectID, Kind: domain.KindPrime, DisplayName: displayName}, true)
+	// Environment display name remains a compatibility override until the UI/API
+	// surfaces persisted settings everywhere.
+	if envName := strings.TrimSpace(s.primeDisplayName); envName != "" {
+		displayName = envName
+	}
+	sess, err := s.spawn(ctx, ports.SpawnConfig{
+		ProjectID:   "",
+		Kind:        domain.KindPrime,
+		DisplayName: displayName,
+		Harness:     settings.Harness,
+		Model:       settings.AgentConfig.Model,
+		Effort:      settings.AgentConfig.Effort,
+	}, true)
 	if err != nil {
 		return domain.Session{}, err
 	}
-	if err := verifyPrimeReplacement(project, sess); err != nil {
+	if err := verifyPrimeReplacement(settings, sess, s.dataDir); err != nil {
 		// The unverified session is already live; without retiring it the
 		// next supervisor tick would see an active prime and silently adopt
 		// it. Retire so the fleet is primeless and replacement re-enters.
@@ -402,6 +424,16 @@ func (s *Service) ActivePrime(ctx context.Context) (domain.Session, bool, error)
 		return domain.Session{}, false, nil
 	}
 	return newestSession(existing), true, nil
+}
+
+// RetirePrime terminates the active Prime without spawning a replacement. The
+// supervisor uses this when fleet Prime is disabled.
+func (s *Service) RetirePrime(ctx context.Context, id domain.SessionID) error {
+	_ = s.sendPrimeRetireNotice(ctx, id)
+	if err := s.manager.RetireForReplacement(ctx, id); err != nil {
+		return toAPIError(err)
+	}
+	return nil
 }
 
 const orchestratorRetireNotice = "AO is replacing this project orchestrator. Stop coordinating new work now; a fresh orchestrator will take over on the canonical branch."
@@ -445,17 +477,17 @@ func projectDisplayName(project domain.ProjectRecord) string {
 	return project.ID
 }
 
-func verifyPrimeReplacement(project domain.ProjectRecord, sess domain.Session) error {
+func verifyPrimeReplacement(settings domain.PrimeSettings, sess domain.Session, dataDir string) error {
 	if sess.IsTerminated {
 		return fmt.Errorf("prime replacement verification failed: new session %s is terminated", sess.ID)
 	}
 	if sess.Kind != domain.KindPrime {
 		return fmt.Errorf("prime replacement verification failed: new session %s has kind %q", sess.ID, sess.Kind)
 	}
-	if expected := project.Config.Prime.Harness; expected != "" && sess.Harness != expected {
+	if expected := settings.Harness; expected != "" && sess.Harness != expected {
 		return fmt.Errorf("prime replacement verification failed: new session %s uses harness %q, want %q", sess.ID, sess.Harness, expected)
 	}
-	expectedBranch := "ao/" + serviceSessionPrefix(project) + "-prime"
+	expectedBranch := sessionmanager.DefaultPrimeBranch(dataDir)
 	if sess.Metadata.Branch != "" && sess.Metadata.Branch != expectedBranch {
 		return fmt.Errorf("prime replacement verification failed: new session %s uses branch %q, want %q", sess.ID, sess.Metadata.Branch, expectedBranch)
 	}
