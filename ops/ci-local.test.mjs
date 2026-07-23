@@ -16,7 +16,9 @@ test("ci-local aggregator mirrors every CI parity job", () => {
 	assert.match(src, /gofmt/); // go.yml format step
 	assert.match(src, /go build/); // build
 	assert.match(src, /go vet/); // vet
-	assert.match(src, /go test -race \.\/\.\.\./); // build-test uses -race; the gate must too
+	// Anchor to the executable `run` line, not the explanatory comment, so
+	// dropping -race from the actual command would fail this test.
+	assert.match(src, /run "go test -race" bash -c '[^']*go test -race \.\/\.\.\./); // build-test parity
 	assert.match(src, /golangci\.sh/); // golangci-lint (pinned, single-sourced)
 	assert.match(src, /frontend:typecheck/); // frontend typecheck
 });
@@ -67,6 +69,7 @@ test("golangci.sh isolates the cache per-worktree to avoid stale sibling-worktre
 	// Pinning the cache under the worktree makes that cross-worktree collision
 	// impossible by construction.
 	const golangci = read("../scripts/ci/golangci.sh");
-	assert.match(golangci, /GOLANGCI_LINT_CACHE=/);
-	assert.match(golangci, /show-toplevel|\/backend\/\.cache/);
+	assert.match(golangci, /GOLANGCI_LINT_CACHE=/); // cache is pinned...
+	assert.match(golangci, /show-toplevel/); // ...to a worktree-derived root...
+	assert.match(golangci, /\/backend\/\.cache/); // ...under this worktree only.
 });

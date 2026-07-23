@@ -12,12 +12,11 @@
 # gate, and that tool's own output explains what to fix.
 set -euo pipefail
 
-cd "$(git rev-parse --show-toplevel)"
-
 # golangci-lint is fetched and built on demand via `go run ...@v2.12.2` (see the
 # `lint` npm script), so the toolchain the gate actually needs is Go plus Node —
-# not a separately-installed golangci binary. Fail with a clear message rather
-# than a confusing mid-run error if either is missing.
+# not a separately-installed golangci binary. Check every tool the gate shells
+# out to up front, BEFORE the first `git` call below, so a missing tool fails
+# with a clear message instead of a confusing mid-run error.
 need() {
 	command -v "$1" >/dev/null 2>&1 || {
 		echo "error: '$1' is required for the local CI-parity gate but was not found on PATH" >&2
@@ -29,6 +28,8 @@ need go
 need node
 need npm
 need npx
+
+cd "$(git rev-parse --show-toplevel)"
 
 run() {
 	printf '\n== %s ==\n' "$1"

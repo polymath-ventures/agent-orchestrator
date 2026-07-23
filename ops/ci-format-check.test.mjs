@@ -67,7 +67,7 @@ test("format-check gate passes when nothing changed", () => {
 	const dir = setupRepo();
 	try {
 		// No working-tree edits and no reachable base ref → empty changed set →
-		// --no-run-if-empty makes this a clean pass, not an error.
+		// the empty-array guard makes this a clean pass, not an error.
 		const r = runGate(dir);
 		assert.equal(r.status, 0, `expected zero exit\nstdout:${r.stdout}\nstderr:${r.stderr}`);
 	} finally {
@@ -78,9 +78,12 @@ test("format-check gate passes when nothing changed", () => {
 test("format-check treats a flag-looking filename as a path, not a Prettier option", () => {
 	const dir = setupRepo();
 	try {
-		// Without the `--` terminator, a changed file named like a flag would be
-		// parsed as a Prettier option (e.g. `--write` would mutate files). It must
-		// be checked as a path and flagged when unformatted.
+		// This is a real regression test for the `--` terminator, not just a
+		// smoke test: without `--`, Prettier parses the bare `--weird.md` as an
+		// unknown option, ignores it, finds no files, and exits 0 — silently
+		// MISSING an unformatted file. With `--` it is checked as a path and the
+		// violation is caught (non-zero). So a non-zero exit here proves the
+		// terminator is present and working.
 		writeFileSync(join(dir, "--weird.md"), "# Title\n\n\n\nBody\n");
 		git(dir, "add", "--", "--weird.md");
 		const r = runGate(dir);
@@ -96,5 +99,5 @@ test("format-check mirrors the prettier CI job command shape", () => {
 	assert.match(src, /prettier@3/);
 	assert.match(src, /--check/);
 	assert.match(src, /--ignore-unknown/);
-	assert.match(src, /--ignore-unknown --$/m); // option terminator before paths
+	assert.match(src, /--ignore-unknown -- "\$\{files\[@\]\}"/); // option terminator before the paths
 });

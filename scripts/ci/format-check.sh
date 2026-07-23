@@ -31,8 +31,18 @@ changed_files() {
 	git diff --name-only -z --diff-filter=d HEAD
 }
 
-# sort -zu de-duplicates the union; --no-run-if-empty means "no changed files"
-# is a clean pass. pipefail propagates a non-zero prettier exit as our exit.
+# Collect the NUL-delimited names into an array. This stays portable to macOS's
+# stock bash 3.2 / BSD userland (no GNU `sort -z`, no `xargs --no-run-if-empty`).
+# Duplicates across the two diff sets are harmless — Prettier just checks a file
+# twice. An empty array is a clean pass, guarded below so `set -u` never trips.
+files=()
+while IFS= read -r -d '' f; do
+	files+=("$f")
+done < <(changed_files)
+
+[ ${#files[@]} -eq 0 ] && exit 0
+
 # The `--` terminator stops option parsing so a changed file whose name looks
-# like a flag (e.g. `--write`) is treated as a path, never a Prettier option.
-changed_files | sort -zu | xargs -0 --no-run-if-empty npx --yes prettier@3 --check --ignore-unknown --
+# like a flag (e.g. `--write`) is treated as a path, never a Prettier option —
+# without it Prettier silently ignores the name and skips the check.
+npx --yes prettier@3 --check --ignore-unknown -- "${files[@]}"
