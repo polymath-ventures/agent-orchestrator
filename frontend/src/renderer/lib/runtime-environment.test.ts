@@ -44,18 +44,22 @@ describe("isMacDesktopChrome", () => {
 		expect(isMacDesktopChrome()).toBe(false);
 	});
 
-	it("is false on iPhone (GH #54: iOS must not get macOS-Electron chrome)", () => {
-		setEnvironment(IPHONE, 5);
+	// The next three force the Electron bridge on so the assertion exercises the
+	// Apple-mobile / iPad-touch exclusions themselves, not just the bridge gate —
+	// otherwise they would pass on `!hasElectronBridge()` alone and the exclusion
+	// logic would be untested (GH #54).
+	it("is false on iPhone even with a bridge (GH #54: iOS must not get macOS-Electron chrome)", () => {
+		setEnvironment(IPHONE, 5, true);
 		expect(isMacDesktopChrome()).toBe(false);
 	});
 
-	it("is false on iPad", () => {
-		setEnvironment(IPAD, 5);
+	it("is false on iPad even with a bridge", () => {
+		setEnvironment(IPAD, 5, true);
 		expect(isMacDesktopChrome()).toBe(false);
 	});
 
-	it("is false on iPadOS masquerading as desktop Safari (touch device)", () => {
-		setEnvironment(IPADOS_DESKTOP_UA, 5);
+	it("is false on iPadOS masquerading as desktop Safari (touch device) even with a bridge", () => {
+		setEnvironment(IPADOS_DESKTOP_UA, 5, true);
 		expect(isMacDesktopChrome()).toBe(false);
 	});
 
