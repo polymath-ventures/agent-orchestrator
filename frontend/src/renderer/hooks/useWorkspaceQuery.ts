@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import type { components } from "../../api/schema";
 import { apiClient, hasTrustedApiBaseUrl } from "../lib/api-client";
 import {
+	FLEET_WORKSPACE_ID,
 	type PauseState,
 	type PRState,
 	type ProjectKind,
@@ -63,9 +64,16 @@ async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
 	}));
 	const projectlessPrimeSessions = sessions
 		.filter((session) => !session.projectId && toSessionKind(session.kind) === "prime")
-		.map((session) => toWorkspaceSession(session, "fleet", "AO Fleet"));
+		.map((session) => toWorkspaceSession(session, FLEET_WORKSPACE_ID, "AO Fleet"));
 	if (projectlessPrimeSessions.length > 0 && workspaces.length > 0) {
 		workspaces[0] = { ...workspaces[0], sessions: [...workspaces[0].sessions, ...projectlessPrimeSessions] };
+	} else if (projectlessPrimeSessions.length > 0) {
+		workspaces.push({
+			id: FLEET_WORKSPACE_ID,
+			name: "AO Fleet",
+			path: "",
+			sessions: projectlessPrimeSessions,
+		});
 	}
 	return workspaces;
 }
