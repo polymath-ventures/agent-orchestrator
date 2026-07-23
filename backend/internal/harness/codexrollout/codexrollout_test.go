@@ -376,3 +376,31 @@ func TestNewestRateLimits_TailBoundaryKeepsWholeRecord(t *testing.T) {
 		t.Fatalf("Used = %v, want 77 — the whole boundary record was dropped", got)
 	}
 }
+
+// TestNewestRateLimits_ExactlyCapPlusOne covers the cap+1 edge (GH #97 cycle-4):
+// a file one byte over the cap must still tail correctly — the first (byte-0)
+// record is discarded as outside the window and the trailing rate_limits event
+// is returned rather than reading the whole file as if untailed.
+func TestNewestRateLimits_ExactlyCapPlusOne(t *testing.T) {
+	tailEvent := `{"type":"event_msg","payload":{"type":"token_count","rate_limits":{"limit_id":"codex","primary":{"used_percent":63,"window_minutes":10080,"resets_at":2000000000}}}}`
+	head := `{"type":"session_meta","payload":{"cwd":"/w"}}` + "\n"
+	content := head + tailEvent + "\n"
+
+	orig := maxRolloutScanBytes
+	maxRolloutScanBytes = int64(len(content) - 1) // size == cap+1
+	defer func() { maxRolloutScanBytes = orig }()
+
+	home := t.TempDir()
+	dir := filepath.Join(home, "sessions", "2026", "07", "18")
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "rollout-capplus1.jsonl"), []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	snaps, found := NewestRateLimits(context.Background(), home, time.Unix(1000, 0).UTC())
+	if !found || len(snaps) != 1 || *snaps[0].Used != 63 {
+		t.Fatalf("found=%v snaps=%+v, want the trailing rate_limits (63%%) at size cap+1", found, snaps)
+	}
+}

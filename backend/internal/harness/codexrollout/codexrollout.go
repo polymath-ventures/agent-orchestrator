@@ -197,8 +197,9 @@ func rolloutRateLimits(ctx context.Context, path string, observedAt time.Time) (
 	if err != nil {
 		return nil, false
 	}
+	tail := info.Size() > maxRolloutScanBytes
 	var start int64
-	if info.Size() > maxRolloutScanBytes {
+	if tail {
 		// Seek to one byte BEFORE the tail window so the first readLine below
 		// consumes exactly the record boundary: if that preceding byte is the
 		// newline that ends the prior record, the discarded "line" is empty and
@@ -206,6 +207,9 @@ func rolloutRateLimits(ctx context.Context, path string, observedAt time.Time) (
 		// is that record's partial tail. Seeking to the window start itself would
 		// wrongly drop a complete record whenever the tail began on a boundary.
 		start = info.Size() - maxRolloutScanBytes - 1
+		if start < 0 {
+			start = 0 // a size of exactly cap+1: read from the top, still discard below
+		}
 	}
 	if start > 0 {
 		if _, err := f.Seek(start, io.SeekStart); err != nil {
@@ -216,8 +220,10 @@ func rolloutRateLimits(ctx context.Context, path string, observedAt time.Time) (
 	// boundary byte), so no single line (up to lineCap) can pull the scan past the
 	// cap.
 	br := bufio.NewReaderSize(io.LimitReader(f, maxRolloutScanBytes+1), 1<<20)
-	if start > 0 {
-		// Drop the boundary/partial first line (see the seek comment above).
+	if tail {
+		// Drop the boundary/partial first line whenever we are tailing — including
+		// the cap+1 case where start clamps to 0 — so a record that begins outside
+		// the tail window is never parsed as if it were inside it.
 		_, _ = readLine(br)
 	}
 

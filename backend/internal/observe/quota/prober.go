@@ -58,12 +58,26 @@ type Prober struct {
 	logger   *slog.Logger
 	now      func() time.Time
 
+	// reconcileMu serializes reconcile so two overlapping calls (e.g. a scheduled
+	// ProbeAll and a force probe-all from the API) can never interleave their
+	// out-of-lock enumerations and commit a stale snapshot over a newer one. Each
+	// reconcile's enumeration therefore reflects the state left by the previous.
+	reconcileMu sync.Mutex
+
 	mu       sync.Mutex // guards statuses + live
 	statuses map[domain.AgentHarness]domain.HarnessQuotaStatus
 	// live is the set of harnesses currently enumerated (installed + probe-capable).
-	// record() writes a status only for a live harness, so a straggler probe whose
-	// harness was evicted mid-flight (uninstalled during a concurrent probe) can
-	// never resurrect a stale chip.
+	// A gated (scheduled) record() writes a status only for a live harness, so a
+	// straggler probe whose harness was evicted mid-flight (uninstalled during a
+	// concurrent probe) can never resurrect a stale chip.
+	//
+	// Residual (accepted): a force-probe recording concurrently with a reconcile
+	// that evicts the same harness can leave a one-cycle-stale chip (shown or
+	// hidden) when a harness binary changes install-state during an in-flight
+	// probe. It always self-heals on the next reconcile. Closing it fully would
+	// require holding this hot status lock across the slow enumeration probes,
+	// which would block every /metrics read — disproportionate to a one-cycle
+	// flicker in an operationally near-impossible window.
 	live map[domain.AgentHarness]struct{}
 
 	flightMu sync.Mutex                          // guards flights map
@@ -131,6 +145,11 @@ func (p *Prober) ProbeAll(ctx context.Context) []domain.HarnessQuotaStatus {
 // enumerated (e.g. an uninstalled harness) is evicted so a stale chip never
 // lingers. Existing statuses for still-present harnesses are left untouched.
 func (p *Prober) reconcile(ctx context.Context) []ports.HarnessQuotaProber {
+	// Serialize with any other reconcile so overlapping enumerations cannot commit
+	// a stale set over a newer one.
+	p.reconcileMu.Lock()
+	defer p.reconcileMu.Unlock()
+
 	probers := p.enumerate(ctx)
 	present := make(map[domain.AgentHarness]struct{}, len(probers))
 	for _, hp := range probers {
