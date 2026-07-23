@@ -85,8 +85,11 @@ type DaemonStatusReader = typeof refreshDaemonStatus;
 type DaemonStarter = typeof aoBridge.daemon.start;
 type DaemonStatusApplier = typeof applyDaemonStatus;
 
-function isProjectCreateDaemonReady(status: Awaited<ReturnType<DaemonStatusReader>>): boolean {
-	return status.state === "ready" && (Boolean(status.port) || !hasElectronBridge());
+function isProjectCreateDaemonReady(
+	status: Awaited<ReturnType<DaemonStatusReader>>,
+	electronBridgeAvailable: boolean,
+): boolean {
+	return status.state === "ready" && (Boolean(status.port) || !electronBridgeAvailable);
 }
 
 export async function ensureProjectCreateDaemonReady({
@@ -98,12 +101,16 @@ export async function ensureProjectCreateDaemonReady({
 	startDaemon?: DaemonStarter;
 	applyStatus?: DaemonStatusApplier;
 } = {}) {
+	const electronBridgeAvailable = hasElectronBridge();
 	const status = await refreshStatus();
-	if (isProjectCreateDaemonReady(status)) return status;
+	if (isProjectCreateDaemonReady(status, electronBridgeAvailable)) return status;
+	if (!electronBridgeAvailable) {
+		throw new Error(status.message || "AO daemon is not ready.");
+	}
 
 	const startedStatus = await startDaemon();
 	applyStatus(startedStatus);
-	if (isProjectCreateDaemonReady(startedStatus)) return startedStatus;
+	if (isProjectCreateDaemonReady(startedStatus, electronBridgeAvailable)) return startedStatus;
 
 	throw new Error(startedStatus.message || status.message || "AO daemon is not ready.");
 }
