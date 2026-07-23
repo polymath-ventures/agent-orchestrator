@@ -338,6 +338,30 @@ npm run api
 npx @redwoodjs/agent-ci run --all
 ```
 
+### Pre-push gate (required before every push)
+
+Run the local CI-parity gate before pushing — it mirrors the remote `format`
+and `lint` CI jobs (plus build/vet/test/typecheck) so those violations are
+caught locally instead of on a wasted remote CI round-trip:
+
+```bash
+npm run ci-local
+```
+
+It runs, fail-fast and cheapest-first: `format:check` (prettier `--check
+--ignore-unknown` on changed files, matching `.github/workflows/prettier.yml`),
+`gofmt`, `go build`, `go vet`, `npm run lint` (`go test` + golangci-lint pinned
+to the CI version v2.12.2, run via `go run` — no separate golangci install
+needed), and `npm run frontend:typecheck`. `npm run format:check` is the fast
+changed-files-only subset if you just need the format check.
+
+Optionally install it as a git `pre-push` hook (per-clone, opt-in) so it runs
+automatically on `git push`; bypass a single push with `git push --no-verify`:
+
+```bash
+npm run hooks:install
+```
+
 Backend-specific checks:
 
 ```bash
