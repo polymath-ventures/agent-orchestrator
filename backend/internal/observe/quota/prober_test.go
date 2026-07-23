@@ -72,6 +72,25 @@ func (e *fakeEnumerator) QuotaProbers(context.Context) []ports.HarnessQuotaProbe
 	return e.probers
 }
 
+// swapEnumerator returns a set of probers that can be swapped between calls, so a
+// test can simulate a harness being uninstalled mid-run.
+type swapEnumerator struct {
+	mu      sync.Mutex
+	probers []ports.HarnessQuotaProber
+}
+
+func (e *swapEnumerator) set(probers []ports.HarnessQuotaProber) {
+	e.mu.Lock()
+	e.probers = probers
+	e.mu.Unlock()
+}
+
+func (e *swapEnumerator) QuotaProbers(context.Context) []ports.HarnessQuotaProber {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.probers
+}
+
 // fakeStore records every upserted snapshot.
 type fakeStore struct {
 	mu    sync.Mutex
@@ -104,6 +123,50 @@ func newTestProber(enum Enumerator, store Store) *Prober {
 		Store:      store,
 		Now:        func() time.Time { return fixedNow },
 	})
+}
+
+// TestProbeDoesNotResurrectEvictedHarness covers the GH #97 cycle-2 race: a probe
+// in flight for a harness that a concurrent reconcile evicts (harness uninstalled)
+// must NOT record its result afterwards and resurrect a stale chip.
+func TestProbeDoesNotResurrectEvictedHarness(t *testing.T) {
+	hold := make(chan struct{})
+	px := &fakeProber{
+		result:  ports.QuotaProbeResult{State: domain.QuotaProbeOK, Snapshots: []domain.QuotaSnapshot{snap(domain.HarnessCodex)}},
+		harness: domain.HarnessCodex,
+		hold:    hold,
+	}
+	enum := &swapEnumerator{}
+	enum.set([]ports.HarnessQuotaProber{{Harness: domain.HarnessCodex, Prober: px}})
+	p := newTestProber(enum, &fakeStore{})
+
+	// Force-probe codex: it marks live[codex], then blocks in ProbeQuota on hold.
+	done := make(chan struct{})
+	go func() {
+		p.ProbeHarness(context.Background(), domain.HarnessCodex)
+		close(done)
+	}()
+	// Wait until the probe is actually in flight.
+	deadline := time.Now().Add(2 * time.Second)
+	for px.callCount() == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("probe never started")
+		}
+		time.Sleep(time.Millisecond)
+	}
+
+	// Uninstall codex and reconcile via ProbeAll (empty enumeration evicts it).
+	enum.set(nil)
+	p.ProbeAll(context.Background())
+
+	// Release the blocked probe; it now calls record(codex) after eviction.
+	close(hold)
+	<-done
+
+	for _, s := range p.Statuses() {
+		if s.Harness == domain.HarnessCodex {
+			t.Fatalf("evicted harness codex was resurrected by a straggler probe: %+v", s)
+		}
+	}
 }
 
 func TestProbeAllRecordsStatusesAndPersistsOKSnapshots(t *testing.T) {

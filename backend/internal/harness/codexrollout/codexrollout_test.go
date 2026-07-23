@@ -297,3 +297,45 @@ func TestNewestRateLimits_CancelledCtxReturnsPromptly(t *testing.T) {
 		t.Fatalf("found=%v snaps=%+v, want (nil,false) for a cancelled ctx", found, snaps)
 	}
 }
+
+// TestNewestRateLimits_TailScanReturnsNewestBeyondCap proves the bounded read is
+// a TAIL scan, not a first-N-bytes scan: when an OLD rate_limits event sits early
+// in a file larger than the byte cap and a NEWER one sits at the end, the newest
+// (tail) window is returned — never the stale early one. This is the GH #97
+// cycle-2 fix (a forward byte cap would have returned the old event).
+func TestNewestRateLimits_TailScanReturnsNewestBeyondCap(t *testing.T) {
+	orig := maxRolloutScanBytes
+	maxRolloutScanBytes = 512 // shrink so a small file exceeds the cap
+	defer func() { maxRolloutScanBytes = orig }()
+
+	home := t.TempDir()
+	dir := filepath.Join(home, "sessions", "2026", "07", "18")
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	reset := int64(2_000_000_000) // far-future so neither window is expired
+	oldEvent := `{"type":"event_msg","payload":{"type":"token_count","rate_limits":{"limit_id":"codex","primary":{"used_percent":10,"window_minutes":10080,"resets_at":` + strconv.FormatInt(reset, 10) + `}}}}`
+	newEvent := `{"type":"event_msg","payload":{"type":"token_count","rate_limits":{"limit_id":"codex","primary":{"used_percent":80,"window_minutes":10080,"resets_at":` + strconv.FormatInt(reset, 10) + `}}}}`
+	var b strings.Builder
+	b.WriteString(`{"type":"session_meta","payload":{"session_id":"sess","cwd":"/w"}}` + "\n")
+	b.WriteString(oldEvent + "\n")
+	for i := 0; i < 40; i++ { // >512 bytes of filler between the two events
+		b.WriteString(`{"type":"event_msg","payload":{"type":"token_count","info":{}}}` + "\n")
+	}
+	b.WriteString(newEvent + "\n")
+	path := filepath.Join(dir, "rollout-tail.jsonl")
+	if err := os.WriteFile(path, []byte(b.String()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if info, _ := os.Stat(path); info.Size() <= maxRolloutScanBytes {
+		t.Fatalf("test file %d bytes must exceed the %d-byte cap", info.Size(), maxRolloutScanBytes)
+	}
+
+	snaps, found := NewestRateLimits(context.Background(), home, time.Unix(1000, 0).UTC())
+	if !found || len(snaps) != 1 {
+		t.Fatalf("found=%v snaps=%+v, want the single newest (tail) window", found, snaps)
+	}
+	if got := *snaps[0].Used; got != 80 {
+		t.Fatalf("Used = %v, want 80 (the tail event), not the stale 10 from before the cap", got)
+	}
+}

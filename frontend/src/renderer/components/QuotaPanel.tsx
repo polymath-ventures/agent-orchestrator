@@ -1,8 +1,9 @@
+import { useIsMutating } from "@tanstack/react-query";
 import { ChevronDown, ChevronRight, Gauge, Loader2, RefreshCw } from "lucide-react";
 import type { components } from "../../api/schema";
 import { useAgentsQuery } from "../hooks/useAgentsQuery";
 import { useMetricsQuery } from "../hooks/useMetricsQuery";
-import { useProbeQuota } from "../hooks/useProbeQuota";
+import { probeQuotaMutationKey, useProbeQuota } from "../hooks/useProbeQuota";
 import { formatTimeCompact } from "../lib/format-time";
 import { useUiStore } from "../stores/ui-store";
 import { cn } from "../lib/utils";
@@ -25,6 +26,11 @@ export function QuotaPanel() {
 	const collapsed = useUiStore((state) => state.isQuotaWidgetCollapsed);
 	const toggleCollapsed = useUiStore((state) => state.toggleQuotaWidgetCollapsed);
 
+	// `busy` is derived from the GLOBAL in-flight count for the probe mutation key,
+	// not this component's `probe.isPending`, so controls stay disabled across a
+	// remount (e.g. toggling widget visibility mid-probe) until the POST settles.
+	const busy = useIsMutating({ mutationKey: probeQuotaMutationKey }) > 0;
+
 	const statuses = metrics.data?.probeStatuses ?? [];
 	// The prober owns the authoritative harness set; nothing to show without it.
 	if (statuses.length === 0) return null;
@@ -34,6 +40,8 @@ export function QuotaPanel() {
 		return inventory.find((agent) => agent.id === harness)?.label ?? harness;
 	};
 
+	// The spinner is a local best-effort hint on the clicked control; `busy` (above)
+	// is the authoritative disable signal and survives remount.
 	const refreshing = probe.isPending && !probe.variables?.harness;
 
 	return (
@@ -59,7 +67,7 @@ export function QuotaPanel() {
 				<button
 					aria-label="Refresh all quota probes"
 					className="grid size-icon-lg shrink-0 place-items-center rounded text-passive transition-colors hover:bg-interactive-hover hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
-					disabled={probe.isPending}
+					disabled={busy}
 					onClick={() => probe.mutate({})}
 					type="button"
 				>
@@ -82,6 +90,7 @@ export function QuotaPanel() {
 							label={labelFor(status.harness)}
 							snapshots={status.snapshots ?? []}
 							probe={probe}
+							busy={busy}
 						/>
 					))}
 				</div>
@@ -95,17 +104,18 @@ function HarnessChip({
 	label,
 	snapshots,
 	probe,
+	busy,
 }: {
 	status: HarnessQuotaStatus;
 	label: string;
 	snapshots: QuotaSnapshot[];
 	probe: ProbeMutation;
+	busy: boolean;
 }) {
-	// spinning: this harness is the one being probed (spinner on its button).
-	// busy: ANY probe is in flight — disable every probe action so two probes
-	// can never run at once, even across different harnesses.
+	// spinning: local best-effort hint that this harness is the one being probed.
+	// busy (from the parent) is the authoritative "any probe in flight" disable
+	// signal — global and remount-safe — so two probes can never run at once.
 	const spinning = probe.isPending && probe.variables?.harness === status.harness;
-	const busy = probe.isPending;
 	const onProbe = () => probe.mutate({ harness: status.harness });
 	const age = status.state === "ok" && status.probedAt ? formatTimeCompact(status.probedAt) : null;
 

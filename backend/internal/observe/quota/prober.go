@@ -58,8 +58,13 @@ type Prober struct {
 	logger   *slog.Logger
 	now      func() time.Time
 
-	mu       sync.Mutex // guards statuses
+	mu       sync.Mutex // guards statuses + live
 	statuses map[domain.AgentHarness]domain.HarnessQuotaStatus
+	// live is the set of harnesses currently enumerated (installed + probe-capable).
+	// record() writes a status only for a live harness, so a straggler probe whose
+	// harness was evicted mid-flight (uninstalled during a concurrent probe) can
+	// never resurrect a stale chip.
+	live map[domain.AgentHarness]struct{}
 
 	flightMu sync.Mutex                          // guards flights map
 	flights  map[domain.AgentHarness]*sync.Mutex // per-harness single-flight locks
@@ -74,6 +79,7 @@ func New(deps Deps) *Prober {
 		logger:   deps.Logger,
 		now:      deps.Now,
 		statuses: make(map[domain.AgentHarness]domain.HarnessQuotaStatus),
+		live:     make(map[domain.AgentHarness]struct{}),
 		flights:  make(map[domain.AgentHarness]*sync.Mutex),
 	}
 	if p.interval <= 0 {
@@ -132,6 +138,7 @@ func (p *Prober) reconcile(ctx context.Context) []ports.HarnessQuotaProber {
 	}
 
 	p.mu.Lock()
+	p.live = present
 	for h := range present {
 		if _, ok := p.statuses[h]; !ok {
 			p.statuses[h] = domain.HarnessQuotaStatus{Harness: h, State: domain.QuotaProbeNotProbed}
@@ -152,6 +159,12 @@ func (p *Prober) reconcile(ctx context.Context) []ports.HarnessQuotaProber {
 func (p *Prober) ProbeHarness(ctx context.Context, harness domain.AgentHarness) (domain.HarnessQuotaStatus, bool) {
 	for _, hp := range p.enumerate(ctx) {
 		if hp.Harness == harness {
+			// The harness is enumerated (installed + probe-capable) right now, so
+			// mark it live before probing — otherwise record() would drop a
+			// force-probe result for a harness no reconcile has seen yet.
+			p.mu.Lock()
+			p.live[harness] = struct{}{}
+			p.mu.Unlock()
 			return p.probe(ctx, hp), true
 		}
 	}
@@ -238,7 +251,12 @@ func (p *Prober) callProbe(ctx context.Context, prober ports.AgentQuotaProber, n
 
 func (p *Prober) record(status domain.HarnessQuotaStatus) domain.HarnessQuotaStatus {
 	p.mu.Lock()
-	p.statuses[status.Harness] = status
+	// Only store the result if the harness is still live. A reconcile may have
+	// evicted it while this probe was in flight (harness uninstalled), in which
+	// case recording would resurrect a stale chip.
+	if _, ok := p.live[status.Harness]; ok {
+		p.statuses[status.Harness] = status
+	}
 	p.mu.Unlock()
 	return status
 }

@@ -45,15 +45,18 @@ const (
 	// lineCap bounds a single JSONL line buffered while scanning a rollout. Lines
 	// above it are skipped rather than aborting the scan.
 	lineCap = 32 << 20
-	// maxRolloutScanBytes caps how many bytes of a single rollout the scan reads
-	// before giving up on that file. A continuously-appended (or maliciously huge)
-	// rollout must never turn one probe into an unbounded read that ignores
-	// shutdown; the scan stops and reports whatever rate_limits it found so far.
-	maxRolloutScanBytes = 8 << 20
 	// maxBasisFieldLen caps a sanitized limit_id/plan_type before it goes into a
 	// snapshot basis string, so an odd or oversized value cannot bloat the basis.
 	maxBasisFieldLen = 64
 )
+
+// maxRolloutScanBytes caps how many bytes of a single rollout the scan reads
+// (the tail window) before giving up on the rest. A continuously-appended (or
+// maliciously huge) rollout must never turn one probe into an unbounded read
+// that ignores shutdown; the scan reads only the last maxRolloutScanBytes, where
+// the newest append-only events live. It is a var (not a const) so tests can
+// shrink it to exercise the tail-scan boundary without writing 8 MiB files.
+var maxRolloutScanBytes int64 = 8 << 20
 
 // RateWindow is one Codex rate-limit window (primary or secondary) as reported
 // in a rollout token_count event. Nil pointers mean the field was absent.
@@ -175,8 +178,14 @@ func NewestRateLimits(ctx context.Context, codexHome string, observedAt time.Tim
 
 // rolloutRateLimits scans one rollout and returns the snapshots of the newest
 // token_count event that produced any, plus whether the rollout carried a
-// rate_limits payload at all (even one whose windows were all rejected). The
-// scan aborts on a cancelled ctx or once it has read maxRolloutScanBytes.
+// rate_limits payload at all (even one whose windows were all rejected).
+//
+// Rollouts are append-only JSONL, so the newest token_count event is at the END
+// of the file. The scan reads only a bounded TAIL window (the last
+// maxRolloutScanBytes): a huge or continuously-appended rollout can neither be
+// read unboundedly (which could delay daemon shutdown) nor hide its newest event
+// behind an early byte cap (a forward cap would return stale windows). The scan
+// also aborts promptly on a cancelled ctx.
 func rolloutRateLimits(ctx context.Context, path string, observedAt time.Time) (snaps []domain.QuotaSnapshot, sawRateLimits bool) {
 	f, ok := openRegularFile(path)
 	if !ok {
@@ -184,7 +193,29 @@ func rolloutRateLimits(ctx context.Context, path string, observedAt time.Time) (
 	}
 	defer func() { _ = f.Close() }()
 
-	scanJSONLines(ctx, f, func(line []byte) {
+	info, err := f.Stat()
+	if err != nil {
+		return nil, false
+	}
+	var start int64
+	if info.Size() > maxRolloutScanBytes {
+		start = info.Size() - maxRolloutScanBytes
+	}
+	if start > 0 {
+		if _, err := f.Seek(start, io.SeekStart); err != nil {
+			return nil, false
+		}
+	}
+	// LimitReader hard-bounds the total bytes read to the tail window, so no
+	// single line (up to lineCap) can pull the scan past the cap.
+	br := bufio.NewReaderSize(io.LimitReader(f, maxRolloutScanBytes), 1<<20)
+	if start > 0 {
+		// A non-zero seek almost certainly landed mid-record; drop the partial
+		// first line so we only parse whole JSONL records.
+		_, _ = readLine(br)
+	}
+
+	scanJSONLines(ctx, br, func(line []byte) {
 		var rec struct {
 			Type    string `json:"type"`
 			Payload struct {
@@ -316,29 +347,24 @@ func openRegularFile(path string) (*os.File, bool) {
 	return f, true
 }
 
-// scanJSONLines calls fn for each newline-delimited record in r, tolerating
-// arbitrarily long lines up to lineCap (longer lines are skipped). It never
-// returns an error: a truncated tail simply yields fewer records. It aborts
-// early on a cancelled ctx (checked every line) and once it has consumed
-// maxRolloutScanBytes, so a huge or continuously-appended rollout can never
-// ignore cancellation or read unboundedly.
-func scanJSONLines(ctx context.Context, r io.Reader, fn func(line []byte)) {
-	br := bufio.NewReaderSize(r, 1<<20)
-	var scanned int64
+// scanJSONLines calls fn for each newline-delimited record read from br,
+// tolerating arbitrarily long lines up to lineCap (longer lines are skipped). It
+// never returns an error: a truncated tail simply yields fewer records. It
+// aborts early on a cancelled ctx (checked every line). Total bytes are bounded
+// by the caller, which wraps the file in an io.LimitReader over the tail window,
+// so a huge or continuously-appended rollout can neither ignore cancellation nor
+// read unboundedly.
+func scanJSONLines(ctx context.Context, br *bufio.Reader, fn func(line []byte)) {
 	for {
 		if ctx.Err() != nil {
 			return
 		}
 		line, err := readLine(br)
-		scanned += int64(len(line)) + 1 // +1 approximates the consumed newline
 		if len(line) > 0 {
 			fn(line)
 		}
 		if err != nil {
 			return
-		}
-		if scanned > maxRolloutScanBytes {
-			return // truncate: past the per-file byte cap
 		}
 	}
 }
