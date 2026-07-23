@@ -225,9 +225,11 @@ describe("useWorkspaceQuery", () => {
 		const { result } = renderHook(() => useWorkspaceQuery(), { wrapper });
 		await waitFor(() => expect(result.current.isSuccess).toBe(true));
 
-		const [workspace] = result.current.data ?? [];
-		expect(workspace.sessions).toHaveLength(1);
-		expect(workspace.sessions[0]).toMatchObject({
+		const workspaces = result.current.data ?? [];
+		expect(workspaces.map((workspace) => workspace.id)).toEqual(["proj-1", "fleet"]);
+		expect(workspaces[0].sessions).toEqual([]);
+		expect(workspaces[1].sessions).toHaveLength(1);
+		expect(workspaces[1].sessions[0]).toMatchObject({
 			id: "prime-1",
 			workspaceId: "fleet",
 			workspaceName: "AO Fleet",

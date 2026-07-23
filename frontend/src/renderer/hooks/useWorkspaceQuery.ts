@@ -65,9 +65,7 @@ async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
 	const projectlessPrimeSessions = sessions
 		.filter((session) => !session.projectId && toSessionKind(session.kind) === "prime")
 		.map((session) => toWorkspaceSession(session, FLEET_WORKSPACE_ID, "AO Fleet"));
-	if (projectlessPrimeSessions.length > 0 && workspaces.length > 0) {
-		workspaces[0] = { ...workspaces[0], sessions: [...workspaces[0].sessions, ...projectlessPrimeSessions] };
-	} else if (projectlessPrimeSessions.length > 0) {
+	if (projectlessPrimeSessions.length > 0) {
 		workspaces.push({
 			id: FLEET_WORKSPACE_ID,
 			name: "AO Fleet",

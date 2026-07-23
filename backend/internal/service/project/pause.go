@@ -97,6 +97,9 @@ func (m *Service) SetFleetPaused(ctx context.Context, paused, hard bool) error {
 			failed++
 		}
 	}
+	if err := m.hardDrainProjectlessPrime(ctx); err != nil {
+		failed++
+	}
 	if failed > 0 {
 		return apierr.Internal("FLEET_HARD_PAUSE_FAILED", "Failed to terminate live sessions for some projects")
 	}
@@ -159,6 +162,26 @@ func (m *Service) hardDrain(ctx context.Context, id domain.ProjectID, includeOrc
 		// Best-effort: one worker's Kill failure must not leave the rest of the
 		// scope's live workers running. Attempt every eligible session and report
 		// the aggregate.
+		if _, err := m.sessions.Kill(ctx, s.ID); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
+func (m *Service) hardDrainProjectlessPrime(ctx context.Context) error {
+	if m.sessions == nil {
+		return nil
+	}
+	sessions, err := m.store.ListAllSessions(ctx)
+	if err != nil {
+		return err
+	}
+	var errs []error
+	for _, s := range sessions {
+		if s.ProjectID != "" || s.Kind != domain.KindPrime || s.IsTerminated {
+			continue
+		}
 		if _, err := m.sessions.Kill(ctx, s.ID); err != nil {
 			errs = append(errs, err)
 		}
