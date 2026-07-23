@@ -2,14 +2,16 @@
 	"name": "agent-orchestrator",
 	"private": true,
 	"scripts": {
-		"lint": "cd backend && go test ./... && go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2 run --path-mode=abs",
+		"lint": "(cd backend && go test ./...) && bash scripts/ci/golangci.sh",
+		"format:check": "bash scripts/ci/format-check.sh",
+		"ci-local": "bash scripts/ci/ci-local.sh",
+		"hooks:install": "git config core.hooksPath .githooks",
 		"frontend:typecheck": "npm --prefix frontend run typecheck",
 		"test:ops": "node --test ops/*.test.mjs",
 		"sqlc": "cd backend && go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 generate",
 		"api:spec": "cd backend && go generate ./internal/httpd/apispec/...",
 		"api:ts": "openapi-typescript backend/internal/httpd/apispec/openapi.yaml -o frontend/src/api/schema.ts",
 		"api": "npm run api:spec && npm run api:ts",
-		"test:ops": "node --test ops/*.test.mjs",
 		"agents": "bash scripts/polyscribe.sh",
 		"agents:check": "bash scripts/polyscribe.sh --check",
 		"agents:system": "bash scripts/polyscribe.sh --system"

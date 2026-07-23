@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+#
+# Pre-push gate — runs the local CI-parity checks before a push is allowed, so
+# format/lint violations are caught locally instead of on a remote CI round-trip.
+#
+# Enable:      npm run hooks:install   (points core.hooksPath at .githooks)
+# Bypass once: git push --no-verify
+exec npm run ci-local
