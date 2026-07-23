@@ -99,6 +99,58 @@ describe("ModelAvailabilityField", () => {
 		expect(onRefresh).toHaveBeenCalledOnce();
 	});
 
+	it("hides advisory status in actionable mode but keeps unreachable warnings", () => {
+		const unreachableAvailability: AgentModelAvailabilityResponse = {
+			...availability,
+			harnesses: availability.harnesses.map((harness) =>
+				harness.id === "codex-fugu"
+					? {
+							...harness,
+							models: [
+								...harness.models,
+								{
+									model: "retired-model",
+									label: "Retired model",
+									efforts: ["high"],
+									defaultEffort: "high",
+									verified: false,
+									status: "unreachable" as const,
+									reason: "model rejected by provider",
+								},
+							],
+						}
+					: harness,
+			),
+		};
+		const { rerender } = render(
+			<ModelAvailabilityField
+				id="worker-model"
+				label="Worker model"
+				value={{ harness: "codex-fugu", model: "fugu", effort: "xhigh" }}
+				onChange={vi.fn()}
+				availability={unreachableAvailability}
+				statusVisibility="actionable"
+			/>,
+		);
+
+		expect(screen.queryByText(/Status: unknown/i)).not.toBeInTheDocument();
+		expect(screen.queryByText(/not probed/i)).not.toBeInTheDocument();
+
+		rerender(
+			<ModelAvailabilityField
+				id="worker-model"
+				label="Worker model"
+				value={{ harness: "codex-fugu", model: "retired-model", effort: "high" }}
+				onChange={vi.fn()}
+				availability={unreachableAvailability}
+				statusVisibility="actionable"
+			/>,
+		);
+
+		expect(screen.getByText(/Status: unreachable/i)).toBeInTheDocument();
+		expect(screen.getByText(/model rejected by provider/i)).toBeInTheDocument();
+	});
+
 	it("contains a rejected refresh so the last successful catalog remains usable", async () => {
 		const onRefresh = vi.fn().mockRejectedValue(new Error("refresh unavailable"));
 		render(
