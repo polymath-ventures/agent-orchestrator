@@ -156,6 +156,11 @@ type HarnessQuotaProber struct {
 // blocking or panicking on malformed local state.
 type AgentQuotaProber interface {
 	ProbeQuota(ctx context.Context, observedAt time.Time) (QuotaProbeResult, error)
+	// QuotaHarness is the canonical harness the probe reports usage under. It is
+	// usually the adapter's own harness, but fork variants that share a login and
+	// usage pool report the base harness (codex-fugu → codex) so the daemon
+	// collapses them into one status instead of duplicating identical data.
+	QuotaHarness() domain.AgentHarness
 }
 
 // AgentPromptReadinessProvider is an optional capability for interactive

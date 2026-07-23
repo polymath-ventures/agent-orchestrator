@@ -46,9 +46,12 @@ var usageLineRe = regexp.MustCompile(`(?i)^\s*(.+?):\s*([0-9]+(?:\.[0-9]+)?)\s*%
 // " (UTC)" from a reset substring before it is parsed.
 var usageTZSuffixRe = regexp.MustCompile(`\s*\([^)]*\)\s*$`)
 
-// resetLayout is the Go reference layout for a yearless Claude reset stamp such
-// as "Jul 27, 5:59pm". The year is supplied from observedAt after parsing.
-const resetLayout = "Jan 2, 3:04pm"
+// resetLayouts are the Go reference layouts for a yearless Claude reset stamp.
+// Claude renders the time with minutes ("Jul 23, 3:50pm") on the session window
+// but drops them on a whole-hour weekly reset ("Jul 27, 6pm"), so both forms
+// must parse. The year is supplied from observedAt after parsing. Layouts are
+// tried in order; the first that parses wins.
+var resetLayouts = []string{"Jan 2, 3:04pm", "Jan 2, 3pm"}
 
 // parseClaudeUsage turns the human-readable output of `claude -p /usage` into
 // quota snapshots. It performs no I/O and never panics on malformed input:
@@ -111,7 +114,13 @@ func trimCurrentPrefix(label string) string {
 // December → January boundary). An unparseable stamp yields the zero time.
 func parseResetTime(reset string, observedAt time.Time) time.Time {
 	reset = strings.TrimSpace(usageTZSuffixRe.ReplaceAllString(reset, ""))
-	parsed, err := time.ParseInLocation(resetLayout, reset, time.UTC)
+	var parsed time.Time
+	var err error
+	for _, layout := range resetLayouts {
+		if parsed, err = time.ParseInLocation(layout, reset, time.UTC); err == nil {
+			break
+		}
+	}
 	if err != nil {
 		return time.Time{}
 	}
@@ -162,6 +171,10 @@ func scrubProbeEnv() []string {
 // cancelled/timed-out context, or output that yields no snapshots all surface as
 // a failed result carrying a short, sanitized reason — never a panic and never a
 // silent ok.
+// QuotaHarness reports the canonical harness this probe's usage belongs to —
+// claude-code has no fork variant sharing its pool, so it is simply itself.
+func (p *Plugin) QuotaHarness() domain.AgentHarness { return domain.HarnessClaudeCode }
+
 func (p *Plugin) ProbeQuota(ctx context.Context, observedAt time.Time) (ports.QuotaProbeResult, error) {
 	binary, err := p.claudeBinary(ctx)
 	if err != nil {

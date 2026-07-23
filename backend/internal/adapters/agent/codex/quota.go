@@ -31,6 +31,13 @@ import (
 // snapshots — the source works, there is just nothing trustworthy to report yet.
 // That is deliberately NOT a failure, which is reserved for a real error such as
 // a cancelled context.
+// QuotaHarness reports the canonical harness this probe's usage belongs to.
+// Both plain Codex and Codex Fugu share one CODEX_HOME and one usage pool, so
+// both report domain.HarnessCodex — the daemon collapses them into a single
+// combined codex status rather than duplicating identical data under a
+// codex-fugu chip.
+func (p *Plugin) QuotaHarness() domain.AgentHarness { return domain.HarnessCodex }
+
 func (p *Plugin) ProbeQuota(ctx context.Context, observedAt time.Time) (ports.QuotaProbeResult, error) {
 	if err := ctx.Err(); err != nil {
 		return ports.QuotaProbeResult{}, err

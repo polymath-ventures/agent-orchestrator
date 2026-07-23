@@ -15,8 +15,9 @@ import (
 // fakeProber is an in-test AgentQuotaProber returning a fixed result, recording
 // call count and observing concurrency with itself.
 type fakeProber struct {
-	result ports.QuotaProbeResult
-	err    error
+	result  ports.QuotaProbeResult
+	err     error
+	harness domain.AgentHarness // reported by QuotaHarness; the prober keys on the enumerator's Harness, so this is only for interface satisfaction
 
 	mu       sync.Mutex
 	calls    int
@@ -24,6 +25,8 @@ type fakeProber struct {
 	maxSeen  int
 	hold     chan struct{} // when non-nil, ProbeQuota blocks until closed
 }
+
+func (f *fakeProber) QuotaHarness() domain.AgentHarness { return f.harness }
 
 func (f *fakeProber) ProbeQuota(ctx context.Context, _ time.Time) (ports.QuotaProbeResult, error) {
 	f.mu.Lock()

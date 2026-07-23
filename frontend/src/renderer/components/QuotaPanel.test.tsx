@@ -65,29 +65,38 @@ describe("QuotaPanel", () => {
 
 	it("renders ok+data inline with used percent, reset time, and an inventory label", async () => {
 		seed({
-			probeStatuses: [{ harness: "claude-code", state: "ok", hasData: true, probedAt: "2026-07-20T19:00:00Z" }],
-			quotas: [
+			probeStatuses: [
 				{
 					harness: "claude-code",
-					accountId: "acct",
-					windowName: "weekly (all models)",
-					used: 45,
-					limit: 100,
-					signalQuality: "exact",
-					source: "probe",
-					windowEnd: "2026-07-25T15:00:00Z",
-					observedAt: "2026-07-20T19:00:00Z",
-				},
-				{
-					harness: "claude-code",
-					accountId: "acct",
-					windowName: "session",
-					used: 12,
-					limit: 100,
-					signalQuality: "exact",
-					source: "probe",
-					windowEnd: "2026-07-20T21:00:00Z",
-					observedAt: "2026-07-20T19:00:00Z",
+					state: "ok",
+					hasData: true,
+					probedAt: "2026-07-20T19:00:00Z",
+					// The widget renders directly from the status's snapshots (no dependence
+					// on the separately-refreshed latest.quotas), so seed them here.
+					snapshots: [
+						{
+							harness: "claude-code",
+							accountId: "acct",
+							windowName: "weekly (all models)",
+							used: 45,
+							limit: 100,
+							signalQuality: "exact",
+							source: "probe",
+							windowEnd: "2026-07-25T15:00:00Z",
+							observedAt: "2026-07-20T19:00:00Z",
+						},
+						{
+							harness: "claude-code",
+							accountId: "acct",
+							windowName: "session",
+							used: 12,
+							limit: 100,
+							signalQuality: "exact",
+							source: "probe",
+							windowEnd: "2026-07-20T21:00:00Z",
+							observedAt: "2026-07-20T19:00:00Z",
+						},
+					],
 				},
 			],
 		});

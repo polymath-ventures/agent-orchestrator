@@ -91,6 +91,52 @@ func TestParseClaudeUsageThreeLineExample(t *testing.T) {
 	}
 }
 
+// TestParseClaudeUsageRealFormatWholeHourReset uses the verbatim output of the
+// installed `claude -p /usage` (claude 2.1.218), which surrounds the three usage
+// lines with prose and renders a whole-hour weekly reset WITHOUT minutes
+// ("Jul 27, 6pm"). The minutes-less stamp regressed to a zero WindowEnd on the
+// headline window (GH #97 end-to-end finding); this locks the fix in and proves
+// the prose lines are skipped.
+func TestParseClaudeUsageRealFormatWholeHourReset(t *testing.T) {
+	observedAt := time.Date(2026, time.July, 23, 14, 0, 0, 0, time.UTC)
+	raw := "You are currently using your subscription to power your Claude Code usage\n" +
+		"\n" +
+		"Current session: 19% used · resets Jul 23, 3:50pm (UTC)\n" +
+		"Current week (all models): 44% used · resets Jul 27, 6pm (UTC)\n" +
+		"Current week (Fable): 42% used · resets Jul 27, 6pm (UTC)\n" +
+		"\n" +
+		"What's contributing to your limits usage?\n" +
+		"Last 24h · 555 requests · 8 sessions\n"
+
+	snaps := parseClaudeUsage(raw, observedAt)
+	if len(snaps) != 3 {
+		t.Fatalf("expected 3 usage snapshots (prose lines skipped), got %d: %+v", len(snaps), snaps)
+	}
+
+	byName := map[string]domain.QuotaSnapshot{}
+	for _, s := range snaps {
+		byName[s.WindowName] = s
+	}
+	head, ok := byName["week (all models)"]
+	if !ok {
+		t.Fatalf("missing 'week (all models)' headline window: %+v", snaps)
+	}
+	if got := derefFloat(t, head.Used); got != 44 {
+		t.Errorf("headline Used = %v, want 44", got)
+	}
+	// The whole-hour "6pm" must parse to 18:00 UTC on Jul 27 — not a zero time.
+	if head.WindowEnd.IsZero() {
+		t.Fatal("headline WindowEnd is zero — the minutes-less '6pm' reset failed to parse")
+	}
+	if head.WindowEnd.Month() != time.July || head.WindowEnd.Day() != 27 || head.WindowEnd.Hour() != 18 || head.WindowEnd.Minute() != 0 {
+		t.Errorf("headline WindowEnd = %v, want 2026-07-27 18:00 UTC", head.WindowEnd)
+	}
+	// The minutes-bearing session stamp must still parse (3:50pm → 15:50).
+	if sess := byName["session"]; sess.WindowEnd.Hour() != 15 || sess.WindowEnd.Minute() != 50 {
+		t.Errorf("session WindowEnd = %v, want 15:50", sess.WindowEnd)
+	}
+}
+
 func TestParseClaudeUsageGarbageResetKeepsSnapshot(t *testing.T) {
 	observedAt := time.Date(2026, time.July, 23, 15, 0, 0, 0, time.UTC)
 	raw := "Current session: 8% used · resets NotADate (UTC)\n"

@@ -29,7 +29,6 @@ export function QuotaPanel() {
 	// The prober owns the authoritative harness set; nothing to show without it.
 	if (statuses.length === 0) return null;
 
-	const quotas = metrics.data?.latest?.quotas ?? [];
 	const labelFor = (harness: string): string => {
 		const inventory = [...(agents.data?.installed ?? []), ...(agents.data?.supported ?? [])];
 		return inventory.find((agent) => agent.id === harness)?.label ?? harness;
@@ -74,7 +73,7 @@ export function QuotaPanel() {
 							key={status.harness}
 							status={status}
 							label={labelFor(status.harness)}
-							snapshots={quotas.filter((quota) => quota.harness === status.harness)}
+							snapshots={status.snapshots ?? []}
 							probe={probe}
 						/>
 					))}

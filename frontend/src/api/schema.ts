@@ -1154,6 +1154,7 @@ export interface components {
             /** Format: date-time */
             probedAt?: string;
             reason?: string;
+            snapshots?: components["schemas"]["QuotaSnapshot"][];
             state: string;
         };
         ImportReport: {

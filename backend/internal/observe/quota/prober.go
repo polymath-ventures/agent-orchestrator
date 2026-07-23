@@ -178,11 +178,12 @@ func (p *Prober) probe(ctx context.Context, hp ports.HarnessQuotaProber) domain.
 	}
 
 	return p.record(domain.HarnessQuotaStatus{
-		Harness:  hp.Harness,
-		State:    result.State,
-		Reason:   result.Reason,
-		ProbedAt: now,
-		HasData:  len(result.Snapshots) > 0,
+		Harness:   hp.Harness,
+		State:     result.State,
+		Reason:    result.Reason,
+		ProbedAt:  now,
+		HasData:   len(result.Snapshots) > 0,
+		Snapshots: result.Snapshots,
 	})
 }
 

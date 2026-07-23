@@ -2891,6 +2891,10 @@ components:
           type: string
         reason:
           type: string
+        snapshots:
+          items:
+            $ref: '#/components/schemas/QuotaSnapshot'
+          type: array
         state:
           type: string
       required:

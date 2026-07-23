@@ -132,4 +132,8 @@ type HarnessQuotaStatus struct {
 	// windows. It lets the widget distinguish ok-with-data from ok-but-empty
 	// ("no usage recorded yet") without inspecting the snapshot list.
 	HasData bool `json:"hasData"`
+	// Snapshots carries this harness's usage windows from the latest successful
+	// probe, so the widget renders directly from the status without waiting on
+	// the separate metrics tick that refreshes persisted snapshots for alerting.
+	Snapshots []QuotaSnapshot `json:"snapshots,omitempty"`
 }
