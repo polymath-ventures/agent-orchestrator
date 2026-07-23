@@ -738,6 +738,80 @@ paths:
       summary: Fetch one orchestrator session
       tags:
       - sessions
+  /api/v1/prime/prompt:
+    get:
+      operationId: getPrimePrompt
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ControllersRolePromptResponse'
+          description: OK
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+      summary: Render the exact assembled fleet Prime system prompt
+      tags:
+      - prime
+  /api/v1/prime/settings:
+    get:
+      operationId: getPrimeSettings
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PrimeSettingsView'
+          description: OK
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+      summary: Read daemon-global fleet Prime settings
+      tags:
+      - prime
+    put:
+      operationId: setPrimeSettings
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ControllersPrimeSettingsRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PrimeSettingsView'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+      summary: Replace daemon-global fleet Prime settings
+      tags:
+      - prime
   /api/v1/projects:
     get:
       operationId: listProjects
@@ -2475,6 +2549,13 @@ components:
       required:
       - paused
       type: object
+    ControllersPrimeSettingsRequest:
+      properties:
+        settings:
+          $ref: '#/components/schemas/DomainPrimeSettings'
+      required:
+      - settings
+      type: object
     ControllersRolePromptResponse:
       properties:
         prompt:
@@ -2712,6 +2793,27 @@ components:
       - model
       - status
       - reason
+      type: object
+    DomainPrimeSettings:
+      properties:
+        agent:
+          type: string
+        agentConfig:
+          $ref: '#/components/schemas/AgentConfig'
+        displayName:
+          type: string
+        enabled:
+          type: boolean
+        rules:
+          type: string
+        rulesFile:
+          type: string
+        wakeBackoff:
+          $ref: '#/components/schemas/DomainWakeBackoffConfig'
+        wakeInterval:
+          type: string
+      required:
+      - enabled
       type: object
     DomainReviewerConfig:
       properties:
@@ -3199,6 +3301,27 @@ components:
       - title
       - targetSha
       - status
+      type: object
+    PrimeLegacyEnvironment:
+      properties:
+        configured:
+          type: boolean
+        displayName:
+          type: string
+        projectId:
+          type: string
+      required:
+      - configured
+      type: object
+    PrimeSettingsView:
+      properties:
+        legacyEnvironment:
+          $ref: '#/components/schemas/PrimeLegacyEnvironment'
+        settings:
+          $ref: '#/components/schemas/DomainPrimeSettings'
+      required:
+      - settings
+      - legacyEnvironment
       type: object
     ProbeAgentResponse:
       properties:
@@ -4228,6 +4351,8 @@ tags:
   name: agents
 - description: Project registry, configuration, and lifecycle administration
   name: projects
+- description: Daemon-global fleet Prime settings and prompt inspection
+  name: prime
 - description: Agent session lifecycle and messaging
   name: sessions
 - description: Pull-request actions (SCM lane)

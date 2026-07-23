@@ -14,6 +14,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/envelope"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	prsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/pr"
+	primesvc "github.com/aoagents/agent-orchestrator/backend/internal/service/prime"
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
 	reviewsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/review"
 )
@@ -24,6 +25,7 @@ type APIDeps struct {
 	AgentModels        controllers.AgentModels
 	AgentModelPins     controllers.AgentModelPinProvider
 	AgentHealth        controllers.AgentHealthSnapshotProvider
+	Prime              *primesvc.Service
 	Projects           projectsvc.Manager
 	RolePrompt         controllers.RolePromptService
 	Sessions           controllers.SessionService
@@ -48,6 +50,7 @@ type APIDeps struct {
 type API struct {
 	cfg           config.Config
 	agents        *controllers.AgentsController
+	prime         *controllers.PrimeController
 	projects      *controllers.ProjectsController
 	rolePrompts   *controllers.RolePromptController
 	sessions      *controllers.SessionsController
@@ -72,6 +75,9 @@ func NewAPI(cfg config.Config, deps APIDeps) *API {
 			Models:    deps.AgentModels,
 			ModelPins: deps.AgentModelPins,
 			Health:    deps.AgentHealth,
+		},
+		prime: &controllers.PrimeController{
+			Svc: deps.Prime,
 		},
 		projects: &controllers.ProjectsController{
 			Mgr: deps.Projects,
@@ -109,6 +115,7 @@ func (a *API) Register(root chi.Router) {
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.Timeout(timeout))
 			a.agents.Register(r)
+			a.prime.Register(r)
 			a.projects.Register(r)
 			a.rolePrompts.Register(r)
 			a.sessions.Register(r)

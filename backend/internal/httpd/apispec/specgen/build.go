@@ -17,6 +17,7 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/controllers"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/envelope"
+	primesvc "github.com/aoagents/agent-orchestrator/backend/internal/service/prime"
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
 )
 
@@ -59,6 +60,8 @@ func Build() ([]byte, error) {
 			"Supported and locally runnable agent adapters"),
 		*(&openapi31.Tag{Name: "projects"}).WithDescription(
 			"Project registry, configuration, and lifecycle administration"),
+		*(&openapi31.Tag{Name: "prime"}).WithDescription(
+			"Daemon-global fleet Prime settings and prompt inspection"),
 		*(&openapi31.Tag{Name: "sessions"}).WithDescription(
 			"Agent session lifecycle and messaging"),
 		*(&openapi31.Tag{Name: "prs"}).WithDescription(
@@ -331,6 +334,7 @@ type operation struct {
 func operations() []operation {
 	ops := append([]operation{}, eventOperations()...)
 	ops = append(ops, agentOperations()...)
+	ops = append(ops, primeOperations()...)
 	ops = append(ops, projectOperations()...)
 	ops = append(ops, sessionOperations()...)
 	ops = append(ops, prOperations()...)
@@ -342,6 +346,38 @@ func operations() []operation {
 	ops = append(ops, devOperations()...)
 	ops = append(ops, mobileOperations()...)
 	return ops
+}
+
+func primeOperations() []operation {
+	return []operation{
+		{
+			method: http.MethodGet, path: "/api/v1/prime/settings", id: "getPrimeSettings", tag: "prime",
+			summary: "Read daemon-global fleet Prime settings",
+			resps: []respUnit{
+				{http.StatusOK, primesvc.SettingsView{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPut, path: "/api/v1/prime/settings", id: "setPrimeSettings", tag: "prime",
+			summary: "Replace daemon-global fleet Prime settings",
+			reqBody: controllers.PrimeSettingsRequest{},
+			resps: []respUnit{
+				{http.StatusOK, primesvc.SettingsView{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodGet, path: "/api/v1/prime/prompt", id: "getPrimePrompt", tag: "prime",
+			summary: "Render the exact assembled fleet Prime system prompt",
+			resps: []respUnit{
+				{http.StatusOK, controllers.RolePromptResponse{}},
+				{http.StatusUnprocessableEntity, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+			},
+		},
+	}
 }
 
 func metricsOperations() []operation {

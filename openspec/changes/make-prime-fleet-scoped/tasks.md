@@ -27,12 +27,12 @@
 
 ## 3. API, CLI, and Generated Client
 
-- [ ] 3.1 Add daemon API DTOs and routes to read/update fleet Prime settings and
+- [x] 3.1 Add daemon API DTOs and routes to read/update fleet Prime settings and
       report legacy environment migration state.
-- [ ] 3.2 Add CLI controls backed by those routes, including enable/disable and
+- [x] 3.2 Add CLI controls backed by those routes, including enable/disable and
       a fleet-scoped Prime prompt inspection path.
-- [ ] 3.3 Update OpenAPI generation and the frontend TypeScript API schema.
-- [ ] 3.4 Add controller and CLI tests covering shared persistence, validation
+- [x] 3.3 Update OpenAPI generation and the frontend TypeScript API schema.
+- [x] 3.4 Add controller and CLI tests covering shared persistence, validation
       errors, and legacy env not re-enabling disabled Prime.
 
 ## 4. Frontend and Documentation
