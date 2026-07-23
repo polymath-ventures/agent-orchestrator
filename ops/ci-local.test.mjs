@@ -31,8 +31,11 @@ test("ci-local runs the format check before the slower go steps (fail cheap firs
 
 test("ci-local checks for its toolchain before running", () => {
 	const src = read("../scripts/ci/ci-local.sh");
-	assert.match(src, /need go/);
-	assert.match(src, /need node/);
+	// Everything the gate shells out to must be present up front, so a missing
+	// tool fails with a clear message instead of a confusing mid-gate error.
+	for (const tool of ["git", "go", "node", "npm", "npx"]) {
+		assert.match(src, new RegExp(`need ${tool}\\b`));
+	}
 });
 
 test("package.json wires the gate scripts", () => {

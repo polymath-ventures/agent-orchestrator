@@ -24,8 +24,10 @@ need() {
 		exit 1
 	}
 }
+need git
 need go
 need node
+need npm
 need npx
 
 run() {

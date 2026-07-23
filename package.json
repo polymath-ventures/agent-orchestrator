@@ -12,7 +12,6 @@
 		"api:spec": "cd backend && go generate ./internal/httpd/apispec/...",
 		"api:ts": "openapi-typescript backend/internal/httpd/apispec/openapi.yaml -o frontend/src/api/schema.ts",
 		"api": "npm run api:spec && npm run api:ts",
-		"test:ops": "node --test ops/*.test.mjs",
 		"agents": "bash scripts/polyscribe.sh",
 		"agents:check": "bash scripts/polyscribe.sh --check",
 		"agents:system": "bash scripts/polyscribe.sh --system"
