@@ -70,3 +70,24 @@ test("mobile: settings route hides the topbar but still exposes the browser side
 	await expect(sheet).toBeVisible();
 	await expect(projectsLabel).toBeVisible();
 });
+
+test("mobile: first-launch welcome board (no projects) still exposes the browser sidebar opener", async ({ page }) => {
+	await installBrowserModeApiFixtures(page);
+	// Empty the projects list so "/" resolves to the first-launch welcome board —
+	// a distinct hideShellTopbar predicate (isWelcomeBoard) from settings, and the
+	// canonical first-run mobile surface for GH #54. A later route wins in
+	// Playwright, so this overrides the fixture's populated projects response.
+	await page.route("**/api/v1/projects", (route) => {
+		if (route.request().method() !== "GET") return route.fallback();
+		return route.fulfill({ json: { projects: [] } });
+	});
+	await page.goto("/");
+
+	await expect(page.locator(".dashboard-app-header")).toHaveCount(0);
+	await expect(page.locator(".titlebar-nav")).toHaveCount(0);
+
+	const toggle = page.getByRole("button", { name: "Open sidebar" });
+	await expect(toggle).toBeVisible();
+	await toggle.click();
+	await expect(page.getByRole("dialog")).toBeVisible();
+});
