@@ -52,11 +52,12 @@ func TestPrimeSettingsWithDefaultsPreservesConfiguredValues(t *testing.T) {
 
 func TestPrimeSettingsValidateRejectsBadValues(t *testing.T) {
 	for name, cfg := range map[string]PrimeSettings{
-		"unknown harness":   {Harness: "nope"},
-		"invalid effort":    {AgentConfig: AgentConfig{Effort: "turbo"}},
-		"bad wake interval": {WakeInterval: "-1m"},
-		"escaping rules":    {RulesFile: "../prime.md"},
-		"blank display":     {DisplayName: strings.Repeat(" ", 3)},
+		"unknown harness":         {Harness: "nope"},
+		"enabled without harness": {Enabled: true},
+		"invalid effort":          {AgentConfig: AgentConfig{Effort: "turbo"}},
+		"bad wake interval":       {WakeInterval: "-1m"},
+		"escaping rules":          {RulesFile: "../prime.md"},
+		"blank display":           {DisplayName: strings.Repeat(" ", 3)},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if err := cfg.Validate(); err == nil {

@@ -110,7 +110,6 @@ type Service struct {
 	clock               func() time.Time
 	dataDir             string
 	telemetry           ports.EventSink
-	primeDisplayName    string
 	orchestratorLocksMu sync.Mutex
 	orchestratorLocks   map[domain.ProjectID]*sync.Mutex
 	// signalCapable reports whether a harness has a hook pipeline that can
@@ -137,9 +136,6 @@ type Deps struct {
 	Clock     func() time.Time
 	DataDir   string
 	Telemetry ports.EventSink
-	// PrimeDisplayName is the optional fleet-scoped name for fresh prime
-	// sessions. The daemon resolves it from AO_PRIME_DISPLAY_NAME.
-	PrimeDisplayName string
 	// SignalCapable gates the no_signal status downgrade per harness; daemon
 	// wiring passes activitydispatch.SupportsHarness. Left nil, no session is
 	// ever downgraded to no_signal.
@@ -148,7 +144,7 @@ type Deps struct {
 
 // NewWithDeps wires a session service with optional PR-claim dependencies.
 func NewWithDeps(d Deps) *Service {
-	s := &Service{manager: d.Manager, store: d.Store, prClaimer: d.PRClaimer, scm: d.SCM, tracker: d.Tracker, clock: d.Clock, dataDir: d.DataDir, signalCapable: d.SignalCapable, telemetry: d.Telemetry, primeDisplayName: strings.TrimSpace(d.PrimeDisplayName)}
+	s := &Service{manager: d.Manager, store: d.Store, prClaimer: d.PRClaimer, scm: d.SCM, tracker: d.Tracker, clock: d.Clock, dataDir: d.DataDir, signalCapable: d.SignalCapable, telemetry: d.Telemetry}
 	if s.prClaimer == nil {
 		if w, ok := d.Store.(ports.PRClaimer); ok {
 			s.prClaimer = w
@@ -385,11 +381,6 @@ func (s *Service) SpawnPrime(ctx context.Context, projectID domain.ProjectID, cl
 	displayName := strings.TrimSpace(settings.DisplayName)
 	if displayName == "" {
 		displayName = domain.DefaultPrimeSettings().DisplayName
-	}
-	// Environment display name remains a compatibility override until the UI/API
-	// surfaces persisted settings everywhere.
-	if envName := strings.TrimSpace(s.primeDisplayName); envName != "" {
-		displayName = envName
 	}
 	sess, err := s.spawn(ctx, ports.SpawnConfig{
 		ProjectID:   "",

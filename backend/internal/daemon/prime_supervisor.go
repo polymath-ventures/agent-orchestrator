@@ -204,7 +204,10 @@ func ensurePrime(ctx context.Context, cfg primeSupervisorConfig, state *primeSup
 		return
 	}
 	settings, settingsOK := cfg.currentPrimeSettings(ctx)
-	if !settingsOK || !settings.Enabled {
+	if !settingsOK {
+		return
+	}
+	if !settings.Enabled {
 		if ok {
 			if err := sessions.RetirePrime(ctx, active.ID); err != nil {
 				cfg.Logger.Warn("prime supervisor: disable retire failed", "session", active.ID, "err", err)

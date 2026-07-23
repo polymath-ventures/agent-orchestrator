@@ -56,6 +56,9 @@ func (s PrimeSettings) Validate() error {
 	if s.Harness != "" && !s.Harness.IsKnown() {
 		return fmt.Errorf("agent: unknown harness %q", s.Harness)
 	}
+	if s.Enabled && s.Harness == "" {
+		return fmt.Errorf("agent: required when Prime is enabled")
+	}
 	if err := s.AgentConfig.Validate(); err != nil {
 		return err
 	}

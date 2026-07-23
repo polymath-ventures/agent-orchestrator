@@ -22,8 +22,8 @@ WHERE type = 'table' AND name = 'sessions';
 UPDATE sqlite_master
 SET sql = replace(
     sql,
-    'UNIQUE (project_id, num)' || char(10) || ')',
-    'UNIQUE (project_id, num),' || char(10) || '    CHECK (kind = ''prime'' OR (project_id IS NOT NULL AND project_id <> ''''))' || char(10) || ')'
+    'UNIQUE (project_id, num)',
+    'UNIQUE (project_id, num),' || char(10) || '    CHECK (kind = ''prime'' OR (project_id IS NOT NULL AND project_id <> ''''))'
 )
 WHERE type = 'table' AND name = 'sessions';
 -- +goose StatementEnd
@@ -48,8 +48,8 @@ PRAGMA writable_schema = ON;
 UPDATE sqlite_master
 SET sql = replace(
     sql,
-    'UNIQUE (project_id, num),' || char(10) || '    CHECK (kind = ''prime'' OR (project_id IS NOT NULL AND project_id <> ''''))' || char(10) || ')',
-    'UNIQUE (project_id, num)' || char(10) || ')'
+    'UNIQUE (project_id, num),' || char(10) || '    CHECK (kind = ''prime'' OR (project_id IS NOT NULL AND project_id <> ''''))',
+    'UNIQUE (project_id, num)'
 )
 WHERE type = 'table' AND name = 'sessions';
 -- +goose StatementEnd

@@ -1104,17 +1104,17 @@ func TestSpawnPrimeUsesFleetSettingsWithoutProject(t *testing.T) {
 	}
 }
 
-func TestSpawnPrimePassesConfiguredDisplayName(t *testing.T) {
+func TestSpawnPrimePassesPersistedDisplayName(t *testing.T) {
 	st := newFakeStore()
-	st.projects["ao"] = domain.ProjectRecord{ID: "ao"}
-	fc := &fakeCommander{spawnRecord: domain.SessionRecord{ID: "ao-prime", ProjectID: "ao", Kind: domain.KindPrime}}
-	svc := NewWithDeps(Deps{Manager: fc, Store: st, PrimeDisplayName: "AO Prime"})
+	st.prime = domain.PrimeSettings{DisplayName: "Saved Prime", Harness: domain.HarnessCodex}.WithDefaults()
+	fc := &fakeCommander{spawnRecord: domain.SessionRecord{ID: "ao-prime", ProjectID: "ao", Kind: domain.KindPrime, Harness: domain.HarnessCodex}}
+	svc := NewWithDeps(Deps{Manager: fc, Store: st})
 
 	if _, err := svc.SpawnPrime(context.Background(), "ao", true); err != nil {
 		t.Fatalf("SpawnPrime: %v", err)
 	}
-	if fc.spawnedCfg.DisplayName != "AO Prime" {
-		t.Fatalf("prime display name = %q, want AO Prime", fc.spawnedCfg.DisplayName)
+	if fc.spawnedCfg.DisplayName != "Saved Prime" {
+		t.Fatalf("prime display name = %q, want Saved Prime", fc.spawnedCfg.DisplayName)
 	}
 }
 

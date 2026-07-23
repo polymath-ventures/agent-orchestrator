@@ -368,6 +368,27 @@ func TestEnsurePrimeLogsAndContinuesOnLookupError(t *testing.T) {
 	}
 }
 
+func TestEnsurePrimeSkipsTickWhenSettingsUnreadable(t *testing.T) {
+	now := time.Date(2026, 7, 21, 10, 0, 0, 0, time.UTC)
+	sessions := &fakePrimeSessions{
+		active: primeSession("ao-prime", domain.StatusIdle, domain.ActivityIdle, now),
+		ok:     true,
+	}
+	cfg := testPrimeConfig(now)
+	cfg.PrimeSettings = func(context.Context) (domain.PrimeSettings, bool) {
+		return domain.PrimeSettings{}, false
+	}
+
+	ensurePrime(context.Background(), cfg, &primeSupervisorState{}, sessions, nil)
+
+	if sessions.retired != "" {
+		t.Fatalf("retired prime = %q, want no retire when settings are unreadable", sessions.retired)
+	}
+	if sessions.spawnCalls != 0 || len(sessions.sent) != 0 {
+		t.Fatalf("unreadable settings caused spawn=%d wake=%d, want skipped tick", sessions.spawnCalls, len(sessions.sent))
+	}
+}
+
 func testPrimeConfig(now time.Time) primeSupervisorConfig {
 	return primeSupervisorConfig{
 		Interval:        time.Millisecond,
