@@ -164,6 +164,29 @@ rebase when #98 lands.
    tests.
 6. Alerting regression coverage; full CI.
 
+## Phase 2 findings
+
+**codex-fugu shares CODEX_HOME with codex (verified).** Reading the codex
+adapter (`backend/internal/adapters/agent/codex/`), `NewFugu()` parameterizes
+only the binary name, manifest, and hook token; it never sets or overrides
+`CODEX_HOME`, and no launch/hook/env path in the package points fugu at a
+separate home (`grep -rn CODEX_HOME internal/` finds only the CLI extractor and
+comments). Fugu's own catalog read (`catalog.go readFuguCatalog`) loads
+`~/.codex/fugu.json`, confirming fugu treats `~/.codex` as its home. The
+codex-fugu binary is a wrapper around the same codex binary and writes its
+rollouts under the same `CODEX_HOME/sessions/**`.
+
+**Choice made: one combined codex chip.** `ProbeQuota` is implemented once on
+the shared `Plugin` type (`quota.go`), so both `New()` and `NewFugu()` satisfy
+`ports.AgentQuotaProber`. It resolves the home identically for both (env
+`CODEX_HOME` else `~/.codex`) and tags every snapshot with `domain.HarnessCodex`
+(the `codexrollout.RateLimits.Snapshots` parser hardcodes that harness). Because
+the two adapters therefore read the same pool and report identical
+codex-tagged data, the daemon/widget collapse them into a single codex signal;
+no separate `codex-fugu` chip carrying duplicate data is emitted. This is the
+simplest correct realization of the ticket decision default — it required no
+fugu-specific probe code and no home divergence to reconcile.
+
 ## Non-goals (per ticket)
 
 Per-account/multi-login tracking (#93 — schema must not preclude it;
