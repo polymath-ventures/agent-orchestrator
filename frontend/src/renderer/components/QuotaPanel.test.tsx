@@ -106,7 +106,8 @@ describe("QuotaPanel", () => {
 		// Label resolves from the agents inventory, not a hardcoded map.
 		expect(await screen.findByText("Claude Code")).toBeInTheDocument();
 		expect(screen.getByText(/45% used/)).toBeInTheDocument();
-		expect(screen.getByText(/45% used/).textContent).toMatch(/resets/);
+		// The reset renders on its own line (so the narrow sidebar can't clip it).
+		expect(screen.getAllByText(/^resets /).length).toBeGreaterThan(0);
 		// The session window renders as the smaller secondary line.
 		expect(screen.getByText(/session 12% used/)).toBeInTheDocument();
 	});
@@ -142,11 +143,13 @@ describe("QuotaPanel", () => {
 		const headline = await screen.findByText(/46% used/);
 		// The prominent line must NAME its window — no longer an anonymous "46% used".
 		expect(headline.textContent).toMatch(/weekly \(all models\)/);
-		// Reset must be dated: "3CharWeekday 3CharMonth DD HH:MM TZ" (24-hour), e.g. "Mon Jul 27 14:00 UTC".
+		// Reset must be dated: "3CharWeekday 3CharMonth DD HH:MM TZ" (24-hour), e.g. "Mon Jul 27 14:00 UTC",
+		// and rendered on its own line so the sidebar can't truncate the date away.
 		// TZ-robust: assert the SHAPE, so the runner's timezone doesn't pin the exact day/time.
-		expect(headline.textContent).toMatch(/resets [A-Z][a-z]{2} [A-Z][a-z]{2} \d{2} \d{2}:\d{2} \S+/);
+		const reset = screen.getByText(/^resets /);
+		expect(reset.textContent).toMatch(/^resets [A-Z][a-z]{2} [A-Z][a-z]{2} \d{2} \d{2}:\d{2} \S+$/);
 		// It must NOT render a bare 12-hour clock time like "2:00 PM".
-		expect(headline.textContent).not.toMatch(/\d{1,2}:\d{2}\s?(AM|PM)/i);
+		expect(reset.textContent).not.toMatch(/\d{1,2}:\d{2}\s?(AM|PM)/i);
 	});
 
 	it("omits the reset clause when windowEnd is missing or zero-valued — no 'Invalid Date'", async () => {

@@ -202,18 +202,20 @@ function WindowLine({ snapshot, prominent = false }: { snapshot: QuotaSnapshot; 
 	// used/limit are percentages (used 0–100); warn once ≤10% remains.
 	const low = used !== null && used >= 90;
 	const reset = formatReset(snapshot.windowEnd);
-	const name = prominent ? null : snapshot.windowName;
+	// Always name the window — the headline was previously anonymous ("46% used"),
+	// which hides WHICH limit (weekly vs session) the percentage measures.
+	const name = snapshot.windowName;
+	// The reset gets its OWN line rather than being appended to a `truncate`d
+	// line: in the narrow sidebar a one-liner clips the reset off the end, which
+	// is exactly the "resets 2:00 PM with no date" bug. Stacking guarantees both
+	// the named window (line 1) and the full dated reset (line 2) survive.
 	return (
-		<div
-			className={cn(
-				"truncate font-mono",
-				prominent ? "text-2xs text-foreground" : "text-micro text-passive",
-				low && "text-warning",
-			)}
-		>
-			{name ? `${name} ` : ""}
-			{used !== null ? `${used}% used` : "usage unknown"}
-			{reset ? ` · resets ${reset}` : ""}
+		<div className={cn("flex flex-col font-mono", low && "text-warning")}>
+			<span className={cn("truncate", prominent ? "text-2xs text-foreground" : "text-micro text-passive")}>
+				{name ? `${name} ` : ""}
+				{used !== null ? `${used}% used` : "usage unknown"}
+			</span>
+			{reset ? <span className="text-micro text-passive">resets {reset}</span> : null}
 		</div>
 	);
 }
@@ -279,11 +281,38 @@ function pickWindows(
 	return { headline: sorted[0], secondary: undefined };
 }
 
+/**
+ * Format a reset instant as `3CharWeekday 3CharMonth DD HH:MM TZ` in 24-hour
+ * local time, e.g. `Mon Jul 27 14:00 EDT`. Always dated — a bare clock time is
+ * ambiguous (a weekly reset days out reads as "today"), which is the whole bug
+ * this widget had. Assembled from `formatToParts` so the field order is fixed
+ * regardless of the runtime locale, and so a short timezone name is included.
+ * Returns null for a missing/zero/unparseable instant so the caller omits the
+ * clause instead of rendering "Invalid Date".
+ */
 function formatReset(value: string | undefined): string | null {
 	if (!value) return null;
 	const end = new Date(value);
 	if (Number.isNaN(end.getTime()) || end.getUTCFullYear() <= 1) return null;
-	return end.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+	const parts = new Intl.DateTimeFormat(undefined, {
+		weekday: "short",
+		month: "short",
+		day: "2-digit",
+		hour: "2-digit",
+		minute: "2-digit",
+		hour12: false,
+		timeZoneName: "short",
+	}).formatToParts(end);
+	const get = (type: Intl.DateTimeFormatPartTypes): string => parts.find((p) => p.type === type)?.value ?? "";
+	const weekday = get("weekday");
+	const month = get("month");
+	const day = get("day");
+	const hour = get("hour");
+	const minute = get("minute");
+	const tz = get("timeZoneName");
+	if (!weekday || !month || !day || !hour || !minute) return null;
+	const stamp = `${weekday} ${month} ${day} ${hour}:${minute}`;
+	return tz ? `${stamp} ${tz}` : stamp;
 }
 
 function truncate(value: string | undefined): string {
