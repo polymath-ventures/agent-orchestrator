@@ -350,9 +350,9 @@ npm run ci-local
 
 It runs, fail-fast and cheapest-first: `format:check` (prettier `--check
 --ignore-unknown` on changed files, matching `.github/workflows/prettier.yml`),
-`gofmt`, `go build`, `go vet`, `npm run lint` (`go test` + golangci-lint pinned
-to the CI version v2.12.2, run via `go run` — no separate golangci install
-needed), and `npm run frontend:typecheck`. `npm run format:check` is the fast
+`gofmt`, `go build`, `go vet`, `go test -race ./...`, golangci-lint (pinned to
+the CI version v2.12.2, run via `go run` — no separate golangci install needed),
+and `npm run frontend:typecheck`. `npm run format:check` is the fast
 changed-files-only subset if you just need the format check.
 
 Optionally install it as a git `pre-push` hook (per-clone, opt-in) so it runs

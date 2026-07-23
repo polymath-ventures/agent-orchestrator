@@ -63,9 +63,38 @@ test("format-check gate passes when the changed files are formatted", () => {
 	}
 });
 
+test("format-check gate passes when nothing changed", () => {
+	const dir = setupRepo();
+	try {
+		// No working-tree edits and no reachable base ref → empty changed set →
+		// --no-run-if-empty makes this a clean pass, not an error.
+		const r = runGate(dir);
+		assert.equal(r.status, 0, `expected zero exit\nstdout:${r.stdout}\nstderr:${r.stderr}`);
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test("format-check treats a flag-looking filename as a path, not a Prettier option", () => {
+	const dir = setupRepo();
+	try {
+		// Without the `--` terminator, a changed file named like a flag would be
+		// parsed as a Prettier option (e.g. `--write` would mutate files). It must
+		// be checked as a path and flagged when unformatted.
+		writeFileSync(join(dir, "--weird.md"), "# Title\n\n\n\nBody\n");
+		git(dir, "add", "--", "--weird.md");
+		const r = runGate(dir);
+		assert.notEqual(r.status, 0, `expected non-zero exit\nstdout:${r.stdout}\nstderr:${r.stderr}`);
+		assert.match(r.stdout + r.stderr, /weird\.md/);
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
 test("format-check mirrors the prettier CI job command shape", () => {
 	const src = readFileSync(scriptPath, "utf8");
 	assert.match(src, /prettier@3/);
 	assert.match(src, /--check/);
 	assert.match(src, /--ignore-unknown/);
+	assert.match(src, /--ignore-unknown --$/m); // option terminator before paths
 });

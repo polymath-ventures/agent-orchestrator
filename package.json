@@ -2,7 +2,7 @@
 	"name": "agent-orchestrator",
 	"private": true,
 	"scripts": {
-		"lint": "cd backend && go test ./... && GOLANGCI_LINT_CACHE=\"$PWD/.cache/golangci-lint\" go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2 run --path-mode=abs",
+		"lint": "(cd backend && go test ./...) && bash scripts/ci/golangci.sh",
 		"format:check": "bash scripts/ci/format-check.sh",
 		"ci-local": "bash scripts/ci/ci-local.sh",
 		"hooks:install": "git config core.hooksPath .githooks",

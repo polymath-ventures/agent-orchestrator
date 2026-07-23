@@ -37,19 +37,20 @@ run() {
 # 1. Prettier format parity (.github/workflows/prettier.yml) — changed files only.
 run "format (prettier, changed files)" bash scripts/ci/format-check.sh
 
-# 2-4. Backend build-test job (.github/workflows/go.yml): gofmt, build, vet.
+# 2-5. Backend build-test job (.github/workflows/go.yml): gofmt, build, vet, and
+# `go test -race ./...`. Use -race to match CI exactly — a data race that CI's
+# race detector would catch must not pass this gate and waste the round-trip.
 run "gofmt" bash -c 'cd backend && unformatted=$(gofmt -l .); if [ -n "$unformatted" ]; then echo "these files need gofmt:"; echo "$unformatted"; exit 1; fi'
 run "go build" bash -c 'cd backend && go build ./...'
 run "go vet" bash -c 'cd backend && go vet ./...'
+run "go test -race" bash -c 'cd backend && go test -race ./...'
 
-# 5. Lint job (.github/workflows/go.yml) + go test. `npm run lint` is the single
-# source of the golangci-lint pin (v2.12.2, matching the CI action) and points
-# golangci at a per-worktree cache so absolute paths cached by a sibling worktree
-# (later removed) can't leak stale gen/*.sql.go issues — the noise CI never sees
-# because it starts from an empty cache. Kept single-sourced so it never drifts.
-run "go test + golangci-lint (npm run lint)" npm run lint
+# 6. Lint job (.github/workflows/go.yml). scripts/ci/golangci.sh is the single
+# source of the golangci-lint pin (v2.12.2, matching the CI action) and the
+# per-worktree cache; `npm run lint` uses the same script, so they never drift.
+run "golangci-lint" bash scripts/ci/golangci.sh
 
-# 6. Frontend typecheck (.github/workflows/frontend.yml).
+# 7. Frontend typecheck (.github/workflows/frontend.yml).
 run "frontend typecheck" npm run frontend:typecheck
 
 printf '\n\xe2\x9c\x93 local CI-parity gate passed\n'

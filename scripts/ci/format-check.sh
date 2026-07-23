@@ -33,4 +33,6 @@ changed_files() {
 
 # sort -zu de-duplicates the union; --no-run-if-empty means "no changed files"
 # is a clean pass. pipefail propagates a non-zero prettier exit as our exit.
-changed_files | sort -zu | xargs -0 --no-run-if-empty npx --yes prettier@3 --check --ignore-unknown
+# The `--` terminator stops option parsing so a changed file whose name looks
+# like a flag (e.g. `--write`) is treated as a path, never a Prettier option.
+changed_files | sort -zu | xargs -0 --no-run-if-empty npx --yes prettier@3 --check --ignore-unknown --
