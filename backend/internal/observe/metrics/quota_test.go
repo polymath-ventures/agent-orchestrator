@@ -27,6 +27,28 @@ func (f *fakeQuotaStore) ListLatestQuotaSnapshots(context.Context) ([]domain.Quo
 	return append([]domain.QuotaSnapshot(nil), f.rows...), nil
 }
 
+// TestStoreQuotaCollectorDoesNotFabricatePlaceholders reproduces GH #97: on a
+// fresh system with no probed data, the collector must not fabricate
+// "unknown / no signal / none" placeholder rows. Quota is a property of the
+// harness login discovered by daemon probes, not something the collector
+// invents on every tick. An empty store must yield an empty result and no
+// writes.
+func TestStoreQuotaCollectorDoesNotFabricatePlaceholders(t *testing.T) {
+	store := &fakeQuotaStore{}
+	observedAt := time.Date(2026, 7, 23, 12, 0, 0, 0, time.UTC)
+
+	rows, err := NewStoreQuotaCollector(store).CollectQuota(context.Background(), observedAt)
+	if err != nil {
+		t.Fatalf("CollectQuota returned error: %v", err)
+	}
+	if len(rows) != 0 {
+		t.Fatalf("empty store must yield no quota rows, got %d: %+v", len(rows), rows)
+	}
+	if len(store.rows) != 0 {
+		t.Fatalf("collector must not write placeholder rows, store has %d: %+v", len(store.rows), store.rows)
+	}
+}
+
 func TestStoreQuotaCollectorRecordsNoSignalForSubscriptionHarnesses(t *testing.T) {
 	store := &fakeQuotaStore{}
 	observedAt := time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC)
