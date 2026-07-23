@@ -8,7 +8,12 @@ import {
 	MAX_SEARCH_RESULTS,
 	type CommandItem,
 } from "./command-palette";
-import type { PullRequestFacts, WorkspaceSession, WorkspaceSummary } from "../types/workspace";
+import {
+	FLEET_WORKSPACE_ID,
+	type PullRequestFacts,
+	type WorkspaceSession,
+	type WorkspaceSummary,
+} from "../types/workspace";
 
 function session(overrides: Partial<WorkspaceSession> & { id: string }): WorkspaceSession {
 	return {
@@ -76,6 +81,29 @@ describe("buildCommands grouping", () => {
 		expect(newTask?.action).toBeUndefined();
 		expect(byId(items).has("current-open-orchestrator")).toBe(false);
 		expect(byId(items).has("current-project-settings")).toBe(false);
+	});
+
+	it("does not treat the fleet session container as a project", () => {
+		const items = buildCommands({
+			workspaces: [
+				{
+					id: FLEET_WORKSPACE_ID,
+					name: "AO Fleet",
+					path: "",
+					sessions: [
+						session({ id: "prime-1", workspaceId: FLEET_WORKSPACE_ID, workspaceName: "AO Fleet", kind: "prime" }),
+					],
+				},
+			],
+			currentProjectId: FLEET_WORKSPACE_ID,
+			currentSessionId: "prime-1",
+		});
+		const map = byId(items);
+
+		expect(map.get("current-new-task")?.disabledReason).toBe("No current project");
+		expect(map.has(`project:${FLEET_WORKSPACE_ID}`)).toBe(false);
+		expect(map.has("current-open-orchestrator")).toBe(false);
+		expect(map.has("current-project-settings")).toBe(false);
 	});
 
 	it("disables New task and Open orchestrator while the project orchestrator is restarting", () => {

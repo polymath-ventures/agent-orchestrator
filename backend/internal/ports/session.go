@@ -24,6 +24,7 @@ type SpawnConfig struct {
 	// on the session row, so the worker-mix census can group live sessions on
 	// (harness, model).
 	Model  string
+	Effort domain.Effort
 	Branch string
 	Prompt string
 

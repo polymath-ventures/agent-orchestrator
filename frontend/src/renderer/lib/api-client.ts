@@ -66,6 +66,8 @@ const ROUTE_TEMPLATES = [
 	"/api/v1/notifications/stream",
 	"/api/v1/orchestrators",
 	"/api/v1/orchestrators/{id}",
+	"/api/v1/prime/prompt",
+	"/api/v1/prime/settings",
 	"/api/v1/projects",
 	"/api/v1/projects/{id}",
 	"/api/v1/projects/{id}/config",

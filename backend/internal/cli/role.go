@@ -19,7 +19,7 @@ type rolePromptResult struct {
 // supportedRoles are the roles whose assembled prompt can be inspected. The CLI
 // validates against this set so an unknown role is a usage error (exit 2)
 // rather than a round trip to the daemon.
-var supportedRoles = map[string]bool{"worker": true, "orchestrator": true, "prime": true, "reviewer": true}
+var supportedRoles = map[string]bool{"worker": true, "orchestrator": true, "reviewer": true}
 
 func newRoleCommand(ctx *commandContext) *cobra.Command {
 	cmd := &cobra.Command{
@@ -37,7 +37,7 @@ func newRolePromptCommand(ctx *commandContext) *cobra.Command {
 		Short: "Print the exact assembled system prompt a role receives for a project",
 		Long: "Print the exact, fully-assembled system prompt an agent role receives for a " +
 			"project — the base scaffold plus every injected operator instruction source. " +
-			"Role is one of: worker, orchestrator, prime, reviewer.",
+			"Role is one of: worker, orchestrator, reviewer. For fleet Prime, use `ao prime prompt`.",
 		Args: func(cmd *cobra.Command, args []string) error {
 			if err := cobra.ExactArgs(2)(cmd, args); err != nil {
 				return usageError{err}
@@ -47,7 +47,7 @@ func newRolePromptCommand(ctx *commandContext) *cobra.Command {
 			}
 			role := strings.TrimSpace(args[1])
 			if !supportedRoles[role] {
-				return usageError{fmt.Errorf("usage: role must be one of worker, orchestrator, prime, reviewer (got %q)", args[1])}
+				return usageError{fmt.Errorf("usage: role must be one of worker, orchestrator, reviewer (got %q); for fleet Prime, use `ao prime prompt`", args[1])}
 			}
 			return nil
 		},

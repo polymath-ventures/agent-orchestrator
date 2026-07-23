@@ -302,11 +302,9 @@ describe("ProjectSettingsForm", () => {
 
 		const reviewerFile = await screen.findByLabelText("Reviewer rules file (repo-relative or absolute)");
 		expect(reviewerFile).toHaveValue("docs/review-rules.md");
-		expect(screen.getByLabelText("Prime rules")).toHaveValue("Prime the next task.");
-		expect(screen.getByLabelText("Prime rules file (repo-relative or absolute)")).toHaveValue("docs/prime-rules.md");
+		expect(screen.queryByLabelText("Prime rules")).not.toBeInTheDocument();
 
 		await userEvent.type(screen.getByLabelText("Orchestrator rules"), "Coordinate through workers.");
-		await userEvent.type(screen.getByLabelText("Prime rules"), " Keep context hot.");
 
 		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
 
@@ -314,7 +312,7 @@ describe("ProjectSettingsForm", () => {
 		const body = putMock.mock.calls[0][1].body.config;
 		expect(body.reviewerRulesFile).toBe("docs/review-rules.md");
 		expect(body.orchestratorRules).toBe("Coordinate through workers.");
-		expect(body.primeRules).toBe("Prime the next task. Keep context hot.");
+		expect(body.primeRules).toBe("Prime the next task.");
 		expect(body.primeRulesFile).toBe("docs/prime-rules.md");
 	}, 20_000);
 
@@ -345,8 +343,8 @@ describe("ProjectSettingsForm", () => {
 		renderSettings();
 
 		expect(await screen.findByText("ASSEMBLED WORKER PROMPT")).toBeInTheDocument();
-		await chooseOption(screen.getByRole("combobox", { name: "Role" }), "prime");
-		expect(await screen.findByText("ASSEMBLED PRIME PROMPT")).toBeInTheDocument();
+		await chooseOption(screen.getByRole("combobox", { name: "Role" }), "reviewer");
+		expect(await screen.findByText("ASSEMBLED REVIEWER PROMPT")).toBeInTheDocument();
 	}, 20_000);
 
 	it("labels the unconfigured reviewer as the cross-family default", async () => {
@@ -877,12 +875,12 @@ describe("ProjectSettingsForm", () => {
 		expect(await screen.findByRole("combobox", { name: "Project model harness" })).toHaveTextContent("codex-fugu");
 		expect(screen.getByRole("combobox", { name: "Default worker agent" })).toHaveTextContent("codex");
 		expect(screen.getByRole("combobox", { name: "Default orchestrator agent" })).toHaveTextContent("claude-code");
-		expect(screen.getByRole("combobox", { name: "Prime agent" })).toHaveTextContent("opencode");
+		expect(screen.queryByRole("combobox", { name: "Prime agent" })).not.toBeInTheDocument();
 		expect(screen.getByRole("combobox", { name: "Default reviewer agent" })).toHaveTextContent("codex");
 		expect(document.getElementById("project-model-model")).toHaveValue("fugu");
 		expect(document.getElementById("worker-model-model")).toHaveValue("gpt-5-codex");
 		expect(document.getElementById("orchestrator-model-model")).toHaveValue("opus");
-		expect(document.getElementById("prime-model-model")).toHaveValue("openai/gpt-5.4");
+		expect(document.getElementById("prime-model-model")).toBeNull();
 		expect(document.getElementById("reviewer-model-model")).toHaveValue("gpt-5-codex");
 
 		const projectHarness = screen.getByRole("combobox", { name: "Project model harness" });

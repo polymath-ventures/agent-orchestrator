@@ -122,8 +122,11 @@ func (w *Workspace) Create(ctx context.Context, cfg ports.WorkspaceConfig) (port
 	if err := validateConfig(cfg); err != nil {
 		return ports.WorkspaceInfo{}, err
 	}
-	repo, err := w.repoPath(cfg.ProjectID)
+	repo, err := w.repoPathForConfig(cfg)
 	if err != nil {
+		return ports.WorkspaceInfo{}, err
+	}
+	if err := w.ensureProjectlessPrimeRepo(ctx, repo, cfg); err != nil {
 		return ports.WorkspaceInfo{}, err
 	}
 	if err := w.validateBranch(ctx, repo, cfg.Branch); err != nil {
@@ -141,7 +144,7 @@ func (w *Workspace) Create(ctx context.Context, cfg ports.WorkspaceConfig) (port
 	if err := w.addWorktree(ctx, repo, path, cfg.Branch, cfg.BaseBranch); err != nil {
 		return ports.WorkspaceInfo{}, err
 	}
-	return ports.WorkspaceInfo{Path: path, Branch: cfg.Branch, SessionID: cfg.SessionID, ProjectID: cfg.ProjectID}, nil
+	return ports.WorkspaceInfo{Path: path, Branch: cfg.Branch, SessionID: cfg.SessionID, ProjectID: cfg.ProjectID, RepoPath: repo}, nil
 }
 
 // CreateWorkspaceProject materialises a root-as-repo workspace session: the
@@ -553,6 +556,9 @@ func (w *Workspace) Restore(ctx context.Context, cfg ports.WorkspaceConfig) (por
 	if err != nil {
 		return ports.WorkspaceInfo{}, err
 	}
+	if err := w.ensureProjectlessPrimeRepo(ctx, repo, cfg); err != nil {
+		return ports.WorkspaceInfo{}, err
+	}
 	path, err := w.restorePath(cfg)
 	if err != nil {
 		return ports.WorkspaceInfo{}, err
@@ -597,9 +603,46 @@ func (w *Workspace) existingWorktree(ctx context.Context, repo, path string, cfg
 		if branch == "" {
 			branch = cfg.Branch
 		}
-		return ports.WorkspaceInfo{Path: path, Branch: branch, SessionID: cfg.SessionID, ProjectID: cfg.ProjectID}, true, nil
+		return ports.WorkspaceInfo{Path: path, Branch: branch, SessionID: cfg.SessionID, ProjectID: cfg.ProjectID, RepoPath: repo}, true, nil
 	}
 	return ports.WorkspaceInfo{}, false, nil
+}
+
+func (w *Workspace) ensureProjectlessPrimeRepo(ctx context.Context, repo string, cfg ports.WorkspaceConfig) error {
+	if cfg.Kind != domain.KindPrime || cfg.ProjectID != "" {
+		return nil
+	}
+	if strings.TrimSpace(cfg.RepoPath) == "" {
+		return errors.New("gitworktree: repo path is required for projectless prime")
+	}
+	if _, err := w.run(ctx, w.binary, "-C", repo, "rev-parse", "--git-dir"); err == nil {
+		return nil
+	}
+	if err := os.MkdirAll(repo, 0o750); err != nil {
+		return fmt.Errorf("gitworktree: create projectless prime repo: %w", err)
+	}
+	if _, err := w.run(ctx, w.binary, "init", repo); err != nil {
+		return fmt.Errorf("gitworktree: init projectless prime repo: %w", err)
+	}
+	if _, err := w.run(ctx, w.binary, "-C", repo, "branch", "-M", firstNonEmpty(cfg.BaseBranch, w.defaultBranch)); err != nil {
+		return fmt.Errorf("gitworktree: configure projectless prime repo branch: %w", err)
+	}
+	if _, err := w.run(ctx, w.binary, "-C", repo, "config", "user.email", "ao@example.com"); err != nil {
+		return fmt.Errorf("gitworktree: configure projectless prime repo email: %w", err)
+	}
+	if _, err := w.run(ctx, w.binary, "-C", repo, "config", "user.name", "Ao Agents"); err != nil {
+		return fmt.Errorf("gitworktree: configure projectless prime repo user: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte(".ao-prime-workspace\n"), 0o600); err != nil {
+		return fmt.Errorf("gitworktree: seed projectless prime repo: %w", err)
+	}
+	if _, err := w.run(ctx, w.binary, "-C", repo, "add", ".gitignore"); err != nil {
+		return fmt.Errorf("gitworktree: stage projectless prime repo seed: %w", err)
+	}
+	if _, err := w.run(ctx, w.binary, "-C", repo, "commit", "-m", "Initialize AO Prime workspace"); err != nil {
+		return fmt.Errorf("gitworktree: commit projectless prime repo seed: %w", err)
+	}
+	return nil
 }
 
 func (w *Workspace) addWorktree(ctx context.Context, repo, path, branch, baseBranch string) error {
@@ -922,10 +965,13 @@ func physicalAbs(path string) (string, error) {
 
 func validateConfig(cfg ports.WorkspaceConfig) error {
 	if cfg.ProjectID == "" {
-		return errors.New("gitworktree: project id is required")
-	}
-	if err := validatePathComponent("project id", string(cfg.ProjectID)); err != nil {
-		return err
+		if cfg.Kind != domain.KindPrime || strings.TrimSpace(cfg.RepoPath) == "" {
+			return errors.New("gitworktree: project id is required")
+		}
+	} else {
+		if err := validatePathComponent("project id", string(cfg.ProjectID)); err != nil {
+			return err
+		}
 	}
 	if cfg.Kind == domain.KindOrchestrator {
 		prefix := resolvedSessionPrefix(cfg)
@@ -997,6 +1043,8 @@ func (w *Workspace) managedPath(cfg ports.WorkspaceConfig) (string, error) {
 	if cfg.Kind == domain.KindOrchestrator {
 		prefix := resolvedSessionPrefix(cfg)
 		path = filepath.Join(w.managedRoot, string(cfg.ProjectID), "orchestrator", prefix+"-orchestrator")
+	} else if cfg.Kind == domain.KindPrime && cfg.ProjectID == "" {
+		path = filepath.Join(w.managedRoot, "prime", string(cfg.SessionID))
 	} else {
 		path = filepath.Join(w.managedRoot, string(cfg.ProjectID), string(cfg.SessionID))
 	}

@@ -380,6 +380,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/prime/prompt": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Render the exact assembled fleet Prime system prompt */
+        get: operations["getPrimePrompt"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/prime/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read daemon-global fleet Prime settings */
+        get: operations["getPrimeSettings"];
+        /** Replace daemon-global fleet Prime settings */
+        put: operations["setPrimeSettings"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects": {
         parameters: {
             query?: never;
@@ -989,6 +1024,9 @@ export interface components {
         ControllersFleetStatusResponse: {
             paused: boolean;
         };
+        ControllersPrimeSettingsRequest: {
+            settings: components["schemas"]["DomainPrimeSettings"];
+        };
         ControllersRolePromptResponse: {
             prompt: string;
             role: string;
@@ -1070,6 +1108,16 @@ export interface components {
             status: "unknown" | "reachable" | "unreachable";
             /** Format: date-time */
             updatedAt?: string;
+        };
+        DomainPrimeSettings: {
+            agent?: string;
+            agentConfig?: components["schemas"]["AgentConfig"];
+            displayName?: string;
+            enabled: boolean;
+            rules?: string;
+            rulesFile?: string;
+            wakeBackoff?: components["schemas"]["DomainWakeBackoffConfig"];
+            wakeInterval?: string;
         };
         DomainReviewerConfig: {
             agentConfig?: components["schemas"]["AgentConfig"];
@@ -1260,6 +1308,15 @@ export interface components {
             status: "needs_review" | "running" | "up_to_date" | "changes_requested" | "ineligible";
             targetSha: string;
             title: string;
+        };
+        PrimeLegacyEnvironment: {
+            configured: boolean;
+            displayName?: string;
+            projectId?: string;
+        };
+        PrimeSettingsView: {
+            legacyEnvironment: components["schemas"]["PrimeLegacyEnvironment"];
+            settings: components["schemas"]["DomainPrimeSettings"];
         };
         ProbeAgentResponse: {
             agent: components["schemas"]["AgentInfo"];
@@ -2664,6 +2721,115 @@ export interface operations {
             };
         };
     };
+    getPrimePrompt: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ControllersRolePromptResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    getPrimeSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PrimeSettingsView"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    setPrimeSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ControllersPrimeSettingsRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PrimeSettingsView"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
     listProjects: {
         parameters: {
             query?: never;
@@ -2993,8 +3159,8 @@ export interface operations {
             path: {
                 /** @description Project identifier (registry key). */
                 id: string;
-                /** @description Agent role: worker, orchestrator, prime, or reviewer. */
-                role: "worker" | "orchestrator" | "prime" | "reviewer";
+                /** @description Project-scoped agent role: worker, orchestrator, or reviewer. Fleet Prime uses /api/v1/prime/prompt. */
+                role: "worker" | "orchestrator" | "reviewer";
             };
             cookie?: never;
         };

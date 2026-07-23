@@ -4,6 +4,7 @@ import {
 	openPRs,
 	sessionIsActive,
 	sessionNeedsAttention,
+	isFleetWorkspace,
 	workerSessions,
 	type WorkspaceSession,
 	type WorkspaceSummary,
@@ -94,10 +95,11 @@ function findSession(workspaces: WorkspaceSummary[], sessionId: string): Workspa
 
 export function buildCommands(ctx: CommandPaletteContext): CommandItem[] {
 	const { workspaces, currentProjectId, currentSessionId, restartingProjectIds } = ctx;
+	const projectWorkspaces = workspaces.filter((workspace) => !isFleetWorkspace(workspace));
 	const items: CommandItem[] = [];
 
 	const currentProject = currentProjectId
-		? workspaces.find((workspace) => workspace.id === currentProjectId)
+		? projectWorkspaces.find((workspace) => workspace.id === currentProjectId)
 		: undefined;
 	const currentSession = currentSessionId ? findSession(workspaces, currentSessionId) : undefined;
 	const isProjectRestarting = Boolean(currentProject && restartingProjectIds?.has(currentProject.id));
@@ -169,7 +171,7 @@ export function buildCommands(ctx: CommandPaletteContext): CommandItem[] {
 		items.push(sessionCommand(workspace, session, "attention"));
 	}
 
-	for (const workspace of workspaces) {
+	for (const workspace of projectWorkspaces) {
 		items.push({
 			id: `project:${workspace.id}`,
 			group: "projects",

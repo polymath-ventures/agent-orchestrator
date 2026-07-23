@@ -220,6 +220,35 @@ func TestSessionCreateAssignsPerProjectID(t *testing.T) {
 	}
 }
 
+func TestCreateSessionAllowsProjectlessPrimeOnly(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	prime := sampleRecord("")
+	prime.Kind = domain.KindPrime
+	prime.Harness = domain.HarnessCodex
+	created, err := s.CreateSession(ctx, prime)
+	if err != nil {
+		t.Fatalf("CreateSession projectless prime: %v", err)
+	}
+	if created.ID != "prime-1" || created.ProjectID != "" {
+		t.Fatalf("projectless prime = id %q project %q, want prime-1 with empty project", created.ID, created.ProjectID)
+	}
+	got, ok, err := s.GetSession(ctx, created.ID)
+	if err != nil || !ok {
+		t.Fatalf("GetSession projectless prime: ok=%v err=%v", ok, err)
+	}
+	if got.ProjectID != "" || got.Kind != domain.KindPrime {
+		t.Fatalf("read projectless prime = %+v", got)
+	}
+
+	worker := sampleRecord("")
+	worker.Kind = domain.KindWorker
+	if _, err := s.CreateSession(ctx, worker); err == nil {
+		t.Fatal("CreateSession projectless worker = nil, want integrity error")
+	}
+}
+
 // TestSessionModelRoundTrips covers the model the session was launched with:
 // it is durable so the per-bucket worker census can group live sessions on
 // (harness, model) without re-reading project config, which may have changed

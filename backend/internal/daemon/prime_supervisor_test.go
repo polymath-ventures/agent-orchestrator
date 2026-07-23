@@ -3,7 +3,6 @@ package daemon
 import (
 	"context"
 	"errors"
-	"strings"
 	"testing"
 	"time"
 
@@ -12,12 +11,29 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
-func TestStartPrimeSupervisorDisabledReturnsClosed(t *testing.T) {
-	done := startPrimeSupervisor(context.Background(), config.Config{}, nil, &fakePrimeSessions{}, nil, nil)
+func TestStartPrimeSupervisorRunsFromFleetSettingsWithoutEnvProject(t *testing.T) {
+	source := &fakePrimeProjects{
+		primeSettings: domain.PrimeSettings{Enabled: true, Harness: domain.HarnessCodex},
+		settingsRead:  make(chan struct{}, 1),
+	}
+	sessions := &fakePrimeSessions{}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := startPrimeSupervisor(ctx, config.Config{}, source, sessions, nil, nil)
+	select {
+	case <-source.settingsRead:
+	case <-time.After(time.Second):
+		t.Fatal("prime supervisor did not read fleet settings")
+	}
+	cancel()
 	select {
 	case <-done:
 	case <-time.After(time.Second):
-		t.Fatal("disabled prime supervisor did not return a closed done channel")
+		t.Fatal("prime supervisor did not stop")
+	}
+	if sessions.spawnCalls == 0 {
+		t.Fatal("prime supervisor did not spawn from enabled fleet settings")
 	}
 }
 
@@ -29,8 +45,29 @@ func TestEnsurePrimeSpawnsWhenMissing(t *testing.T) {
 	if sessions.spawnCalls != 1 {
 		t.Fatalf("SpawnPrime calls = %d, want 1", sessions.spawnCalls)
 	}
-	if sessions.lastProjectID != "ao" || sessions.lastClean {
-		t.Fatalf("SpawnPrime project=%q clean=%v, want ao false", sessions.lastProjectID, sessions.lastClean)
+	if sessions.lastProjectID != "" || sessions.lastClean {
+		t.Fatalf("SpawnPrime project=%q clean=%v, want empty false", sessions.lastProjectID, sessions.lastClean)
+	}
+}
+
+func TestEnsurePrimeRetiresActiveWhenDisabled(t *testing.T) {
+	now := time.Date(2026, 7, 21, 10, 0, 0, 0, time.UTC)
+	sessions := &fakePrimeSessions{
+		active: primeSession("ao-prime", domain.StatusIdle, domain.ActivityIdle, now.Add(-20*time.Minute)),
+		ok:     true,
+	}
+	cfg := testPrimeConfig(now)
+	cfg.PrimeSettings = func(context.Context) (domain.PrimeSettings, bool) {
+		return domain.PrimeSettings{Enabled: false}, true
+	}
+
+	ensurePrime(context.Background(), cfg, &primeSupervisorState{}, sessions, nil)
+
+	if sessions.retired != "ao-prime" {
+		t.Fatalf("retired prime = %q, want ao-prime", sessions.retired)
+	}
+	if sessions.spawnCalls != 0 || len(sessions.sent) != 0 {
+		t.Fatalf("disabled prime spawn=%d wake=%d, want neither", sessions.spawnCalls, len(sessions.sent))
 	}
 }
 
@@ -184,8 +221,8 @@ func TestEnsurePrimeUsesConfiguredWakeInterval(t *testing.T) {
 		ok:     true,
 	}
 	cfg := testPrimeConfig(base)
-	cfg.ResolveProject = func(context.Context) (domain.ProjectRecord, bool) {
-		return domain.ProjectRecord{Config: domain.ProjectConfig{Prime: domain.RoleOverride{WakeInterval: "30m"}}}, true
+	cfg.PrimeSettings = func(context.Context) (domain.PrimeSettings, bool) {
+		return domain.PrimeSettings{Enabled: true, WakeInterval: "30m"}, true
 	}
 
 	ensurePrime(context.Background(), cfg, &primeSupervisorState{}, sessions, nil)
@@ -208,14 +245,11 @@ func TestEnsurePrimeUsesDisabledWakeBackoffAsFixedInterval(t *testing.T) {
 		ok:     true,
 	}
 	cfg := testPrimeConfig(base)
-	cfg.ResolveProject = func(context.Context) (domain.ProjectRecord, bool) {
-		return domain.ProjectRecord{
-			Config: domain.ProjectConfig{
-				Prime: domain.RoleOverride{
-					WakeInterval: "15m",
-					WakeBackoff:  &domain.WakeBackoffConfig{Enabled: &disabled},
-				},
-			},
+	cfg.PrimeSettings = func(context.Context) (domain.PrimeSettings, bool) {
+		return domain.PrimeSettings{
+			Enabled:      true,
+			WakeInterval: "15m",
+			WakeBackoff:  &domain.WakeBackoffConfig{Enabled: &disabled},
 		}, true
 	}
 	state := &primeSupervisorState{}
@@ -260,7 +294,7 @@ func TestEnsurePrimeDoesNotWakeBlockedPrime(t *testing.T) {
 	}
 }
 
-func TestEnsurePrimeSuppressesWakeWhenProjectPaused(t *testing.T) {
+func TestEnsurePrimeSuppressesWakeWhenFleetPaused(t *testing.T) {
 	now := time.Date(2026, 7, 21, 10, 0, 0, 0, time.UTC)
 	sessions := &fakePrimeSessions{
 		active: primeSession("ao-prime", domain.StatusIdle, domain.ActivityIdle, now.Add(-20*time.Minute)),
@@ -268,9 +302,7 @@ func TestEnsurePrimeSuppressesWakeWhenProjectPaused(t *testing.T) {
 	}
 	state := &primeSupervisorState{}
 	cfg := testPrimeConfig(now)
-	cfg.ResolveProject = func(context.Context) (domain.ProjectRecord, bool) {
-		return domain.ProjectRecord{Paused: true}, true
-	}
+	cfg.FleetPaused = func(context.Context) bool { return true }
 
 	ensurePrime(context.Background(), cfg, state, sessions, nil)
 
@@ -279,16 +311,14 @@ func TestEnsurePrimeSuppressesWakeWhenProjectPaused(t *testing.T) {
 	}
 }
 
-func TestEnsurePrimeReplacesUnhealthyWhenProjectPaused(t *testing.T) {
+func TestEnsurePrimeReplacesUnhealthyWhenFleetPaused(t *testing.T) {
 	now := time.Date(2026, 7, 21, 10, 0, 0, 0, time.UTC)
 	sessions := &fakePrimeSessions{
 		active: primeSession("ao-prime", domain.StatusNoSignal, domain.ActivityIdle, now.Add(-10*time.Minute)),
 		ok:     true,
 	}
 	cfg := testPrimeConfig(now)
-	cfg.ResolveProject = func(context.Context) (domain.ProjectRecord, bool) {
-		return domain.ProjectRecord{Paused: true}, true
-	}
+	cfg.FleetPaused = func(context.Context) bool { return true }
 
 	ensurePrime(context.Background(), cfg, &primeSupervisorState{}, sessions, nil)
 
@@ -300,10 +330,9 @@ func TestEnsurePrimeReplacesUnhealthyWhenProjectPaused(t *testing.T) {
 func TestStartPrimeSupervisorSuppressesWakeWhenFleetPaused(t *testing.T) {
 	now := time.Now().UTC()
 	source := &fakePrimeProjects{
-		project:     domain.ProjectRecord{ID: "ao"},
-		ok:          true,
-		fleetPaused: true,
-		fleetRead:   make(chan struct{}, 1),
+		primeSettings: domain.PrimeSettings{Enabled: true, Harness: domain.HarnessCodex},
+		fleetPaused:   true,
+		fleetRead:     make(chan struct{}, 1),
 	}
 	sessions := &fakePrimeSessions{
 		active: primeSession("ao-prime", domain.StatusIdle, domain.ActivityIdle, now.Add(-20*time.Minute)),
@@ -312,7 +341,7 @@ func TestStartPrimeSupervisorSuppressesWakeWhenFleetPaused(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	done := startPrimeSupervisor(ctx, config.Config{PrimeProjectID: "ao"}, source, sessions, nil, nil)
+	done := startPrimeSupervisor(ctx, config.Config{}, source, sessions, nil, nil)
 	select {
 	case <-source.fleetRead:
 	case <-time.After(time.Second):
@@ -339,9 +368,29 @@ func TestEnsurePrimeLogsAndContinuesOnLookupError(t *testing.T) {
 	}
 }
 
+func TestEnsurePrimeSkipsTickWhenSettingsUnreadable(t *testing.T) {
+	now := time.Date(2026, 7, 21, 10, 0, 0, 0, time.UTC)
+	sessions := &fakePrimeSessions{
+		active: primeSession("ao-prime", domain.StatusIdle, domain.ActivityIdle, now),
+		ok:     true,
+	}
+	cfg := testPrimeConfig(now)
+	cfg.PrimeSettings = func(context.Context) (domain.PrimeSettings, bool) {
+		return domain.PrimeSettings{}, false
+	}
+
+	ensurePrime(context.Background(), cfg, &primeSupervisorState{}, sessions, nil)
+
+	if sessions.retired != "" {
+		t.Fatalf("retired prime = %q, want no retire when settings are unreadable", sessions.retired)
+	}
+	if sessions.spawnCalls != 0 || len(sessions.sent) != 0 {
+		t.Fatalf("unreadable settings caused spawn=%d wake=%d, want skipped tick", sessions.spawnCalls, len(sessions.sent))
+	}
+}
+
 func testPrimeConfig(now time.Time) primeSupervisorConfig {
 	return primeSupervisorConfig{
-		ProjectID:       "ao",
 		Interval:        time.Millisecond,
 		UnhealthyAfter:  5 * time.Minute,
 		RestartWindow:   time.Hour,
@@ -351,7 +400,10 @@ func testPrimeConfig(now time.Time) primeSupervisorConfig {
 		IdleWakeAfter:   15 * time.Minute,
 		IdleWakeBackoff: time.Minute,
 		IdleWakeMaxBack: 5 * time.Minute,
-		Now:             func() time.Time { return now },
+		PrimeSettings: func(context.Context) (domain.PrimeSettings, bool) {
+			return domain.PrimeSettings{Enabled: true, Harness: domain.HarnessCodex}, true
+		},
+		Now: func() time.Time { return now },
 	}
 }
 
@@ -379,6 +431,7 @@ type fakePrimeSessions struct {
 	spawnCalls    int
 	lastProjectID domain.ProjectID
 	lastClean     bool
+	retired       domain.SessionID
 	sent          []struct {
 		id      domain.SessionID
 		message string
@@ -399,6 +452,11 @@ func (f *fakePrimeSessions) SpawnPrime(_ context.Context, projectID domain.Proje
 	return primeSession("ao-prime-new", domain.StatusIdle, domain.ActivityIdle, time.Now()), nil
 }
 
+func (f *fakePrimeSessions) RetirePrime(_ context.Context, id domain.SessionID) error {
+	f.retired = id
+	return nil
+}
+
 func (f *fakePrimeSessions) Send(_ context.Context, id domain.SessionID, message string) error {
 	f.sent = append(f.sent, struct {
 		id      domain.SessionID
@@ -408,14 +466,20 @@ func (f *fakePrimeSessions) Send(_ context.Context, id domain.SessionID, message
 }
 
 type fakePrimeProjects struct {
-	project     domain.ProjectRecord
-	ok          bool
-	fleetPaused bool
-	fleetRead   chan struct{}
+	primeSettings domain.PrimeSettings
+	settingsRead  chan struct{}
+	fleetPaused   bool
+	fleetRead     chan struct{}
 }
 
-func (f *fakePrimeProjects) GetProject(context.Context, string) (domain.ProjectRecord, bool, error) {
-	return f.project, f.ok, nil
+func (f *fakePrimeProjects) GetPrimeSettings(context.Context) (domain.PrimeSettings, error) {
+	if f.settingsRead != nil {
+		select {
+		case f.settingsRead <- struct{}{}:
+		default:
+		}
+	}
+	return f.primeSettings, nil
 }
 
 func (f *fakePrimeProjects) GetFleetPaused(context.Context) (bool, error) {
@@ -464,13 +528,10 @@ func TestEnsurePrimeCapAlertsWhenPrimeNeverSpawned(t *testing.T) {
 	if got.Type != domain.NotificationPrimeRestartCapped {
 		t.Fatalf("notification type = %q, want prime restart cap", got.Type)
 	}
-	// No session/project references: the configured project may not exist and
-	// a dangling id would be rejected by the notifications project FK. The
-	// configured value travels in the message and dedupe key.
 	if got.SessionID != "" || got.ProjectID != "" {
 		t.Fatalf("notification refs = session %q project %q, want both empty", got.SessionID, got.ProjectID)
 	}
-	if !strings.Contains(got.Message, string(testPrimeConfig(base).ProjectID)) || !strings.Contains(got.DedupeKey, string(testPrimeConfig(base).ProjectID)) {
-		t.Fatalf("message/dedupe must name the configured project: %+v", got)
+	if got.Message == "" || got.DedupeKey == "" {
+		t.Fatalf("message/dedupe must describe fleet settings failure: %+v", got)
 	}
 }

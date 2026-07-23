@@ -14,6 +14,7 @@ vi.mock("../lib/api-client", () => ({
 }));
 
 import { useWorkspaceQuery } from "./useWorkspaceQuery";
+import { findFleetPrime } from "../types/workspace";
 
 function wrapper({ children }: { children: ReactNode }) {
 	// The hook pins its own retry policy; retryDelay 0 keeps the error tests fast.
@@ -197,6 +198,81 @@ describe("useWorkspaceQuery", () => {
 		]);
 		// A session with no PRs maps to an empty stack, so the empty states render.
 		expect(sessions[1].prs).toEqual([]);
+	});
+
+	it("keeps projectless prime sessions available for the global sidebar item", async () => {
+		respondWith({
+			projects: { data: { projects: [{ id: "proj-1", name: "my-app", path: "/p" }] }, error: undefined },
+			sessions: {
+				data: {
+					sessions: [
+						{
+							id: "prime-1",
+							projectId: "",
+							kind: "prime",
+							displayName: "AO Prime",
+							harness: "codex",
+							status: "working",
+							isTerminated: false,
+							updatedAt: "2026-06-10T16:15:04Z",
+						},
+					],
+				},
+				error: undefined,
+			},
+		});
+
+		const { result } = renderHook(() => useWorkspaceQuery(), { wrapper });
+		await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+		const workspaces = result.current.data ?? [];
+		expect(workspaces.map((workspace) => workspace.id)).toEqual(["proj-1", "fleet"]);
+		expect(workspaces[0].sessions).toEqual([]);
+		expect(workspaces[1].sessions).toHaveLength(1);
+		expect(workspaces[1].sessions[0]).toMatchObject({
+			id: "prime-1",
+			workspaceId: "fleet",
+			workspaceName: "AO Fleet",
+			kind: "prime",
+			title: "AO Prime",
+		});
+	});
+
+	it("keeps projectless prime sessions discoverable when no projects are registered", async () => {
+		respondWith({
+			projects: { data: { projects: [] }, error: undefined },
+			sessions: {
+				data: {
+					sessions: [
+						{
+							id: "prime-1",
+							projectId: "",
+							kind: "prime",
+							displayName: "AO Prime",
+							harness: "codex",
+							status: "working",
+							isTerminated: false,
+							updatedAt: "2026-06-10T16:15:04Z",
+						},
+					],
+				},
+				error: undefined,
+			},
+		});
+
+		const { result } = renderHook(() => useWorkspaceQuery(), { wrapper });
+		await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+		const workspaces = result.current.data ?? [];
+		expect(workspaces).toHaveLength(1);
+		expect(workspaces[0]).toMatchObject({ id: "fleet", name: "AO Fleet", path: "" });
+		expect(findFleetPrime(workspaces)).toMatchObject({
+			id: "prime-1",
+			workspaceId: "fleet",
+			workspaceName: "AO Fleet",
+			kind: "prime",
+			title: "AO Prime",
+		});
 	});
 
 	it("preserves backend merged status for terminated merged sessions", async () => {

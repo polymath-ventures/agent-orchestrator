@@ -91,11 +91,28 @@ func TestMigrateAllowsPrimeSessionKind(t *testing.T) {
 	if !strings.Contains(schema, "'"+string(domain.KindPrime)+"'") {
 		t.Fatalf("sessions.kind CHECK is missing prime; schema:\n%s", schema)
 	}
+	if !strings.Contains(schema, "kind = 'prime' OR (project_id IS NOT NULL AND project_id <> '')") {
+		t.Fatalf("sessions projectless CHECK is missing; schema:\n%s", schema)
+	}
 
 	if _, err := db.Exec(
 		`INSERT INTO projects (id, path, registered_at) VALUES ('ao', '/tmp/ao', CURRENT_TIMESTAMP)`,
 	); err != nil {
 		t.Fatalf("seed project: %v", err)
+	}
+	if _, err := db.Exec(
+		`INSERT INTO sessions (id, project_id, num, kind, is_terminated, activity_last_at, created_at, updated_at)
+		 VALUES ('prime-1', NULL, 1, ?, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+		string(domain.KindPrime),
+	); err != nil {
+		t.Fatalf("insert projectless prime session: %v", err)
+	}
+	if _, err := db.Exec(
+		`INSERT INTO sessions (id, project_id, num, kind, activity_last_at, created_at, updated_at)
+		 VALUES ('worker-1', NULL, 2, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+		string(domain.KindWorker),
+	); err == nil {
+		t.Fatal("insert projectless worker succeeded, want CHECK constraint failure")
 	}
 	if _, err := db.Exec(
 		`INSERT INTO sessions (id, project_id, num, kind, activity_last_at, created_at, updated_at)

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -21,6 +22,13 @@ func (s *Store) CreateSession(ctx context.Context, rec domain.SessionRecord) (do
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 
+	if rec.ProjectID == "" {
+		if rec.Kind != domain.KindPrime {
+			return domain.SessionRecord{}, fmt.Errorf("project id is required for %s sessions", rec.Kind)
+		}
+		return s.createProjectlessPrimeSession(ctx, rec)
+	}
+
 	num, err := s.qw.NextSessionNum(ctx, rec.ProjectID)
 	if err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("next session num for %s: %w", rec.ProjectID, err)
@@ -31,6 +39,56 @@ func (s *Store) CreateSession(ctx context.Context, rec domain.SessionRecord) (do
 	}
 	return rec, nil
 }
+
+func (s *Store) createProjectlessPrimeSession(ctx context.Context, rec domain.SessionRecord) (domain.SessionRecord, error) {
+	var num int64
+	if err := s.writeDB.QueryRowContext(ctx, `SELECT COALESCE(MAX(num), 0) + 1 FROM sessions WHERE project_id IS NULL AND kind = 'prime'`).Scan(&num); err != nil {
+		return domain.SessionRecord{}, fmt.Errorf("next projectless prime session num: %w", err)
+	}
+	rec.ID = domain.SessionID(fmt.Sprintf("prime-%d", num))
+	params := recordToInsert(rec, num)
+	if _, err := s.writeDB.ExecContext(ctx, insertProjectlessPrimeSessionSQL,
+		params.ID,
+		nil,
+		params.Num,
+		params.IssueID,
+		params.Kind,
+		params.Harness,
+		params.DisplayName,
+		params.ActivityState,
+		params.ActivityLastAt,
+		params.FirstSignalAt,
+		params.IsTerminated,
+		params.Branch,
+		params.WorkspacePath,
+		params.RuntimeHandleID,
+		params.AgentSessionID,
+		params.Prompt,
+		params.PreviewURL,
+		params.PreviewRevision,
+		params.Model,
+		params.Effort,
+		params.MixSelected,
+		params.MixBucketModel,
+		params.RuntimeToken,
+		params.LaunchCommand,
+		params.PromptPolicyHash,
+		params.CreatedAt,
+		params.UpdatedAt,
+	); err != nil {
+		return domain.SessionRecord{}, fmt.Errorf("insert projectless prime session %s: %w", rec.ID, err)
+	}
+	return rec, nil
+}
+
+const insertProjectlessPrimeSessionSQL = `
+INSERT INTO sessions (
+    id, project_id, num, issue_id, kind, harness, display_name,
+    activity_state, activity_last_at, first_signal_at, is_terminated,
+    branch, workspace_path, runtime_handle_id, agent_session_id, prompt,
+    preview_url, preview_revision, model, effort, mix_selected, mix_bucket_model, runtime_token, launch_command,
+    prompt_policy_hash, created_at, updated_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 // UpdateSession writes the full mutable state of an existing session. The
 // id/project/num/created_at are immutable and not touched here.
@@ -191,7 +249,7 @@ func mapSessionRows(rows []gen.Session) []domain.SessionRecord {
 func rowToRecord(row gen.Session) domain.SessionRecord {
 	return domain.SessionRecord{
 		ID:             row.ID,
-		ProjectID:      row.ProjectID,
+		ProjectID:      domain.ProjectID(strings.TrimSpace(string(row.ProjectID))),
 		IssueID:        row.IssueID,
 		Kind:           row.Kind,
 		Harness:        row.Harness,

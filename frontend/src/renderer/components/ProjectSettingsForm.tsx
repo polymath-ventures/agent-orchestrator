@@ -44,7 +44,7 @@ const PERMISSION_MODE_OPTIONS = [
 	{ value: "bypass-permissions", label: "Bypass permissions" },
 ] as const;
 
-const ROLE_PROMPT_OPTIONS = ["worker", "orchestrator", "prime", "reviewer"] as const;
+const ROLE_PROMPT_OPTIONS = ["worker", "orchestrator", "reviewer"] as const;
 type RolePromptRole = (typeof ROLE_PROMPT_OPTIONS)[number];
 
 const projectQueryKey = (id: string) => ["project", id] as const;
@@ -100,7 +100,6 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 	const initialProjectHarness = firstConfiguredHarness(config.agentConfig);
 	const initialWorkerAgent = config.worker?.agent ?? "";
 	const initialOrchestratorAgent = config.orchestrator?.agent ?? "";
-	const initialPrimeAgent = config.prime?.agent ?? "";
 	const initialReviewerHarness = firstReviewer?.harness ?? "";
 	const [form, setForm] = useState({
 		defaultBranch: config.defaultBranch ?? project.defaultBranch ?? "",
@@ -113,8 +112,6 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 		workerModels: toRoleHarnessModelForm(config.worker?.agentConfig, initialWorkerAgent),
 		orchestratorAgent: initialOrchestratorAgent,
 		orchestratorModels: toRoleHarnessModelForm(config.orchestrator?.agentConfig, initialOrchestratorAgent),
-		primeAgent: initialPrimeAgent,
-		primeModels: toRoleHarnessModelForm(config.prime?.agentConfig, initialPrimeAgent),
 		permissions: config.agentConfig?.permissions ?? "",
 		reviewerHarness: initialReviewerHarness,
 		reviewerModels: toRoleHarnessModelForm(firstReviewer?.agentConfig, initialReviewerHarness),
@@ -122,8 +119,6 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 		agentRulesFile: config.agentRulesFile ?? "",
 		orchestratorRules: config.orchestratorRules ?? "",
 		orchestratorRulesFile: config.orchestratorRulesFile ?? "",
-		primeRules: config.primeRules ?? "",
-		primeRulesFile: config.primeRulesFile ?? "",
 		reviewerRules: config.reviewerRules ?? "",
 		reviewerRulesFile: config.reviewerRulesFile ?? "",
 		intakeEnabled: intake.enabled ?? false,
@@ -194,16 +189,6 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 						form.orchestratorModels,
 					),
 				},
-				prime: blankToUndefined({
-					...config.prime,
-					agent: form.primeAgent || undefined,
-					agentConfig: buildRoleAgentConfig(
-						config.prime?.agentConfig,
-						initialPrimeAgent,
-						form.primeAgent,
-						form.primeModels,
-					),
-				}),
 				agentConfig: buildAgentConfig(
 					config.agentConfig,
 					form.model,
@@ -221,8 +206,6 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 				agentRulesFile: form.agentRulesFile.trim() || undefined,
 				orchestratorRules: form.orchestratorRules.trim() || undefined,
 				orchestratorRulesFile: form.orchestratorRulesFile.trim() || undefined,
-				primeRules: form.primeRules.trim() || undefined,
-				primeRulesFile: form.primeRulesFile.trim() || undefined,
 				reviewerRules: form.reviewerRules.trim() || undefined,
 				reviewerRulesFile: form.reviewerRulesFile.trim() || undefined,
 				trackerIntake: buildIntake(intakeForm),
@@ -431,26 +414,6 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 						}
 					/>
 					<HarnessModelRow
-						id="prime-model"
-						harnessLabel="Prime agent"
-						modelLabel="Prime model and effort"
-						selection={roleSelection(form.primeAgent, form.primeModels)}
-						configuredPins={modelPins(form.primeModels)}
-						agentCatalog={agentCatalog}
-						availability={effectiveModelAvailability}
-						allowDefaultHarness
-						defaultHarnessLabel="Project default"
-						isRefreshingModels={isRefreshingModels || modelAvailabilityQuery.isFetching}
-						onRefreshModels={refreshModels}
-						onChange={(selection) =>
-							setForm((f) => ({
-								...f,
-								primeAgent: selection.harness,
-								primeModels: patchHarnessSelection(f.primeModels, selection),
-							}))
-						}
-					/>
-					<HarnessModelRow
 						id="reviewer-model"
 						harnessLabel="Default reviewer agent"
 						modelLabel="Reviewer model and effort"
@@ -535,15 +498,6 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 						file={form.orchestratorRulesFile}
 						onRules={(v) => setForm((f) => ({ ...f, orchestratorRules: v }))}
 						onFile={(v) => setForm((f) => ({ ...f, orchestratorRulesFile: v }))}
-					/>
-					<RulesField
-						label="Prime rules"
-						fileLabel="Prime rules file (repo-relative or absolute)"
-						idPrefix="primeRules"
-						rules={form.primeRules}
-						file={form.primeRulesFile}
-						onRules={(v) => setForm((f) => ({ ...f, primeRules: v }))}
-						onFile={(v) => setForm((f) => ({ ...f, primeRulesFile: v }))}
 					/>
 					<RulesField
 						label="Reviewer rules"

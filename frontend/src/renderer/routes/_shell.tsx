@@ -1,6 +1,6 @@
 import { createFileRoute, Outlet, useMatchRoute, useNavigate, useParams } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
-import { type CSSProperties, useCallback, useEffect, useRef, useState } from "react";
+import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CommandPalette } from "../components/CommandPalette";
 import { CenterPanelShell } from "../components/CenterPanelShell";
 import { NotificationRuntime } from "../components/NotificationCenter";
@@ -28,7 +28,7 @@ import { aoBridge } from "../lib/bridge";
 import { isLinuxPlatform, isWindowsPlatform, usesFramedAppTopbar } from "../lib/platform";
 import { isMacDesktopChrome } from "../lib/runtime-environment";
 import { useUiStore } from "../stores/ui-store";
-import { findFleetPrime, type WorkspaceSummary } from "../types/workspace";
+import { findFleetPrime, isFleetWorkspace, type WorkspaceSummary } from "../types/workspace";
 import type { components } from "../../api/schema";
 
 export const Route = createFileRoute("/_shell")({
@@ -84,6 +84,7 @@ function ShellLayout() {
 	const queryClient = useQueryClient();
 	const workspaceQuery = useWorkspaceQuery();
 	const workspaces = workspaceQuery.data ?? [];
+	const projectWorkspaces = useMemo(() => workspaces.filter((workspace) => !isFleetWorkspace(workspace)), [workspaces]);
 	const primeSession = findFleetPrime(workspaces);
 	const daemonStatus = useDaemonStatus(queryClient);
 	const agentCatalogPortRef = useRef<number | undefined>(undefined);
@@ -99,13 +100,15 @@ function ShellLayout() {
 	const scopedProjectId = routeParams.projectId
 		? routeParams.projectId
 		: routeParams.sessionId
-			? workspaces.find((workspace) => workspace.sessions.some((session) => session.id === routeParams.sessionId))?.id
+			? projectWorkspaces.find((workspace) =>
+					workspace.sessions.some((session) => session.id === routeParams.sessionId),
+				)?.id
 			: undefined;
 	const isSessionRoute =
 		Boolean(matchRoute({ to: "/projects/$projectId/sessions/$sessionId", fuzzy: true })) ||
 		Boolean(matchRoute({ to: "/sessions/$sessionId", fuzzy: true }));
 	// First-launch root board only (no projects in scope).
-	const isWelcomeBoard = Boolean(matchRoute({ to: "/" })) && workspaces.length === 0;
+	const isWelcomeBoard = Boolean(matchRoute({ to: "/" })) && projectWorkspaces.length === 0;
 	const isSettingsRoute =
 		Boolean(matchRoute({ to: "/settings", fuzzy: true })) ||
 		Boolean(matchRoute({ to: "/projects/$projectId/settings", fuzzy: true }));
@@ -298,7 +301,7 @@ function ShellLayout() {
 	useEffect(() => {
 		const handleKeyDown = (event: KeyboardEvent) => {
 			if ((event.metaKey || event.ctrlKey) && /^[1-9]$/.test(event.key)) {
-				const workspace = workspaces[Number(event.key) - 1];
+				const workspace = projectWorkspaces[Number(event.key) - 1];
 				if (workspace) {
 					event.preventDefault();
 					void navigate({ to: "/projects/$projectId", params: { projectId: workspace.id } });
@@ -307,7 +310,7 @@ function ShellLayout() {
 		};
 		window.addEventListener("keydown", handleKeyDown);
 		return () => window.removeEventListener("keydown", handleKeyDown);
-	}, [navigate, workspaces]);
+	}, [navigate, projectWorkspaces]);
 
 	// New session (⌘N / Ctrl+Shift+N) is detected in the main process and
 	// delivered here, so it fires even when focus is inside xterm or a native
@@ -371,7 +374,7 @@ function ShellLayout() {
 						onInitializeProject={initializeProjectRepository}
 						onRemoveProject={removeProject}
 						workspaceError={workspaceQuery.isError ? errorMessage(workspaceQuery.error) : undefined}
-						workspaces={workspaces}
+						workspaces={projectWorkspaces}
 					/>
 					<main className="flex min-w-0 flex-1 flex-col overflow-x-hidden">
 						<div className="min-h-0 flex-1 overflow-x-hidden">
@@ -433,7 +436,7 @@ function ShellLayout() {
 					}}
 					onRetry={(projectId) => void restartOrchestrator(projectId)}
 					projectId={replacementErrorProjectId}
-					workspaces={workspaces}
+					workspaces={projectWorkspaces}
 				/>
 				<CommandPalette />
 			</div>

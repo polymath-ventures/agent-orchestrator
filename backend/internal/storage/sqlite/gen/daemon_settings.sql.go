@@ -20,11 +20,31 @@ func (q *Queries) GetFleetPaused(ctx context.Context) (bool, error) {
 	return fleet_paused, err
 }
 
+const getPrimeSettingsJSON = `-- name: GetPrimeSettingsJSON :one
+SELECT prime_settings FROM daemon_settings WHERE id = 1
+`
+
+func (q *Queries) GetPrimeSettingsJSON(ctx context.Context) (string, error) {
+	row := q.db.QueryRowContext(ctx, getPrimeSettingsJSON)
+	var prime_settings string
+	err := row.Scan(&prime_settings)
+	return prime_settings, err
+}
+
 const setFleetPaused = `-- name: SetFleetPaused :exec
 UPDATE daemon_settings SET fleet_paused = ? WHERE id = 1
 `
 
 func (q *Queries) SetFleetPaused(ctx context.Context, fleetPaused bool) error {
 	_, err := q.db.ExecContext(ctx, setFleetPaused, fleetPaused)
+	return err
+}
+
+const setPrimeSettingsJSON = `-- name: SetPrimeSettingsJSON :exec
+UPDATE daemon_settings SET prime_settings = ? WHERE id = 1
+`
+
+func (q *Queries) SetPrimeSettingsJSON(ctx context.Context, primeSettings string) error {
+	_, err := q.db.ExecContext(ctx, setPrimeSettingsJSON, primeSettings)
 	return err
 }

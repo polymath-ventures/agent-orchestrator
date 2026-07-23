@@ -22,8 +22,9 @@ type ChangeLog struct {
 }
 
 type DaemonSetting struct {
-	ID          int64
-	FleetPaused bool
+	ID            int64
+	FleetPaused   bool
+	PrimeSettings string
 }
 
 type ModelHealth struct {

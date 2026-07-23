@@ -352,6 +352,12 @@ export type WorkspaceSummary = {
 	sessions: WorkspaceSession[];
 };
 
+export const FLEET_WORKSPACE_ID = "fleet";
+
+export function isFleetWorkspace(workspace: WorkspaceSummary): boolean {
+	return workspace.id === FLEET_WORKSPACE_ID;
+}
+
 export function orchestratorNeedsRestart(workspace: WorkspaceSummary, orchestrator?: WorkspaceSession): boolean {
 	if (!orchestrator || !workspace.orchestratorAgent) return false;
 	return orchestrator.provider !== workspace.orchestratorAgent;

@@ -77,7 +77,7 @@ func New(sessions SessionPromptAssembler, projects ProjectGetter) *Assembler {
 // fail-closed error a spawn would raise, rather than a prompt with the override
 // silently omitted.
 func (a *Assembler) RolePrompt(ctx context.Context, projectID domain.ProjectID, role string) (string, error) {
-	if role != RoleWorker && role != RoleOrchestrator && role != RolePrime && role != RoleReviewer {
+	if role != RoleWorker && role != RoleOrchestrator && role != RoleReviewer {
 		return "", fmt.Errorf("%w: %q", ErrUnknownRole, role)
 	}
 	proj, ok, err := a.projects.GetProject(ctx, string(projectID))
@@ -92,8 +92,6 @@ func (a *Assembler) RolePrompt(ctx context.Context, projectID domain.ProjectID, 
 		return a.sessions.RoleSystemPrompt(ctx, domain.KindWorker, projectID)
 	case RoleOrchestrator:
 		return a.sessions.RoleSystemPrompt(ctx, domain.KindOrchestrator, projectID)
-	case RolePrime:
-		return a.sessions.RoleSystemPrompt(ctx, domain.KindPrime, projectID)
 	default: // RoleReviewer
 		// Same loader the reviewer spawn path uses (review.ReviewerRules), so
 		// what the operator inspects matches what the reviewer is launched with.

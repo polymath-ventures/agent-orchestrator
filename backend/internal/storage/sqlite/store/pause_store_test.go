@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
 )
 
 // Fleet pause is a single daemon-global bit, defaulting to unpaused, that
@@ -34,6 +35,57 @@ func TestFleetPausedRoundTrip(t *testing.T) {
 	}
 	if paused, err = s.GetFleetPaused(ctx); err != nil || paused {
 		t.Fatalf("after SetFleetPaused(false): paused=%v err=%v, want false/nil", paused, err)
+	}
+}
+
+// Prime settings live beside fleet pause in daemon-owned storage. A fresh
+// daemon starts disabled, and saving settings survives a store reopen because
+// the database is the single source of truth.
+func TestPrimeSettingsRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	s, err := sqlite.Open(dir)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+
+	settings, err := s.GetPrimeSettings(ctx)
+	if err != nil {
+		t.Fatalf("GetPrimeSettings fresh: %v", err)
+	}
+	if settings.Enabled {
+		t.Fatalf("fresh Prime enabled = true, want false")
+	}
+
+	settings.Enabled = true
+	settings.DisplayName = "Fleet Lead"
+	settings.Harness = domain.HarnessCodex
+	settings.AgentConfig = domain.AgentConfig{Model: "gpt-5-codex", Effort: domain.EffortHigh}
+	settings.Rules = "watch the fleet"
+	settings.RulesFile = "/etc/ao/prime.md"
+	settings.WakeInterval = "30m"
+	if err := s.SetPrimeSettings(ctx, settings); err != nil {
+		t.Fatalf("SetPrimeSettings: %v", err)
+	}
+	_ = s.Close()
+
+	reopened, err := sqlite.Open(dir)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	t.Cleanup(func() { _ = reopened.Close() })
+	got, err := reopened.GetPrimeSettings(ctx)
+	if err != nil {
+		t.Fatalf("GetPrimeSettings reopened: %v", err)
+	}
+	if !got.Enabled || got.DisplayName != "Fleet Lead" || got.Harness != domain.HarnessCodex {
+		t.Fatalf("settings after reopen = %+v", got)
+	}
+	if got.AgentConfig.Model != "gpt-5-codex" || got.AgentConfig.Effort != domain.EffortHigh {
+		t.Fatalf("agent config after reopen = %+v", got.AgentConfig)
+	}
+	if got.Rules != "watch the fleet" || got.RulesFile != "/etc/ao/prime.md" || got.WakeInterval != "30m" {
+		t.Fatalf("settings text/wake after reopen = %+v", got)
 	}
 }
 

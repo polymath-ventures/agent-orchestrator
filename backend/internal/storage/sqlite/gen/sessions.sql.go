@@ -14,7 +14,13 @@ import (
 )
 
 const getSession = `-- name: GetSession :one
-SELECT id, project_id, num, issue_id, kind, harness, activity_state, activity_last_at, is_terminated, branch, workspace_path, runtime_handle_id, agent_session_id, prompt, created_at, updated_at, display_name, first_signal_at, preview_url, preview_revision, model, mix_selected, runtime_token, launch_command, effort, prompt_policy_hash, mix_bucket_model FROM sessions WHERE id = ?
+SELECT id, COALESCE(project_id, '') AS project_id, num, issue_id, kind, harness,
+       activity_state, activity_last_at, is_terminated, branch, workspace_path,
+       runtime_handle_id, agent_session_id, prompt, created_at, updated_at,
+       display_name, first_signal_at, preview_url, preview_revision, model,
+       mix_selected, runtime_token, launch_command, effort, prompt_policy_hash,
+       mix_bucket_model
+FROM sessions WHERE id = ?
 `
 
 func (q *Queries) GetSession(ctx context.Context, id domain.SessionID) (Session, error) {
@@ -126,7 +132,13 @@ func (q *Queries) InsertSession(ctx context.Context, arg InsertSessionParams) er
 }
 
 const listAllSessions = `-- name: ListAllSessions :many
-SELECT id, project_id, num, issue_id, kind, harness, activity_state, activity_last_at, is_terminated, branch, workspace_path, runtime_handle_id, agent_session_id, prompt, created_at, updated_at, display_name, first_signal_at, preview_url, preview_revision, model, mix_selected, runtime_token, launch_command, effort, prompt_policy_hash, mix_bucket_model FROM sessions ORDER BY project_id, num
+SELECT id, COALESCE(project_id, '') AS project_id, num, issue_id, kind, harness,
+       activity_state, activity_last_at, is_terminated, branch, workspace_path,
+       runtime_handle_id, agent_session_id, prompt, created_at, updated_at,
+       display_name, first_signal_at, preview_url, preview_revision, model,
+       mix_selected, runtime_token, launch_command, effort, prompt_policy_hash,
+       mix_bucket_model
+FROM sessions ORDER BY COALESCE(project_id, ''), num
 `
 
 func (q *Queries) ListAllSessions(ctx context.Context) ([]Session, error) {
@@ -181,7 +193,13 @@ func (q *Queries) ListAllSessions(ctx context.Context) ([]Session, error) {
 }
 
 const listSessionsByProject = `-- name: ListSessionsByProject :many
-SELECT id, project_id, num, issue_id, kind, harness, activity_state, activity_last_at, is_terminated, branch, workspace_path, runtime_handle_id, agent_session_id, prompt, created_at, updated_at, display_name, first_signal_at, preview_url, preview_revision, model, mix_selected, runtime_token, launch_command, effort, prompt_policy_hash, mix_bucket_model FROM sessions WHERE project_id = ? ORDER BY num
+SELECT id, COALESCE(project_id, '') AS project_id, num, issue_id, kind, harness,
+       activity_state, activity_last_at, is_terminated, branch, workspace_path,
+       runtime_handle_id, agent_session_id, prompt, created_at, updated_at,
+       display_name, first_signal_at, preview_url, preview_revision, model,
+       mix_selected, runtime_token, launch_command, effort, prompt_policy_hash,
+       mix_bucket_model
+FROM sessions WHERE project_id = ? ORDER BY num
 `
 
 func (q *Queries) ListSessionsByProject(ctx context.Context, projectID domain.ProjectID) ([]Session, error) {
