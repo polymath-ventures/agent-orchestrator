@@ -3159,8 +3159,8 @@ export interface operations {
             path: {
                 /** @description Project identifier (registry key). */
                 id: string;
-                /** @description Agent role: worker, orchestrator, prime, or reviewer. */
-                role: "worker" | "orchestrator" | "prime" | "reviewer";
+                /** @description Project-scoped agent role: worker, orchestrator, or reviewer. Fleet Prime uses /api/v1/prime/prompt. */
+                role: "worker" | "orchestrator" | "reviewer";
             };
             cookie?: never;
         };

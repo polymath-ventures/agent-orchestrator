@@ -1080,16 +1080,17 @@ paths:
         schema:
           description: Project identifier (registry key).
           type: string
-      - description: 'Agent role: worker, orchestrator, prime, or reviewer.'
+      - description: 'Project-scoped agent role: worker, orchestrator, or reviewer.
+          Fleet Prime uses /api/v1/prime/prompt.'
         in: path
         name: role
         required: true
         schema:
-          description: 'Agent role: worker, orchestrator, prime, or reviewer.'
+          description: 'Project-scoped agent role: worker, orchestrator, or reviewer.
+            Fleet Prime uses /api/v1/prime/prompt.'
           enum:
           - worker
           - orchestrator
-          - prime
           - reviewer
           type: string
       responses:
