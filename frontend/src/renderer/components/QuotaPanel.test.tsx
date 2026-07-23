@@ -111,6 +111,76 @@ describe("QuotaPanel", () => {
 		expect(screen.getByText(/session 12% used/)).toBeInTheDocument();
 	});
 
+	it("names the headline window and renders a dated reset (weekday, month, date, tz) — not a bare clock time", async () => {
+		seed({
+			probeStatuses: [
+				{
+					harness: "claude-code",
+					state: "ok",
+					hasData: true,
+					probedAt: "2026-07-20T19:00:00Z",
+					snapshots: [
+						{
+							harness: "claude-code",
+							accountId: "acct",
+							// Headline window: the weekly "all models" limit that actually resets days later.
+							windowName: "weekly (all models)",
+							used: 46,
+							limit: 100,
+							signalQuality: "exact",
+							source: "probe",
+							windowEnd: "2026-07-27T14:00:00Z",
+							observedAt: "2026-07-20T19:00:00Z",
+						},
+					],
+				},
+			],
+		});
+
+		renderWithClient(<QuotaPanel />);
+
+		const headline = await screen.findByText(/46% used/);
+		// The prominent line must NAME its window — no longer an anonymous "46% used".
+		expect(headline.textContent).toMatch(/weekly \(all models\)/);
+		// Reset must be dated: "3CharWeekday 3CharMonth DD HH:MM TZ" (24-hour), e.g. "Mon Jul 27 14:00 UTC".
+		// TZ-robust: assert the SHAPE, so the runner's timezone doesn't pin the exact day/time.
+		expect(headline.textContent).toMatch(/resets [A-Z][a-z]{2} [A-Z][a-z]{2} \d{2} \d{2}:\d{2} \S+/);
+		// It must NOT render a bare 12-hour clock time like "2:00 PM".
+		expect(headline.textContent).not.toMatch(/\d{1,2}:\d{2}\s?(AM|PM)/i);
+	});
+
+	it("omits the reset clause when windowEnd is missing or zero-valued — no 'Invalid Date'", async () => {
+		seed({
+			probeStatuses: [
+				{
+					harness: "codex",
+					state: "ok",
+					hasData: true,
+					probedAt: "2026-07-20T19:00:00Z",
+					snapshots: [
+						{
+							harness: "codex",
+							accountId: "acct",
+							windowName: "primary",
+							used: 21,
+							limit: 100,
+							signalQuality: "exact",
+							source: "probe",
+							// No windowEnd at all — the reset clause must simply be omitted.
+							observedAt: "2026-07-20T19:00:00Z",
+						},
+					],
+				},
+			],
+		});
+
+		renderWithClient(<QuotaPanel />);
+
+		const headline = await screen.findByText(/21% used/);
+		expect(headline.textContent).not.toMatch(/resets/);
+		expect(headline.textContent).not.toMatch(/Invalid Date/i);
+	});
+
 	it("renders not_probed inline with a Probe button that triggers a POST", async () => {
 		seed({ probeStatuses: [{ harness: "codex", state: "not_probed", hasData: false }] });
 
