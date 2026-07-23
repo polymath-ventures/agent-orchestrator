@@ -54,7 +54,7 @@
       typecheck/build, lint, and the repository CI command.
 - [x] 5.2 Verify production-style zero-project startup creates Prime only after
       persisted enablement and no longer logs an unknown-project boot warning.
-- [ ] 5.3 Document the rejected synthetic-project alternative in the PR.
+- [x] 5.3 Document the rejected synthetic-project alternative in the PR.
 
 Verification notes:
 
