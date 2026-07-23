@@ -43,6 +43,20 @@ yarn-error.*
 /ios
 /android
 
+# Fastlane / iOS build artifacts (produced on the Mac build host)
+/build/
+*.ipa
+*.dSYM.zip
+fastlane/report.xml
+fastlane/Preview.html
+fastlane/test_output/
+fastlane/README.md
+
+# Ruby / Bundler (Fastlane toolchain, resolved on the Mac build host)
+/vendor/bundle/
+/.bundle/
+Gemfile.lock
+
 # logs
 *.log
 

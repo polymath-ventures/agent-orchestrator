@@ -1,0 +1,75 @@
+# Fastlane lanes for the AO iOS app.
+#
+# Delivery uses an App Store Connect API key so the Mac mini runner can build
+# and upload headlessly. All sensitive values arrive via GitHub Actions secrets
+# scoped to the workflow steps that need them.
+
+default_platform(:ios)
+
+APP_IDENTIFIER = ENV["APPLE_APP_IDENTIFIER"] || "aoagents.ao"
+# Expo prebuild derives these names from expo.name in app.json.
+WORKSPACE = "ios/AO.xcworkspace"
+SCHEME = "AO"
+INFO_PLIST = "ios/AO/Info.plist"
+
+def asc_api_key
+  app_store_connect_api_key(
+    key_id: ENV.fetch("ASC_KEY_ID"),
+    issuer_id: ENV.fetch("ASC_ISSUER_ID"),
+    key_content: ENV.fetch("ASC_API_KEY_P8"),
+    is_key_content_base64: ENV["ASC_API_KEY_P8_BASE64"] == "true",
+    in_house: false,
+  )
+end
+
+platform :ios do
+  desc "Build the iOS app and, when UPLOAD_TESTFLIGHT=true, upload it to TestFlight"
+  lane :beta do
+    api_key = asc_api_key
+    team_id = ENV.fetch("APPLE_TEAM_ID")
+    app_version = get_info_plist_value(path: INFO_PLIST, key: "CFBundleShortVersionString")
+    latest_build = latest_testflight_build_number(
+      api_key: api_key,
+      app_identifier: APP_IDENTIFIER,
+      version: app_version,
+      initial_build_number: 0,
+    ).to_i
+    next_build = (latest_build + 1).to_s
+
+    UI.message("Setting CFBundleVersion=#{next_build} (latest TestFlight build was #{latest_build}).")
+    set_info_plist_value(
+      path: INFO_PLIST,
+      key: "CFBundleVersion",
+      value: next_build,
+    )
+
+    build_app(
+      workspace: WORKSPACE,
+      scheme: SCHEME,
+      configuration: "Release",
+      export_method: "app-store",
+      output_directory: "build",
+      output_name: "AO.ipa",
+      clean: true,
+      xcargs: "-allowProvisioningUpdates DEVELOPMENT_TEAM=#{team_id}",
+      export_options: {
+        signingStyle: "automatic",
+        teamID: team_id,
+      },
+    )
+
+    unless ENV["UPLOAD_TESTFLIGHT"] == "true"
+      UI.important("UPLOAD_TESTFLIGHT is not 'true' - built the app but skipping the TestFlight upload.")
+      next
+    end
+
+    upload_to_testflight(
+      api_key: api_key,
+      app_identifier: APP_IDENTIFIER,
+      ipa: "build/AO.ipa",
+      skip_submission: true,
+      skip_waiting_for_build_processing: true,
+      distribute_external: false,
+    )
+  end
+end
