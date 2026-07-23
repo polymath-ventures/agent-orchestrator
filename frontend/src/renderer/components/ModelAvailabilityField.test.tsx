@@ -95,7 +95,7 @@ describe("ModelAvailabilityField", () => {
 		expect(screen.getByText(/installed catalog could not be read/i)).toBeInTheDocument();
 		expect(screen.getByText(/Checked/)).toHaveAttribute("datetime", availability.checkedAt);
 
-		fireEvent.click(screen.getByRole("button", { name: "Refresh models" }));
+		fireEvent.click(screen.getByRole("button", { name: "Refresh model catalog" }));
 		expect(onRefresh).toHaveBeenCalledOnce();
 	});
 
@@ -112,7 +112,7 @@ describe("ModelAvailabilityField", () => {
 			/>,
 		);
 
-		fireEvent.click(screen.getByRole("button", { name: "Refresh models" }));
+		fireEvent.click(screen.getByRole("button", { name: "Refresh model catalog" }));
 		await waitFor(() => expect(onRefresh).toHaveBeenCalledOnce());
 		expect(screen.getByLabelText("Model")).toHaveValue("fugu");
 	});

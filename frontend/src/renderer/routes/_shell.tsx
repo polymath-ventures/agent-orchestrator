@@ -48,22 +48,34 @@ function errorMessage(error: unknown) {
 
 type CreateProjectConfigInput = Pick<
 	CreateProjectInput,
-	"workerAgent" | "orchestratorAgent" | "modelOverride" | "trackerIntake"
+	"workerAgent" | "orchestratorAgent" | "reviewerAgent" | "modelDefaults" | "trackerIntake"
 >;
 
 export function createProjectConfig(input: CreateProjectConfigInput): components["schemas"]["ProjectConfig"] {
-	const harness = input.modelOverride.harness.trim();
-	const model = input.modelOverride.model.trim();
-	const effort = input.modelOverride.effort.trim();
-	const harnessOverride = {
-		...(model ? { model } : {}),
-		...(effort ? { effort } : {}),
-	};
-	const agentConfig =
-		harness && Object.keys(harnessOverride).length > 0 ? { modelByHarness: { [harness]: harnessOverride } } : undefined;
+	const selectedHarnesses = new Set([input.workerAgent, input.orchestratorAgent, input.reviewerAgent].filter(Boolean));
+	const modelByHarness = Object.fromEntries(
+		Object.entries(input.modelDefaults)
+			.filter(([harness]) => selectedHarnesses.has(harness))
+			.map(([harness, value]) => {
+				const model = value.model.trim();
+				const effort = value.effort.trim();
+				return [
+					harness,
+					{
+						...(model ? { model } : {}),
+						...(effort ? { effort } : {}),
+					},
+				] as const;
+			})
+			.filter(([, value]) => Object.keys(value).length > 0),
+	);
+	const agentConfig = Object.keys(modelByHarness).length > 0 ? { modelByHarness } : undefined;
 	return {
 		worker: { agent: input.workerAgent as components["schemas"]["RoleOverride"]["agent"] },
 		orchestrator: { agent: input.orchestratorAgent as components["schemas"]["RoleOverride"]["agent"] },
+		...(input.reviewerAgent
+			? { reviewers: [{ harness: input.reviewerAgent as components["schemas"]["DomainReviewerConfig"]["harness"] }] }
+			: {}),
 		...(agentConfig ? { agentConfig } : {}),
 		...(input.trackerIntake ? { trackerIntake: input.trackerIntake } : {}),
 	};
