@@ -50,8 +50,22 @@
 
 ## 5. Verification
 
-- [ ] 5.1 Run `npm run sqlc`, `npm run api`, backend Go tests, frontend
+- [x] 5.1 Run `npm run sqlc`, `npm run api`, backend Go tests, frontend
       typecheck/build, lint, and the repository CI command.
-- [ ] 5.2 Verify production-style zero-project startup creates Prime only after
+- [x] 5.2 Verify production-style zero-project startup creates Prime only after
       persisted enablement and no longer logs an unknown-project boot warning.
 - [ ] 5.3 Document the rejected synthetic-project alternative in the PR.
+
+Verification notes:
+
+- `npm run sqlc`, `npm run api`, `cd backend && go test ./...`,
+  `npm run frontend:typecheck`, `npm --prefix frontend run build:web`, focused
+  Prime frontend tests, and `openspec validate make-prime-fleet-scoped --strict`
+  passed locally.
+- `npm run lint` ran after branch-owned lint fixes; it still fails on existing
+  generated sqlc `dupl`/`errcheck` findings plus a stale sibling-worktree
+  `gosec` path outside this branch.
+- `npx @redwoodjs/agent-ci run --all` ran and failed in the local runner before
+  branch checks could complete because required secrets were missing, non-Linux
+  jobs cannot start on this host, `gh` is absent from the runner image, and the
+  local runner hit `/usr/bin/git: Permission denied` during checkout.

@@ -470,13 +470,6 @@ func (s *Service) verifyOrchestratorReplacement(project domain.ProjectRecord, se
 	return nil
 }
 
-func projectDisplayName(project domain.ProjectRecord) string {
-	if name := strings.TrimSpace(project.DisplayName); name != "" {
-		return name
-	}
-	return project.ID
-}
-
 func verifyPrimeReplacement(settings domain.PrimeSettings, sess domain.Session, dataDir string) error {
 	if sess.IsTerminated {
 		return fmt.Errorf("prime replacement verification failed: new session %s is terminated", sess.ID)

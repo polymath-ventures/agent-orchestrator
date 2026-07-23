@@ -65,7 +65,7 @@ type primeSupervisorState struct {
 	idleWakeBackoff time.Duration
 }
 
-func startPrimeSupervisor(ctx context.Context, cfg config.Config, settings primeSettingsSource, sessions primeSessionService, notifier notificationSink, logger *slog.Logger) <-chan struct{} {
+func startPrimeSupervisor(ctx context.Context, _ config.Config, settings primeSettingsSource, sessions primeSessionService, notifier notificationSink, logger *slog.Logger) <-chan struct{} {
 	if logger == nil {
 		logger = slog.Default()
 	}

@@ -69,10 +69,7 @@ func newPrimeEnableCommand(ctx *commandContext) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			settings, err := opts.apply(cmd, view.Settings)
-			if err != nil {
-				return err
-			}
+			settings := opts.apply(cmd, view.Settings)
 			settings.Enabled = true
 			updated, err := putPrimeSettings(cmd, ctx, settings)
 			if err != nil {
@@ -151,7 +148,7 @@ func (f *primeSettingsFlags) bind(cmd *cobra.Command) {
 	cmd.Flags().StringVar(&f.wakeInterval, "wake-interval", "", "Idle wake interval, e.g. 15m")
 }
 
-func (f primeSettingsFlags) apply(cmd *cobra.Command, settings domain.PrimeSettings) (domain.PrimeSettings, error) {
+func (f primeSettingsFlags) apply(cmd *cobra.Command, settings domain.PrimeSettings) domain.PrimeSettings {
 	if cmd.Flags().Changed("name") {
 		settings.DisplayName = strings.TrimSpace(f.name)
 	}
@@ -173,7 +170,7 @@ func (f primeSettingsFlags) apply(cmd *cobra.Command, settings domain.PrimeSetti
 	if cmd.Flags().Changed("wake-interval") {
 		settings.WakeInterval = strings.TrimSpace(f.wakeInterval)
 	}
-	return settings, nil
+	return settings
 }
 
 func getPrimeSettings(cmd *cobra.Command, ctx *commandContext) (primeSettingsView, error) {
