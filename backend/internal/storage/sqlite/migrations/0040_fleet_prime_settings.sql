@@ -1,3 +1,4 @@
+-- +goose NO TRANSACTION
 -- +goose Up
 -- +goose StatementBegin
 ALTER TABLE daemon_settings ADD COLUMN prime_settings TEXT NOT NULL DEFAULT '{}';
