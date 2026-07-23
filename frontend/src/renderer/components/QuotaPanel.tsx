@@ -202,18 +202,27 @@ function WindowLine({ snapshot, prominent = false }: { snapshot: QuotaSnapshot; 
 	// used/limit are percentages (used 0–100); warn once ≤10% remains.
 	const low = used !== null && used >= 90;
 	const reset = formatReset(snapshot.windowEnd);
-	const name = prominent ? null : snapshot.windowName;
+	// Always name the window — the headline was previously anonymous ("46% used"),
+	// which hides WHICH limit (weekly vs session) the percentage measures.
+	const name = snapshot.windowName;
+	// Colour lives on the spans, not the container: a child's own colour overrides
+	// the parent's inherited one, so a container-level `text-warning` would never
+	// take effect. Keep the low-quota warning ("warn once ≤10% remains") by putting
+	// it directly on each line.
+	const usageColor = low ? "text-warning" : prominent ? "text-foreground" : "text-passive";
+	const resetColor = low ? "text-warning" : "text-passive";
+	// The reset gets its OWN line rather than being appended to a `truncate`d line:
+	// in the narrow sidebar a one-liner clips the reset off the end, which is exactly
+	// the "resets 2:00 PM with no date" bug. Within the first line the window name
+	// truncates but the `% used` metric is `shrink-0`, so a long window name can
+	// never hide the number. Both the named window and the full dated reset survive.
 	return (
-		<div
-			className={cn(
-				"truncate font-mono",
-				prominent ? "text-2xs text-foreground" : "text-micro text-passive",
-				low && "text-warning",
-			)}
-		>
-			{name ? `${name} ` : ""}
-			{used !== null ? `${used}% used` : "usage unknown"}
-			{reset ? ` · resets ${reset}` : ""}
+		<div className="flex flex-col font-mono">
+			<span className={cn("flex min-w-0 items-baseline gap-1", prominent ? "text-2xs" : "text-micro", usageColor)}>
+				{name ? <span className="min-w-0 truncate">{name}</span> : null}
+				<span className="shrink-0">{used !== null ? `${used}% used` : "usage unknown"}</span>
+			</span>
+			{reset ? <span className={cn("text-micro", resetColor)}>resets {reset}</span> : null}
 		</div>
 	);
 }
@@ -279,11 +288,49 @@ function pickWindows(
 	return { headline: sorted[0], secondary: undefined };
 }
 
+/**
+ * Format a reset instant as `3CharWeekday 3CharMonth DD HH:MM TZ` in 24-hour
+ * time, e.g. `Mon Jul 27 14:00 EDT`. Always dated — a bare clock time is
+ * ambiguous (a weekly reset days out reads as "today"), which is the whole bug
+ * this widget had.
+ *
+ * Locale is pinned to `en-US` so the weekday/month names, Latin digits, and
+ * field order are deterministic regardless of the host locale (an unpinned
+ * formatter yields `lun. juil.` etc. and makes the output — and its tests —
+ * environment-dependent). The timezone is left as the host's local zone (no
+ * `timeZone` option) so the reset reads in the user's wall-clock, with a short
+ * English zone name. `hourCycle: "h23"` forces 00–23; `hour12: false` alone can
+ * resolve to an `h24` cycle that renders midnight as the ambiguous `24:00`.
+ *
+ * Returns null for a missing/zero/unparseable instant so the caller omits the
+ * clause instead of rendering "Invalid Date".
+ */
 function formatReset(value: string | undefined): string | null {
 	if (!value) return null;
 	const end = new Date(value);
 	if (Number.isNaN(end.getTime()) || end.getUTCFullYear() <= 1) return null;
-	return end.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+	const fmt = new Intl.DateTimeFormat("en-US", {
+		weekday: "short",
+		month: "short",
+		day: "2-digit",
+		hour: "2-digit",
+		minute: "2-digit",
+		hourCycle: "h23",
+		timeZoneName: "short",
+	});
+	const parts = fmt.formatToParts(end);
+	const get = (type: Intl.DateTimeFormatPartTypes): string => parts.find((p) => p.type === type)?.value ?? "";
+	const weekday = get("weekday");
+	const month = get("month");
+	const day = get("day");
+	const hour = get("hour");
+	const minute = get("minute");
+	// timeZoneName:"short" effectively always yields a value; fall back to the
+	// resolved IANA zone so the stamp is never zone-less (the contract requires TZ).
+	const tz = get("timeZoneName") || fmt.resolvedOptions().timeZone;
+	if (!weekday || !month || !day || !hour || !minute) return null;
+	const stamp = `${weekday} ${month} ${day} ${hour}:${minute}`;
+	return tz ? `${stamp} ${tz}` : stamp;
 }
 
 function truncate(value: string | undefined): string {
