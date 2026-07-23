@@ -403,8 +403,8 @@ paths:
               schema:
                 $ref: '#/components/schemas/APIError'
           description: Not Implemented
-      summary: Force a harness quota probe; empty body probes all installed harnesses,
-        {harness} probes one
+      summary: Force a harness quota probe; {} probes all installed harnesses, {harness}
+        probes one
       tags:
       - metrics
   /api/v1/mobile/disable:
@@ -2896,6 +2896,11 @@ components:
             $ref: '#/components/schemas/QuotaSnapshot'
           type: array
         state:
+          enum:
+          - not_probed
+          - ok
+          - failed
+          - no_source
           type: string
       required:
       - harness

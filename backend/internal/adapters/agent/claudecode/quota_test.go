@@ -2,6 +2,9 @@ package claudecode
 
 import (
 	"context"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -219,6 +222,67 @@ func TestProbeQuotaBinaryMissingFails(t *testing.T) {
 	}
 	if len(res.Snapshots) != 0 {
 		t.Errorf("expected no snapshots on failure, got %d", len(res.Snapshots))
+	}
+}
+
+func TestParseResetTimeUsesUTCYearAtBoundary(t *testing.T) {
+	// Local wall-clock is Jan 1 in a tz well east of UTC, so in UTC it is still
+	// Dec 31 of the PRIOR year. A late-December UTC reset ("Dec 31, 11pm") must
+	// take its year from observedAt.UTC() (the prior year), not the local year.
+	east := time.FixedZone("east", 14*60*60) // +14:00: local date is a day ahead of UTC
+	observedLocal := time.Date(2027, time.January, 1, 10, 0, 0, 0, east)
+	if observedLocal.UTC().Year() != 2026 {
+		t.Fatalf("precondition: observed UTC year = %d, want 2026", observedLocal.UTC().Year())
+	}
+
+	end := parseResetTime("Dec 31, 11pm", observedLocal)
+	if end.IsZero() {
+		t.Fatal("reset failed to parse")
+	}
+	if end.Year() != 2026 || end.Month() != time.December || end.Day() != 31 || end.Hour() != 23 {
+		t.Fatalf("WindowEnd = %v, want 2026-12-31 23:00 UTC (year from observed UTC)", end)
+	}
+}
+
+func TestCappedBufferTruncatesPastMax(t *testing.T) {
+	b := &cappedBuffer{max: 16}
+	n, err := b.Write([]byte(strings.Repeat("x", 100)))
+	if err != nil {
+		t.Fatalf("Write err = %v", err)
+	}
+	// The writer reports the full write so the child never blocks on a short write.
+	if n != 100 {
+		t.Fatalf("Write returned n = %d, want 100 (full write reported)", n)
+	}
+	if got := b.String(); len(got) != 16 {
+		t.Fatalf("retained %d bytes, want 16 (capped)", len(got))
+	}
+}
+
+func TestProbeQuotaCapsHugeOutputAndReturns(t *testing.T) {
+	// A binary that streams far more than maxProbeCaptureBytes must not wedge the
+	// probe: capture is bounded and the probe still returns a (failed) result
+	// because the giant blob is not parseable usage output.
+	dir := t.TempDir()
+	script := filepath.Join(dir, "fake-claude.sh")
+	// Emit ~1 MiB of 'x' (>> maxProbeCaptureBytes) regardless of args.
+	body := "#!/bin/sh\nyes x | head -c 1048576\n"
+	if err := os.WriteFile(script, []byte(body), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	p := New()
+	p.resolvedBinary = script
+
+	res, err := p.ProbeQuota(context.Background(), time.Now())
+	if err != nil {
+		t.Fatalf("ProbeQuota returned error, want nil: %v", err)
+	}
+	if res.State != domain.QuotaProbeFailed {
+		t.Fatalf("State = %q, want %q (unparseable giant output)", res.State, domain.QuotaProbeFailed)
+	}
+	if len([]rune(res.Reason)) > quotaReasonMaxLen {
+		t.Fatalf("reason length %d exceeds cap %d", len([]rune(res.Reason)), quotaReasonMaxLen)
 	}
 }
 

@@ -12,6 +12,7 @@ package codexrollout
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -44,6 +45,14 @@ const (
 	// lineCap bounds a single JSONL line buffered while scanning a rollout. Lines
 	// above it are skipped rather than aborting the scan.
 	lineCap = 32 << 20
+	// maxRolloutScanBytes caps how many bytes of a single rollout the scan reads
+	// before giving up on that file. A continuously-appended (or maliciously huge)
+	// rollout must never turn one probe into an unbounded read that ignores
+	// shutdown; the scan stops and reports whatever rate_limits it found so far.
+	maxRolloutScanBytes = 8 << 20
+	// maxBasisFieldLen caps a sanitized limit_id/plan_type before it goes into a
+	// snapshot basis string, so an odd or oversized value cannot bloat the basis.
+	maxBasisFieldLen = 64
 )
 
 // RateWindow is one Codex rate-limit window (primary or secondary) as reported
@@ -103,15 +112,21 @@ func (r RateLimits) snapshot(name string, win *RateWindow, observedAt time.Time)
 	if reset.IsZero() {
 		return domain.QuotaSnapshot{}, false
 	}
+	// An expired window means the quota already reset; its used_percent is stale
+	// and must not be presented as current usage (or drive a low-quota alert
+	// forever). Reject any window whose reset is not strictly in the future.
+	if !reset.After(observedAt) {
+		return domain.QuotaSnapshot{}, false
+	}
 	limit := 100.0
 	remaining := limit - used
 	source := "codex rollout token_count.rate_limits"
 	basis := "Parsed " + name + " Codex rate-limit window from matching rollout JSONL"
 	if r.LimitID != "" {
-		basis += "; limit_id=" + sanitizeForLog(r.LimitID)
+		basis += "; limit_id=" + capField(sanitizeForLog(r.LimitID))
 	}
 	if r.PlanType != "" {
-		basis += "; plan_type=" + sanitizeForLog(r.PlanType)
+		basis += "; plan_type=" + capField(sanitizeForLog(r.PlanType))
 	}
 	return domain.QuotaSnapshot{
 		Harness:       domain.HarnessCodex,
@@ -143,10 +158,14 @@ func (r RateLimits) snapshot(name string, win *RateWindow, observedAt time.Time)
 //
 // The scan is bounded the same way the stop-hook locator is — recent non-empty
 // day directories, capped, newest-first by mtime — so a long-lived CODEX_HOME
-// never becomes a full-tree walk.
-func NewestRateLimits(codexHome string, observedAt time.Time) (snaps []domain.QuotaSnapshot, found bool) {
+// never becomes a full-tree walk. It also honors ctx: a cancelled context (e.g.
+// daemon shutdown) aborts the scan promptly, returning whatever was found so far.
+func NewestRateLimits(ctx context.Context, codexHome string, observedAt time.Time) (snaps []domain.QuotaSnapshot, found bool) {
 	for _, path := range newestRolloutPaths(codexHome) {
-		windows, sawRateLimits := rolloutRateLimits(path, observedAt)
+		if ctx.Err() != nil {
+			return nil, false
+		}
+		windows, sawRateLimits := rolloutRateLimits(ctx, path, observedAt)
 		if sawRateLimits {
 			return windows, true
 		}
@@ -156,15 +175,16 @@ func NewestRateLimits(codexHome string, observedAt time.Time) (snaps []domain.Qu
 
 // rolloutRateLimits scans one rollout and returns the snapshots of the newest
 // token_count event that produced any, plus whether the rollout carried a
-// rate_limits payload at all (even one whose windows were all rejected).
-func rolloutRateLimits(path string, observedAt time.Time) (snaps []domain.QuotaSnapshot, sawRateLimits bool) {
+// rate_limits payload at all (even one whose windows were all rejected). The
+// scan aborts on a cancelled ctx or once it has read maxRolloutScanBytes.
+func rolloutRateLimits(ctx context.Context, path string, observedAt time.Time) (snaps []domain.QuotaSnapshot, sawRateLimits bool) {
 	f, ok := openRegularFile(path)
 	if !ok {
 		return nil, false
 	}
 	defer func() { _ = f.Close() }()
 
-	scanJSONLines(f, func(line []byte) {
+	scanJSONLines(ctx, f, func(line []byte) {
 		var rec struct {
 			Type    string `json:"type"`
 			Payload struct {
@@ -298,16 +318,27 @@ func openRegularFile(path string) (*os.File, bool) {
 
 // scanJSONLines calls fn for each newline-delimited record in r, tolerating
 // arbitrarily long lines up to lineCap (longer lines are skipped). It never
-// returns an error: a truncated tail simply yields fewer records.
-func scanJSONLines(r io.Reader, fn func(line []byte)) {
+// returns an error: a truncated tail simply yields fewer records. It aborts
+// early on a cancelled ctx (checked every line) and once it has consumed
+// maxRolloutScanBytes, so a huge or continuously-appended rollout can never
+// ignore cancellation or read unboundedly.
+func scanJSONLines(ctx context.Context, r io.Reader, fn func(line []byte)) {
 	br := bufio.NewReaderSize(r, 1<<20)
+	var scanned int64
 	for {
+		if ctx.Err() != nil {
+			return
+		}
 		line, err := readLine(br)
+		scanned += int64(len(line)) + 1 // +1 approximates the consumed newline
 		if len(line) > 0 {
 			fn(line)
 		}
 		if err != nil {
 			return
+		}
+		if scanned > maxRolloutScanBytes {
+			return // truncate: past the per-file byte cap
 		}
 	}
 }
@@ -353,6 +384,16 @@ func sanitizeForLog(s string) string {
 		}
 		return r
 	}, s)
+}
+
+// capField truncates a sanitized basis field to maxBasisFieldLen runes so an
+// oversized limit_id/plan_type cannot bloat a snapshot's basis string.
+func capField(s string) string {
+	r := []rune(s)
+	if len(r) > maxBasisFieldLen {
+		return string(r[:maxBasisFieldLen])
+	}
+	return s
 }
 
 func floatPtr(f float64) *float64 { return &f }

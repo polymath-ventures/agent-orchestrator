@@ -170,6 +170,60 @@ describe("QuotaPanel", () => {
 		);
 	});
 
+	it("disables every probe action while any probe is in flight", async () => {
+		seed({
+			probeStatuses: [
+				{ harness: "codex", state: "not_probed", hasData: false },
+				{ harness: "claude-code", state: "not_probed", hasData: false },
+			],
+		});
+		// Hold the POST open so the mutation stays pending while we assert.
+		let resolvePost: () => void = () => {};
+		postMock.mockImplementation(
+			() =>
+				new Promise((res) => {
+					resolvePost = () => res({ data: { statuses: [] }, error: undefined });
+				}),
+		);
+
+		renderWithClient(<QuotaPanel />);
+
+		const codexBtn = await screen.findByRole("button", { name: "Probe Codex" });
+		const claudeBtn = screen.getByRole("button", { name: "Probe Claude Code" });
+		const refresh = screen.getByRole("button", { name: "Refresh all quota probes" });
+		expect(codexBtn).toBeEnabled();
+		expect(claudeBtn).toBeEnabled();
+		expect(refresh).toBeEnabled();
+
+		await userEvent.click(codexBtn);
+
+		// A probe for codex is in flight: the codex button, the OTHER harness's
+		// button, and the header Refresh must all be disabled to prevent a second
+		// concurrent probe.
+		await waitFor(() => expect(codexBtn).toBeDisabled());
+		expect(claudeBtn).toBeDisabled();
+		expect(refresh).toBeDisabled();
+
+		// Once the probe resolves, every action is re-enabled.
+		resolvePost();
+		await waitFor(() => expect(codexBtn).toBeEnabled());
+		expect(claudeBtn).toBeEnabled();
+		expect(refresh).toBeEnabled();
+	});
+
+	it("surfaces an inline error when a probe mutation rejects", async () => {
+		seed({ probeStatuses: [{ harness: "codex", state: "not_probed", hasData: false }] });
+		postMock.mockResolvedValue({ data: undefined, error: { message: "probe blew up" } });
+
+		renderWithClient(<QuotaPanel />);
+
+		const probeButton = await screen.findByRole("button", { name: "Probe Codex" });
+		await userEvent.click(probeButton);
+
+		const alert = await screen.findByRole("alert");
+		expect(alert).toHaveTextContent(/probe failed/i);
+	});
+
 	it("renders nothing when there are no probe statuses", async () => {
 		seed({ probeStatuses: [] });
 

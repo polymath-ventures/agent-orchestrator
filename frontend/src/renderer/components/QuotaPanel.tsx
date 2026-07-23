@@ -66,6 +66,13 @@ export function QuotaPanel() {
 					<RefreshCw className={cn("size-icon-sm", refreshing && "animate-spin")} aria-hidden="true" />
 				</button>
 			</div>
+			{probe.isError && (
+				<div className="px-2 pb-1.5">
+					<span role="alert" className="text-micro text-warning">
+						probe failed — retry
+					</span>
+				</div>
+			)}
 			{!collapsed && (
 				<div className="flex flex-col gap-1 px-2 pb-2">
 					{statuses.map((status) => (
@@ -94,7 +101,11 @@ function HarnessChip({
 	snapshots: QuotaSnapshot[];
 	probe: ProbeMutation;
 }) {
-	const pending = probe.isPending && probe.variables?.harness === status.harness;
+	// spinning: this harness is the one being probed (spinner on its button).
+	// busy: ANY probe is in flight — disable every probe action so two probes
+	// can never run at once, even across different harnesses.
+	const spinning = probe.isPending && probe.variables?.harness === status.harness;
+	const busy = probe.isPending;
 	const onProbe = () => probe.mutate({ harness: status.harness });
 	const age = status.state === "ok" && status.probedAt ? formatTimeCompact(status.probedAt) : null;
 
@@ -105,7 +116,14 @@ function HarnessChip({
 				{age ? <span className="shrink-0 text-micro text-passive">updated {age}</span> : null}
 			</div>
 			<div className="mt-1">
-				<ChipBody status={status} snapshots={snapshots} label={label} onProbe={onProbe} pending={pending} />
+				<ChipBody
+					status={status}
+					snapshots={snapshots}
+					label={label}
+					onProbe={onProbe}
+					spinning={spinning}
+					busy={busy}
+				/>
 			</div>
 		</div>
 	);
@@ -116,23 +134,25 @@ function ChipBody({
 	snapshots,
 	label,
 	onProbe,
-	pending,
+	spinning,
+	busy,
 }: {
 	status: HarnessQuotaStatus;
 	snapshots: QuotaSnapshot[];
 	label: string;
 	onProbe: () => void;
-	pending: boolean;
+	spinning: boolean;
+	busy: boolean;
 }) {
 	switch (status.state) {
 		case "ok":
 			return status.hasData && snapshots.length > 0 ? (
 				<UsageLines harness={status.harness} snapshots={snapshots} />
 			) : (
-				<InlineAction text="no usage recorded yet" label={label} onProbe={onProbe} pending={pending} />
+				<InlineAction text="no usage recorded yet" label={label} onProbe={onProbe} spinning={spinning} busy={busy} />
 			);
 		case "not_probed":
-			return <InlineAction text="not probed yet" label={label} onProbe={onProbe} pending={pending} />;
+			return <InlineAction text="not probed yet" label={label} onProbe={onProbe} spinning={spinning} busy={busy} />;
 		case "failed":
 			return (
 				<InlineAction
@@ -140,7 +160,8 @@ function ChipBody({
 					tone="warning"
 					label={label}
 					onProbe={onProbe}
-					pending={pending}
+					spinning={spinning}
+					busy={busy}
 				/>
 			);
 		case "no_source":
@@ -192,13 +213,15 @@ function InlineAction({
 	tone,
 	label,
 	onProbe,
-	pending,
+	spinning,
+	busy,
 }: {
 	text: string;
 	tone?: "warning";
 	label: string;
 	onProbe: () => void;
-	pending: boolean;
+	spinning: boolean;
+	busy: boolean;
 }) {
 	return (
 		<div className="flex items-center justify-between gap-2">
@@ -208,11 +231,11 @@ function InlineAction({
 			<button
 				aria-label={`Probe ${label}`}
 				className="inline-flex shrink-0 items-center gap-1 rounded border border-border px-1.5 py-0.5 text-micro font-medium text-passive transition-colors hover:bg-interactive-hover hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
-				disabled={pending}
+				disabled={busy}
 				onClick={onProbe}
 				type="button"
 			>
-				{pending ? (
+				{spinning ? (
 					<Loader2 className="size-icon-xs animate-spin" aria-hidden="true" />
 				) : (
 					<RefreshCw className="size-icon-xs" aria-hidden="true" />

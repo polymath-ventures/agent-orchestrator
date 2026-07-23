@@ -218,7 +218,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Force a harness quota probe; empty body probes all installed harnesses, {harness} probes one */
+        /** Force a harness quota probe; {} probes all installed harnesses, {harness} probes one */
         post: operations["probeQuota"];
         delete?: never;
         options?: never;
@@ -1155,7 +1155,8 @@ export interface components {
             probedAt?: string;
             reason?: string;
             snapshots?: components["schemas"]["QuotaSnapshot"][];
-            state: string;
+            /** @enum {string} */
+            state: "not_probed" | "ok" | "failed" | "no_source";
         };
         ImportReport: {
             dryRun: boolean;

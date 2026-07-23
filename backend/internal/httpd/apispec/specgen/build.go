@@ -395,8 +395,12 @@ func metricsOperations() []operation {
 		},
 		{
 			method: http.MethodPost, path: "/api/v1/metrics/probe", id: "probeQuota", tag: "metrics",
-			summary: "Force a harness quota probe; empty body probes all installed harnesses, {harness} probes one",
-			reqBody: controllers.ProbeQuotaRequest{}, // body is optional: omit to probe every harness
+			summary: "Force a harness quota probe; {} probes all installed harnesses, {harness} probes one",
+			// The body carries an optional `harness`; the request body itself is
+			// marked required (below). Callers always send a JSON object — `{}` to
+			// probe every harness, `{"harness":"..."}` to probe one. (The handler
+			// additionally tolerates a wholly absent body, but the contract is `{}`.)
+			reqBody: controllers.ProbeQuotaRequest{},
 			resps: []respUnit{
 				{http.StatusOK, controllers.ProbeQuotaResponse{}},
 				{http.StatusBadRequest, envelope.APIError{}},

@@ -125,7 +125,7 @@ func (s QuotaProbeState) Valid() bool {
 // it is not persisted (a fresh run re-probes).
 type HarnessQuotaStatus struct {
 	Harness  AgentHarness    `json:"harness"`
-	State    QuotaProbeState `json:"state"`
+	State    QuotaProbeState `json:"state" enum:"not_probed,ok,failed,no_source"`
 	Reason   string          `json:"reason,omitempty"`
 	ProbedAt time.Time       `json:"probedAt,omitempty"`
 	// HasData reports whether the latest successful probe produced any usage
@@ -136,4 +136,27 @@ type HarnessQuotaStatus struct {
 	// probe, so the widget renders directly from the status without waiting on
 	// the separate metrics tick that refreshes persisted snapshots for alerting.
 	Snapshots []QuotaSnapshot `json:"snapshots,omitempty"`
+}
+
+// MarshalJSON omits a zero ProbedAt. A not_probed status has never been probed,
+// so its zero time must not serialize as year 0001 despite `omitempty` (time.Time
+// is a struct, which `omitempty` cannot detect as empty). It mirrors
+// QuotaSnapshot.MarshalJSON's pointer trick and also omits an empty Snapshots.
+func (s HarnessQuotaStatus) MarshalJSON() ([]byte, error) {
+	type harnessQuotaStatusJSON struct {
+		Harness   AgentHarness    `json:"harness"`
+		State     QuotaProbeState `json:"state" enum:"not_probed,ok,failed,no_source"`
+		Reason    string          `json:"reason,omitempty"`
+		ProbedAt  *time.Time      `json:"probedAt,omitempty"`
+		HasData   bool            `json:"hasData"`
+		Snapshots []QuotaSnapshot `json:"snapshots,omitempty"`
+	}
+	return json.Marshal(harnessQuotaStatusJSON{
+		Harness:   s.Harness,
+		State:     s.State,
+		Reason:    s.Reason,
+		ProbedAt:  quotaWindowTime(s.ProbedAt),
+		HasData:   s.HasData,
+		Snapshots: s.Snapshots,
+	})
 }

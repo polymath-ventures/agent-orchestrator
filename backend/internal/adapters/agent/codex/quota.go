@@ -43,7 +43,7 @@ func (p *Plugin) ProbeQuota(ctx context.Context, observedAt time.Time) (ports.Qu
 		return ports.QuotaProbeResult{}, err
 	}
 
-	snaps, found := codexrollout.NewestRateLimits(resolveCodexHome(), observedAt)
+	snaps, found := codexrollout.NewestRateLimits(ctx, resolveCodexHome(), observedAt)
 	if !found || len(snaps) == 0 {
 		return ports.QuotaProbeResult{
 			State:  domain.QuotaProbeOK,

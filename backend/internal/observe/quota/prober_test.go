@@ -234,8 +234,61 @@ func TestProbeHarnessSingleFlight(t *testing.T) {
 	if got := slow.maxConcurrency(); got != 1 {
 		t.Fatalf("max concurrent ProbeQuota = %d, want 1 (single-flight per harness)", got)
 	}
-	if slow.callCount() < 1 {
-		t.Fatal("ProbeQuota never called")
+	// Skip-if-in-flight: while one probe holds the flight lock, the concurrent
+	// one is skipped (returns the current status) rather than serialized, so the
+	// adapter is called exactly once and no real quota turn is wasted.
+	if got := slow.callCount(); got != 1 {
+		t.Fatalf("ProbeQuota called %d times, want exactly 1 (second probe skipped in flight)", got)
+	}
+}
+
+func TestReconcileSeedsNotProbed(t *testing.T) {
+	enum := &fakeEnumerator{probers: []ports.HarnessQuotaProber{
+		{Harness: domain.HarnessClaudeCode, Prober: &fakeProber{result: ports.QuotaProbeResult{State: domain.QuotaProbeOK}}},
+		{Harness: domain.HarnessCodex, Prober: &fakeProber{result: ports.QuotaProbeResult{State: domain.QuotaProbeOK}}},
+	}}
+	p := newTestProber(enum, &fakeStore{})
+
+	// Before any probe resolves, reconcile seeds not_probed for every enumerated
+	// harness so the widget renders immediately.
+	p.reconcile(context.Background())
+
+	statuses := p.Statuses()
+	if len(statuses) != 2 {
+		t.Fatalf("Statuses len = %d, want 2 seeded not_probed entries", len(statuses))
+	}
+	for _, s := range statuses {
+		if s.State != domain.QuotaProbeNotProbed {
+			t.Fatalf("harness %q state = %q, want not_probed", s.Harness, s.State)
+		}
+		if !s.ProbedAt.IsZero() {
+			t.Fatalf("harness %q seeded with non-zero ProbedAt %v", s.Harness, s.ProbedAt)
+		}
+	}
+}
+
+func TestProbeAllEvictsDroppedHarness(t *testing.T) {
+	enum := &fakeEnumerator{probers: []ports.HarnessQuotaProber{
+		{Harness: domain.HarnessClaudeCode, Prober: &fakeProber{result: ports.QuotaProbeResult{State: domain.QuotaProbeOK}}},
+		{Harness: domain.HarnessCodex, Prober: &fakeProber{result: ports.QuotaProbeResult{State: domain.QuotaProbeOK}}},
+	}}
+	p := newTestProber(enum, &fakeStore{})
+
+	if got := len(p.ProbeAll(context.Background())); got != 2 {
+		t.Fatalf("first ProbeAll returned %d statuses, want 2", got)
+	}
+
+	// Codex is no longer enumerated (e.g. uninstalled). The next ProbeAll must
+	// evict its stale status rather than leaving a lingering chip.
+	enum.probers = []ports.HarnessQuotaProber{
+		{Harness: domain.HarnessClaudeCode, Prober: &fakeProber{result: ports.QuotaProbeResult{State: domain.QuotaProbeOK}}},
+	}
+	statuses := p.ProbeAll(context.Background())
+	if len(statuses) != 1 {
+		t.Fatalf("second ProbeAll returned %d statuses, want 1 (codex evicted)", len(statuses))
+	}
+	if statuses[0].Harness != domain.HarnessClaudeCode {
+		t.Fatalf("remaining status = %q, want claude-code", statuses[0].Harness)
 	}
 }
 

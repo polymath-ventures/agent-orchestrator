@@ -88,10 +88,12 @@ func New(deps Deps) *Prober {
 	return p
 }
 
-// Start runs ProbeAll once immediately (inside the goroutine, so daemon startup
-// is not blocked), then on every interval tick until ctx is done. The returned
-// channel closes when the loop exits.
+// Start seeds not_probed statuses for the currently enumerated harnesses so the
+// widget renders "not probed yet" immediately, then runs ProbeAll once (inside
+// the goroutine, so daemon startup is not blocked) and on every interval tick
+// until ctx is done. The returned channel closes when the loop exits.
 func (p *Prober) Start(ctx context.Context) <-chan struct{} {
+	p.reconcile(ctx)
 	return observe.StartPollLoop(ctx, p.interval, func(ctx context.Context) error {
 		p.ProbeAll(ctx)
 		return nil
@@ -100,9 +102,10 @@ func (p *Prober) Start(ctx context.Context) <-chan struct{} {
 
 // ProbeAll probes every currently enumerated harness. Distinct harnesses probe
 // concurrently; each still takes its own single-flight lock, so a concurrent
-// force-probe of one harness never doubles up.
+// force-probe of one harness never doubles up. It first reconciles the status
+// map with the current enumeration (seeding not_probed, evicting stragglers).
 func (p *Prober) ProbeAll(ctx context.Context) []domain.HarnessQuotaStatus {
-	probers := p.enumerate(ctx)
+	probers := p.reconcile(ctx)
 	var wg sync.WaitGroup
 	for _, hp := range probers {
 		wg.Add(1)
@@ -113,6 +116,35 @@ func (p *Prober) ProbeAll(ctx context.Context) []domain.HarnessQuotaStatus {
 	}
 	wg.Wait()
 	return p.Statuses()
+}
+
+// reconcile aligns the in-memory status map with the current harness
+// enumeration and returns that enumeration. Each newly-enumerated harness with
+// no status yet is seeded QuotaProbeNotProbed (zero ProbedAt) so the widget can
+// render "not probed yet" immediately; any status whose harness is no longer
+// enumerated (e.g. an uninstalled harness) is evicted so a stale chip never
+// lingers. Existing statuses for still-present harnesses are left untouched.
+func (p *Prober) reconcile(ctx context.Context) []ports.HarnessQuotaProber {
+	probers := p.enumerate(ctx)
+	present := make(map[domain.AgentHarness]struct{}, len(probers))
+	for _, hp := range probers {
+		present[hp.Harness] = struct{}{}
+	}
+
+	p.mu.Lock()
+	for h := range present {
+		if _, ok := p.statuses[h]; !ok {
+			p.statuses[h] = domain.HarnessQuotaStatus{Harness: h, State: domain.QuotaProbeNotProbed}
+		}
+	}
+	for h := range p.statuses {
+		if _, ok := present[h]; !ok {
+			delete(p.statuses, h)
+		}
+	}
+	p.mu.Unlock()
+
+	return probers
 }
 
 // ProbeHarness force-probes a single harness. It returns (_, false) when the
@@ -152,7 +184,12 @@ func (p *Prober) enumerate(ctx context.Context) []ports.HarnessQuotaProber {
 // misbehaving adapter never wedges the prober.
 func (p *Prober) probe(ctx context.Context, hp ports.HarnessQuotaProber) domain.HarnessQuotaStatus {
 	lock := p.flightLock(hp.Harness)
-	lock.Lock()
+	if !lock.TryLock() {
+		// A probe for this harness is already in flight. Probing costs a real
+		// quota turn (e.g. claude -p /usage), so skip the duplicate and return
+		// the current cached status rather than serializing behind and re-probing.
+		return p.currentStatus(hp.Harness)
+	}
 	defer lock.Unlock()
 
 	now := p.now()
@@ -204,6 +241,18 @@ func (p *Prober) record(status domain.HarnessQuotaStatus) domain.HarnessQuotaSta
 	p.statuses[status.Harness] = status
 	p.mu.Unlock()
 	return status
+}
+
+// currentStatus returns the cached status for harness, or a not_probed status
+// when none is recorded yet. It backs the single-flight skip in probe: a caller
+// whose probe is skipped still gets an honest current status to return.
+func (p *Prober) currentStatus(harness domain.AgentHarness) domain.HarnessQuotaStatus {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if s, ok := p.statuses[harness]; ok {
+		return s
+	}
+	return domain.HarnessQuotaStatus{Harness: harness, State: domain.QuotaProbeNotProbed}
 }
 
 func (p *Prober) flightLock(harness domain.AgentHarness) *sync.Mutex {

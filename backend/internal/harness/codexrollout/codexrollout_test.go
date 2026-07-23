@@ -1,6 +1,7 @@
 package codexrollout
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -123,7 +124,7 @@ func TestNewestRateLimits_ValidRollout(t *testing.T) {
 	rl := `{"limit_id":"codex","primary":{"used_percent":80,"window_minutes":10080,"resets_at":1785277078},"secondary":{"used_percent":40,"window_minutes":300,"resets_at":1784680000},"plan_type":"pro"}`
 	writeRollout(t, home, []string{"2026", "07", "18"}, "rollout-a.jsonl", rl, [][3]int{{100, 20, 120}})
 
-	snaps, found := NewestRateLimits(home, time.Unix(200, 0).UTC())
+	snaps, found := NewestRateLimits(context.Background(), home, time.Unix(200, 0).UTC())
 	if !found {
 		t.Fatal("found = false, want true for a rollout carrying rate_limits")
 	}
@@ -140,7 +141,7 @@ func TestNewestRateLimits_ImplausibleReturnsFoundNoSnaps(t *testing.T) {
 	rl := `{"limit_id":"codex","primary":{"used_percent":120,"window_minutes":10080,"resets_at":1785277078}}`
 	writeRollout(t, home, []string{"2026", "07", "18"}, "rollout-a.jsonl", rl, [][3]int{{100, 20, 120}})
 
-	snaps, found := NewestRateLimits(home, time.Unix(200, 0).UTC())
+	snaps, found := NewestRateLimits(context.Background(), home, time.Unix(200, 0).UTC())
 	if !found {
 		t.Fatal("found = false, want true: a rate_limits event was present even though its windows are implausible")
 	}
@@ -159,7 +160,7 @@ func TestNewestRateLimits_NewestDayWithDataWins(t *testing.T) {
 	rl := `{"limit_id":"codex","primary":{"used_percent":73,"window_minutes":10080,"resets_at":1785277078}}`
 	writeRollout(t, home, []string{"2026", "07", "18"}, "rollout-a.jsonl", rl, [][3]int{{7, 3, 10}})
 
-	snaps, found := NewestRateLimits(home, time.Unix(200, 0).UTC())
+	snaps, found := NewestRateLimits(context.Background(), home, time.Unix(200, 0).UTC())
 	if !found || len(snaps) != 1 {
 		t.Fatalf("found=%v snaps=%+v, want a single window from the older non-empty day", found, snaps)
 	}
@@ -185,7 +186,7 @@ func TestNewestRateLimits_NewerRolloutWithoutRateLimitsFallsBack(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	snaps, found := NewestRateLimits(home, time.Unix(200, 0).UTC())
+	snaps, found := NewestRateLimits(context.Background(), home, time.Unix(200, 0).UTC())
 	if !found || len(snaps) != 1 {
 		t.Fatalf("found=%v snaps=%+v, want the older rollout's rate_limits", found, snaps)
 	}
@@ -196,15 +197,103 @@ func TestNewestRateLimits_NewerRolloutWithoutRateLimitsFallsBack(t *testing.T) {
 
 func TestNewestRateLimits_NoRolloutReturnsNotFound(t *testing.T) {
 	home := t.TempDir()
-	snaps, found := NewestRateLimits(home, time.Unix(200, 0).UTC())
+	snaps, found := NewestRateLimits(context.Background(), home, time.Unix(200, 0).UTC())
 	if found || snaps != nil {
 		t.Fatalf("found=%v snaps=%+v, want not found for an empty home", found, snaps)
 	}
 }
 
 func TestNewestRateLimits_MissingHomeReturnsNotFound(t *testing.T) {
-	snaps, found := NewestRateLimits(filepath.Join(t.TempDir(), "does-not-exist"), time.Unix(200, 0).UTC())
+	snaps, found := NewestRateLimits(context.Background(), filepath.Join(t.TempDir(), "does-not-exist"), time.Unix(200, 0).UTC())
 	if found || snaps != nil {
 		t.Fatalf("found=%v snaps=%+v, want not found for an absent home", found, snaps)
+	}
+}
+
+// TestSnapshots_RejectsExpiredWindow proves an already-reset window (resets_at
+// at or before observedAt) is dropped: its used_percent is stale and must not
+// be presented as current usage.
+func TestSnapshots_RejectsExpiredWindow(t *testing.T) {
+	used := 95.0
+	minutes := 10080.0
+	reset := int64(1_000_000_000) // 2001, long before observedAt below
+	observed := time.Unix(2_000_000_000, 0).UTC()
+	rl := RateLimits{Primary: &RateWindow{UsedPercent: &used, WindowMinutes: &minutes, ResetsAt: &reset}}
+	if got := rl.Snapshots(observed); len(got) != 0 {
+		t.Fatalf("expired window must be rejected, got %+v", got)
+	}
+	// A reset exactly equal to observedAt is not strictly in the future → rejected.
+	eq := observed.Unix()
+	rl.Primary.ResetsAt = &eq
+	if got := rl.Snapshots(observed); len(got) != 0 {
+		t.Fatalf("reset == observedAt must be rejected (not strictly future), got %+v", got)
+	}
+}
+
+// TestNewestRateLimits_ExpiredWindowFoundNoSnaps proves the file-level read
+// still reports found=true (a rate_limits event existed) but yields zero
+// snapshots when the only window has already reset.
+func TestNewestRateLimits_ExpiredWindowFoundNoSnaps(t *testing.T) {
+	home := t.TempDir()
+	rl := `{"limit_id":"codex","primary":{"used_percent":95,"window_minutes":10080,"resets_at":1000000000}}`
+	writeRollout(t, home, []string{"2026", "07", "18"}, "rollout-a.jsonl", rl, [][3]int{{100, 20, 120}})
+
+	snaps, found := NewestRateLimits(context.Background(), home, time.Unix(2_000_000_000, 0).UTC())
+	if !found {
+		t.Fatal("found = false, want true: a rate_limits event was present even though its window has expired")
+	}
+	if len(snaps) != 0 {
+		t.Fatalf("snaps = %+v, want none (window already reset)", snaps)
+	}
+}
+
+// TestSnapshots_CapsBasisFields proves an oversized limit_id/plan_type is
+// truncated to maxBasisFieldLen runes in the snapshot basis.
+func TestSnapshots_CapsBasisFields(t *testing.T) {
+	used := 50.0
+	minutes := 300.0
+	reset := int64(1785277078)
+	longID := strings.Repeat("A", 200)
+	longPlan := strings.Repeat("B", 200)
+	rl := RateLimits{
+		LimitID:  longID,
+		PlanType: longPlan,
+		Primary:  &RateWindow{UsedPercent: &used, WindowMinutes: &minutes, ResetsAt: &reset},
+	}
+	got := rl.Snapshots(time.Unix(200, 0).UTC())
+	if len(got) != 1 {
+		t.Fatalf("snapshots = %+v, want one", got)
+	}
+	if strings.Contains(got[0].Basis, strings.Repeat("A", maxBasisFieldLen+1)) {
+		t.Fatalf("limit_id not capped to %d runes: %q", maxBasisFieldLen, got[0].Basis)
+	}
+	if strings.Contains(got[0].Basis, strings.Repeat("B", maxBasisFieldLen+1)) {
+		t.Fatalf("plan_type not capped to %d runes: %q", maxBasisFieldLen, got[0].Basis)
+	}
+	if !strings.Contains(got[0].Basis, "limit_id="+strings.Repeat("A", maxBasisFieldLen)) {
+		t.Fatalf("expected capped limit_id in basis: %q", got[0].Basis)
+	}
+}
+
+// TestNewestRateLimits_CancelledCtxReturnsPromptly proves a cancelled context
+// short-circuits the scan: NewestRateLimits returns (nil,false) without reading
+// the large rollout on disk.
+func TestNewestRateLimits_CancelledCtxReturnsPromptly(t *testing.T) {
+	home := t.TempDir()
+	// A large synthetic rollout whose only rate_limits sits at the very end. A
+	// full scan would have to read the whole thing; a cancelled ctx must not.
+	rl := `{"limit_id":"codex","primary":{"used_percent":50,"window_minutes":10080,"resets_at":1785277078}}`
+	filler := make([][3]int, 20000)
+	for i := range filler {
+		filler[i] = [3]int{i, i, 2 * i}
+	}
+	writeRollout(t, home, []string{"2026", "07", "18"}, "rollout-big.jsonl", rl, filler)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // already cancelled before the call
+
+	snaps, found := NewestRateLimits(ctx, home, time.Unix(200, 0).UTC())
+	if found || snaps != nil {
+		t.Fatalf("found=%v snaps=%+v, want (nil,false) for a cancelled ctx", found, snaps)
 	}
 }

@@ -1,7 +1,6 @@
 package claudecode
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"math"
@@ -10,6 +9,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 
@@ -29,6 +29,11 @@ const (
 
 	// quotaReasonMaxLen caps a sanitized raw excerpt carried on a failed probe.
 	quotaReasonMaxLen = 200
+
+	// maxProbeCaptureBytes bounds how much stdout/stderr the probe retains. The
+	// `/usage` output is tiny; this only stops a misbehaving binary from streaming
+	// unbounded data into memory. It comfortably exceeds any real usage output.
+	maxProbeCaptureBytes = 64 << 10
 )
 
 // usageLineRe matches one Claude `/usage` line of the shape
@@ -109,9 +114,11 @@ func trimCurrentPrefix(label string) string {
 }
 
 // parseResetTime parses a yearless Claude reset stamp into a UTC time, filling
-// the year from observedAt. Because reset windows are near-future, a result
-// more than 24h before observedAt is rolled forward one year (year-wrap at a
-// December → January boundary). An unparseable stamp yields the zero time.
+// the year from observedAt. Because the reset itself is rendered in UTC, the
+// year is taken from observedAt.UTC() — a near-New-Year LOCAL observedAt could
+// otherwise place a UTC reset a year off. Because reset windows are near-future,
+// a result more than 24h before observedAt is rolled forward one year (year-wrap
+// at a December → January boundary). An unparseable stamp yields the zero time.
 func parseResetTime(reset string, observedAt time.Time) time.Time {
 	reset = strings.TrimSpace(usageTZSuffixRe.ReplaceAllString(reset, ""))
 	var parsed time.Time
@@ -124,8 +131,9 @@ func parseResetTime(reset string, observedAt time.Time) time.Time {
 	if err != nil {
 		return time.Time{}
 	}
-	end := time.Date(observedAt.Year(), parsed.Month(), parsed.Day(), parsed.Hour(), parsed.Minute(), 0, 0, time.UTC)
-	if end.Before(observedAt.Add(-24 * time.Hour)) {
+	observedUTC := observedAt.UTC()
+	end := time.Date(observedUTC.Year(), parsed.Month(), parsed.Day(), parsed.Hour(), parsed.Minute(), 0, 0, time.UTC)
+	if end.Before(observedUTC.Add(-24 * time.Hour)) {
 		end = end.AddDate(1, 0, 0)
 	}
 	return end
@@ -187,9 +195,10 @@ func (p *Plugin) ProbeQuota(ctx context.Context, observedAt time.Time) (ports.Qu
 	cmd := exec.CommandContext(probeCtx, binary, usageProbeArgs()...)
 	cmd.Stdin = nil // no prompt: /usage is a slash command, not a task
 	cmd.Env = scrubProbeEnv()
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+	stdout := &cappedBuffer{max: maxProbeCaptureBytes}
+	stderr := &cappedBuffer{max: maxProbeCaptureBytes}
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
 	cmd.WaitDelay = claudeProbeWaitDelay
 	configureProbeProcessGroup(cmd)
 
@@ -212,6 +221,35 @@ func (p *Plugin) ProbeQuota(ctx context.Context, observedAt time.Time) (ports.Qu
 		reason = sanitizeReason(runErr.Error())
 	}
 	return ports.QuotaProbeResult{State: domain.QuotaProbeFailed, Reason: reason}, nil
+}
+
+// cappedBuffer is a thread-safe io.Writer that retains at most max bytes of what
+// is written to it and silently drops the rest. It always reports the full write
+// as accepted so the child process never sees a short write and blocks. The
+// subprocess writes stdout/stderr from its own goroutines, so the mutex guards
+// concurrent Writes against String().
+type cappedBuffer struct {
+	mu  sync.Mutex
+	buf []byte
+	max int
+}
+
+func (b *cappedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if room := b.max - len(b.buf); room > 0 {
+		if len(p) < room {
+			room = len(p)
+		}
+		b.buf = append(b.buf, p[:room]...)
+	}
+	return len(p), nil
+}
+
+func (b *cappedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return string(b.buf)
 }
 
 // sanitizeReason makes a raw excerpt safe to store and render: it strips control

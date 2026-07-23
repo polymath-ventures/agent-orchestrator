@@ -45,6 +45,41 @@ func TestQuotaSnapshotJSONIncludesKnownWindowTimes(t *testing.T) {
 	}
 }
 
+func TestHarnessQuotaStatusJSONOmitsZeroProbedAt(t *testing.T) {
+	raw, err := json.Marshal(HarnessQuotaStatus{
+		Harness: HarnessCodex,
+		State:   QuotaProbeNotProbed,
+	})
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	body := string(raw)
+	if strings.Contains(body, "probedAt") || strings.Contains(body, "0001-01-01") {
+		t.Fatalf("zero ProbedAt leaked into JSON: %s", body)
+	}
+	if strings.Contains(body, "snapshots") {
+		t.Fatalf("empty Snapshots leaked into JSON: %s", body)
+	}
+	if !strings.Contains(body, `"state":"not_probed"`) {
+		t.Fatalf("expected not_probed state in JSON: %s", body)
+	}
+}
+
+func TestHarnessQuotaStatusJSONIncludesKnownProbedAt(t *testing.T) {
+	probed := time.Date(2026, 7, 20, 12, 0, 0, 0, time.FixedZone("offset", -4*60*60))
+	raw, err := json.Marshal(HarnessQuotaStatus{
+		Harness:  HarnessCodex,
+		State:    QuotaProbeOK,
+		ProbedAt: probed,
+	})
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	if !strings.Contains(string(raw), `"probedAt":"2026-07-20T16:00:00Z"`) {
+		t.Fatalf("known ProbedAt missing or not normalized to UTC: %s", raw)
+	}
+}
+
 func TestQuotaSnapshotJSONIncludesWindowName(t *testing.T) {
 	raw, err := json.Marshal(QuotaSnapshot{
 		Harness:       HarnessCodex,
