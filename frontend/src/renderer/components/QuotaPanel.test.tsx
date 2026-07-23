@@ -269,6 +269,8 @@ describe("QuotaPanel", () => {
 		const meter = screen.getByRole("progressbar", { name: "Codex primary quota usage" });
 		expect(meter).not.toHaveAttribute("aria-valuenow");
 		expect(meter).toHaveAttribute("aria-valuetext", "usage unknown");
+		expect(meter.firstElementChild).toHaveStyle({ width: "0%" });
+		expect(meter.firstElementChild).not.toHaveStyle({ minWidth: "2px" });
 	});
 
 	it("clamps over-100 usage to a full critical meter", async () => {

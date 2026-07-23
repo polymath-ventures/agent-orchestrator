@@ -218,7 +218,7 @@ function WindowLine({ snapshot, label }: { snapshot: QuotaSnapshot; label: strin
 	const progressValue = used ?? 0;
 	const fillStyle = {
 		width: `${progressValue}%`,
-		minWidth: "2px",
+		...(used !== null ? { minWidth: "2px" } : {}),
 	};
 	const remaining = 100 - progressValue;
 	const showRemaining = severity === "warning" || severity === "critical";
