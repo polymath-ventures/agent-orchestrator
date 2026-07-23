@@ -1,0 +1,5 @@
+# App identity for Fastlane. The bundle identifier mirrors
+# expo.ios.bundleIdentifier in app.json. The team id comes from the environment
+# so no account-specific value is committed.
+app_identifier(ENV["APPLE_APP_IDENTIFIER"] || "aoagents.ao")
+team_id(ENV["APPLE_TEAM_ID"]) if ENV["APPLE_TEAM_ID"]

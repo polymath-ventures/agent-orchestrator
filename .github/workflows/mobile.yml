@@ -1,22 +1,42 @@
 name: Mobile
 
-# Typechecks the Expo mobile app. Without this, changes under packages/mobile
-# (e.g. the push-notification client) shipped with no CI coverage — the existing
-# frontend/go workflows don't touch this package.
+# Mobile app CI + iOS TestFlight delivery.
+#
+# Two jobs keep the runner split explicit:
+#   * verify - Linux: install, typecheck, unit tests, and non-blocking Expo
+#              health checks. This is the PR gate.
+#   * ios-testflight - self-hosted Mac mini: prebuild the iOS project, install
+#              pods, archive with Fastlane, and upload to TestFlight on main or
+#              manual dispatch. This job never runs on PRs, so a single Mac
+#              runner cannot gate or stall every pull request.
 
 on:
   push:
     branches: [main]
+    paths:
+      - "packages/mobile/**"
+      - ".github/workflows/mobile.yml"
   pull_request:
     paths:
       - "packages/mobile/**"
       - ".github/workflows/mobile.yml"
+  workflow_dispatch:
+    inputs:
+      upload_testflight:
+        description: "Upload the resulting build to TestFlight (needs App Store Connect secrets)"
+        type: boolean
+        default: true
 
 permissions:
   contents: read
 
+concurrency:
+  group: mobile-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
-  typecheck:
+  verify:
+    name: Verify (Linux)
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -30,8 +50,86 @@ jobs:
           cache: npm
           cache-dependency-path: packages/mobile/package-lock.json
 
-      # .npmrc pins legacy-peer-deps for this package; npm ci honors it.
-      - run: npm ci
+      - name: Install dependencies
+        run: npm ci
 
       - name: Typecheck
         run: npm run typecheck
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Expo project health (informational)
+        continue-on-error: true
+        run: npx --yes expo-doctor@1
+
+  ios-testflight:
+    name: iOS build + TestFlight
+    needs: verify
+    if: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}
+    runs-on: [self-hosted, macOS, ao-mac-mini]
+    defaults:
+      run:
+        working-directory: packages/mobile
+    env:
+      UPLOAD_TESTFLIGHT: ${{ github.event_name == 'workflow_dispatch' && inputs.upload_testflight || github.event_name == 'push' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Preflight - App Store Connect credentials
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_API_KEY_P8: ${{ secrets.ASC_API_KEY_P8 }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          missing=()
+          [ -n "$ASC_KEY_ID" ] || missing+=("ASC_KEY_ID")
+          [ -n "$ASC_ISSUER_ID" ] || missing+=("ASC_ISSUER_ID")
+          [ -n "$ASC_API_KEY_P8" ] || missing+=("ASC_API_KEY_P8")
+          [ -n "$APPLE_TEAM_ID" ] || missing+=("APPLE_TEAM_ID")
+          if [ "${#missing[@]}" -ne 0 ]; then
+            echo "::error::Missing App Store Connect secrets: ${missing[*]}."
+            echo "::error::Set them in repo Settings > Secrets and variables > Actions (see docs/mobile-ci-mac-mini.md)."
+            exit 1
+          fi
+          echo "App Store Connect credentials present."
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: packages/mobile/package-lock.json
+
+      - name: Install JS dependencies
+        run: npm ci
+
+      - name: Prebuild native iOS project
+        run: npx expo prebuild --platform ios --no-install
+
+      - name: Install CocoaPods
+        run: npx pod-install ios
+
+      - name: Install Fastlane
+        run: bundle install
+
+      - name: Build and upload to TestFlight
+        # Fastlane reads the latest TestFlight build number and writes the next
+        # CFBundleVersion into the generated Info.plist before archiving.
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_API_KEY_P8: ${{ secrets.ASC_API_KEY_P8 }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: bundle exec fastlane ios beta
+
+      - name: Upload build artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-build
+          path: |
+            packages/mobile/build/*.ipa
+            packages/mobile/build/*.app.dSYM.zip
+          if-no-files-found: ignore
+          retention-days: 7

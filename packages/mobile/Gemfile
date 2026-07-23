@@ -1,0 +1,5 @@
+# Fastlane is the iOS build and TestFlight delivery toolchain for this package.
+# It is installed only on the macOS build host via Bundler.
+source "https://rubygems.org"
+
+gem "fastlane", "~> 2.222"
