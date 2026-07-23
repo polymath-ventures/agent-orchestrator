@@ -22,6 +22,7 @@ import {
 	workerSessions,
 } from "../types/workspace";
 import { getSessionDotView } from "../lib/session-presentation";
+import { isMacDesktopChrome } from "../lib/runtime-environment";
 import { aoBridge } from "../lib/bridge";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
@@ -67,7 +68,7 @@ import { ResizeHandle } from "./ResizeHandle";
 // in the full-width topbar's left inset (_shell renders the bar above the
 // sidebar row); the sidebar itself starts below the 56px header, so its border
 // never crosses the titlebar strip.
-const isMac = typeof navigator !== "undefined" && /Mac|iPod|iPhone|iPad/.test(navigator.userAgent);
+const isMac = isMacDesktopChrome();
 const isWindows =
 	typeof navigator !== "undefined" &&
 	/win/i.test(

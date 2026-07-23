@@ -1,17 +1,17 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { installBrowserModeApiFixtures } from "./fixtures";
 
-// Regression guard for #366 (macOS): the sidebar's "Agent Orchestrator" brand
-// must never sit under the fixed TitlebarNav cluster, and the wordmark must stay
-// readable. The original bug was board routes (`/` and `/projects/:id`) having no
-// topbar, so the sidebar stayed at top-0 and the brand landed in the cluster's
-// 56px lane. It is now fixed structurally — the shell renders the topbar on every
-// route, so the sidebar always hangs below the titlebar band — and these tests
-// lock that invariant in: if a topbar-less route is ever reintroduced, they fail.
+// Regression guard for #366: the sidebar's "Agent Orchestrator" brand must never
+// sit under the top titlebar band, and the wordmark must stay readable. The
+// original bug was board routes (`/` and `/projects/:id`) having no topbar, so
+// the sidebar stayed at top-0 and the brand landed in the titlebar lane. The
+// structural fix renders the shell topbar on every route, so the sidebar always
+// hangs below the header — these tests lock that invariant in.
 //
-// macOS-only: TitlebarNav (and the bug) gate on navigator.userAgent looking like
-// a Mac, read once at module load. Force a Mac UA so this is deterministic
-// regardless of the host/CI OS.
+// GH #54 additionally makes the macOS TitlebarNav cluster Electron-only, so it
+// never renders in browser mode. A Mac UA keeps the topbar on board routes
+// (Linux would otherwise drop it) and lets us assert, in one place, that browser
+// mode carries no Electron titlebar chrome while the brand still clears the band.
 test.use({
 	userAgent:
 		"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -31,29 +31,36 @@ async function isTruncated(span: Locator) {
 	return span.evaluate((el) => el.scrollWidth > el.clientWidth + 1);
 }
 
-async function expectBrandClearsCluster(page: Page) {
-	const cluster = page.locator(".titlebar-nav");
-	await expect(cluster).toBeVisible();
+async function expectBrandClearsHeader(page: Page) {
+	// Browser mode must never render the macOS Electron titlebar cluster.
+	await expect(page.locator(".titlebar-nav")).toHaveCount(0);
+
+	const header = page.locator(".dashboard-app-header");
+	await expect(header).toBeVisible();
 	const span = brand(page);
 	await expect(span).toBeVisible();
 
-	const clusterBox = await cluster.boundingBox();
+	const headerBox = await header.boundingBox();
 	const brandBox = await span.boundingBox();
-	expect(clusterBox).not.toBeNull();
+	expect(headerBox).not.toBeNull();
 	expect(brandBox).not.toBeNull();
 
-	expect(overlaps(brandBox!, clusterBox!)).toBe(false);
+	// The brand sits in the sidebar column and must never intersect the app
+	// header band — in the framed shell the header lives in the content column
+	// beside the sidebar, so this holds by non-overlap on either axis rather
+	// than by vertical stacking.
+	expect(overlaps(brandBox!, headerBox!)).toBe(false);
 	expect(await isTruncated(span)).toBe(false);
 }
 
-test("home board route: brand clears the macOS titlebar cluster and stays readable", async ({ page }) => {
+test("home board route: brand clears the titlebar band and stays readable", async ({ page }) => {
 	await installBrowserModeApiFixtures(page);
 	await page.goto("/");
 	await expect(page.getByText("Projects")).toBeVisible();
-	await expectBrandClearsCluster(page);
+	await expectBrandClearsHeader(page);
 });
 
-test("project board route: brand clears the macOS titlebar cluster and stays readable", async ({ page }) => {
+test("project board route: brand clears the titlebar band and stays readable", async ({ page }) => {
 	await installBrowserModeApiFixtures(page);
 	await page.goto("/");
 	await expect(page.getByText("Projects")).toBeVisible();
@@ -63,7 +70,7 @@ test("project board route: brand clears the macOS titlebar cluster and stays rea
 	// The active project row marks itself aria-current=page once navigation lands.
 	await expect(page.locator('[aria-current="page"]')).toBeVisible();
 
-	await expectBrandClearsCluster(page);
+	await expectBrandClearsHeader(page);
 });
 
 test("brand stays put and readable when navigating board → session", async ({ page }) => {
@@ -82,5 +89,5 @@ test("brand stays put and readable when navigating board → session", async ({ 
 	// Persistent shell element: no vertical/horizontal jump across the transition.
 	expect(Math.abs(sessionBrandBox!.x - boardBrandBox!.x)).toBeLessThanOrEqual(1);
 	expect(Math.abs(sessionBrandBox!.y - boardBrandBox!.y)).toBeLessThanOrEqual(1);
-	await expectBrandClearsCluster(page);
+	await expectBrandClearsHeader(page);
 });

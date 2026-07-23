@@ -1,10 +1,11 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useUiStore } from "../stores/ui-store";
 import type { SessionActivityState, WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 import { ShellTopbar, TopbarKillButton } from "./ShellTopbar";
+import { SidebarProvider } from "./ui/sidebar";
 
 const { navigateMock, onKilledMock, paramsMock, postMock, useWorkspaceQueryMock } = vi.hoisted(() => ({
 	navigateMock: vi.fn(),
@@ -49,6 +50,9 @@ vi.mock("../lib/telemetry", () => ({
 }));
 vi.mock("./NewTaskDialog", () => ({ NewTaskDialog: () => null }));
 vi.mock("./NotificationCenter", () => ({ NotificationCenter: () => null }));
+// Force the Sheet-backed mobile sidebar path regardless of jsdom viewport;
+// only isBrowserMode (the Electron bridge) distinguishes the toggle tests below.
+vi.mock("@/hooks/use-mobile", () => ({ useIsMobile: () => true }));
 
 const worker: WorkspaceSession = {
 	id: "sess-1",
@@ -110,7 +114,9 @@ function renderTopbarSessions(sessions: WorkspaceSession[], sessionId: string) {
 	const queryClient = new QueryClient();
 	const topbar = () => (
 		<QueryClientProvider client={queryClient}>
-			<ShellTopbar />
+			<SidebarProvider>
+				<ShellTopbar />
+			</SidebarProvider>
 		</QueryClientProvider>
 	);
 	const result = render(topbar());
@@ -286,5 +292,47 @@ describe("TopbarKillButton", () => {
 		await waitFor(() => {
 			expect(onKilledMock).toHaveBeenCalledWith("proj-1", undefined);
 		});
+	});
+});
+
+// isBrowserMode/isMac are read once at module import, so exercising both
+// states requires a fresh import per test (GH #54).
+describe("ShellTopbar mobile sidebar toggle", () => {
+	const originalBridge = window.ao;
+
+	function renderFresh(ShellTopbarComponent: typeof ShellTopbar, SidebarProviderComponent: typeof SidebarProvider) {
+		return render(
+			<QueryClientProvider client={new QueryClient()}>
+				<SidebarProviderComponent>
+					<ShellTopbarComponent />
+				</SidebarProviderComponent>
+			</QueryClientProvider>,
+		);
+	}
+
+	afterEach(() => {
+		Object.defineProperty(window, "ao", { configurable: true, value: originalBridge });
+	});
+
+	it("shows the sidebar opener for a mobile browser with no Electron bridge", async () => {
+		Object.defineProperty(window, "ao", { configurable: true, value: undefined });
+		vi.resetModules();
+
+		const { ShellTopbar: BrowserShellTopbar } = await import("./ShellTopbar");
+		const { SidebarProvider: FreshSidebarProvider } = await import("./ui/sidebar");
+		renderFresh(BrowserShellTopbar, FreshSidebarProvider);
+
+		expect(screen.getByRole("button", { name: "Open sidebar" })).toBeInTheDocument();
+	});
+
+	it("hides the sidebar opener inside the Electron desktop app", async () => {
+		Object.defineProperty(window, "ao", { configurable: true, value: {} as Window["ao"] });
+		vi.resetModules();
+
+		const { ShellTopbar: DesktopShellTopbar } = await import("./ShellTopbar");
+		const { SidebarProvider: FreshSidebarProvider } = await import("./ui/sidebar");
+		renderFresh(DesktopShellTopbar, FreshSidebarProvider);
+
+		expect(screen.queryByRole("button", { name: /open sidebar|close sidebar/i })).not.toBeInTheDocument();
 	});
 });

@@ -6,27 +6,22 @@ test.use({
 		"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
 });
 
-// Repro for the titlebar history arrows: navigate home → project → back,
-// then the forward arrow must be enabled and actually traverse forward.
-test("titlebar back/forward arrows traverse history", async ({ page }) => {
+// GH #54: the titlebar back/forward arrows are macOS Electron chrome and must
+// never appear in browser mode (even under a Mac desktop UA), because there is
+// no Electron bridge. Browsers rely on the browser's own history controls; the
+// TitlebarNav arrow behavior is exercised for Electron by TitlebarNav's unit
+// coverage, which stubs the bridge.
+test("browser mode exposes no titlebar history arrows", async ({ page }) => {
 	await installBrowserModeApiFixtures(page);
 	await page.goto("/");
 	await expect(page.getByText("Projects")).toBeVisible();
 
-	// Navigate: home → session view (in-app push).
+	// Navigate home → session view so a real history entry exists; in Electron
+	// this is where the forward arrow would light up.
 	await page.getByRole("button", { name: "Open Split terminal mux responsibilities" }).click();
 	await expect(page).toHaveURL(/sessions\/refactor-mux/);
 
-	const back = page.getByRole("button", { name: "Go back" });
-	const forward = page.getByRole("button", { name: "Go forward" });
-
-	await expect(forward).toBeDisabled();
-	await expect(back).toBeEnabled();
-
-	await back.click();
-	await expect(page).not.toHaveURL(/sessions\/refactor-mux/);
-
-	await expect(forward).toBeEnabled();
-	await forward.click();
-	await expect(page).toHaveURL(/sessions\/refactor-mux/);
+	await expect(page.locator(".titlebar-nav")).toHaveCount(0);
+	await expect(page.getByRole("button", { name: "Go back" })).toHaveCount(0);
+	await expect(page.getByRole("button", { name: "Go forward" })).toHaveCount(0);
 });

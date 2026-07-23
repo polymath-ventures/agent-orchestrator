@@ -12,6 +12,7 @@ import {
 } from "../types/workspace";
 import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
+import { isMacDesktopChrome } from "../lib/runtime-environment";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { addRendererExceptionStep, captureRendererEvent, captureRendererException } from "../lib/telemetry";
 import { useUiStore } from "../stores/ui-store";
@@ -20,7 +21,6 @@ import { cn } from "../lib/utils";
 import { getAgentActivityView } from "../lib/session-presentation";
 import {
 	isLinuxPlatform,
-	isMacPlatform,
 	isWindowsPlatform,
 	usesBoardActionsInFramedTopbar,
 	usesFramedAppTopbar,
@@ -33,8 +33,9 @@ import {
 	topbarHeaderMacClass,
 	topbarProjectLabelClass,
 } from "./TopbarButton";
+import { MobileSidebarOpener } from "./MobileSidebarOpener";
 
-const isMac = isMacPlatform();
+const isMac = isMacDesktopChrome();
 const isLinux = isLinuxPlatform();
 const isWindows = isWindowsPlatform();
 const boardActionsInFramedTopbar = usesBoardActionsInFramedTopbar();
@@ -145,6 +146,7 @@ export function ShellTopbar() {
 	return (
 		<header className={cn(topbarHeaderClass, topbarNeedsTitlebarOffset && topbarHeaderMacClass)} style={dragStyle}>
 			<div className="flex min-w-0 items-center gap-3">
+				<MobileSidebarOpener />
 				{isSessionRoute && isTerminalOnly ? (
 					<div className="inline-flex min-w-0 items-center gap-2">
 						<div className="inline-flex min-w-0 items-center gap-1.5">

@@ -10,6 +10,7 @@ import type { CreateProjectInput } from "../components/CreateProjectFlow";
 import { ShellTopbar } from "../components/ShellTopbar";
 import { OrchestratorReplacementDialog } from "../components/OrchestratorReplacementDialog";
 import { Sidebar } from "../components/Sidebar";
+import { MobileSidebarOpener } from "../components/MobileSidebarOpener";
 import { SidebarProvider } from "../components/ui/sidebar";
 import { TitlebarNav } from "../components/TitlebarNav";
 import { WindowTitlebar } from "../components/WindowTitlebar";
@@ -24,7 +25,8 @@ import { restartProjectOrchestrator } from "../lib/restart-orchestrator";
 import { captureOrchestratorReplacementFailure } from "../lib/orchestrator-replacement-telemetry";
 import { applyDocumentTheme } from "../lib/theme";
 import { aoBridge } from "../lib/bridge";
-import { isLinuxPlatform, isMacPlatform, isWindowsPlatform, usesFramedAppTopbar } from "../lib/platform";
+import { isLinuxPlatform, isWindowsPlatform, usesFramedAppTopbar } from "../lib/platform";
+import { isMacDesktopChrome } from "../lib/runtime-environment";
 import { useUiStore } from "../stores/ui-store";
 import { findFleetPrime, type WorkspaceSummary } from "../types/workspace";
 import type { components } from "../../api/schema";
@@ -67,7 +69,7 @@ export function createProjectConfig(input: CreateProjectConfigInput): components
 	};
 }
 
-const isMac = isMacPlatform();
+const isMac = isMacDesktopChrome();
 const isWindows = isWindowsPlatform();
 const isLinux = isLinuxPlatform();
 const framedAppTopbar = usesFramedAppTopbar();
@@ -390,6 +392,16 @@ function ShellLayout() {
 							)}
 						</div>
 					</main>
+					{/* Settings and first-launch welcome hide ShellTopbar, so in browser
+              mode they carry no sidebar opener — the Sheet would be unreachable
+              on mobile. Float the opener here for exactly those routes; it
+              self-gates to browser + mobile and renders nothing otherwise
+              (GH #54). */}
+					{hideShellTopbar ? (
+						<div className="fixed left-3 top-3 z-chrome">
+							<MobileSidebarOpener />
+						</div>
+					) : null}
 					{/* When ShellTopbar is hidden on the welcome board, keep a macOS
               window-drag strip in the same 56px band — otherwise only
               TitlebarNav's no-drag buttons remain and the top chrome can't
