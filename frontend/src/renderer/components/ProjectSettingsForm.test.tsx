@@ -300,11 +300,11 @@ describe("ProjectSettingsForm", () => {
 
 		renderSettings();
 
-		const reviewerFile = await screen.findByLabelText("Reviewer rules file (repo-relative or absolute)");
+		const reviewerFile = await screen.findByLabelText("Reviewer instructions file path (repo-relative or absolute)");
 		expect(reviewerFile).toHaveValue("docs/review-rules.md");
-		expect(screen.queryByLabelText("Prime rules")).not.toBeInTheDocument();
+		expect(screen.queryByLabelText("Prime instructions")).not.toBeInTheDocument();
 
-		await userEvent.type(screen.getByLabelText("Orchestrator rules"), "Coordinate through workers.");
+		await userEvent.type(screen.getByLabelText("Orchestrator instructions"), "Coordinate through workers.");
 
 		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
 

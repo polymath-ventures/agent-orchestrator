@@ -40,7 +40,7 @@ func primeServer(t *testing.T, status int, respBody string) (*httptest.Server, *
 
 func TestPrimeSettings_PrintsGlobalSettings(t *testing.T) {
 	cfg := setConfigEnv(t)
-	srv, capture := primeServer(t, http.StatusOK, `{"settings":{"enabled":false,"displayName":"AO Prime","wakeInterval":"15m"},"legacyEnvironment":{"configured":true,"projectId":"ao"}}`)
+	srv, capture := primeServer(t, http.StatusOK, `{"settings":{"enabled":false,"displayName":"AO Prime","wakeInterval":"15m"}}`)
 	writeRunFileFor(t, cfg, srv)
 
 	out, errOut, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "prime", "settings")
@@ -50,14 +50,14 @@ func TestPrimeSettings_PrintsGlobalSettings(t *testing.T) {
 	if capture.method != http.MethodGet || capture.path != "/api/v1/prime/settings" {
 		t.Fatalf("request = %s %s, want GET /api/v1/prime/settings", capture.method, capture.path)
 	}
-	if !strings.Contains(out, "enabled=false") || !strings.Contains(out, "legacyProject=ao") {
-		t.Fatalf("output = %q, want settings and legacy env", out)
+	if !strings.Contains(out, "enabled=false") || strings.Contains(out, "legacy") {
+		t.Fatalf("output = %q, want settings without legacy env", out)
 	}
 }
 
 func TestPrimeEnable_PutsEnabledSettings(t *testing.T) {
 	cfg := setConfigEnv(t)
-	srv, capture := primeServer(t, http.StatusOK, `{"settings":{"enabled":true,"displayName":"Fleet Lead","agent":"codex","agentConfig":{"model":"gpt-5-codex","effort":"high"},"wakeInterval":"20m"},"legacyEnvironment":{"configured":false}}`)
+	srv, capture := primeServer(t, http.StatusOK, `{"settings":{"enabled":true,"displayName":"Fleet Lead","agent":"codex","agentConfig":{"model":"gpt-5-codex","effort":"high"},"wakeInterval":"20m"}}`)
 	writeRunFileFor(t, cfg, srv)
 
 	_, errOut, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }},
@@ -91,7 +91,7 @@ func TestPrimeEnable_PutsEnabledSettings(t *testing.T) {
 
 func TestPrimeDisable_PutsDisabledSettings(t *testing.T) {
 	cfg := setConfigEnv(t)
-	srv, capture := primeServer(t, http.StatusOK, `{"settings":{"enabled":false,"displayName":"AO Prime","wakeInterval":"15m"},"legacyEnvironment":{"configured":false}}`)
+	srv, capture := primeServer(t, http.StatusOK, `{"settings":{"enabled":false,"displayName":"AO Prime","wakeInterval":"15m"}}`)
 	writeRunFileFor(t, cfg, srv)
 
 	_, errOut, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "prime", "disable")

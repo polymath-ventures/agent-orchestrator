@@ -10,7 +10,7 @@ import (
 func TestLoadDefaults(t *testing.T) {
 	// Clear every recognised var so we observe pure defaults regardless of the
 	// surrounding environment.
-	for _, k := range []string{"AO_PORT", "AO_REQUEST_TIMEOUT", "AO_SHUTDOWN_TIMEOUT", "AO_RUN_FILE", "AO_DATA_DIR", "AO_AGENT", "AO_AGENT_HEALTH_INTERVAL", "AO_MODEL_REVALIDATION_INTERVAL", "AO_PRIME_PROJECT_ID", "AO_PRIME_DISPLAY_NAME", "AO_ALLOWED_ORIGINS", "AO_MOBILE_ADVERTISED_HOST", "AO_TELEMETRY_EVENTS", "AO_TELEMETRY_METRICS", "AO_TELEMETRY_REMOTE", "AO_TELEMETRY_POSTHOG_KEY", "AO_TELEMETRY_POSTHOG_HOST", "AO_METRICS_INTERVAL", "AO_METRICS_LOW_QUOTA_PERCENT", "AO_QUOTA_PROBE_INTERVAL"} {
+	for _, k := range []string{"AO_PORT", "AO_REQUEST_TIMEOUT", "AO_SHUTDOWN_TIMEOUT", "AO_RUN_FILE", "AO_DATA_DIR", "AO_AGENT", "AO_AGENT_HEALTH_INTERVAL", "AO_MODEL_REVALIDATION_INTERVAL", "AO_ALLOWED_ORIGINS", "AO_MOBILE_ADVERTISED_HOST", "AO_TELEMETRY_EVENTS", "AO_TELEMETRY_METRICS", "AO_TELEMETRY_REMOTE", "AO_TELEMETRY_POSTHOG_KEY", "AO_TELEMETRY_POSTHOG_HOST", "AO_METRICS_INTERVAL", "AO_METRICS_LOW_QUOTA_PERCENT", "AO_QUOTA_PROBE_INTERVAL"} {
 		t.Setenv(k, "")
 	}
 
@@ -65,9 +65,6 @@ func TestLoadDefaults(t *testing.T) {
 	}
 	if cfg.MobileAdvertisedHost != "" {
 		t.Errorf("MobileAdvertisedHost = %q, want empty default", cfg.MobileAdvertisedHost)
-	}
-	if cfg.PrimeProjectID != "" || cfg.PrimeDisplayName != "" {
-		t.Errorf("prime defaults = project %q display %q, want disabled", cfg.PrimeProjectID, cfg.PrimeDisplayName)
 	}
 }
 
@@ -126,8 +123,6 @@ func TestLoadOverrides(t *testing.T) {
 	t.Setenv("AO_METRICS_LOW_QUOTA_PERCENT", "7.5")
 	t.Setenv("AO_QUOTA_PROBE_INTERVAL", "30m")
 	t.Setenv("AO_MOBILE_ADVERTISED_HOST", "  ao-server.example.ts.net  ")
-	t.Setenv("AO_PRIME_PROJECT_ID", "  ao  ")
-	t.Setenv("AO_PRIME_DISPLAY_NAME", "  AO Prime  ")
 
 	cfg, err := Load()
 	if err != nil {
@@ -163,12 +158,6 @@ func TestLoadOverrides(t *testing.T) {
 	if cfg.MobileAdvertisedHost != "ao-server.example.ts.net" {
 		t.Errorf("MobileAdvertisedHost = %q, want trimmed override", cfg.MobileAdvertisedHost)
 	}
-	if cfg.PrimeProjectID != "ao" {
-		t.Errorf("PrimeProjectID = %q, want trimmed ao", cfg.PrimeProjectID)
-	}
-	if cfg.PrimeDisplayName != "AO Prime" {
-		t.Errorf("PrimeDisplayName = %q, want trimmed override", cfg.PrimeDisplayName)
-	}
 }
 
 func TestLoadInvalid(t *testing.T) {
@@ -199,7 +188,6 @@ func TestLoadInvalid(t *testing.T) {
 		{"negative quota probe interval", map[string]string{"AO_QUOTA_PROBE_INTERVAL": "-1s"}},
 		{"bad low quota percent", map[string]string{"AO_METRICS_LOW_QUOTA_PERCENT": "low"}},
 		{"negative low quota percent", map[string]string{"AO_METRICS_LOW_QUOTA_PERCENT": "-1"}},
-		{"prime display name too long", map[string]string{"AO_PRIME_DISPLAY_NAME": "123456789012345678901"}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

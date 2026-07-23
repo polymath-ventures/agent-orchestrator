@@ -121,10 +121,6 @@ type Config struct {
 	// ModelRevalidationInterval controls scheduled model-pin reachability
 	// checks. Zero disables scheduled revalidation.
 	ModelRevalidationInterval time.Duration
-	// PrimeProjectID is a legacy migration hint for the old env-gated Prime.
-	PrimeProjectID string
-	// PrimeDisplayName is a legacy migration hint for the old env-gated Prime.
-	PrimeDisplayName string
 	// AllowedOrigins are the browser origins granted CORS read access (see
 	// DefaultAllowedOrigins). Overridden by AO_ALLOWED_ORIGINS.
 	AllowedOrigins []string
@@ -159,8 +155,6 @@ func (c Config) Addr() string {
 //	AO_AGENT             compatibility agent id (default claude-code)
 //	AO_AGENT_HEALTH_INTERVAL agent install/auth probe period (Go duration >= 0, 0 disables, default 5m)
 //	AO_MODEL_REVALIDATION_INTERVAL model-pin probe period (Go duration >= 0, 0 disables, default 24h)
-//	AO_PRIME_PROJECT_ID  legacy Prime migration hint, reported by the API but no longer enables Prime
-//	AO_PRIME_DISPLAY_NAME legacy Prime migration hint, <= 20 runes
 //	AO_ALLOWED_ORIGINS   CORS origins, comma-separated (default DefaultAllowedOrigins)
 //	AO_MOBILE_ADVERTISED_HOST  host advertised in the Connect Mobile pairing status/QR (default: interface autopick)
 //	AO_TELEMETRY_EVENTS  local event capture off|on (default off)
@@ -237,14 +231,6 @@ func Load() (Config, error) {
 			return Config{}, err
 		}
 		cfg.ModelRevalidationInterval = duration
-	}
-
-	cfg.PrimeProjectID = strings.TrimSpace(os.Getenv("AO_PRIME_PROJECT_ID"))
-	if raw := strings.TrimSpace(os.Getenv("AO_PRIME_DISPLAY_NAME")); raw != "" {
-		if l := len([]rune(raw)); l > 20 {
-			return Config{}, fmt.Errorf("invalid AO_PRIME_DISPLAY_NAME: must be <= 20 characters, got %d", l)
-		}
-		cfg.PrimeDisplayName = raw
 	}
 
 	if raw := strings.TrimSpace(os.Getenv("AO_MOBILE_ADVERTISED_HOST")); raw != "" {

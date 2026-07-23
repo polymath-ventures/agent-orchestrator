@@ -6,7 +6,11 @@ import (
 	"time"
 )
 
-const defaultPrimeDisplayName = "AO Prime"
+const (
+	defaultPrimeDisplayName = "AO Prime"
+	minPrimeWakeInterval    = time.Minute
+	maxPrimeWakeInterval    = 360 * time.Minute
+)
 
 // PrimeSettings is the daemon-owned configuration for the fleet Prime
 // singleton. ProjectConfig no longer owns Prime launch settings.
@@ -63,8 +67,12 @@ func (s PrimeSettings) Validate() error {
 		return err
 	}
 	if s.WakeInterval != "" {
-		if _, err := s.WakeIntervalDuration(); err != nil {
+		d, err := s.WakeIntervalDuration()
+		if err != nil {
 			return fmt.Errorf("wakeInterval: %w", err)
+		}
+		if d < minPrimeWakeInterval || d > maxPrimeWakeInterval {
+			return fmt.Errorf("wakeInterval: must be between 1m and 360m")
 		}
 	}
 	if _, err := s.WakeBackoffPolicy(); err != nil {

@@ -1337,13 +1337,7 @@ export interface components {
             targetSha: string;
             title: string;
         };
-        PrimeLegacyEnvironment: {
-            configured: boolean;
-            displayName?: string;
-            projectId?: string;
-        };
         PrimeSettingsView: {
-            legacyEnvironment: components["schemas"]["PrimeLegacyEnvironment"];
             settings: components["schemas"]["DomainPrimeSettings"];
         };
         ProbeAgentResponse: {

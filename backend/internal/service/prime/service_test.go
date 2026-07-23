@@ -5,20 +5,13 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
 )
 
-func TestServiceGetSettingsIncludesDefaultsAndLegacyEnv(t *testing.T) {
+func TestServiceGetSettingsIncludesDefaultsOnly(t *testing.T) {
 	store := &fakeStore{settings: domain.DefaultPrimeSettings()}
-	svc := New(Deps{
-		Store: store,
-		Config: config.Config{
-			PrimeProjectID:   "ao",
-			PrimeDisplayName: "Legacy Prime",
-		},
-	})
+	svc := New(Deps{Store: store})
 
 	got, err := svc.GetSettings(context.Background())
 	if err != nil {
@@ -29,9 +22,6 @@ func TestServiceGetSettingsIncludesDefaultsAndLegacyEnv(t *testing.T) {
 	}
 	if got.Settings.DisplayName != "AO Prime" {
 		t.Fatalf("displayName = %q, want AO Prime", got.Settings.DisplayName)
-	}
-	if !got.LegacyEnvironment.Configured || got.LegacyEnvironment.ProjectID != "ao" || got.LegacyEnvironment.DisplayName != "Legacy Prime" {
-		t.Fatalf("legacy env = %+v, want configured ao/Legacy Prime", got.LegacyEnvironment)
 	}
 }
 

@@ -3373,26 +3373,12 @@ components:
       - targetSha
       - status
       type: object
-    PrimeLegacyEnvironment:
-      properties:
-        configured:
-          type: boolean
-        displayName:
-          type: string
-        projectId:
-          type: string
-      required:
-      - configured
-      type: object
     PrimeSettingsView:
       properties:
-        legacyEnvironment:
-          $ref: '#/components/schemas/PrimeLegacyEnvironment'
         settings:
           $ref: '#/components/schemas/DomainPrimeSettings'
       required:
       - settings
-      - legacyEnvironment
       type: object
     ProbeAgentResponse:
       properties:
