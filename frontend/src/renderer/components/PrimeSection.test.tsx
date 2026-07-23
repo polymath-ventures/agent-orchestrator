@@ -11,7 +11,8 @@ const { getMock, putMock } = vi.hoisted(() => ({
 
 vi.mock("../lib/api-client", () => ({
 	apiClient: { GET: getMock, PUT: putMock },
-	apiErrorMessage: (error: unknown) => (typeof error === "object" && error && "message" in error ? String(error.message) : "API error"),
+	apiErrorMessage: (error: unknown) =>
+		typeof error === "object" && error && "message" in error ? String(error.message) : "API error",
 }));
 
 function renderPrimeSection() {

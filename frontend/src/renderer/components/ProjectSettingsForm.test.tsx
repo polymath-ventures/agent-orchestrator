@@ -340,11 +340,11 @@ describe("ProjectSettingsForm", () => {
 			};
 		});
 
-	renderSettings();
+		renderSettings();
 
-	expect(await screen.findByText("ASSEMBLED WORKER PROMPT")).toBeInTheDocument();
-	await chooseOption(screen.getByRole("combobox", { name: "Role" }), "reviewer");
-	expect(await screen.findByText("ASSEMBLED REVIEWER PROMPT")).toBeInTheDocument();
+		expect(await screen.findByText("ASSEMBLED WORKER PROMPT")).toBeInTheDocument();
+		await chooseOption(screen.getByRole("combobox", { name: "Role" }), "reviewer");
+		expect(await screen.findByText("ASSEMBLED REVIEWER PROMPT")).toBeInTheDocument();
 	}, 20_000);
 
 	it("labels the unconfigured reviewer as the cross-family default", async () => {

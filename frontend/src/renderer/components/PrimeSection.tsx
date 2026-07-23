@@ -45,7 +45,9 @@ export function PrimeSection() {
 
 	const mutation = useMutation({
 		mutationFn: async () => {
-			const { data, error } = await apiClient.PUT("/api/v1/prime/settings", { body: { settings: normalizeSettings(form) } });
+			const { data, error } = await apiClient.PUT("/api/v1/prime/settings", {
+				body: { settings: normalizeSettings(form) },
+			});
 			if (error) throw new Error(apiErrorMessage(error));
 			if (!data) throw new Error("Prime settings were not returned.");
 			return data;
@@ -83,7 +85,11 @@ export function PrimeSection() {
 				</div>
 
 				<div className="grid gap-3 sm:grid-cols-2">
-					<PrimeInput label="Display name" value={form.displayName ?? ""} onChange={(displayName) => setForm((f) => ({ ...f, displayName }))} />
+					<PrimeInput
+						label="Display name"
+						value={form.displayName ?? ""}
+						onChange={(displayName) => setForm((f) => ({ ...f, displayName }))}
+					/>
 					<PrimeInput label="Agent" value={form.agent ?? ""} onChange={(agent) => setForm((f) => ({ ...f, agent }))} />
 					<PrimeInput
 						label="Model"
