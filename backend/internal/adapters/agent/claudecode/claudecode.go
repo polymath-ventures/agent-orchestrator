@@ -83,6 +83,7 @@ var _ ports.Agent = (*Plugin)(nil)
 var _ ports.AgentAuthChecker = (*Plugin)(nil)
 var _ ports.AgentModelCatalog = (*Plugin)(nil)
 var _ ports.AgentModelValidator = (*Plugin)(nil)
+var _ ports.AgentQuotaProber = (*Plugin)(nil)
 
 // Manifest returns the adapter's static self-description.
 func (p *Plugin) Manifest() adapters.Manifest {
