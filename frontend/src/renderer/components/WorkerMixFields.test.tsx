@@ -189,7 +189,7 @@ describe("WorkerMixFields model selection", () => {
 				.map((option) => option.getAttribute("value")),
 		).toEqual(["", "high", "xhigh"]);
 		expect(screen.getByText(/known fallback catalog/i)).toBeInTheDocument();
-		fireEvent.click(screen.getByRole("button", { name: "Refresh models" }));
+		fireEvent.click(screen.getByRole("button", { name: "Refresh model catalog" }));
 		expect(onRefresh).toHaveBeenCalledOnce();
 	});
 

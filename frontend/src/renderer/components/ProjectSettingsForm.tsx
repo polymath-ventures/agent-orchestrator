@@ -422,7 +422,7 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 						agentCatalog={agentCatalog}
 						availability={effectiveModelAvailability}
 						allowDefaultHarness
-						defaultHarnessLabel="Cross-family default"
+						defaultHarnessLabel="Automatic independent reviewer"
 						reviewerOnly
 						isRefreshingModels={isRefreshingModels || modelAvailabilityQuery.isFetching}
 						onRefreshModels={refreshModels}

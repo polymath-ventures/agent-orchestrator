@@ -347,7 +347,7 @@ describe("ProjectSettingsForm", () => {
 		expect(await screen.findByText("ASSEMBLED REVIEWER PROMPT")).toBeInTheDocument();
 	}, 20_000);
 
-	it("labels the unconfigured reviewer as the cross-family default", async () => {
+	it("labels the unconfigured reviewer as the automatic independent reviewer", async () => {
 		mockProject({
 			id: "proj-1",
 			name: "Project One",
@@ -361,7 +361,7 @@ describe("ProjectSettingsForm", () => {
 		renderSettings();
 
 		expect(await screen.findByRole("combobox", { name: "Default reviewer agent" })).toHaveTextContent(
-			"Cross-family default",
+			"Automatic independent reviewer",
 		);
 	});
 

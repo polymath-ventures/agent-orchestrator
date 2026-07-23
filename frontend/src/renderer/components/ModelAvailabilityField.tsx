@@ -113,7 +113,7 @@ export function ModelAvailabilityField({
 						onClick={() => void refresh()}
 					>
 						<RefreshCw className={`size-3.5 ${isRefreshing ? "animate-spin" : ""}`} aria-hidden="true" />
-						<span className="sr-only">Refresh models</span>
+						<span className="sr-only">Refresh model catalog</span>
 					</Button>
 				)}
 			</div>

@@ -7,7 +7,6 @@ import { Sidebar } from "./Sidebar";
 import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 import { agentsQueryKey } from "../hooks/useAgentsQuery";
 import { modelAvailabilityQueryKey } from "../hooks/useModelAvailabilityQuery";
-import type { ModelSelection } from "./ModelAvailabilityField";
 import { useUiStore } from "../stores/ui-store";
 
 const { getMock, navigateMock, mockParams, renameSessionMock, updateStatusMock } = vi.hoisted(() => ({
@@ -89,7 +88,8 @@ type CreateProjectInput = {
 	path: string;
 	workerAgent: string;
 	orchestratorAgent: string;
-	modelOverride: ModelSelection;
+	reviewerAgent: string;
+	modelDefaults: Record<string, { model: string; effort: string }>;
 	trackerIntake?: unknown;
 	asWorkspace?: boolean;
 };
@@ -189,8 +189,8 @@ async function openCreateProjectDialog(
 	await user.click(screen.getByLabelText("New project"));
 	await user.click(screen.getByRole("button", { name: /^Project/i }));
 	await screen.findByText(path);
-	await chooseOption(screen.getByRole("combobox", { name: "Worker agent" }), "Codex");
-	await chooseOption(screen.getByRole("combobox", { name: "Orchestrator agent" }), "Claude Code");
+	await chooseOption(screen.getByRole("combobox", { name: "Worker harness" }), "Codex");
+	await chooseOption(screen.getByRole("combobox", { name: "Orchestrator harness" }), "Claude Code");
 	return user;
 }
 
@@ -348,7 +348,7 @@ describe("Sidebar", () => {
 
 		expect(await screen.findByText("/repo/new-project")).toBeInTheDocument();
 		expect(window.ao!.app.chooseDirectory).toHaveBeenCalledWith("Choose a project repository");
-		const dialog = screen.getByRole("dialog", { name: "Project agents" });
+		const dialog = screen.getByRole("dialog", { name: "Project harnesses" });
 		expect(dialog).toHaveClass("left-1/2", "top-1/2", "-translate-x-1/2", "-translate-y-1/2");
 		await user.click(screen.getByRole("button", { name: "Create and start" }));
 
@@ -376,7 +376,7 @@ describe("Sidebar", () => {
 			await user.type(screen.getByRole("textbox", { name: "Path" }), "/srv/ao/projects/api");
 			await user.click(screen.getByRole("button", { name: "Continue" }));
 
-			expect(screen.getByRole("dialog", { name: "Project agents" })).toBeInTheDocument();
+			expect(screen.getByRole("dialog", { name: "Project harnesses" })).toBeInTheDocument();
 			await user.click(screen.getByRole("button", { name: "Create and start" }));
 
 			await waitFor(() =>
@@ -452,10 +452,10 @@ describe("Sidebar", () => {
 		await user.click(screen.getByLabelText("New project"));
 		await user.click(screen.getByRole("button", { name: /^Project/i }));
 		expect(await screen.findByText("/repo/new-project")).toBeInTheDocument();
-		expect(screen.getByRole("combobox", { name: "Worker agent" })).toHaveTextContent(/cursor/i);
-		expect(screen.getByRole("combobox", { name: "Orchestrator agent" })).toHaveTextContent(/cursor/i);
+		expect(screen.getByRole("combobox", { name: "Worker harness" })).toHaveTextContent(/cursor/i);
+		expect(screen.getByRole("combobox", { name: "Orchestrator harness" })).toHaveTextContent(/cursor/i);
 
-		await user.click(screen.getByRole("combobox", { name: "Worker agent" }));
+		await user.click(screen.getByRole("combobox", { name: "Worker harness" }));
 		expect((await screen.findAllByRole("option")).map((option) => option.textContent)).toEqual([
 			"Cursor",
 			"OpenCode",
@@ -525,7 +525,7 @@ describe("Sidebar", () => {
 		const user = await openCreateProjectDialog("/repo/new-project", { path: "/repo/new-project", repos: [] });
 		await user.click(screen.getByRole("button", { name: "Cancel" }));
 		expect(onInitializeProject).not.toHaveBeenCalled();
-		expect(screen.queryByRole("dialog", { name: "Project agents" })).not.toBeInTheDocument();
+		expect(screen.queryByRole("dialog", { name: "Project harnesses" })).not.toBeInTheDocument();
 	});
 
 	it("surfaces repository initialization failures", async () => {
@@ -549,9 +549,9 @@ describe("Sidebar", () => {
 
 		expect(await screen.findByText("/repo/workspace")).toBeInTheDocument();
 		expect(window.ao!.app.chooseDirectory).toHaveBeenCalledWith("Choose a workspace folder");
-		expect(screen.getByRole("dialog", { name: "Workspace agents" })).toBeInTheDocument();
-		await chooseOption(screen.getByRole("combobox", { name: "Worker agent" }), "Codex");
-		await chooseOption(screen.getByRole("combobox", { name: "Orchestrator agent" }), "Claude Code");
+		expect(screen.getByRole("dialog", { name: "Workspace harnesses" })).toBeInTheDocument();
+		await chooseOption(screen.getByRole("combobox", { name: "Worker harness" }), "Codex");
+		await chooseOption(screen.getByRole("combobox", { name: "Orchestrator harness" }), "Claude Code");
 		await user.click(screen.getByRole("button", { name: "Create workspace and start" }));
 
 		await waitFor(() =>
@@ -559,7 +559,8 @@ describe("Sidebar", () => {
 				path: "/repo/workspace",
 				workerAgent: "codex",
 				orchestratorAgent: "claude-code",
-				modelOverride: { harness: "", model: "", effort: "" },
+				reviewerAgent: "",
+				modelDefaults: {},
 				asWorkspace: true,
 			}),
 		);
@@ -579,8 +580,8 @@ describe("Sidebar", () => {
 
 		await user.click(screen.getByLabelText("New project"));
 		await user.click(screen.getByRole("button", { name: /^Workspace/i }));
-		await screen.findByRole("dialog", { name: "Workspace agents" });
-		await chooseOption(screen.getByRole("combobox", { name: "Orchestrator agent" }), "Claude Code");
+		await screen.findByRole("dialog", { name: "Workspace harnesses" });
+		await chooseOption(screen.getByRole("combobox", { name: "Orchestrator harness" }), "Claude Code");
 		await user.click(screen.getByRole("button", { name: "Create workspace and start" }));
 
 		await waitFor(() => expect(onCreateProject).toHaveBeenCalledTimes(1));
@@ -625,8 +626,8 @@ describe("Sidebar", () => {
 
 		await user.click(screen.getByLabelText("New project"));
 		await user.click(screen.getByRole("button", { name: /^Workspace/i }));
-		await screen.findByRole("dialog", { name: "Workspace agents" });
-		await chooseOption(screen.getByRole("combobox", { name: "Orchestrator agent" }), "Claude Code");
+		await screen.findByRole("dialog", { name: "Workspace harnesses" });
+		await chooseOption(screen.getByRole("combobox", { name: "Orchestrator harness" }), "Claude Code");
 		await user.click(screen.getByRole("button", { name: "Create workspace and start" }));
 
 		expect(await screen.findByText(/Import failed · workspace not registered/i)).toBeInTheDocument();
@@ -651,8 +652,8 @@ describe("Sidebar", () => {
 
 		await user.click(screen.getByLabelText("New project"));
 		await user.click(screen.getByRole("button", { name: /^Workspace/i }));
-		await screen.findByRole("dialog", { name: "Workspace agents" });
-		await chooseOption(screen.getByRole("combobox", { name: "Orchestrator agent" }), "Claude Code");
+		await screen.findByRole("dialog", { name: "Workspace harnesses" });
+		await chooseOption(screen.getByRole("combobox", { name: "Orchestrator harness" }), "Claude Code");
 		await user.click(screen.getByRole("button", { name: "Create workspace and start" }));
 
 		expect(await screen.findByText("AO daemon is not ready.")).toBeInTheDocument();
@@ -693,7 +694,7 @@ describe("Sidebar", () => {
 		await user.click(screen.getByRole("button", { name: /^Project/i }));
 		expect(await screen.findByText("/repo/new-project")).toBeInTheDocument();
 
-		await user.click(screen.getByRole("combobox", { name: "Orchestrator agent" }));
+		await user.click(screen.getByRole("combobox", { name: "Orchestrator harness" }));
 		const options = await screen.findAllByRole("option");
 		expect(options.map((option) => option.textContent)).toEqual([
 			"Claude Code",
@@ -753,7 +754,7 @@ describe("Sidebar", () => {
 			error: undefined,
 		});
 
-		await chooseOption(screen.getByRole("combobox", { name: "Orchestrator agent" }), "Claude Code");
+		await chooseOption(screen.getByRole("combobox", { name: "Orchestrator harness" }), "Claude Code");
 		await user.click(screen.getByRole("button", { name: "Create and start" }));
 
 		await waitFor(() =>
@@ -761,7 +762,8 @@ describe("Sidebar", () => {
 				path: "/repo/new-project",
 				workerAgent: "claude-code",
 				orchestratorAgent: "claude-code",
-				modelOverride: { harness: "", model: "", effort: "" },
+				reviewerAgent: "",
+				modelDefaults: {},
 				trackerIntake: undefined,
 				asWorkspace: false,
 			}),
