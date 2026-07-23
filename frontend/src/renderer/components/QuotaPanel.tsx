@@ -218,9 +218,10 @@ function WindowLine({ snapshot, label }: { snapshot: QuotaSnapshot; label: strin
 	const progressValue = used ?? 0;
 	const fillStyle = {
 		width: `${progressValue}%`,
-		...(progressValue === 0 ? { minWidth: "2px" } : {}),
+		minWidth: "2px",
 	};
 	const remaining = 100 - progressValue;
+	const showRemaining = severity === "warning" || severity === "critical";
 
 	return (
 		<div className="flex min-w-0 flex-col gap-1 font-mono">
@@ -234,7 +235,7 @@ function WindowLine({ snapshot, label }: { snapshot: QuotaSnapshot; label: strin
 				aria-label={`${label} ${name} quota usage`}
 				aria-valuemax={100}
 				aria-valuemin={0}
-				aria-valuenow={progressValue}
+				{...(used === null ? { "aria-valuetext": "usage unknown" } : { "aria-valuenow": progressValue })}
 				className="h-1.5 w-full overflow-hidden rounded-full bg-[var(--color-quota-track)]"
 				role="progressbar"
 			>
@@ -247,7 +248,7 @@ function WindowLine({ snapshot, label }: { snapshot: QuotaSnapshot; label: strin
 					) : (
 						<Clock className="size-2 shrink-0" aria-hidden="true" />
 					)}
-					{severity === "critical" ? (
+					{showRemaining ? (
 						<>
 							<span className="shrink-0">{remaining}% left</span>
 							<span aria-hidden="true">·</span>

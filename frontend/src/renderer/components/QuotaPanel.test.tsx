@@ -200,7 +200,7 @@ describe("QuotaPanel", () => {
 			expect(number).toHaveClass(expectedNumberClass);
 			expect(meter.firstElementChild).toHaveClass(expectedFillClass);
 			expect(screen.getByText(/^resets /).parentElement).toHaveClass(expectedResetClass);
-			if (used >= 90) {
+			if (used >= 75) {
 				expect(screen.getByText(`${100 - used}% left`)).toBeInTheDocument();
 			}
 		},
@@ -237,6 +237,72 @@ describe("QuotaPanel", () => {
 		const meter = screen.getByRole("progressbar", { name: "Codex primary quota usage" });
 		expect(meter).toHaveAttribute("aria-valuenow", "0");
 		expect(meter.firstElementChild).toHaveStyle({ width: "0%", minWidth: "2px" });
+	});
+
+	it("announces unknown usage as indeterminate instead of 0%", async () => {
+		seed({
+			probeStatuses: [
+				{
+					harness: "codex",
+					state: "ok",
+					hasData: true,
+					probedAt: "2026-07-20T19:00:00Z",
+					snapshots: [
+						{
+							harness: "codex",
+							accountId: "acct",
+							windowName: "primary",
+							limit: 100,
+							signalQuality: "estimated",
+							source: "probe",
+							windowEnd: "2026-07-28T18:17:00Z",
+							observedAt: "2026-07-20T19:00:00Z",
+						},
+					],
+				},
+			],
+		});
+
+		renderWithClient(<QuotaPanel />);
+
+		expect(await screen.findByText("usage unknown")).toBeInTheDocument();
+		const meter = screen.getByRole("progressbar", { name: "Codex primary quota usage" });
+		expect(meter).not.toHaveAttribute("aria-valuenow");
+		expect(meter).toHaveAttribute("aria-valuetext", "usage unknown");
+	});
+
+	it("clamps over-100 usage to a full critical meter", async () => {
+		seed({
+			probeStatuses: [
+				{
+					harness: "codex",
+					state: "ok",
+					hasData: true,
+					probedAt: "2026-07-20T19:00:00Z",
+					snapshots: [
+						{
+							harness: "codex",
+							accountId: "acct",
+							windowName: "primary",
+							used: 130,
+							limit: 100,
+							signalQuality: "exact",
+							source: "probe",
+							windowEnd: "2026-07-28T18:17:00Z",
+							observedAt: "2026-07-20T19:00:00Z",
+						},
+					],
+				},
+			],
+		});
+
+		renderWithClient(<QuotaPanel />);
+
+		expect(await screen.findByText("100%")).toHaveClass("text-error");
+		expect(screen.getByText("0% left")).toBeInTheDocument();
+		const meter = screen.getByRole("progressbar", { name: "Codex primary quota usage" });
+		expect(meter).toHaveAttribute("aria-valuenow", "100");
+		expect(meter.firstElementChild).toHaveStyle({ width: "100%", minWidth: "2px" });
 	});
 
 	it("renders a midnight reset as 00:00, never the ambiguous 24:00", async () => {
