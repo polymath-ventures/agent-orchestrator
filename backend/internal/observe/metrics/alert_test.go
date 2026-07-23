@@ -104,6 +104,52 @@ func TestEvaluatorLowQuotaClearsPerSubject(t *testing.T) {
 	}
 }
 
+// TestEvaluatorLowQuotaSkipsExpiredWindow proves a stale, already-ended quota
+// window does not fire quota_low: the quota it measured has reset. A fresh
+// window at the same usage (end in the future) still fires.
+func TestEvaluatorLowQuotaSkipsExpiredWindow(t *testing.T) {
+	now := time.Date(2026, 7, 23, 12, 0, 0, 0, time.UTC)
+	used, limit := 95.0, 100.0
+
+	// Expired window: end one hour before the tick. Must NOT fire.
+	e := newEvaluator(Thresholds{LowQuotaPercent: 10})
+	alerts, tr := e.evaluate(Snapshot{
+		CollectedAt: now,
+		Quotas: []domain.QuotaSnapshot{{
+			Harness:       domain.HarnessClaudeCode,
+			AccountID:     "unknown",
+			WindowName:    "week (all models)",
+			Used:          &used,
+			Limit:         &limit,
+			SignalQuality: domain.QuotaSignalExact,
+			WindowEnd:     now.Add(-time.Hour),
+			ObservedAt:    now.Add(-2 * time.Hour),
+		}},
+	})
+	if len(alerts) != 0 || len(tr) != 0 {
+		t.Fatalf("expired window must not fire quota_low, got alerts=%+v tr=%+v", alerts, tr)
+	}
+
+	// Fresh window: end in the future. Same 95% usage must fire.
+	fresh := newEvaluator(Thresholds{LowQuotaPercent: 10})
+	alerts, tr = fresh.evaluate(Snapshot{
+		CollectedAt: now,
+		Quotas: []domain.QuotaSnapshot{{
+			Harness:       domain.HarnessClaudeCode,
+			AccountID:     "unknown",
+			WindowName:    "week (all models)",
+			Used:          &used,
+			Limit:         &limit,
+			SignalQuality: domain.QuotaSignalExact,
+			WindowEnd:     now.Add(time.Hour),
+			ObservedAt:    now,
+		}},
+	})
+	if len(alerts) != 1 || len(tr) != 1 || !tr[0].Firing {
+		t.Fatalf("fresh 95%%-used window should fire, got alerts=%+v tr=%+v", alerts, tr)
+	}
+}
+
 func TestEvaluatorLowQuotaCanUseReportedUsedPercent(t *testing.T) {
 	e := newEvaluator(Thresholds{LowQuotaPercent: 10})
 	used, limit := 92.0, 100.0

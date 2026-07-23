@@ -2,6 +2,7 @@ package metrics
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -27,51 +28,81 @@ func (f *fakeQuotaStore) ListLatestQuotaSnapshots(context.Context) ([]domain.Quo
 	return append([]domain.QuotaSnapshot(nil), f.rows...), nil
 }
 
-func TestStoreQuotaCollectorRecordsNoSignalForSubscriptionHarnesses(t *testing.T) {
+// TestStoreQuotaCollectorDoesNotFabricatePlaceholders reproduces GH #97: on a
+// fresh system with no probed data, the collector must not fabricate
+// "unknown / no signal / none" placeholder rows. Quota is a property of the
+// harness login discovered by daemon probes, not something the collector
+// invents on every tick. An empty store must yield an empty result and no
+// writes.
+func TestStoreQuotaCollectorDoesNotFabricatePlaceholders(t *testing.T) {
 	store := &fakeQuotaStore{}
-	observedAt := time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC)
+	observedAt := time.Date(2026, 7, 23, 12, 0, 0, 0, time.UTC)
 
 	rows, err := NewStoreQuotaCollector(store).CollectQuota(context.Background(), observedAt)
 	if err != nil {
 		t.Fatalf("CollectQuota returned error: %v", err)
 	}
-
-	want := map[domain.AgentHarness]bool{
-		domain.HarnessClaudeCode: false,
-		domain.HarnessCodex:      false,
+	if len(rows) != 0 {
+		t.Fatalf("empty store must yield no quota rows, got %d: %+v", len(rows), rows)
 	}
-	if len(rows) != len(want) {
-		t.Fatalf("got %d quota rows, want %d: %+v", len(rows), len(want), rows)
-	}
-	for _, row := range rows {
-		if _, ok := want[row.Harness]; !ok {
-			t.Fatalf("unexpected quota harness %q", row.Harness)
-		}
-		want[row.Harness] = true
-		if row.SignalQuality != domain.QuotaSignalNone {
-			t.Errorf("%s signal = %q, want none", row.Harness, row.SignalQuality)
-		}
-		if row.AccountID != "unknown" {
-			t.Errorf("%s account = %q, want unknown", row.Harness, row.AccountID)
-		}
-		if !row.ObservedAt.Equal(observedAt) {
-			t.Errorf("%s observedAt = %s, want %s", row.Harness, row.ObservedAt, observedAt)
-		}
-		if row.Limit != nil || row.Remaining != nil || row.Used != nil {
-			t.Errorf("%s no-signal snapshot must not fabricate numeric values: %+v", row.Harness, row)
-		}
-	}
-	for harness, seen := range want {
-		if !seen {
-			t.Errorf("missing quota snapshot for %s", harness)
-		}
+	if len(store.rows) != 0 {
+		t.Fatalf("collector must not write placeholder rows, store has %d: %+v", len(store.rows), store.rows)
 	}
 }
 
-func TestStoreQuotaCollectorSuppressesStaticNoSignalWhenExactSignalExists(t *testing.T) {
+// TestLowQuotaAlertFiresOnProbePersistedSnapshot is the GH #97 regression that
+// low-quota alerts key off daemon-probe data, not just hook-ingested data. A
+// probe persists an exact snapshot to quota_snapshots; the collector reads it
+// and the evaluator must fire quota_low when remaining is at/below threshold and
+// stay quiet when it is healthy — proving the probe → persist → collect → alert
+// path end to end for both a used-percent (claude) and a remaining (codex) row.
+func TestLowQuotaAlertFiresOnProbePersistedSnapshot(t *testing.T) {
+	// claude -p /usage reporting 95% used on the weekly all-models window.
+	lowUsed, lowRemaining, limit := 95.0, 5.0, 100.0
+	// a healthy codex primary window (17% used → 83% remaining) must not fire.
+	okUsed, okRemaining := 17.0, 83.0
+	store := &fakeQuotaStore{rows: []domain.QuotaSnapshot{
+		{
+			Harness: domain.HarnessClaudeCode, AccountID: "unknown", WindowName: "week (all models)",
+			Used: &lowUsed, Remaining: &lowRemaining, Limit: &limit,
+			SignalQuality: domain.QuotaSignalExact, Source: "claude -p /usage", ObservedAt: time.Unix(10, 0).UTC(),
+		},
+		{
+			Harness: domain.HarnessCodex, AccountID: "unknown", WindowName: "primary",
+			Used: &okUsed, Remaining: &okRemaining, Limit: &limit,
+			SignalQuality: domain.QuotaSignalExact, Source: "codex rollout token_count.rate_limits", ObservedAt: time.Unix(10, 0).UTC(),
+		},
+	}}
+
+	rows, err := NewStoreQuotaCollector(store).CollectQuota(context.Background(), time.Unix(20, 0).UTC())
+	if err != nil {
+		t.Fatalf("CollectQuota: %v", err)
+	}
+
+	alerts, transitions := newEvaluator(Thresholds{LowQuotaPercent: 10}).evaluate(Snapshot{Quotas: rows})
+	if len(alerts) != 1 {
+		t.Fatalf("got %d firing alerts, want exactly 1 (the low claude window): %+v", len(alerts), alerts)
+	}
+	if alerts[0].Kind != AlertQuotaLow {
+		t.Fatalf("alert kind = %q, want %q", alerts[0].Kind, AlertQuotaLow)
+	}
+	if alerts[0].Value != 5.0 {
+		t.Errorf("alert value = %.1f, want 5.0%% remaining", alerts[0].Value)
+	}
+	if !strings.Contains(alerts[0].Subject, string(domain.HarnessClaudeCode)) {
+		t.Errorf("alert subject %q should name the claude-code harness", alerts[0].Subject)
+	}
+	if len(transitions) != 1 || !transitions[0].Firing {
+		t.Fatalf("want one firing transition, got %+v", transitions)
+	}
+}
+
+func TestStoreQuotaCollectorPassesThroughRealRowsAndDropsPlaceholders(t *testing.T) {
 	used, remaining, limit := 12.0, 88.0, 100.0
 	store := &fakeQuotaStore{rows: []domain.QuotaSnapshot{
 		{
+			// Legacy placeholder row left behind by the pre-probe implementation:
+			// must never surface, even before the purge migration runs.
 			Harness:       domain.HarnessCodex,
 			AccountID:     "unknown",
 			SignalQuality: domain.QuotaSignalNone,
@@ -95,40 +126,20 @@ func TestStoreQuotaCollectorSuppressesStaticNoSignalWhenExactSignalExists(t *tes
 	if err != nil {
 		t.Fatalf("CollectQuota returned error: %v", err)
 	}
-	var codexRows, claudeRows int
+	if len(rows) != 1 {
+		t.Fatalf("got %d rows, want 1 (real codex row, placeholder dropped): %+v", len(rows), rows)
+	}
+	if rows[0].Harness != domain.HarnessCodex || rows[0].SignalQuality != domain.QuotaSignalExact {
+		t.Fatalf("expected the exact codex row, got %+v", rows[0])
+	}
+	// The collector must never fabricate a claude-code row (no probe data yet).
 	for _, row := range rows {
-		switch row.Harness {
-		case domain.HarnessCodex:
-			codexRows++
-			if row.SignalQuality == domain.QuotaSignalNone {
-				t.Fatalf("Codex no-signal row should be suppressed when exact signal exists: %+v", rows)
-			}
-		case domain.HarnessClaudeCode:
-			claudeRows++
-			if row.SignalQuality != domain.QuotaSignalNone {
-				t.Fatalf("Claude fallback should remain no-signal: %+v", row)
-			}
+		if row.Harness == domain.HarnessClaudeCode {
+			t.Fatalf("collector fabricated a claude-code row: %+v", row)
 		}
 	}
-	if codexRows != 1 || claudeRows != 1 {
-		t.Fatalf("rows = %+v, want one exact Codex row and one Claude no-signal row", rows)
-	}
-}
-
-func TestStoreQuotaCollectorDoesNotRewriteStaticNoSignalRows(t *testing.T) {
-	store := &fakeQuotaStore{}
-	firstAt := time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC)
-	secondAt := firstAt.Add(time.Hour)
-
-	if _, err := NewStoreQuotaCollector(store).CollectQuota(context.Background(), firstAt); err != nil {
-		t.Fatalf("first CollectQuota: %v", err)
-	}
-	if _, err := NewStoreQuotaCollector(store).CollectQuota(context.Background(), secondAt); err != nil {
-		t.Fatalf("second CollectQuota: %v", err)
-	}
-	for _, row := range store.rows {
-		if !row.ObservedAt.Equal(firstAt) {
-			t.Fatalf("static no-signal row was rewritten on second collect: %+v", row)
-		}
+	// It must not write anything either.
+	if len(store.rows) != 2 {
+		t.Fatalf("collector must not write rows, store has %d: %+v", len(store.rows), store.rows)
 	}
 }

@@ -209,6 +209,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/metrics/probe": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Force a harness quota probe; {} probes all installed harnesses, {harness} probes one */
+        post: operations["probeQuota"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/mobile/disable": {
         parameters: {
             query?: never;
@@ -1131,6 +1148,16 @@ export interface components {
             /** @description Positive Go duration cap for exponential idle wake backoff. Empty uses the daemon default. */
             max?: string;
         };
+        HarnessQuotaStatus: {
+            harness: string;
+            hasData: boolean;
+            /** Format: date-time */
+            probedAt?: string;
+            reason?: string;
+            snapshots?: components["schemas"]["QuotaSnapshot"][];
+            /** @enum {string} */
+            state: "not_probed" | "ok" | "failed" | "no_source";
+        };
         ImportReport: {
             dryRun: boolean;
             notes?: string[];
@@ -1256,6 +1283,7 @@ export interface components {
         MetricsResponse: {
             history: components["schemas"]["MetricsSnapshot"][];
             latest?: components["schemas"]["MetricsSnapshot"];
+            probeStatuses: components["schemas"]["HarnessQuotaStatus"][];
         };
         MetricsSnapshot: {
             alerts: components["schemas"]["MetricsAlert"][];
@@ -1316,6 +1344,12 @@ export interface components {
             agent: components["schemas"]["AgentInfo"];
             installed: boolean;
             supported: boolean;
+        };
+        ProbeQuotaRequest: {
+            harness?: string;
+        };
+        ProbeQuotaResponse: {
+            statuses: components["schemas"]["HarnessQuotaStatus"][];
         };
         Project: {
             agent?: string;
@@ -2213,6 +2247,57 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MetricsResponse"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    probeQuota: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProbeQuotaRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProbeQuotaResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
                 };
             };
             /** @description Not Implemented */

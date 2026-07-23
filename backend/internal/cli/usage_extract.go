@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -14,6 +13,7 @@ import (
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/harness/codexrollout"
 )
 
 // Real per-turn token usage is NOT present in any harness stop-hook payload —
@@ -262,8 +262,8 @@ func (e *usageExtractor) codexQuotaSnapshots(observedAt time.Time) []domain.Quot
 		var rec struct {
 			Type    string `json:"type"`
 			Payload struct {
-				Type       string          `json:"type"`
-				RateLimits codexRateLimits `json:"rate_limits"`
+				Type       string                  `json:"type"`
+				RateLimits codexrollout.RateLimits `json:"rate_limits"`
 			} `json:"payload"`
 		}
 		if err := json.Unmarshal(line, &rec); err != nil {
@@ -272,86 +272,11 @@ func (e *usageExtractor) codexQuotaSnapshots(observedAt time.Time) []domain.Quot
 		if rec.Type != "event_msg" || rec.Payload.Type != "token_count" {
 			return
 		}
-		if snaps := rec.Payload.RateLimits.snapshots(observedAt.UTC()); len(snaps) > 0 {
+		if snaps := rec.Payload.RateLimits.Snapshots(observedAt.UTC()); len(snaps) > 0 {
 			latest = snaps
 		}
 	})
 	return latest
-}
-
-type codexRateLimits struct {
-	LimitID   string           `json:"limit_id"`
-	PlanType  string           `json:"plan_type"`
-	Primary   *codexRateWindow `json:"primary"`
-	Secondary *codexRateWindow `json:"secondary"`
-}
-
-type codexRateWindow struct {
-	UsedPercent   *float64 `json:"used_percent"`
-	WindowMinutes *float64 `json:"window_minutes"`
-	ResetsAt      *int64   `json:"resets_at"`
-}
-
-func (r codexRateLimits) snapshots(observedAt time.Time) []domain.QuotaSnapshot {
-	var out []domain.QuotaSnapshot
-	for _, entry := range []struct {
-		name string
-		win  *codexRateWindow
-	}{
-		{name: "primary", win: r.Primary},
-		{name: "secondary", win: r.Secondary},
-	} {
-		snap, ok := r.snapshot(entry.name, entry.win, observedAt)
-		if ok {
-			out = append(out, snap)
-		}
-	}
-	return out
-}
-
-func (r codexRateLimits) snapshot(name string, win *codexRateWindow, observedAt time.Time) (domain.QuotaSnapshot, bool) {
-	if win == nil || win.UsedPercent == nil || win.WindowMinutes == nil || win.ResetsAt == nil {
-		return domain.QuotaSnapshot{}, false
-	}
-	used := *win.UsedPercent
-	minutes := *win.WindowMinutes
-	if math.IsNaN(used) || math.IsInf(used, 0) || used < 0 || used > 100 {
-		return domain.QuotaSnapshot{}, false
-	}
-	if math.IsNaN(minutes) || math.IsInf(minutes, 0) || minutes <= 0 {
-		return domain.QuotaSnapshot{}, false
-	}
-	if *win.ResetsAt <= 0 {
-		return domain.QuotaSnapshot{}, false
-	}
-	reset := time.Unix(*win.ResetsAt, 0).UTC()
-	if reset.IsZero() {
-		return domain.QuotaSnapshot{}, false
-	}
-	limit := 100.0
-	remaining := limit - used
-	source := "codex rollout token_count.rate_limits"
-	basis := "Parsed " + name + " Codex rate-limit window from matching rollout JSONL"
-	if r.LimitID != "" {
-		basis += "; limit_id=" + sanitizeForLog(r.LimitID)
-	}
-	if r.PlanType != "" {
-		basis += "; plan_type=" + sanitizeForLog(r.PlanType)
-	}
-	return domain.QuotaSnapshot{
-		Harness:       domain.HarnessCodex,
-		AccountID:     "unknown",
-		WindowName:    name,
-		WindowStart:   reset.Add(-time.Duration(minutes * float64(time.Minute))),
-		WindowEnd:     reset,
-		Used:          floatPtr(used),
-		Remaining:     floatPtr(remaining),
-		Limit:         floatPtr(limit),
-		SignalQuality: domain.QuotaSignalExact,
-		Source:        source,
-		Basis:         basis,
-		ObservedAt:    observedAt,
-	}, true
 }
 
 // codexSessionMeta is the first-line header of a codex rollout.

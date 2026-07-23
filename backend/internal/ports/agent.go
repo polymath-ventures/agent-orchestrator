@@ -125,6 +125,44 @@ type AgentBinaryResolver interface {
 	ResolveBinary(ctx context.Context) (path string, err error)
 }
 
+// QuotaProbeResult is an adapter's report of the harness login's current usage,
+// independent of AO sessions. State is one of ok/failed/no_source (an adapter
+// never returns not_probed — that is a daemon-level state). Snapshots carry real
+// usage windows only when State is QuotaProbeOK; an ok result with no snapshots
+// means the source works but no usage is recorded in the current window yet.
+// Reason is a short, log-safe excerpt explaining a failed or no_source result.
+type QuotaProbeResult struct {
+	State     domain.QuotaProbeState
+	Reason    string
+	Snapshots []domain.QuotaSnapshot
+}
+
+// HarnessQuotaProber pairs a harness with its adapter's quota-probe capability.
+// The agent service returns these for the installed harnesses whose adapter
+// implements AgentQuotaProber, so the daemon quota prober iterates the dynamic
+// registry rather than a hardcoded harness list.
+type HarnessQuotaProber struct {
+	Harness domain.AgentHarness
+	Prober  AgentQuotaProber
+}
+
+// AgentQuotaProber is the optional capability for adapters that can report their
+// harness login's current usage/quota independent of AO projects and sessions
+// (e.g. a CLI usage command or a passive local rollout read). Callers use it
+// only from background/advisory paths — the daemon's hourly cadence or an
+// on-demand force-probe — never from the spawn hot path, because some
+// implementations cost a real quota turn. Implementations must be bounded and
+// must never wedge the caller: honor ctx, and return a failed result rather than
+// blocking or panicking on malformed local state.
+type AgentQuotaProber interface {
+	ProbeQuota(ctx context.Context, observedAt time.Time) (QuotaProbeResult, error)
+	// QuotaHarness is the canonical harness the probe reports usage under. It is
+	// usually the adapter's own harness, but fork variants that share a login and
+	// usage pool report the base harness (codex-fugu → codex) so the daemon
+	// collapses them into one status instead of duplicating identical data.
+	QuotaHarness() domain.AgentHarness
+}
+
 // AgentPromptReadinessProvider is an optional capability for interactive
 // adapters that receive their first task after startup. It lets AO wait until a
 // terminal UI is ready before injecting text through the runtime.

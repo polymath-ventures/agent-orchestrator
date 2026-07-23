@@ -80,7 +80,7 @@ func newEvaluator(th Thresholds) *evaluator {
 func (e *evaluator) evaluate(s Snapshot) ([]Alert, []AlertTransition) {
 	next := map[string]Alert{}
 	if e.th.LowQuotaPercent > 0 {
-		for _, alert := range lowQuotaAlerts(s.Quotas, e.th.LowQuotaPercent) {
+		for _, alert := range lowQuotaAlerts(s.Quotas, e.th.LowQuotaPercent, s.CollectedAt) {
 			next[alertKey(alert)] = alert
 		}
 	}
@@ -90,10 +90,17 @@ func (e *evaluator) evaluate(s Snapshot) ([]Alert, []AlertTransition) {
 	return sortedAlerts(next), transitions
 }
 
-func lowQuotaAlerts(quotas []domain.QuotaSnapshot, threshold float64) []Alert {
+func lowQuotaAlerts(quotas []domain.QuotaSnapshot, threshold float64, now time.Time) []Alert {
 	var out []Alert
 	for _, q := range quotas {
 		if q.SignalQuality == domain.QuotaSignalNone || q.Limit == nil || *q.Limit <= 0 {
+			continue
+		}
+		// An already-ended window is stale: the quota it measured has reset, so
+		// its used% must not keep firing a low-quota alert. Skip a window whose
+		// end is set and not in the future relative to the tick time. A zero
+		// WindowEnd (unknown end) is not skipped.
+		if !q.WindowEnd.IsZero() && !q.WindowEnd.After(now) {
 			continue
 		}
 		pct, ok := remainingPercent(q)

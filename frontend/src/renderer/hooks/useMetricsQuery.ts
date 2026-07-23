@@ -9,10 +9,10 @@ export type MetricsResponse = components["schemas"]["MetricsResponse"];
 export async function fetchMetrics(): Promise<MetricsResponse> {
 	const { data, error, response } = await apiClient.GET("/api/v1/metrics");
 	if (error) {
-		if (response.status === 501) return { history: [] };
+		if (response.status === 501) return { history: [], probeStatuses: [] };
 		throw new Error(apiErrorMessage(error, "Could not load metrics"));
 	}
-	return data ?? { history: [] };
+	return data ?? { history: [], probeStatuses: [] };
 }
 
 export function useMetricsQuery() {

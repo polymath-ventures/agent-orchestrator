@@ -216,6 +216,9 @@ var schemaNames = map[string]string{
 	"MetricsCost":                                 "MetricsCost",
 	"MetricsAlert":                                "MetricsAlert",
 	"DomainQuotaSnapshot":                         "QuotaSnapshot",
+	"DomainHarnessQuotaStatus":                    "HarnessQuotaStatus",
+	"ControllersProbeQuotaRequest":                "ProbeQuotaRequest",
+	"ControllersProbeQuotaResponse":               "ProbeQuotaResponse",
 	// httpd/controllers — PR wire envelopes
 	"ControllersMergePRResponse":         "MergePRResponse",
 	"ControllersResolveCommentsRequest":  "ResolveCommentsRequest",
@@ -387,6 +390,21 @@ func metricsOperations() []operation {
 			summary: "Return the latest resource, usage, and quota metrics snapshot plus a short history",
 			resps: []respUnit{
 				{http.StatusOK, controllers.MetricsResponse{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/metrics/probe", id: "probeQuota", tag: "metrics",
+			summary: "Force a harness quota probe; {} probes all installed harnesses, {harness} probes one",
+			// The body carries an optional `harness`; the request body itself is
+			// marked required (below). Callers always send a JSON object — `{}` to
+			// probe every harness, `{"harness":"..."}` to probe one. (The handler
+			// additionally tolerates a wholly absent body, but the contract is `{}`.)
+			reqBody: controllers.ProbeQuotaRequest{},
+			resps: []respUnit{
+				{http.StatusOK, controllers.ProbeQuotaResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
 				{http.StatusNotImplemented, envelope.APIError{}},
 			},
 		},

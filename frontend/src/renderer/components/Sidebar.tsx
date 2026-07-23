@@ -62,6 +62,7 @@ import { cn } from "../lib/utils";
 import { useUiStore } from "../stores/ui-store";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { CreateProjectFlow, type CreateProjectInput } from "./CreateProjectFlow";
+import { QuotaPanel } from "./QuotaPanel";
 import { ResizeHandle } from "./ResizeHandle";
 
 // The macOS hiddenInset traffic lights and the fixed TitlebarNav overlay live
@@ -154,6 +155,9 @@ export function Sidebar({
 	const [expandedChromeVisible, setExpandedChromeVisible] = useState(!isCollapsed);
 	// One IPC subscription for both footer variants of the restart-to-update prompt.
 	const updateStatus = useUpdateStatus();
+	// The sidebar-footer quota widget is hidden entirely by the Settings toggle;
+	// it also lives in the expanded-chrome cluster, so it drops out on the rail.
+	const isQuotaWidgetVisible = useUiStore((state) => state.isQuotaWidgetVisible);
 
 	useEffect(() => {
 		if (isCollapsed) {
@@ -341,6 +345,7 @@ export function Sidebar({
 			{/* Footer — Settings opens the global settings page directly. */}
 			<SidebarFooter className="relative mb-2 mt-auto gap-0 overflow-hidden px-1.75 pb-2.5 pt-1.75 transition-[padding] duration-200 ease-linear group-data-[collapsible=icon]:min-h-[64px] group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:px-1.5 group-data-[collapsible=icon]:pb-1.5 group-data-[collapsible=icon]:pt-1.5">
 				<div className="sidebar-expanded-chrome relative flex w-full min-w-[186px] flex-col gap-1 transition-[opacity,transform] duration-150 ease-out group-data-[collapsible=icon]:pointer-events-none group-data-[collapsible=icon]:-translate-x-2 group-data-[collapsible=icon]:opacity-0">
+					{isQuotaWidgetVisible && <QuotaPanel />}
 					<RestartToUpdateRow status={updateStatus} />
 					<button
 						aria-label="Settings"
