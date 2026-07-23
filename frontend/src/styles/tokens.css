@@ -60,6 +60,7 @@
 	/* Interactive overlays */
 	--color-interactive-hover: rgb(255 255 255 / 0.04);
 	--color-interactive-active: rgb(255 255 255 / 0.07);
+	--color-quota-track: rgb(255 255 255 / 0.09);
 	--color-overlay-subtle: rgb(255 255 255 / 0.018);
 	--color-overlay-faint: rgb(255 255 255 / 0.02);
 	--color-scrollbar: rgb(255 255 255 / 0.12);
@@ -443,6 +444,7 @@
 
 	--color-interactive-hover: rgb(0 0 0 / 0.04);
 	--color-interactive-active: rgb(0 0 0 / 0.07);
+	--color-quota-track: rgb(0 0 0 / 0.08);
 	--color-overlay-subtle: rgb(0 0 0 / 0.02);
 	--color-overlay-faint: rgb(0 0 0 / 0.03);
 	--color-scrollbar: rgb(0 0 0 / 0.12);

@@ -63,7 +63,7 @@ describe("QuotaPanel", () => {
 		useUiStore.setState({ isQuotaWidgetCollapsed: false });
 	});
 
-	it("renders ok+data inline with used percent, reset time, and an inventory label", async () => {
+	it("renders ok+data as accessible meter rows with used percent, reset time, and an inventory label", async () => {
 		seed({
 			probeStatuses: [
 				{
@@ -105,16 +105,21 @@ describe("QuotaPanel", () => {
 
 		// Label resolves from the agents inventory, not a hardcoded map.
 		expect(await screen.findByText("Claude Code")).toBeInTheDocument();
-		expect(screen.getByText(/45% used/)).toBeInTheDocument();
+		expect(screen.getByText("45%")).toBeInTheDocument();
+		const weeklyMeter = screen.getByRole("progressbar", { name: "Claude Code weekly (all models) quota usage" });
+		expect(weeklyMeter).toHaveAttribute("aria-valuemin", "0");
+		expect(weeklyMeter).toHaveAttribute("aria-valuemax", "100");
+		expect(weeklyMeter).toHaveAttribute("aria-valuenow", "45");
+		expect(weeklyMeter.firstElementChild).toHaveStyle({ width: "45%" });
 		// The reset renders on its own line (so the narrow sidebar can't clip it).
 		expect(screen.getAllByText(/^resets /).length).toBeGreaterThan(0);
 		// The session window renders as the smaller secondary line — name and metric
 		// are separate spans (the name truncates; the % metric never does).
 		expect(screen.getByText("session")).toBeInTheDocument();
-		expect(screen.getByText(/12% used/)).toBeInTheDocument();
+		expect(screen.getByText("12%")).toBeInTheDocument();
 	});
 
-	it("names the headline window and renders a dated reset (weekday, month, date, tz) — not a bare clock time", async () => {
+	it("names the headline window and renders a dated reset (weekday, month, date, time) — not a bare clock time", async () => {
 		seed({
 			probeStatuses: [
 				{
@@ -146,37 +151,79 @@ describe("QuotaPanel", () => {
 		// Name and metric are sibling spans; the metric is `shrink-0` so a long name
 		// can never truncate it away.
 		expect(await screen.findByText("weekly (all models)")).toBeInTheDocument();
-		expect(screen.getByText(/46% used/)).toBeInTheDocument();
-		// Reset must be dated: "3CharWeekday 3CharMonth DD HH:MM TZ" (24-hour), e.g. "Mon Jul 27 14:00 UTC",
+		expect(screen.getByText("46%")).toBeInTheDocument();
+		// Reset must be dated: "3CharWeekday DD 3CharMonth HH:MM" (24-hour), e.g. "Mon 27 Jul 14:00",
 		// and rendered on its own line so the sidebar can't truncate the date away.
 		// TZ-robust: assert the SHAPE, so the runner's timezone doesn't pin the exact day/time.
 		const reset = screen.getByText(/^resets /);
-		expect(reset.textContent).toMatch(/^resets [A-Z][a-z]{2} [A-Z][a-z]{2} \d{2} \d{2}:\d{2} \S+$/);
+		expect(reset.textContent).toMatch(/^resets [A-Z][a-z]{2} \d{2} [A-Z][a-z]{2} \d{2}:\d{2}$/);
 		// It must NOT render a bare 12-hour clock time like "2:00 PM".
 		expect(reset.textContent).not.toMatch(/\d{1,2}:\d{2}\s?(AM|PM)/i);
 	});
 
-	it("keeps the low-quota warning colour on the usage and reset lines when ≥90% used", async () => {
-		// Regression guard: colour lives on the spans, not the container. A container-
-		// level warning class would be overridden by each span's own colour, silently
-		// dropping the "warn once ≤10% remains" signal.
+	it.each([
+		[74, "bg-accent", "text-foreground", "text-passive"],
+		[75, "bg-warning", "text-warning", "text-passive"],
+		[89, "bg-warning", "text-warning", "text-passive"],
+		[90, "bg-error", "text-error", "text-error"],
+	])(
+		"uses the expected severity classes at %i%% used",
+		async (used, expectedFillClass, expectedNumberClass, expectedResetClass) => {
+			seed({
+				probeStatuses: [
+					{
+						harness: "claude-code",
+						state: "ok",
+						hasData: true,
+						probedAt: "2026-07-20T19:00:00Z",
+						snapshots: [
+							{
+								harness: "claude-code",
+								accountId: "acct",
+								windowName: "weekly (all models)",
+								used,
+								limit: 100,
+								signalQuality: "exact",
+								source: "probe",
+								windowEnd: "2026-07-27T14:00:00Z",
+								observedAt: "2026-07-20T19:00:00Z",
+							},
+						],
+					},
+				],
+			});
+
+			renderWithClient(<QuotaPanel />);
+
+			const number = await screen.findByText(`${used}%`);
+			const meter = screen.getByRole("progressbar", { name: "Claude Code weekly (all models) quota usage" });
+			expect(number).toHaveClass(expectedNumberClass);
+			expect(meter.firstElementChild).toHaveClass(expectedFillClass);
+			expect(screen.getByText(/^resets /).parentElement).toHaveClass(expectedResetClass);
+			if (used >= 75) {
+				expect(screen.getByText(`${100 - used}% left`)).toBeInTheDocument();
+			}
+		},
+	);
+
+	it("renders a 0% window as a neutral meter with a hairline fill", async () => {
 		seed({
 			probeStatuses: [
 				{
-					harness: "claude-code",
+					harness: "codex",
 					state: "ok",
 					hasData: true,
 					probedAt: "2026-07-20T19:00:00Z",
 					snapshots: [
 						{
-							harness: "claude-code",
+							harness: "codex",
 							accountId: "acct",
-							windowName: "weekly (all models)",
-							used: 95,
+							windowName: "primary",
+							used: 0,
 							limit: 100,
 							signalQuality: "exact",
 							source: "probe",
-							windowEnd: "2026-07-27T14:00:00Z",
+							windowEnd: "2026-07-28T18:17:00Z",
 							observedAt: "2026-07-20T19:00:00Z",
 						},
 					],
@@ -186,10 +233,78 @@ describe("QuotaPanel", () => {
 
 		renderWithClient(<QuotaPanel />);
 
-		// The usage line (parent of the "95% used" span) carries the warning colour.
-		const usage = (await screen.findByText(/95% used/)).parentElement;
-		expect(usage?.className).toMatch(/text-warning/);
-		expect(screen.getByText(/^resets /).className).toMatch(/text-warning/);
+		expect(await screen.findByText("0%")).toHaveClass("text-passive");
+		const meter = screen.getByRole("progressbar", { name: "Codex primary quota usage" });
+		expect(meter).toHaveAttribute("aria-valuenow", "0");
+		expect(meter.firstElementChild).toHaveStyle({ width: "0%", minWidth: "2px" });
+	});
+
+	it("announces unknown usage as indeterminate instead of 0%", async () => {
+		seed({
+			probeStatuses: [
+				{
+					harness: "codex",
+					state: "ok",
+					hasData: true,
+					probedAt: "2026-07-20T19:00:00Z",
+					snapshots: [
+						{
+							harness: "codex",
+							accountId: "acct",
+							windowName: "primary",
+							limit: 100,
+							signalQuality: "estimated",
+							source: "probe",
+							windowEnd: "2026-07-28T18:17:00Z",
+							observedAt: "2026-07-20T19:00:00Z",
+						},
+					],
+				},
+			],
+		});
+
+		renderWithClient(<QuotaPanel />);
+
+		expect(await screen.findByText("usage unknown")).toBeInTheDocument();
+		const meter = screen.getByRole("progressbar", { name: "Codex primary quota usage" });
+		expect(meter).not.toHaveAttribute("aria-valuenow");
+		expect(meter).toHaveAttribute("aria-valuetext", "usage unknown");
+		expect(meter.firstElementChild).toHaveStyle({ width: "0%" });
+		expect(meter.firstElementChild).not.toHaveStyle({ minWidth: "2px" });
+	});
+
+	it("clamps over-100 usage to a full critical meter", async () => {
+		seed({
+			probeStatuses: [
+				{
+					harness: "codex",
+					state: "ok",
+					hasData: true,
+					probedAt: "2026-07-20T19:00:00Z",
+					snapshots: [
+						{
+							harness: "codex",
+							accountId: "acct",
+							windowName: "primary",
+							used: 130,
+							limit: 100,
+							signalQuality: "exact",
+							source: "probe",
+							windowEnd: "2026-07-28T18:17:00Z",
+							observedAt: "2026-07-20T19:00:00Z",
+						},
+					],
+				},
+			],
+		});
+
+		renderWithClient(<QuotaPanel />);
+
+		expect(await screen.findByText("100%")).toHaveClass("text-error");
+		expect(screen.getByText("0% left")).toBeInTheDocument();
+		const meter = screen.getByRole("progressbar", { name: "Codex primary quota usage" });
+		expect(meter).toHaveAttribute("aria-valuenow", "100");
+		expect(meter.firstElementChild).toHaveStyle({ width: "100%", minWidth: "2px" });
 	});
 
 	it("renders a midnight reset as 00:00, never the ambiguous 24:00", async () => {
@@ -260,7 +375,7 @@ describe("QuotaPanel", () => {
 
 		const { container } = renderWithClient(<QuotaPanel />);
 
-		expect(await screen.findByText(/21% used/)).toBeInTheDocument();
+		expect(await screen.findByText("21%")).toBeInTheDocument();
 		expect(screen.queryByText(/^resets /)).toBeNull();
 		expect(container.textContent).not.toMatch(/Invalid Date/i);
 	});

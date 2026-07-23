@@ -1,5 +1,5 @@
 import { useIsMutating } from "@tanstack/react-query";
-import { ChevronDown, ChevronRight, Gauge, Loader2, RefreshCw } from "lucide-react";
+import { ChevronDown, ChevronRight, Clock, Gauge, Loader2, RefreshCw, TriangleAlert } from "lucide-react";
 import type { components } from "../../api/schema";
 import { useAgentsQuery } from "../hooks/useAgentsQuery";
 import { useMetricsQuery } from "../hooks/useMetricsQuery";
@@ -13,6 +13,7 @@ type HarnessQuotaStatus = components["schemas"]["HarnessQuotaStatus"];
 type ProbeMutation = ReturnType<typeof useProbeQuota>;
 
 const MAX_REASON_LEN = 120;
+type QuotaSeverity = "normal" | "warning" | "critical";
 
 /**
  * Sidebar-footer quota widget. Renders one chip per harness reported by the
@@ -120,9 +121,9 @@ function HarnessChip({
 	const age = status.state === "ok" && status.probedAt ? formatTimeCompact(status.probedAt) : null;
 
 	return (
-		<div className="rounded border border-border bg-background px-2 py-1.5">
+		<div className="rounded-lg border border-border bg-background px-2 py-1.5">
 			<div className="flex items-center justify-between gap-2">
-				<span className="min-w-0 truncate text-2xs font-medium text-foreground">{label}</span>
+				<span className="min-w-0 truncate text-sm font-semibold text-foreground">{label}</span>
 				{age ? <span className="shrink-0 text-micro text-passive">updated {age}</span> : null}
 			</div>
 			<div className="mt-1">
@@ -157,7 +158,7 @@ function ChipBody({
 	switch (status.state) {
 		case "ok":
 			return status.hasData && snapshots.length > 0 ? (
-				<UsageLines harness={status.harness} snapshots={snapshots} />
+				<UsageLines harness={status.harness} label={label} snapshots={snapshots} />
 			) : (
 				<InlineAction text="no usage recorded yet" label={label} onProbe={onProbe} spinning={spinning} busy={busy} />
 			);
@@ -186,45 +187,88 @@ function ChipBody({
 	}
 }
 
-function UsageLines({ harness, snapshots }: { harness: string; snapshots: QuotaSnapshot[] }) {
+function UsageLines({ harness, label, snapshots }: { harness: string; label: string; snapshots: QuotaSnapshot[] }) {
 	const { headline, secondary } = pickWindows(harness, snapshots);
 	if (!headline && !secondary) return <span className="text-2xs text-passive">no usage recorded yet</span>;
 	return (
-		<div className="flex flex-col gap-0.5">
-			{headline ? <WindowLine snapshot={headline} prominent /> : null}
-			{secondary ? <WindowLine snapshot={secondary} /> : null}
+		<div className="flex flex-col gap-1.5">
+			{headline ? <WindowLine snapshot={headline} label={label} /> : null}
+			{secondary ? <WindowLine snapshot={secondary} label={label} /> : null}
 		</div>
 	);
 }
 
-function WindowLine({ snapshot, prominent = false }: { snapshot: QuotaSnapshot; prominent?: boolean }) {
-	const used = typeof snapshot.used === "number" ? Math.round(snapshot.used) : null;
-	// used/limit are percentages (used 0–100); warn once ≤10% remains.
-	const low = used !== null && used >= 90;
+function WindowLine({ snapshot, label }: { snapshot: QuotaSnapshot; label: string }) {
+	const used = typeof snapshot.used === "number" ? clampPercent(Math.round(snapshot.used)) : null;
+	const severity = quotaSeverity(used);
 	const reset = formatReset(snapshot.windowEnd);
 	// Always name the window — the headline was previously anonymous ("46% used"),
 	// which hides WHICH limit (weekly vs session) the percentage measures.
-	const name = snapshot.windowName;
-	// Colour lives on the spans, not the container: a child's own colour overrides
-	// the parent's inherited one, so a container-level `text-warning` would never
-	// take effect. Keep the low-quota warning ("warn once ≤10% remains") by putting
-	// it directly on each line.
-	const usageColor = low ? "text-warning" : prominent ? "text-foreground" : "text-passive";
-	const resetColor = low ? "text-warning" : "text-passive";
-	// The reset gets its OWN line rather than being appended to a `truncate`d line:
-	// in the narrow sidebar a one-liner clips the reset off the end, which is exactly
-	// the "resets 2:00 PM with no date" bug. Within the first line the window name
-	// truncates but the `% used` metric is `shrink-0`, so a long window name can
-	// never hide the number. Both the named window and the full dated reset survive.
+	const name = snapshot.windowName || "quota window";
+	const fillColor = severity === "critical" ? "bg-error" : severity === "warning" ? "bg-warning" : "bg-accent";
+	const numberColor =
+		used === 0
+			? "text-passive"
+			: severity === "critical"
+				? "text-error"
+				: severity === "warning"
+					? "text-warning"
+					: "text-foreground";
+	const resetColor = severity === "critical" ? "text-error" : "text-passive";
+	const progressValue = used ?? 0;
+	const fillStyle = {
+		width: `${progressValue}%`,
+		...(used !== null ? { minWidth: "2px" } : {}),
+	};
+	const remaining = 100 - progressValue;
+	const showRemaining = severity === "warning" || severity === "critical";
+
 	return (
-		<div className="flex flex-col font-mono">
-			<span className={cn("flex min-w-0 items-baseline gap-1", prominent ? "text-2xs" : "text-micro", usageColor)}>
-				{name ? <span className="min-w-0 truncate">{name}</span> : null}
-				<span className="shrink-0">{used !== null ? `${used}% used` : "usage unknown"}</span>
-			</span>
-			{reset ? <span className={cn("text-micro", resetColor)}>resets {reset}</span> : null}
+		<div className="flex min-w-0 flex-col gap-1 font-mono">
+			<div className="flex min-w-0 items-baseline justify-between gap-2">
+				<span className="min-w-0 truncate text-micro text-muted-foreground">{name}</span>
+				<span className={cn("shrink-0 text-sm font-bold", numberColor)}>
+					{used !== null ? `${used}%` : "usage unknown"}
+				</span>
+			</div>
+			<div
+				aria-label={`${label} ${name} quota usage`}
+				aria-valuemax={100}
+				aria-valuemin={0}
+				{...(used === null ? { "aria-valuetext": "usage unknown" } : { "aria-valuenow": progressValue })}
+				className="h-1.5 w-full overflow-hidden rounded-full bg-[var(--color-quota-track)]"
+				role="progressbar"
+			>
+				<div className={cn("h-full rounded-full transition-[width]", fillColor)} style={fillStyle} />
+			</div>
+			{reset ? (
+				<span className={cn("flex min-w-0 items-center gap-0.5 overflow-hidden text-[9px] leading-none", resetColor)}>
+					{severity === "critical" ? (
+						<TriangleAlert className="size-2 shrink-0" aria-hidden="true" />
+					) : (
+						<Clock className="size-2 shrink-0" aria-hidden="true" />
+					)}
+					{showRemaining ? (
+						<>
+							<span className="shrink-0">{remaining}% left</span>
+							<span aria-hidden="true">·</span>
+						</>
+					) : null}
+					<span className="min-w-0 truncate whitespace-nowrap">resets {reset}</span>
+				</span>
+			) : null}
 		</div>
 	);
+}
+
+function clampPercent(value: number): number {
+	return Math.min(100, Math.max(0, value));
+}
+
+function quotaSeverity(used: number | null): QuotaSeverity {
+	if (used === null || used < 75) return "normal";
+	if (used < 90) return "warning";
+	return "critical";
 }
 
 function InlineAction({
@@ -289,8 +333,8 @@ function pickWindows(
 }
 
 /**
- * Format a reset instant as `3CharWeekday 3CharMonth DD HH:MM TZ` in 24-hour
- * time, e.g. `Mon Jul 27 14:00 EDT`. Always dated — a bare clock time is
+ * Format a reset instant as `3CharWeekday DD 3CharMonth HH:MM` in 24-hour
+ * time, e.g. `Mon 27 Jul 14:00`. Always dated — a bare clock time is
  * ambiguous (a weekly reset days out reads as "today"), which is the whole bug
  * this widget had.
  *
@@ -298,8 +342,9 @@ function pickWindows(
  * field order are deterministic regardless of the host locale (an unpinned
  * formatter yields `lun. juil.` etc. and makes the output — and its tests —
  * environment-dependent). The timezone is left as the host's local zone (no
- * `timeZone` option) so the reset reads in the user's wall-clock, with a short
- * English zone name. `hourCycle: "h23"` forces 00–23; `hour12: false` alone can
+ * `timeZone` option) so the reset reads in the user's wall-clock. The zone name
+ * is intentionally omitted because the sidebar rail needs the full date and time
+ * to fit on one line. `hourCycle: "h23"` forces 00–23; `hour12: false` alone can
  * resolve to an `h24` cycle that renders midnight as the ambiguous `24:00`.
  *
  * Returns null for a missing/zero/unparseable instant so the caller omits the
@@ -316,7 +361,6 @@ function formatReset(value: string | undefined): string | null {
 		hour: "2-digit",
 		minute: "2-digit",
 		hourCycle: "h23",
-		timeZoneName: "short",
 	});
 	const parts = fmt.formatToParts(end);
 	const get = (type: Intl.DateTimeFormatPartTypes): string => parts.find((p) => p.type === type)?.value ?? "";
@@ -325,12 +369,8 @@ function formatReset(value: string | undefined): string | null {
 	const day = get("day");
 	const hour = get("hour");
 	const minute = get("minute");
-	// timeZoneName:"short" effectively always yields a value; fall back to the
-	// resolved IANA zone so the stamp is never zone-less (the contract requires TZ).
-	const tz = get("timeZoneName") || fmt.resolvedOptions().timeZone;
 	if (!weekday || !month || !day || !hour || !minute) return null;
-	const stamp = `${weekday} ${month} ${day} ${hour}:${minute}`;
-	return tz ? `${stamp} ${tz}` : stamp;
+	return `${weekday} ${day} ${month} ${hour}:${minute}`;
 }
 
 function truncate(value: string | undefined): string {
