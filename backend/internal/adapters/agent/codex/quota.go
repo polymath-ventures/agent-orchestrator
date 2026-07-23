@@ -12,18 +12,19 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
+// QuotaHarness reports the canonical harness this probe's usage belongs to.
+// Both plain Codex (New) and Codex Fugu (NewFugu) share one CODEX_HOME — fugu is
+// a wrapper around the same codex binary and stores its rollouts (and reads its
+// fugu.json) under ~/.codex — and one usage pool, so both report
+// domain.HarnessCodex. The daemon collapses the two into a single combined codex
+// status rather than duplicating identical data under a codex-fugu chip.
+func (p *Plugin) QuotaHarness() domain.AgentHarness { return domain.HarnessCodex }
+
 // ProbeQuota implements the optional quota-prober capability (the interface
-// assertion lives beside the others in codex.go). Both plain Codex (New) and
-// Codex Fugu (NewFugu) share one CODEX_HOME — fugu is a wrapper around the same
-// codex binary and stores its rollouts (and reads its fugu.json) under ~/.codex —
-// so this single implementation, tagging every snapshot with the codex harness,
-// makes the daemon collapse the two into one combined codex chip rather than
-// emitting a duplicate fugu chip carrying identical data.
-//
-// ProbeQuota reports the Codex login's current usage by a passive, cwd-independent
-// read of the newest rollout carrying a token_count.rate_limits event under
-// CODEX_HOME. It is zero-cost (a local file read, no model turn), so the daemon
-// may probe it freely.
+// assertion lives beside the others in codex.go). It reports the Codex login's
+// current usage by a passive, cwd-independent read of the newest rollout carrying
+// a token_count.rate_limits event under CODEX_HOME. It is zero-cost (a local file
+// read, no model turn), so the daemon may probe it freely.
 //
 // The read is best-effort and can never wedge the caller: an absent or empty
 // CODEX_HOME, a fresh install with no usage yet, or a rollout whose rate-limit
@@ -31,13 +32,6 @@ import (
 // snapshots — the source works, there is just nothing trustworthy to report yet.
 // That is deliberately NOT a failure, which is reserved for a real error such as
 // a cancelled context.
-// QuotaHarness reports the canonical harness this probe's usage belongs to.
-// Both plain Codex and Codex Fugu share one CODEX_HOME and one usage pool, so
-// both report domain.HarnessCodex — the daemon collapses them into a single
-// combined codex status rather than duplicating identical data under a
-// codex-fugu chip.
-func (p *Plugin) QuotaHarness() domain.AgentHarness { return domain.HarnessCodex }
-
 func (p *Plugin) ProbeQuota(ctx context.Context, observedAt time.Time) (ports.QuotaProbeResult, error) {
 	if err := ctx.Err(); err != nil {
 		return ports.QuotaProbeResult{}, err

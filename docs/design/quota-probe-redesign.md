@@ -63,7 +63,7 @@ Cadence: probe-all on daemon start, then hourly when idle. Force-probe via
 Single-flight per harness (per-harness lock; force-probe skips if in flight).
 
 Real snapshots are **persisted to `quota_snapshots`** (upsert), so they feed
-alerts + history and render immediately on load. Probe *status* (not_probed /
+alerts + history and render immediately on load. Probe _status_ (not_probed /
 failed+reason / no_source / ok+age) is held **in memory** on the prober and
 exposed via the metrics API — it is rebuilt on daemon start, so no new table.
 

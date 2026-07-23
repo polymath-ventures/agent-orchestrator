@@ -172,6 +172,10 @@ func scrubProbeEnv() []string {
 	return out
 }
 
+// QuotaHarness reports the canonical harness this probe's usage belongs to —
+// claude-code has no fork variant sharing its pool, so it is simply itself.
+func (p *Plugin) QuotaHarness() domain.AgentHarness { return domain.HarnessClaudeCode }
+
 // ProbeQuota implements ports.AgentQuotaProber for the Claude Code adapter. It
 // runs the bounded, env-scrubbed `claude -p /usage` probe (mirroring the
 // ValidateModel subprocess discipline: timeout, WaitDelay, process-group
@@ -179,10 +183,6 @@ func scrubProbeEnv() []string {
 // cancelled/timed-out context, or output that yields no snapshots all surface as
 // a failed result carrying a short, sanitized reason — never a panic and never a
 // silent ok.
-// QuotaHarness reports the canonical harness this probe's usage belongs to —
-// claude-code has no fork variant sharing its pool, so it is simply itself.
-func (p *Plugin) QuotaHarness() domain.AgentHarness { return domain.HarnessClaudeCode }
-
 func (p *Plugin) ProbeQuota(ctx context.Context, observedAt time.Time) (ports.QuotaProbeResult, error) {
 	binary, err := p.claudeBinary(ctx)
 	if err != nil {
