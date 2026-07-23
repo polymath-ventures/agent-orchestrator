@@ -1,6 +1,15 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "@tanstack/react-router";
-import { GitBranch, LayoutDashboard, PanelRightClose, PanelRightOpen, Plus, Square, Trash2 } from "lucide-react";
+import {
+	GitBranch,
+	LayoutDashboard,
+	PanelLeft,
+	PanelRightClose,
+	PanelRightOpen,
+	Plus,
+	Square,
+	Trash2,
+} from "lucide-react";
 import { useState } from "react";
 import { NotificationCenter } from "./NotificationCenter";
 import {
@@ -12,6 +21,7 @@ import {
 } from "../types/workspace";
 import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
+import { hasElectronBridge, isMacDesktopChrome } from "../lib/runtime-environment";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { addRendererExceptionStep, captureRendererEvent, captureRendererException } from "../lib/telemetry";
 import { useUiStore } from "../stores/ui-store";
@@ -20,7 +30,6 @@ import { cn } from "../lib/utils";
 import { getAgentActivityView } from "../lib/session-presentation";
 import {
 	isLinuxPlatform,
-	isMacPlatform,
 	isWindowsPlatform,
 	usesBoardActionsInFramedTopbar,
 	usesFramedAppTopbar,
@@ -33,10 +42,14 @@ import {
 	topbarHeaderMacClass,
 	topbarProjectLabelClass,
 } from "./TopbarButton";
+import { useSidebar } from "./ui/sidebar";
 
-const isMac = isMacPlatform();
+const isMac = isMacDesktopChrome();
 const isLinux = isLinuxPlatform();
 const isWindows = isWindowsPlatform();
+// Mobile browsers (no Electron bridge, narrow viewport) render the sidebar as
+// a Sheet with no other opener, so the topbar hosts the toggle (GH #54).
+const isBrowserMode = !hasElectronBridge();
 const boardActionsInFramedTopbar = usesBoardActionsInFramedTopbar();
 const topbarNeedsTitlebarOffset = isMac && !usesFramedAppTopbar();
 const dragStyle = isMac ? ({ WebkitAppRegion: "drag" } as React.CSSProperties) : undefined;
@@ -55,6 +68,7 @@ const noDragStyle = isMac ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperti
 // project is in scope. Merges the old DashboardTopbar/Topbar pair —
 // agent-orchestrator keeps those as two components aligned only by CSS.
 export function ShellTopbar() {
+	const { isMobile, openMobile, toggleSidebar } = useSidebar();
 	const navigate = useNavigate();
 	const queryClient = useQueryClient();
 	const params = useParams({ strict: false }) as { projectId?: string; sessionId?: string };
@@ -89,6 +103,10 @@ export function ShellTopbar() {
 	const projectLabel = project?.name ?? session?.workspaceName ?? (projectId ? "" : "Board");
 	const orchestrator = projectId ? findProjectOrchestrator(all, projectId) : undefined;
 	const isProjectRestarting = projectId ? restartingProjectIds.has(projectId) : false;
+	// Mobile browsers have no other sidebar affordance (no titlebar cluster, no
+	// desktop hover rail), so the topbar is the one place left to host the
+	// Sheet toggle (GH #54).
+	const showMobileSidebarToggle = isBrowserMode && isMobile;
 
 	const openBoard = () =>
 		projectId ? void navigate({ to: "/projects/$projectId", params: { projectId } }) : void navigate({ to: "/" });
@@ -145,6 +163,17 @@ export function ShellTopbar() {
 	return (
 		<header className={cn(topbarHeaderClass, topbarNeedsTitlebarOffset && topbarHeaderMacClass)} style={dragStyle}>
 			<div className="flex min-w-0 items-center gap-3">
+				{showMobileSidebarToggle ? (
+					<TopbarButton
+						aria-label={openMobile ? "Close sidebar" : "Open sidebar"}
+						aria-pressed={openMobile}
+						onClick={toggleSidebar}
+						title={openMobile ? "Close sidebar" : "Open sidebar"}
+						variant="icon"
+					>
+						<PanelLeft className="size-icon-lg" aria-hidden="true" />
+					</TopbarButton>
+				) : null}
 				{isSessionRoute && isTerminalOnly ? (
 					<div className="inline-flex min-w-0 items-center gap-2">
 						<div className="inline-flex min-w-0 items-center gap-1.5">

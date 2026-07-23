@@ -24,7 +24,8 @@ import { restartProjectOrchestrator } from "../lib/restart-orchestrator";
 import { captureOrchestratorReplacementFailure } from "../lib/orchestrator-replacement-telemetry";
 import { applyDocumentTheme } from "../lib/theme";
 import { aoBridge } from "../lib/bridge";
-import { isLinuxPlatform, isMacPlatform, isWindowsPlatform, usesFramedAppTopbar } from "../lib/platform";
+import { isLinuxPlatform, isWindowsPlatform, usesFramedAppTopbar } from "../lib/platform";
+import { isMacDesktopChrome } from "../lib/runtime-environment";
 import { useUiStore } from "../stores/ui-store";
 import { findFleetPrime, type WorkspaceSummary } from "../types/workspace";
 import type { components } from "../../api/schema";
@@ -67,7 +68,7 @@ export function createProjectConfig(input: CreateProjectConfigInput): components
 	};
 }
 
-const isMac = isMacPlatform();
+const isMac = isMacDesktopChrome();
 const isWindows = isWindowsPlatform();
 const isLinux = isLinuxPlatform();
 const framedAppTopbar = usesFramedAppTopbar();

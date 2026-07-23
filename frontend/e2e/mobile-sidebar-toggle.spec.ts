@@ -1,10 +1,10 @@
 import { expect, test } from "@playwright/test";
 import { installBrowserModeApiFixtures } from "./fixtures";
 
-// Adversarial UI verification for GH #46. Drives the real production web bundle
+// Adversarial UI verification for GH #54. Drives the real production web bundle
 // at an iPhone viewport + iOS user agent (browser mode over the tailnet is the
-// reported surface) and proves the titlebar toggle opens the mobile sidebar
-// Sheet — the symptom was that tapping it did nothing.
+// reported surface), proves macOS/Electron titlebar chrome is absent, and proves
+// the replacement ShellTopbar opener still controls the mobile sidebar Sheet.
 test.use({
 	viewport: { width: 390, height: 844 },
 	hasTouch: true,
@@ -13,22 +13,24 @@ test.use({
 		"Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
 });
 
-test("mobile: titlebar toggle opens the sidebar sheet", async ({ page }, testInfo) => {
+test("mobile: browser topbar toggle opens the sidebar without macOS titlebar chrome", async ({ page }, testInfo) => {
 	await installBrowserModeApiFixtures(page);
 	await page.goto("/");
+
+	await expect(page.locator(".titlebar-nav")).toHaveCount(0);
+	await expect(page.locator(".dashboard-app-header")).not.toHaveClass(/pl-titlebar-content-offset/);
 
 	// The mobile sidebar Sheet is closed on load: the "Projects" nav label lives
 	// inside it, so it must not be visible yet.
 	const projectsLabel = page.getByText("Projects", { exact: true });
 	await expect(projectsLabel).toBeHidden();
 
-	// Tap the sidebar toggle. iOS still matches the titlebar cluster's UA gate
-	// (`/Mac|iPod|iPhone|iPad/`), so the cluster renders and hosts the toggle;
-	// this PR only rewires that toggle to the viewport-aware sidebar context.
-	await page
-		.getByRole("button", { name: /expand sidebar/i })
-		.first()
-		.click();
+	// The persistent ShellTopbar owns the mobile-browser opener. There are no
+	// back/forward buttons here; those remain desktop Electron titlebar chrome.
+	const toggle = page.getByRole("button", { name: "Open sidebar" });
+	await expect(toggle).toBeVisible();
+	await page.screenshot({ path: testInfo.outputPath("mobile-browser-chrome-closed.png") });
+	await toggle.click();
 
 	const sheet = page.getByRole("dialog");
 	await expect(sheet).toBeVisible();
@@ -36,8 +38,10 @@ test("mobile: titlebar toggle opens the sidebar sheet", async ({ page }, testInf
 
 	await page.screenshot({ path: testInfo.outputPath("mobile-sidebar-open.png") });
 
-	// The left Sheet is 3/4 width; tap the dimmed overlay at the right edge.
-	await page.mouse.click(370, 100);
+	// The topbar is inert while the modal Sheet is open; use the visible
+	// in-Sheet collapse toggle to prove the sidebar still closes via a real
+	// sidebar control (the overlay/Escape remain available too).
+	await sheet.getByRole("button", { name: "Collapse sidebar" }).click();
 	await expect(sheet).toBeHidden();
 	await expect(projectsLabel).toBeHidden();
 });

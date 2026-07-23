@@ -1,9 +1,10 @@
 import { useCanGoBack, useRouter } from "@tanstack/react-router";
 import { ArrowLeft, ArrowRight, PanelLeft } from "lucide-react";
 import { useEffect, useState } from "react";
+import { isMacDesktopChrome } from "../lib/runtime-environment";
 import { useSidebar } from "./ui/sidebar";
 
-const isMac = typeof navigator !== "undefined" && /Mac|iPod|iPhone|iPad/.test(navigator.userAgent);
+const isMac = isMacDesktopChrome();
 const noDragStyle = isMac ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperties) : undefined;
 
 // macOS-only titlebar cluster (sidebar toggle + history arrows) pinned beside
