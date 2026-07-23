@@ -49,51 +49,12 @@ func TestStoreQuotaCollectorDoesNotFabricatePlaceholders(t *testing.T) {
 	}
 }
 
-func TestStoreQuotaCollectorRecordsNoSignalForSubscriptionHarnesses(t *testing.T) {
-	store := &fakeQuotaStore{}
-	observedAt := time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC)
-
-	rows, err := NewStoreQuotaCollector(store).CollectQuota(context.Background(), observedAt)
-	if err != nil {
-		t.Fatalf("CollectQuota returned error: %v", err)
-	}
-
-	want := map[domain.AgentHarness]bool{
-		domain.HarnessClaudeCode: false,
-		domain.HarnessCodex:      false,
-	}
-	if len(rows) != len(want) {
-		t.Fatalf("got %d quota rows, want %d: %+v", len(rows), len(want), rows)
-	}
-	for _, row := range rows {
-		if _, ok := want[row.Harness]; !ok {
-			t.Fatalf("unexpected quota harness %q", row.Harness)
-		}
-		want[row.Harness] = true
-		if row.SignalQuality != domain.QuotaSignalNone {
-			t.Errorf("%s signal = %q, want none", row.Harness, row.SignalQuality)
-		}
-		if row.AccountID != "unknown" {
-			t.Errorf("%s account = %q, want unknown", row.Harness, row.AccountID)
-		}
-		if !row.ObservedAt.Equal(observedAt) {
-			t.Errorf("%s observedAt = %s, want %s", row.Harness, row.ObservedAt, observedAt)
-		}
-		if row.Limit != nil || row.Remaining != nil || row.Used != nil {
-			t.Errorf("%s no-signal snapshot must not fabricate numeric values: %+v", row.Harness, row)
-		}
-	}
-	for harness, seen := range want {
-		if !seen {
-			t.Errorf("missing quota snapshot for %s", harness)
-		}
-	}
-}
-
-func TestStoreQuotaCollectorSuppressesStaticNoSignalWhenExactSignalExists(t *testing.T) {
+func TestStoreQuotaCollectorPassesThroughRealRowsAndDropsPlaceholders(t *testing.T) {
 	used, remaining, limit := 12.0, 88.0, 100.0
 	store := &fakeQuotaStore{rows: []domain.QuotaSnapshot{
 		{
+			// Legacy placeholder row left behind by the pre-probe implementation:
+			// must never surface, even before the purge migration runs.
 			Harness:       domain.HarnessCodex,
 			AccountID:     "unknown",
 			SignalQuality: domain.QuotaSignalNone,
@@ -117,40 +78,20 @@ func TestStoreQuotaCollectorSuppressesStaticNoSignalWhenExactSignalExists(t *tes
 	if err != nil {
 		t.Fatalf("CollectQuota returned error: %v", err)
 	}
-	var codexRows, claudeRows int
+	if len(rows) != 1 {
+		t.Fatalf("got %d rows, want 1 (real codex row, placeholder dropped): %+v", len(rows), rows)
+	}
+	if rows[0].Harness != domain.HarnessCodex || rows[0].SignalQuality != domain.QuotaSignalExact {
+		t.Fatalf("expected the exact codex row, got %+v", rows[0])
+	}
+	// The collector must never fabricate a claude-code row (no probe data yet).
 	for _, row := range rows {
-		switch row.Harness {
-		case domain.HarnessCodex:
-			codexRows++
-			if row.SignalQuality == domain.QuotaSignalNone {
-				t.Fatalf("Codex no-signal row should be suppressed when exact signal exists: %+v", rows)
-			}
-		case domain.HarnessClaudeCode:
-			claudeRows++
-			if row.SignalQuality != domain.QuotaSignalNone {
-				t.Fatalf("Claude fallback should remain no-signal: %+v", row)
-			}
+		if row.Harness == domain.HarnessClaudeCode {
+			t.Fatalf("collector fabricated a claude-code row: %+v", row)
 		}
 	}
-	if codexRows != 1 || claudeRows != 1 {
-		t.Fatalf("rows = %+v, want one exact Codex row and one Claude no-signal row", rows)
-	}
-}
-
-func TestStoreQuotaCollectorDoesNotRewriteStaticNoSignalRows(t *testing.T) {
-	store := &fakeQuotaStore{}
-	firstAt := time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC)
-	secondAt := firstAt.Add(time.Hour)
-
-	if _, err := NewStoreQuotaCollector(store).CollectQuota(context.Background(), firstAt); err != nil {
-		t.Fatalf("first CollectQuota: %v", err)
-	}
-	if _, err := NewStoreQuotaCollector(store).CollectQuota(context.Background(), secondAt); err != nil {
-		t.Fatalf("second CollectQuota: %v", err)
-	}
-	for _, row := range store.rows {
-		if !row.ObservedAt.Equal(firstAt) {
-			t.Fatalf("static no-signal row was rewritten on second collect: %+v", row)
-		}
+	// It must not write anything either.
+	if len(store.rows) != 2 {
+		t.Fatalf("collector must not write rows, store has %d: %+v", len(store.rows), store.rows)
 	}
 }

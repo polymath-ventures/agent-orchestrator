@@ -23,21 +23,40 @@ bottom above Settings.
 
 ## Design
 
-### Source of record = daemon probes
+### Source of record = daemon probes, over the existing harness surface
 
-A dedicated `QuotaProber` component (started by the daemon like the metrics
-Observer) probes each harness:
+**Reuse the canonical harness registry — do not hardcode a harness list.** The
+`model-management` spec already mandates that consumers use the dynamic harness
+registry, and sibling ticket #98 applies that same contract to the setup dialog.
+#97 applies it to quota. Concretely:
 
-- **claude-code**: `claude -p "/usage"`, bounded (`context.WithTimeout`), env
-  scrubbed of `AO_SESSION_ID` / `AO_RUNTIME_TOKEN` / `AO_RUN_FILE`, stdin closed,
-  process-group cleanup — mirroring the existing bounded-probe pattern in
-  `adapters/agent/claudecode/claudecode.go` `ValidateModel`. Parse the
-  `N% used · resets <time>` lines. Costs a small quota turn → **hourly** cadence.
-- **codex / codex-fugu**: passive read of the newest rollout `rate_limits` event
-  under `CODEX_HOME/sessions/**` (cwd-independent). Zero cost → probes freely.
-  codex-fugu shares `CODEX_HOME` with codex (one adapter, `NewFugu`), so a single
-  **combined codex chip** covers both (per the ticket's decision default). Verify
-  the shared-home assumption in Phase 2 and note it in the PR.
+- Quota probing is a new **optional adapter capability port**
+  `ports.AgentQuotaProber` (parallel to `AgentModelValidator` /
+  `AgentModelCatalog` / `AgentBinaryResolver`). Each adapter that can report
+  usage implements it; adapters that can't simply don't.
+- The daemon `QuotaProber` component (started like the metrics Observer)
+  enumerates harnesses via the agent `Service` inventory
+  (`adapters/agent/registry.Harnessed()` gated by `Service` `Installed` /
+  `Authorized`), capability-casts each adapter to `AgentQuotaProber` (the same
+  cast pattern `service/agent.probeAgent` already uses for
+  `AgentBinaryResolver`), and probes only harnesses that are both available and
+  implement the port. No hardcoded `[claude-code, codex]` list anywhere;
+  codex-fugu falls out of the registry automatically.
+
+Per-adapter probe implementations:
+
+- **claude-code adapter**: `claude -p "/usage"`, bounded
+  (`context.WithTimeout`), env scrubbed of `AO_SESSION_ID` / `AO_RUNTIME_TOKEN` /
+  `AO_RUN_FILE`, stdin closed, process-group cleanup — mirroring the existing
+  bounded-probe pattern in `adapters/agent/claudecode/claudecode.go`
+  `ValidateModel`. Parse the `N% used · resets <time>` lines. Costs a small quota
+  turn → **hourly** cadence.
+- **codex / codex-fugu adapters**: passive read of the newest rollout
+  `rate_limits` event under `CODEX_HOME/sessions/**` (cwd-independent), via the
+  shared `codexrollout` package. Zero cost → probes freely. codex-fugu shares
+  `CODEX_HOME` with codex (one adapter family, `NewFugu`), so the two report the
+  same pool; the widget shows a single **combined codex chip** (ticket decision
+  default). Verify the shared-home assumption in Phase 2 and note it in the PR.
 
 Cadence: probe-all on daemon start, then hourly when idle. Force-probe via
 `POST /api/v1/metrics/probe` (optional `{harness}`) and a widget button.
@@ -72,12 +91,17 @@ Tooltips may add detail but never carry the only explanation.
   moment it is written: we stop creating the bad state rather than filtering it on
   read forever.)
 
-### Placement
+### Placement + harness labels from the shared inventory
 
 Move `<QuotaPanel />` from `SessionsBoard` into `Sidebar` `SidebarFooter`, pinned
 above the Settings button (mirror `RestartToUpdateRow`). Collapsible. A persisted
 `ui-store` flag (`ao.quota.visible`, default on) + a Settings `Switch` toggle
 show/hide it.
+
+The widget derives its harness set and human labels from the **same
+`useAgentsQuery` inventory the pickers use** (labels = adapter `Manifest.Name`),
+reusing `AGENT_OPTIONS`/`AgentProvider` only for the id vocabulary — no parallel
+hardcoded harness list. This keeps it aligned with #98's picker-registry work.
 
 ### Alerting
 
@@ -111,17 +135,33 @@ cwd-independent "newest rollout with rate_limits" locate in the shared package.
 - **Duplicate the rollout parser in the daemon** — two copies that must agree
   will drift. Rejected for the shared `codexrollout` extraction.
 
+## Coordination with #98 (harness/model surface)
+
+#98 ("clarify project setup harness and model defaults", Codex-owned, not yet
+landed) reworks the frontend setup dialog to use the dynamic harness registry.
+It is **not** the source of the lookup surface — that surface already exists in
+`main` (`registry.Harnessed()`, the agent `Service`, `useAgentsQuery`) and is
+already required by the archived `model-management` spec. #97 does not depend on
+#98 and does not wait for it. Both build on the same functions, so they converge
+and stay rebase-friendly. #97 must not touch #98's files
+(`CreateProjectAgentSheet.tsx`, `ModelAvailabilityField.tsx`, `_shell.tsx`);
+rebase when #98 lands.
+
 ## Phases
 
 0. Reproduce-first: failing test — collector must not write `none` placeholders.
 1. Backend: stop writing placeholders; `CollectQuota` → pure read; migration 0041.
-2. Backend: shared `codexrollout` package + codex prober (cwd-independent).
-3. Backend: claude-code prober (pure parse + bounded env-scrubbed subprocess) +
-   `QuotaProber` component (schedule, single-flight, in-memory status, persist).
+2. Backend: shared `codexrollout` package + `AgentQuotaProber` capability port;
+   codex/codex-fugu adapters implement it (cwd-independent rollout read).
+3. Backend: claude-code adapter implements `AgentQuotaProber` (pure parse +
+   bounded env-scrubbed subprocess); `QuotaProber` daemon component drives it off
+   the agent `Service` inventory (schedule, single-flight, in-memory status,
+   persist real snapshots). No hardcoded harness list.
 4. API: `ProbeStatuses` on `MetricsResponse` + `POST /metrics/probe`; wire prober
    into daemon + controller; regen OpenAPI + TS.
-5. Frontend: QuotaPanel honest-states rewrite + probe-now; relocate to sidebar
-   footer; settings toggle + ui-store flag; tests.
+5. Frontend: QuotaPanel honest-states rewrite + probe-now; harness set/labels from
+   `useAgentsQuery`; relocate to sidebar footer; settings toggle + ui-store flag;
+   tests.
 6. Alerting regression coverage; full CI.
 
 ## Non-goals (per ticket)
