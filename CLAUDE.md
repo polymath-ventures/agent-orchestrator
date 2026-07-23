@@ -2,9 +2,9 @@
 
 # Agent Orchestrator
 
-Agent Orchestrator is a Go daemon and Electron supervisor for coordinating
-coding-agent sessions. The backend owns durable lifecycle state, storage,
-runtime adapters, and the loopback HTTP API. The frontend is a thin supervisor
+Agent Orchestrator is a Go daemon and web-first React supervisor for
+coordinating coding-agent sessions. The backend owns durable lifecycle state,
+storage, runtime adapters, and the HTTP API. The frontend is a thin supervisor
 surface over the generated API client.
 
 This fork tracks upstream closely while carrying Polymath SDLC wiring and a
@@ -317,14 +317,25 @@ Use the resources available to you. An agent is one node in a larger system with
 
 - `backend/` contains the Go daemon, Cobra CLI, services, storage, runtime
   adapters, lifecycle/reaper, terminal mux, and tests.
-- `frontend/` contains the Electron and React supervisor wired to the generated
-  daemon client.
+- `frontend/` contains the React web supervisor wired to the generated daemon
+  client, plus upstream Electron shell code that this fork preserves for
+  compatibility.
 - `docs/` contains current architecture and status notes. Start here before
   changing lifecycle, CLI, agents, storage, or daemon behavior.
 - `test/` contains external smoke/e2e assets, including the CLI fresh-install
   container check.
 - `.github/workflows/` contains CI definitions. Mirror these commands locally
   when possible.
+
+## Fork posture
+
+This fork is web-first. Treat the browser-based supervisor talking to the daemon
+over HTTP as the primary product path. Electron behavior is upstream
+compatibility surface, not the default assumption for Polymath work. Do not make
+frontend correctness depend on `window.ao`, Electron preload APIs, Electron-only
+daemon status fields such as a discovered port, or desktop packaging behavior
+unless the ticket explicitly targets Electron. For frontend changes, include or
+preserve web-mode coverage when the behavior can run in a browser.
 
 ## Commands
 
@@ -386,9 +397,12 @@ the session so the change renders in the desktop browser panel.
 
 ## Distribution
 
-The desktop app from GitHub Releases is the canonical install path. The
-`@aoagents/ao` npm package remains a frozen legacy on-ramp at `0.10.0`; do not
-add new features, docs, or flows that treat npm as the intended install path.
+For this fork, the web supervisor is the canonical product direction. Upstream
+Electron packaging may remain in the tree for compatibility, but new product
+flows should not assume the desktop app is the user's runtime unless the ticket
+explicitly says so. The `@aoagents/ao` npm package remains a frozen legacy
+on-ramp at `0.10.0`; do not add new features, docs, or flows that treat npm as
+the intended install path.
 
 ## Coding conventions
 

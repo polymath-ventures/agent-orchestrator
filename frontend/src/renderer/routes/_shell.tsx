@@ -18,7 +18,7 @@ import { agentsQueryKey, agentsQueryOptions, refreshAgents } from "../hooks/useA
 import { useDaemonStatus } from "../hooks/useDaemonStatus";
 import { useWorkspaceQuery, workspaceQueryKey, workspaceQueryOptions } from "../hooks/useWorkspaceQuery";
 import { apiClient, apiErrorCode, apiErrorMessage } from "../lib/api-client";
-import { refreshDaemonStatus } from "../lib/daemon-status";
+import { applyDaemonStatus, refreshDaemonStatus } from "../lib/daemon-status";
 import { addRendererExceptionStep, captureRendererEvent, captureRendererException } from "../lib/telemetry";
 import { ShellProvider } from "../lib/shell-context";
 import { restartProjectOrchestrator } from "../lib/restart-orchestrator";
@@ -26,7 +26,7 @@ import { captureOrchestratorReplacementFailure } from "../lib/orchestrator-repla
 import { applyDocumentTheme } from "../lib/theme";
 import { aoBridge } from "../lib/bridge";
 import { isLinuxPlatform, isWindowsPlatform, usesFramedAppTopbar } from "../lib/platform";
-import { isMacDesktopChrome } from "../lib/runtime-environment";
+import { hasElectronBridge, isMacDesktopChrome } from "../lib/runtime-environment";
 import { useUiStore } from "../stores/ui-store";
 import { findFleetPrime, isFleetWorkspace, type WorkspaceSummary } from "../types/workspace";
 import type { components } from "../../api/schema";
@@ -79,6 +79,40 @@ export function createProjectConfig(input: CreateProjectConfigInput): components
 		...(agentConfig ? { agentConfig } : {}),
 		...(input.trackerIntake ? { trackerIntake: input.trackerIntake } : {}),
 	};
+}
+
+type DaemonStatusReader = typeof refreshDaemonStatus;
+type DaemonStarter = typeof aoBridge.daemon.start;
+type DaemonStatusApplier = typeof applyDaemonStatus;
+
+function isProjectCreateDaemonReady(
+	status: Awaited<ReturnType<DaemonStatusReader>>,
+	electronBridgeAvailable: boolean,
+): boolean {
+	return status.state === "ready" && (Boolean(status.port) || !electronBridgeAvailable);
+}
+
+export async function ensureProjectCreateDaemonReady({
+	refreshStatus = refreshDaemonStatus,
+	startDaemon = aoBridge.daemon.start,
+	applyStatus = applyDaemonStatus,
+}: {
+	refreshStatus?: DaemonStatusReader;
+	startDaemon?: DaemonStarter;
+	applyStatus?: DaemonStatusApplier;
+} = {}) {
+	const electronBridgeAvailable = hasElectronBridge();
+	const status = await refreshStatus();
+	if (isProjectCreateDaemonReady(status, electronBridgeAvailable)) return status;
+	if (!electronBridgeAvailable) {
+		throw new Error(status.message || "AO daemon is not ready.");
+	}
+
+	const startedStatus = await startDaemon();
+	applyStatus(startedStatus);
+	if (isProjectCreateDaemonReady(startedStatus, electronBridgeAvailable)) return startedStatus;
+
+	throw new Error(startedStatus.message || status.message || "AO daemon is not ready.");
 }
 
 const isMac = isMacDesktopChrome();
@@ -146,10 +180,7 @@ function ShellLayout() {
 				surface: "project_board",
 			});
 			void captureRendererEvent("ao.renderer.project_add_requested");
-			const status = await refreshDaemonStatus();
-			if (status.state !== "ready" || !status.port) {
-				throw new Error(status.message || "AO daemon is not ready.");
-			}
+			await ensureProjectCreateDaemonReady();
 			const { data, error } = await apiClient.POST("/api/v1/projects", {
 				body: {
 					path: input.path,

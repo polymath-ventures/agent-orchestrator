@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { createProjectConfig } from "../routes/_shell";
+import { describe, expect, it, vi } from "vitest";
+import { createProjectConfig, ensureProjectCreateDaemonReady } from "../routes/_shell";
 
 describe("createProjectConfig", () => {
 	it("persists selected worker and orchestrator agents without tracker intake by default", () => {
@@ -72,5 +72,100 @@ describe("createProjectConfig", () => {
 			orchestrator: { agent: "opencode" },
 			trackerIntake: { enabled: true, provider: "github", assignee: "octocat" },
 		});
+	});
+});
+
+describe("ensureProjectCreateDaemonReady", () => {
+	it("accepts browser-mode readiness without an Electron daemon port", async () => {
+		const bridge = window.ao;
+		delete window.ao;
+		try {
+			const refreshStatus = vi.fn().mockResolvedValue({ state: "ready", pid: 42 });
+			const startDaemon = vi.fn();
+
+			await expect(
+				ensureProjectCreateDaemonReady({
+					refreshStatus,
+					startDaemon,
+					applyStatus: vi.fn(),
+				}),
+			).resolves.toEqual({ state: "ready", pid: 42 });
+
+			expect(startDaemon).not.toHaveBeenCalled();
+		} finally {
+			window.ao = bridge;
+		}
+	});
+
+	it("does not start the Electron daemon from browser mode", async () => {
+		const bridge = window.ao;
+		delete window.ao;
+		try {
+			const refreshStatus = vi.fn().mockResolvedValue({ state: "starting" });
+			const startDaemon = vi.fn();
+
+			await expect(
+				ensureProjectCreateDaemonReady({
+					refreshStatus,
+					startDaemon,
+					applyStatus: vi.fn(),
+				}),
+			).rejects.toThrow("AO daemon is not ready.");
+
+			expect(startDaemon).not.toHaveBeenCalled();
+		} finally {
+			window.ao = bridge;
+		}
+	});
+
+	it("starts the Electron daemon when ready status has no bridge port", async () => {
+		const refreshStatus = vi.fn().mockResolvedValue({ state: "ready", pid: 41 });
+		const startDaemon = vi.fn().mockResolvedValue({ state: "ready", port: 3037, pid: 42 });
+		const applyStatus = vi.fn();
+
+		await expect(
+			ensureProjectCreateDaemonReady({
+				refreshStatus,
+				startDaemon,
+				applyStatus,
+			}),
+		).resolves.toEqual({ state: "ready", port: 3037, pid: 42 });
+
+		expect(startDaemon).toHaveBeenCalledTimes(1);
+		expect(applyStatus).toHaveBeenCalledWith({ state: "ready", port: 3037, pid: 42 });
+	});
+
+	it("waits for a starting daemon and applies the ready port before creating", async () => {
+		const refreshStatus = vi.fn().mockResolvedValue({ state: "starting" });
+		const startDaemon = vi.fn().mockResolvedValue({ state: "ready", port: 3037, pid: 42 });
+		const applyStatus = vi.fn();
+
+		await expect(
+			ensureProjectCreateDaemonReady({
+				refreshStatus,
+				startDaemon,
+				applyStatus,
+			}),
+		).resolves.toEqual({ state: "ready", port: 3037, pid: 42 });
+
+		expect(startDaemon).toHaveBeenCalledTimes(1);
+		expect(applyStatus).toHaveBeenCalledWith({ state: "ready", port: 3037, pid: 42 });
+	});
+
+	it("surfaces the daemon start failure when it still cannot become ready", async () => {
+		const refreshStatus = vi.fn().mockResolvedValue({ state: "starting" });
+		const startDaemon = vi.fn().mockResolvedValue({
+			state: "error",
+			code: "not_ready",
+			message: "An AO daemon is already running, but it is not ready yet.",
+		});
+
+		await expect(
+			ensureProjectCreateDaemonReady({
+				refreshStatus,
+				startDaemon,
+				applyStatus: vi.fn(),
+			}),
+		).rejects.toThrow("An AO daemon is already running, but it is not ready yet.");
 	});
 });
