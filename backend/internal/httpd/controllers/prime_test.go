@@ -22,7 +22,6 @@ func TestPrimeControllerGetSettings(t *testing.T) {
 			DisplayName: "Fleet Lead",
 			Harness:     domain.HarnessCodex,
 		},
-		LegacyEnvironment: primesvc.LegacyEnvironment{Configured: true, ProjectID: "ao"},
 	}}
 	rr := httptest.NewRecorder()
 
@@ -35,7 +34,7 @@ func TestPrimeControllerGetSettings(t *testing.T) {
 	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if !got.Settings.Enabled || got.Settings.DisplayName != "Fleet Lead" || got.LegacyEnvironment.ProjectID != "ao" {
+	if !got.Settings.Enabled || got.Settings.DisplayName != "Fleet Lead" {
 		t.Fatalf("response = %+v", got)
 	}
 }

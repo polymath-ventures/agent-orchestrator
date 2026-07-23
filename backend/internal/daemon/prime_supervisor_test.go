@@ -501,8 +501,7 @@ func (f *fakePrimeNotifier) Notify(_ context.Context, intent ports.NotificationI
 	return nil
 }
 
-// A prime that has never spawned successfully (e.g. mistyped
-// AO_PRIME_PROJECT_ID) must still alert when the restart budget caps —
+// A prime that has never spawned successfully must still alert when the restart budget caps —
 // silence here was the failure mode: three Warn logs and nothing else.
 func TestEnsurePrimeCapAlertsWhenPrimeNeverSpawned(t *testing.T) {
 	base := time.Date(2026, 7, 21, 10, 0, 0, 0, time.UTC)

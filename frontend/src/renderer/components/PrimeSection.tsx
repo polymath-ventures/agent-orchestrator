@@ -3,7 +3,9 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
 import type { components } from "../../api/schema";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
+import { useModelAvailabilityQuery, useRefreshModelAvailability } from "../hooks/useModelAvailabilityQuery";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
+import { ModelAvailabilityField, type ModelSelection } from "./ModelAvailabilityField";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Switch } from "./ui/switch";
@@ -32,21 +34,33 @@ async function fetchPrimeSettings(): Promise<PrimeSettingsView> {
 
 export function PrimeSection() {
 	const queryClient = useQueryClient();
+	const modelAvailabilityQuery = useModelAvailabilityQuery();
+	const { refresh: refreshModels, isRefreshing: isRefreshingModels } = useRefreshModelAvailability();
 	const query = useQuery({
 		queryKey: primeSettingsQueryKey,
 		queryFn: fetchPrimeSettings,
 		refetchInterval: 15_000,
 	});
 	const [form, setForm] = useState<PrimeSettings>(emptySettings);
+	const [wakeMinutes, setWakeMinutes] = useState("15");
+	const [validationError, setValidationError] = useState<string | null>(null);
 
 	useEffect(() => {
-		if (query.data?.settings) setForm(normalizeSettings(query.data.settings));
+		if (query.data?.settings) {
+			const settings = normalizeSettings(query.data.settings);
+			setForm(settings);
+			setWakeMinutes(durationToMinutes(settings.wakeInterval ?? "15m"));
+		}
 	}, [query.data]);
 
 	const mutation = useMutation({
 		mutationFn: async () => {
+			const minutes = parseWakeMinutes(wakeMinutes);
+			if (minutes === null) {
+				throw new PrimeValidationError("Wake interval must be between 1 and 360 minutes.");
+			}
 			const { data, error } = await apiClient.PUT("/api/v1/prime/settings", {
-				body: { settings: normalizeSettings(form) },
+				body: { settings: normalizeSettings({ ...form, wakeInterval: `${minutes}m` }) },
 			});
 			if (error) throw new Error(apiErrorMessage(error));
 			if (!data) throw new Error("Prime settings were not returned.");
@@ -56,10 +70,23 @@ export function PrimeSection() {
 			queryClient.setQueryData(primeSettingsQueryKey, next);
 			void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
 		},
+		onError: (error) => {
+			setValidationError(error instanceof PrimeValidationError ? error.message : null);
+		},
 	});
 
-	const legacy = query.data?.legacyEnvironment;
 	const busy = query.isLoading || mutation.isPending;
+	const modelSelection: ModelSelection = {
+		harness: form.agent ?? "",
+		model: form.agentConfig?.model ?? "",
+		effort: form.agentConfig?.effort ?? "",
+	};
+	const updateModelSelection = (selection: ModelSelection) =>
+		setForm((f) => ({
+			...f,
+			agent: selection.harness,
+			agentConfig: { ...f.agentConfig, model: selection.model, effort: selection.effort },
+		}));
 
 	return (
 		<Card>
@@ -90,56 +117,74 @@ export function PrimeSection() {
 						value={form.displayName ?? ""}
 						onChange={(displayName) => setForm((f) => ({ ...f, displayName }))}
 					/>
-					<PrimeInput label="Agent" value={form.agent ?? ""} onChange={(agent) => setForm((f) => ({ ...f, agent }))} />
 					<PrimeInput
-						label="Model"
-						value={form.agentConfig?.model ?? ""}
-						onChange={(model) => setForm((f) => ({ ...f, agentConfig: { ...f.agentConfig, model } }))}
+						label="Wake interval minutes"
+						type="number"
+						min={1}
+						max={360}
+						value={wakeMinutes}
+						onChange={setWakeMinutes}
 					/>
 					<PrimeInput
-						label="Effort"
-						value={form.agentConfig?.effort ?? ""}
-						onChange={(effort) => setForm((f) => ({ ...f, agentConfig: { ...f.agentConfig, effort } }))}
-					/>
-					<PrimeInput
-						label="Wake interval"
-						value={form.wakeInterval ?? ""}
-						onChange={(wakeInterval) => setForm((f) => ({ ...f, wakeInterval }))}
-					/>
-					<PrimeInput
-						label="Rules file"
+						label="Instructions file path"
 						value={form.rulesFile ?? ""}
 						onChange={(rulesFile) => setForm((f) => ({ ...f, rulesFile }))}
 					/>
 				</div>
 
+				<ModelAvailabilityField
+					id="prime-model"
+					label="Prime model and effort"
+					value={modelSelection}
+					onChange={updateModelSelection}
+					availability={modelAvailabilityQuery.data}
+					configuredPins={[modelSelection]}
+					disabled={busy}
+					isRefreshing={isRefreshingModels || modelAvailabilityQuery.isFetching}
+					onRefresh={refreshModels}
+					emptyLabel="Select harness"
+				/>
+				{modelAvailabilityQuery.isError && (
+					<p className="text-xs leading-row text-warning">
+						Model catalogs are unavailable; saved pins remain editable.
+					</p>
+				)}
+
 				<label className="flex flex-col gap-1 text-control text-foreground">
-					<span>Rules</span>
+					<span>Inline instructions</span>
 					<textarea
 						className="min-h-24 rounded-md border border-input bg-transparent px-2.5 py-2 text-control text-foreground placeholder:text-passive focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-weak"
 						value={form.rules ?? ""}
 						onChange={(event) => setForm((f) => ({ ...f, rules: event.target.value }))}
 					/>
 				</label>
+				<p className="text-xs leading-row text-muted-foreground">
+					Inline instructions are loaded first. File content is appended after it; the file does not override inline
+					instructions. Use an absolute path for fleet Prime.
+				</p>
 
-				{legacy?.configured && (
-					<p className="text-xs leading-row text-warning">
-						Legacy Prime environment is configured{legacy.projectId ? ` for ${legacy.projectId}` : ""}.
-					</p>
-				)}
 				{query.isError && (
 					<p className="text-xs leading-row text-error">
 						{query.error instanceof Error ? query.error.message : "Could not load Prime settings."}
 					</p>
 				)}
-				{mutation.isError && (
+				{validationError && <p className="text-xs leading-row text-error">{validationError}</p>}
+				{mutation.isError && !(mutation.error instanceof PrimeValidationError) && (
 					<p className="text-xs leading-row text-error">
 						{mutation.error instanceof Error ? mutation.error.message : "Could not save Prime settings."}
 					</p>
 				)}
 
 				<div>
-					<Button type="button" variant="primary" onClick={() => mutation.mutate()} disabled={busy}>
+					<Button
+						type="button"
+						variant="primary"
+						onClick={() => {
+							setValidationError(null);
+							mutation.mutate();
+						}}
+						disabled={busy}
+					>
 						{mutation.isPending && <Loader2 className="mr-2 size-icon-base animate-spin" />}
 						Save Prime
 					</Button>
@@ -149,11 +194,28 @@ export function PrimeSection() {
 	);
 }
 
-function PrimeInput({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
+function PrimeInput({
+	label,
+	value,
+	onChange,
+	type = "text",
+	min,
+	max,
+}: {
+	label: string;
+	value: string;
+	onChange: (value: string) => void;
+	type?: string;
+	min?: number;
+	max?: number;
+}) {
 	return (
 		<label className="flex flex-col gap-1 text-control text-foreground">
 			<span>{label}</span>
 			<input
+				type={type}
+				min={min}
+				max={max}
 				className="h-control-form rounded-md border border-input bg-transparent px-2.5 text-control text-foreground placeholder:text-passive focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-weak"
 				value={value}
 				onChange={(event) => onChange(event.target.value)}
@@ -169,3 +231,40 @@ function normalizeSettings(settings: PrimeSettings): PrimeSettings {
 		agentConfig: { ...(settings.agentConfig ?? {}) },
 	};
 }
+
+function durationToMinutes(value: string): string {
+	const minutes = parseDurationMinutes(value);
+	return minutes === null ? "" : String(minutes);
+}
+
+function parseWakeMinutes(value: string): number | null {
+	if (!/^\d+$/.test(value.trim())) return null;
+	const minutes = Number(value);
+	return Number.isInteger(minutes) && minutes >= 1 && minutes <= 360 ? minutes : null;
+}
+
+function parseDurationMinutes(value: string): number | null {
+	const raw = value.trim();
+	if (!raw) return null;
+	const tokenPattern = /(\d+(?:\.\d+)?)(h|m|s)/g;
+	let totalSeconds = 0;
+	let matched = false;
+	let position = 0;
+	for (const match of raw.matchAll(tokenPattern)) {
+		if (match.index !== position) return null;
+		position += match[0].length;
+		matched = true;
+		const amount = Number(match[1]);
+		if (match[2] === "h") totalSeconds += amount * 60 * 60;
+		if (match[2] === "m") totalSeconds += amount * 60;
+		if (match[2] === "s") totalSeconds += amount;
+	}
+	const seconds = Math.round(totalSeconds);
+	if (!matched || position !== raw.length || Math.abs(totalSeconds - seconds) > Number.EPSILON || seconds % 60 !== 0) {
+		return null;
+	}
+	const minutes = seconds / 60;
+	return minutes >= 1 && minutes <= 360 ? minutes : null;
+}
+
+class PrimeValidationError extends Error {}

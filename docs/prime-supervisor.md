@@ -20,9 +20,9 @@ ao prime disable
 
 The settings are stored under the daemon data directory and include enablement,
 display name, harness, model, effort, inline rules, rules file, wake interval,
-and wake backoff policy. `AO_PRIME_PROJECT_ID` and `AO_PRIME_DISPLAY_NAME` are
-legacy migration hints only: the API reports them so operators can remove the
-old environment, but they do not enable Prime or choose its project.
+and wake backoff policy. Legacy `AO_PRIME_PROJECT_ID` and
+`AO_PRIME_DISPLAY_NAME` environment variables do not enable Prime, choose a
+project, or appear in Prime settings responses.
 
 ## Lifecycle
 
