@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -190,6 +191,42 @@ func TestWorkspaceIntegrationCreateInRemotelessRepo(t *testing.T) {
 	}
 }
 
+func TestWorkspaceIntegrationProjectlessPrimeCreatesFleetRepo(t *testing.T) {
+	git := requireGit(t)
+	tmp := t.TempDir()
+	root := filepath.Join(tmp, "managed")
+	repo := filepath.Join(tmp, "prime", "repo")
+	ws, err := New(Options{Binary: git, ManagedRoot: root, RepoResolver: StaticRepoResolver{}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	ctx := context.Background()
+	cfg := ports.WorkspaceConfig{
+		Kind:       domain.KindPrime,
+		SessionID:  "prime-1",
+		Branch:     "ao/prime",
+		BaseBranch: domain.DefaultBranchName,
+		RepoPath:   repo,
+	}
+
+	info, err := ws.Create(ctx, cfg)
+	if err != nil {
+		t.Fatalf("create projectless prime: %v", err)
+	}
+	if info.Path != filepath.Join(ws.managedRoot, "prime", "prime-1") || info.ProjectID != "" || info.RepoPath != repo {
+		t.Fatalf("info = %#v", info)
+	}
+	if out := strings.TrimSpace(string(runGitOutput(t, git, info.Path, "rev-parse", "--is-inside-work-tree"))); out != "true" {
+		t.Fatalf("worktree probe = %q, want true", out)
+	}
+	if _, err := os.Stat(filepath.Join(info.Path, ".gitignore")); err != nil {
+		t.Fatalf("created worktree missing fleet seed file: %v", err)
+	}
+	if err := ws.Destroy(ctx, info); err != nil {
+		t.Fatalf("destroy: %v", err)
+	}
+}
+
 func requireGit(t *testing.T) string {
 	t.Helper()
 	git, err := exec.LookPath("git")
@@ -232,11 +269,22 @@ func runGit(t *testing.T, git, dir string, args ...string) {
 	run(t, git, append([]string{"-C", dir}, args...)...)
 }
 
+func runGitOutput(t *testing.T, git, dir string, args ...string) []byte {
+	t.Helper()
+	return runOutput(t, git, append([]string{"-C", dir}, args...)...)
+}
+
 func run(t *testing.T, binary string, args ...string) {
+	t.Helper()
+	_ = runOutput(t, binary, args...)
+}
+
+func runOutput(t *testing.T, binary string, args ...string) []byte {
 	t.Helper()
 	cmd := exec.Command(binary, args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("%s %s: %v\n%s", binary, strings.Join(args, " "), err, out)
 	}
+	return out
 }

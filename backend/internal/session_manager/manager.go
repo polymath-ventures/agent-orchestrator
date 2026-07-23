@@ -679,6 +679,7 @@ func (m *Manager) createSessionWorkspace(ctx context.Context, project domain.Pro
 			SessionPrefix: "prime",
 			Branch:        branch,
 			BaseBranch:    domain.DefaultBranchName,
+			RepoPath:      fleetPrimeRepoPath(m.dataDir),
 		})
 		return ws, nil, err
 	}
@@ -1853,6 +1854,7 @@ func (m *Manager) RestoreAll(ctx context.Context) error {
 				Kind:          rec.Kind,
 				SessionPrefix: sessionPrefix(project),
 				Branch:        rec.Metadata.Branch,
+				RepoPath:      singleRepoOverridePath(rec, m.dataDir),
 			})
 			if restoreErr != nil {
 				m.logger.Error("restore-all: workspace restore failed", "sessionID", rec.ID, "error", restoreErr)
@@ -1954,6 +1956,7 @@ func (m *Manager) restoreSessionWorkspace(ctx context.Context, project domain.Pr
 			Kind:          rec.Kind,
 			SessionPrefix: sessionPrefix(project),
 			Branch:        rec.Metadata.Branch,
+			RepoPath:      singleRepoOverridePath(rec, m.dataDir),
 		})
 	}
 	rows, err := m.workspaceProjectRestoreRows(ctx, project, rec)
@@ -2551,6 +2554,17 @@ func DefaultOrchestratorBranch(prefix, dataDir string) string {
 // fleet Prime singleton in the current data-dir namespace.
 func DefaultPrimeBranch(dataDir string) string {
 	return defaultSessionBranch("", domain.KindPrime, "", generatedBranchNamespace(dataDir))
+}
+
+func fleetPrimeRepoPath(dataDir string) string {
+	return filepath.Join(dataDir, "prime", "repo")
+}
+
+func singleRepoOverridePath(rec domain.SessionRecord, dataDir string) string {
+	if rec.Kind == domain.KindPrime && rec.ProjectID == "" {
+		return fleetPrimeRepoPath(dataDir)
+	}
+	return ""
 }
 
 func aoBranch(namespace string, parts ...string) string {

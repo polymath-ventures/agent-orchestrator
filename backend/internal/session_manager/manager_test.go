@@ -491,7 +491,7 @@ func (w *fakeWorkspace) Create(_ context.Context, cfg ports.WorkspaceConfig) (po
 	if path == "" {
 		path = "/ws/" + string(cfg.SessionID)
 	}
-	return ports.WorkspaceInfo{Path: path, Branch: cfg.Branch, SessionID: cfg.SessionID, ProjectID: cfg.ProjectID}, nil
+	return ports.WorkspaceInfo{Path: path, Branch: cfg.Branch, SessionID: cfg.SessionID, ProjectID: cfg.ProjectID, RepoPath: cfg.RepoPath}, nil
 }
 func (w *fakeWorkspace) CreateWorkspaceProject(_ context.Context, cfg ports.WorkspaceProjectConfig) (ports.WorkspaceProjectInfo, error) {
 	if w.projectErr != nil {
@@ -3039,6 +3039,7 @@ func TestSpawn_ProjectlessPrimeUsesFleetWorkspaceAndSettings(t *testing.T) {
 	agent := &recordingAgent{}
 	ws := &fakeWorkspace{}
 	rt := &fakeRuntime{}
+	dataDir := t.TempDir()
 	m := New(Deps{
 		Runtime:   rt,
 		Agents:    singleAgent{agent: agent},
@@ -3046,6 +3047,7 @@ func TestSpawn_ProjectlessPrimeUsesFleetWorkspaceAndSettings(t *testing.T) {
 		Store:     st,
 		Messenger: &fakeMessenger{},
 		Lifecycle: &fakeLCM{store: st},
+		DataDir:   dataDir,
 		LookPath:  func(string) (string, error) { return "/bin/true", nil },
 	})
 
@@ -3064,6 +3066,9 @@ func TestSpawn_ProjectlessPrimeUsesFleetWorkspaceAndSettings(t *testing.T) {
 	}
 	if ws.lastCfg.ProjectID != "" || ws.lastCfg.SessionPrefix != "prime" || ws.lastCfg.Branch != "ao/prime" {
 		t.Fatalf("workspace cfg = %+v, want projectless prime branch", ws.lastCfg)
+	}
+	if got, want := ws.lastCfg.RepoPath, filepath.Join(dataDir, "prime", "repo"); got != want {
+		t.Fatalf("workspace repo path = %q, want %q", got, want)
 	}
 	if agent.lastConfig.Model != "gpt-5-codex" || agent.lastConfig.Effort != domain.EffortHigh {
 		t.Fatalf("launch config = %+v, want fleet model/effort", agent.lastConfig)

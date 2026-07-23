@@ -109,6 +109,13 @@ func TestManagedPathSafety(t *testing.T) {
 	if want := filepath.Join(ws.managedRoot, "proj", "sess"); path != want {
 		t.Fatalf("path = %q, want %q", path, want)
 	}
+	primePath, err := ws.managedPath(ports.WorkspaceConfig{Kind: domain.KindPrime, SessionID: "prime-1", Branch: "ao/prime", RepoPath: filepath.Join(root, "prime", "repo")})
+	if err != nil {
+		t.Fatalf("projectless prime managed path: %v", err)
+	}
+	if want := filepath.Join(ws.managedRoot, "prime", "prime-1"); primePath != want {
+		t.Fatalf("prime path = %q, want %q", primePath, want)
+	}
 	if _, err := ws.validateManagedPath(filepath.Join(root, "..", "outside")); !errors.Is(err, ErrUnsafePath) {
 		t.Fatalf("outside error = %v, want ErrUnsafePath", err)
 	}
@@ -318,6 +325,7 @@ func TestValidateConfigAcceptsBenignIDs(t *testing.T) {
 		{ProjectID: "proj-1", SessionID: "sess_2", Branch: "main"},
 		{ProjectID: "foo.bar", SessionID: "abc-42", Branch: "main"},
 		{ProjectID: "p", SessionID: "..hidden", Branch: "main"}, // leading dots != ".."
+		{Kind: domain.KindPrime, SessionID: "prime-1", Branch: "ao/prime", RepoPath: "/tmp/ao-prime-repo"},
 	}
 	for i, cfg := range cases {
 		if err := validateConfig(cfg); err != nil {
