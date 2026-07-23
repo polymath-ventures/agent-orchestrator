@@ -3,6 +3,7 @@
 	"private": true,
 	"scripts": {
 		"lint": "cd backend && go test ./... && go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2 run --path-mode=abs",
+		"format:check": "bash scripts/ci/format-check.sh",
 		"frontend:typecheck": "npm --prefix frontend run typecheck",
 		"test:ops": "node --test ops/*.test.mjs",
 		"sqlc": "cd backend && go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 generate",
