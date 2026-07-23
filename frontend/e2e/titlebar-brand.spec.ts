@@ -19,6 +19,11 @@ test.use({
 
 const brand = (page: Page) => page.getByText("Agent Orchestrator", { exact: true });
 
+// Two boxes overlap iff they intersect on both axes.
+function overlaps(a: { x: number; y: number; width: number; height: number }, b: typeof a) {
+	return a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y;
+}
+
 // The brand <span> has `truncate` (overflow:hidden), so it stays "visible" even
 // when clipped to nothing. Compare scroll vs client width to prove the wordmark
 // is actually fully rendered, not just present-but-clipped.
@@ -40,8 +45,11 @@ async function expectBrandClearsHeader(page: Page) {
 	expect(headerBox).not.toBeNull();
 	expect(brandBox).not.toBeNull();
 
-	// The sidebar (and its brand) hangs below the topbar band, never in it.
-	expect(brandBox!.y).toBeGreaterThanOrEqual(headerBox!.y + headerBox!.height - 1);
+	// The brand sits in the sidebar column and must never intersect the app
+	// header band — in the framed shell the header lives in the content column
+	// beside the sidebar, so this holds by non-overlap on either axis rather
+	// than by vertical stacking.
+	expect(overlaps(brandBox!, headerBox!)).toBe(false);
 	expect(await isTruncated(span)).toBe(false);
 }
 
