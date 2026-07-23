@@ -1,109 +1,260 @@
-import { Gauge, Signal, SignalZero } from "lucide-react";
+import { ChevronDown, ChevronRight, Gauge, Loader2, RefreshCw } from "lucide-react";
 import type { components } from "../../api/schema";
+import { useAgentsQuery } from "../hooks/useAgentsQuery";
 import { useMetricsQuery } from "../hooks/useMetricsQuery";
+import { useProbeQuota } from "../hooks/useProbeQuota";
+import { formatTimeCompact } from "../lib/format-time";
+import { useUiStore } from "../stores/ui-store";
 import { cn } from "../lib/utils";
 
 type QuotaSnapshot = components["schemas"]["QuotaSnapshot"];
+type HarnessQuotaStatus = components["schemas"]["HarnessQuotaStatus"];
+type ProbeMutation = ReturnType<typeof useProbeQuota>;
 
+const MAX_REASON_LEN = 120;
+
+/**
+ * Sidebar-footer quota widget. Renders one chip per harness reported by the
+ * daemon prober (`probeStatuses`), each showing an honest INLINE state — never a
+ * tooltip-only error. Harness labels come from the shared agents inventory.
+ */
 export function QuotaPanel() {
 	const metrics = useMetricsQuery();
+	const agents = useAgentsQuery();
+	const probe = useProbeQuota();
+	const collapsed = useUiStore((state) => state.isQuotaWidgetCollapsed);
+	const toggleCollapsed = useUiStore((state) => state.toggleQuotaWidgetCollapsed);
+
+	const statuses = metrics.data?.probeStatuses ?? [];
+	// The prober owns the authoritative harness set; nothing to show without it.
+	if (statuses.length === 0) return null;
+
 	const quotas = metrics.data?.latest?.quotas ?? [];
-	if (quotas.length === 0) return null;
+	const labelFor = (harness: string): string => {
+		const inventory = [...(agents.data?.installed ?? []), ...(agents.data?.supported ?? [])];
+		return inventory.find((agent) => agent.id === harness)?.label ?? harness;
+	};
+
+	const refreshing = probe.isPending && !probe.variables?.harness;
 
 	return (
-		<div className="mb-3 flex min-h-row-lg items-center gap-3 rounded-panel border border-border bg-surface px-3 py-2">
-			<div className="flex shrink-0 items-center gap-2 text-caption font-semibold uppercase tracking-wide-md text-muted-foreground">
-				<Gauge className="size-icon-base" aria-hidden="true" />
-				Quota
+		<div className="flex w-full flex-col overflow-hidden rounded-md border border-border bg-surface">
+			<div className="flex items-center gap-1.5 px-2 py-1.5">
+				<button
+					aria-expanded={!collapsed}
+					aria-label={collapsed ? "Expand quota widget" : "Collapse quota widget"}
+					className="grid size-icon-lg shrink-0 place-items-center rounded text-passive transition-colors hover:bg-interactive-hover hover:text-foreground"
+					onClick={toggleCollapsed}
+					type="button"
+				>
+					{collapsed ? (
+						<ChevronRight className="size-icon-sm" aria-hidden="true" />
+					) : (
+						<ChevronDown className="size-icon-sm" aria-hidden="true" />
+					)}
+				</button>
+				<Gauge className="size-icon-sm shrink-0 text-passive" aria-hidden="true" />
+				<span className="min-w-0 flex-1 truncate text-caption font-semibold uppercase tracking-wide-md text-muted-foreground">
+					Quota
+				</span>
+				<button
+					aria-label="Refresh all quota probes"
+					className="grid size-icon-lg shrink-0 place-items-center rounded text-passive transition-colors hover:bg-interactive-hover hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
+					disabled={probe.isPending}
+					onClick={() => probe.mutate({})}
+					type="button"
+				>
+					<RefreshCw className={cn("size-icon-sm", refreshing && "animate-spin")} aria-hidden="true" />
+				</button>
 			</div>
-			<div className="flex min-w-0 flex-1 flex-wrap gap-2">
-				{quotas.map((quota) => (
-					<QuotaChip quota={quota} key={quotaKey(quota)} />
-				))}
+			{!collapsed && (
+				<div className="flex flex-col gap-1 px-2 pb-2">
+					{statuses.map((status) => (
+						<HarnessChip
+							key={status.harness}
+							status={status}
+							label={labelFor(status.harness)}
+							snapshots={quotas.filter((quota) => quota.harness === status.harness)}
+							probe={probe}
+						/>
+					))}
+				</div>
+			)}
+		</div>
+	);
+}
+
+function HarnessChip({
+	status,
+	label,
+	snapshots,
+	probe,
+}: {
+	status: HarnessQuotaStatus;
+	label: string;
+	snapshots: QuotaSnapshot[];
+	probe: ProbeMutation;
+}) {
+	const pending = probe.isPending && probe.variables?.harness === status.harness;
+	const onProbe = () => probe.mutate({ harness: status.harness });
+	const age = status.state === "ok" && status.probedAt ? formatTimeCompact(status.probedAt) : null;
+
+	return (
+		<div className="rounded border border-border bg-background px-2 py-1.5">
+			<div className="flex items-center justify-between gap-2">
+				<span className="min-w-0 truncate text-2xs font-medium text-foreground">{label}</span>
+				{age ? <span className="shrink-0 text-micro text-passive">updated {age}</span> : null}
+			</div>
+			<div className="mt-1">
+				<ChipBody status={status} snapshots={snapshots} label={label} onProbe={onProbe} pending={pending} />
 			</div>
 		</div>
 	);
 }
 
-function QuotaChip({ quota }: { quota: QuotaSnapshot }) {
-	const quality = quota.signalQuality;
-	const remaining = quota.remaining;
-	const limit = quota.limit;
-	const pct =
-		typeof remaining === "number" && typeof limit === "number" && limit > 0 ? (remaining / limit) * 100 : null;
-	const tone =
-		quality === "none"
-			? "border-border text-passive"
-			: pct !== null && pct <= 10
-				? "border-warning/50 text-warning"
-				: "border-success/40 text-success";
-	const Icon = quality === "none" ? SignalZero : Signal;
+function ChipBody({
+	status,
+	snapshots,
+	label,
+	onProbe,
+	pending,
+}: {
+	status: HarnessQuotaStatus;
+	snapshots: QuotaSnapshot[];
+	label: string;
+	onProbe: () => void;
+	pending: boolean;
+}) {
+	switch (status.state) {
+		case "ok":
+			return status.hasData && snapshots.length > 0 ? (
+				<UsageLines harness={status.harness} snapshots={snapshots} />
+			) : (
+				<InlineAction text="no usage recorded yet" label={label} onProbe={onProbe} pending={pending} />
+			);
+		case "not_probed":
+			return <InlineAction text="not probed yet" label={label} onProbe={onProbe} pending={pending} />;
+		case "failed":
+			return (
+				<InlineAction
+					text={`probe failed: ${truncate(status.reason)}`}
+					tone="warning"
+					label={label}
+					onProbe={onProbe}
+					pending={pending}
+				/>
+			);
+		case "no_source":
+			return (
+				<div className="flex flex-col gap-0.5">
+					<span className="text-2xs text-passive">no machine-readable source</span>
+					{status.reason ? <span className="text-micro text-passive">{truncate(status.reason)}</span> : null}
+				</div>
+			);
+		default:
+			return <span className="text-2xs text-passive">{status.state}</span>;
+	}
+}
+
+function UsageLines({ harness, snapshots }: { harness: string; snapshots: QuotaSnapshot[] }) {
+	const { headline, secondary } = pickWindows(harness, snapshots);
+	if (!headline && !secondary) return <span className="text-2xs text-passive">no usage recorded yet</span>;
+	return (
+		<div className="flex flex-col gap-0.5">
+			{headline ? <WindowLine snapshot={headline} prominent /> : null}
+			{secondary ? <WindowLine snapshot={secondary} /> : null}
+		</div>
+	);
+}
+
+function WindowLine({ snapshot, prominent = false }: { snapshot: QuotaSnapshot; prominent?: boolean }) {
+	const used = typeof snapshot.used === "number" ? Math.round(snapshot.used) : null;
+	// used/limit are percentages (used 0–100); warn once ≤10% remains.
+	const low = used !== null && used >= 90;
+	const reset = formatReset(snapshot.windowEnd);
+	const name = prominent ? null : snapshot.windowName;
 	return (
 		<div
 			className={cn(
-				"inline-flex min-h-control-md max-w-full items-center gap-2 rounded-md border bg-background px-2.5 py-1 font-mono text-2xs",
-				tone,
+				"truncate font-mono",
+				prominent ? "text-2xs text-foreground" : "text-micro text-passive",
+				low && "text-warning",
 			)}
-			title={quota.basis || quota.source}
 		>
-			<Icon className="size-icon-sm shrink-0" aria-hidden="true" />
-			<span className="min-w-0 truncate text-foreground">{quotaLabel(quota)}</span>
-			<span className="shrink-0">{quotaValue(quota, pct)}</span>
-			<span className="shrink-0 text-passive">{qualityLabel(quality)}</span>
-			{hasWindowEnd(quota.windowEnd) ? (
-				<span className="shrink-0 text-passive">{windowLabel(quota.windowEnd)}</span>
-			) : null}
+			{name ? `${name} ` : ""}
+			{used !== null ? `${used}% used` : "usage unknown"}
+			{reset ? ` · resets ${reset}` : ""}
 		</div>
 	);
 }
 
-function quotaKey(quota: QuotaSnapshot): string {
-	return [quota.harness, quota.accountId, quota.model, quota.windowName, quota.windowStart, quota.windowEnd]
-		.filter(Boolean)
-		.join(":");
+function InlineAction({
+	text,
+	tone,
+	label,
+	onProbe,
+	pending,
+}: {
+	text: string;
+	tone?: "warning";
+	label: string;
+	onProbe: () => void;
+	pending: boolean;
+}) {
+	return (
+		<div className="flex items-center justify-between gap-2">
+			<span className={cn("min-w-0 flex-1 truncate text-2xs", tone === "warning" ? "text-warning" : "text-passive")}>
+				{text}
+			</span>
+			<button
+				aria-label={`Probe ${label}`}
+				className="inline-flex shrink-0 items-center gap-1 rounded border border-border px-1.5 py-0.5 text-micro font-medium text-passive transition-colors hover:bg-interactive-hover hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
+				disabled={pending}
+				onClick={onProbe}
+				type="button"
+			>
+				{pending ? (
+					<Loader2 className="size-icon-xs animate-spin" aria-hidden="true" />
+				) : (
+					<RefreshCw className="size-icon-xs" aria-hidden="true" />
+				)}
+				Probe now
+			</button>
+		</div>
+	);
 }
 
-function quotaLabel(quota: QuotaSnapshot): string {
-	const account = quota.accountId || "unknown";
-	const parts = [quota.harness, account, quota.model, quota.windowName].filter(Boolean);
-	return parts.join("/");
-}
-
-function quotaValue(quota: QuotaSnapshot, pct: number | null): string {
-	if (quota.signalQuality === "none") return "no signal";
-	if (typeof quota.used === "number" && typeof quota.limit === "number" && quota.limit > 0) {
-		return `${((quota.used / quota.limit) * 100).toFixed(1)}% used`;
+/**
+ * Resolve the headline + optional secondary window for a harness. Known harness
+ * vocabularies map to their named windows; anything else falls back to the
+ * highest-usage window so a new harness still renders honestly.
+ */
+function pickWindows(
+	harness: string,
+	snapshots: QuotaSnapshot[],
+): { headline?: QuotaSnapshot; secondary?: QuotaSnapshot } {
+	if (harness === "claude-code") {
+		const headline = snapshots.find((snap) => (snap.windowName ?? "").toLowerCase().includes("all models"));
+		const secondary = snapshots.find((snap) => snap.windowName === "session");
+		if (headline || secondary) return { headline, secondary };
 	}
-	if (typeof quota.remaining === "number" && typeof quota.limit === "number" && quota.limit > 0) {
-		return pct === null ? `${formatNumber(quota.remaining)}/${formatNumber(quota.limit)}` : `${pct.toFixed(1)}%`;
+	if (harness === "codex") {
+		const headline = snapshots.find((snap) => snap.windowName === "primary");
+		const secondary = snapshots.find((snap) => snap.windowName === "secondary");
+		if (headline || secondary) return { headline, secondary };
 	}
-	if (typeof quota.remaining === "number") return `${formatNumber(quota.remaining)} remaining`;
-	return "unknown";
+	const sorted = [...snapshots].sort((a, b) => (b.used ?? 0) - (a.used ?? 0));
+	return { headline: sorted[0], secondary: undefined };
 }
 
-function qualityLabel(quality: QuotaSnapshot["signalQuality"]): string {
-	switch (quality) {
-		case "exact":
-			return "exact";
-		case "estimated":
-			return "est.";
-		default:
-			return "none";
-	}
-}
-
-function windowLabel(value: string): string {
+function formatReset(value: string | undefined): string | null {
+	if (!value) return null;
 	const end = new Date(value);
-	if (Number.isNaN(end.getTime())) return "";
-	return `until ${end.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+	if (Number.isNaN(end.getTime()) || end.getUTCFullYear() <= 1) return null;
+	return end.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }
 
-function hasWindowEnd(value: string | undefined): value is string {
-	if (!value) return false;
-	const end = new Date(value);
-	return !Number.isNaN(end.getTime()) && end.getUTCFullYear() > 1;
-}
-
-function formatNumber(value: number): string {
-	return new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 }).format(value);
+function truncate(value: string | undefined): string {
+	if (!value) return "unknown";
+	return value.length > MAX_REASON_LEN ? `${value.slice(0, MAX_REASON_LEN - 1)}…` : value;
 }

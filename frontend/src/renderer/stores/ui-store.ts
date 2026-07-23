@@ -28,6 +28,10 @@ export type InspectorSessionState = {
 type UiState = {
 	workbenchTab: WorkbenchTab;
 	isSidebarOpen: boolean;
+	/** Whether the sidebar-footer quota widget is shown at all (Settings toggle). */
+	isQuotaWidgetVisible: boolean;
+	/** Whether the quota widget body is collapsed behind its header chevron. */
+	isQuotaWidgetCollapsed: boolean;
 	inspectorSessions: Record<string, InspectorSessionState>;
 	isCommandPaletteOpen: boolean;
 	themePreference: ThemePreference;
@@ -49,6 +53,10 @@ type UiState = {
 	/** Refresh resolvedTheme from OS without writing light/dark to storage. */
 	syncSystemTheme: () => void;
 	toggleSidebar: () => void;
+	setQuotaWidgetVisible: (visible: boolean) => void;
+	toggleQuotaWidgetVisible: () => void;
+	setQuotaWidgetCollapsed: (collapsed: boolean) => void;
+	toggleQuotaWidgetCollapsed: () => void;
 	setInspectorOpen: (sessionId: string, isOpen: boolean) => void;
 	toggleInspector: (sessionId: string) => void;
 	setInspectorView: (sessionId: string, view: InspectorView) => void;
@@ -62,6 +70,8 @@ type UiState = {
 };
 
 const sidebarStorageKey = "ao.sidebar.open";
+const quotaVisibleStorageKey = "ao.quota.visible";
+const quotaCollapsedStorageKey = "ao.quota.collapsed";
 
 function getLocalStorage() {
 	if (typeof window === "undefined" || !window.localStorage) return null;
@@ -70,6 +80,14 @@ function getLocalStorage() {
 
 function initialSidebarOpen() {
 	return getLocalStorage()?.getItem(sidebarStorageKey) !== "false";
+}
+
+function initialQuotaWidgetVisible() {
+	return getLocalStorage()?.getItem(quotaVisibleStorageKey) !== "false";
+}
+
+function initialQuotaWidgetCollapsed() {
+	return getLocalStorage()?.getItem(quotaCollapsedStorageKey) === "true";
 }
 
 function inspectorState(sessions: Record<string, InspectorSessionState>, sessionId: string): InspectorSessionState {
@@ -81,6 +99,8 @@ const initialThemePreference = readStoredThemePreference();
 export const useUiStore = create<UiState>((set) => ({
 	workbenchTab: "changes",
 	isSidebarOpen: initialSidebarOpen(),
+	isQuotaWidgetVisible: initialQuotaWidgetVisible(),
+	isQuotaWidgetCollapsed: initialQuotaWidgetCollapsed(),
 	inspectorSessions: {},
 	isCommandPaletteOpen: false,
 	themePreference: initialThemePreference,
@@ -106,6 +126,26 @@ export const useUiStore = create<UiState>((set) => ({
 			const isSidebarOpen = !state.isSidebarOpen;
 			getLocalStorage()?.setItem(sidebarStorageKey, String(isSidebarOpen));
 			return { isSidebarOpen };
+		}),
+	setQuotaWidgetVisible: (isQuotaWidgetVisible) => {
+		getLocalStorage()?.setItem(quotaVisibleStorageKey, String(isQuotaWidgetVisible));
+		set({ isQuotaWidgetVisible });
+	},
+	toggleQuotaWidgetVisible: () =>
+		set((state) => {
+			const isQuotaWidgetVisible = !state.isQuotaWidgetVisible;
+			getLocalStorage()?.setItem(quotaVisibleStorageKey, String(isQuotaWidgetVisible));
+			return { isQuotaWidgetVisible };
+		}),
+	setQuotaWidgetCollapsed: (isQuotaWidgetCollapsed) => {
+		getLocalStorage()?.setItem(quotaCollapsedStorageKey, String(isQuotaWidgetCollapsed));
+		set({ isQuotaWidgetCollapsed });
+	},
+	toggleQuotaWidgetCollapsed: () =>
+		set((state) => {
+			const isQuotaWidgetCollapsed = !state.isQuotaWidgetCollapsed;
+			getLocalStorage()?.setItem(quotaCollapsedStorageKey, String(isQuotaWidgetCollapsed));
+			return { isQuotaWidgetCollapsed };
 		}),
 	setInspectorOpen: (sessionId, isOpen) =>
 		set((state) => {

@@ -1,6 +1,7 @@
-import { Monitor, Moon, Palette, Smartphone, Sun } from "lucide-react";
+import { Gauge, Monitor, Moon, Palette, Smartphone, Sun } from "lucide-react";
 import type { ThemePreference } from "../../lib/theme";
 import { useUiStore } from "../../stores/ui-store";
+import { Switch } from "../ui/switch";
 import { SettingsOptionMenu, type SettingsOption } from "./SettingsOptionMenu";
 import { SettingsLinkRow, SettingsRow } from "./SettingsRow";
 import { SettingsSection } from "./SettingsSection";
@@ -14,6 +15,8 @@ const THEME_OPTIONS = [
 export function GeneralSettingsSection({ onConnectMobile }: { onConnectMobile: () => void }) {
 	const themePreference = useUiStore((state) => state.themePreference);
 	const setThemePreference = useUiStore((state) => state.setThemePreference);
+	const isQuotaWidgetVisible = useUiStore((state) => state.isQuotaWidgetVisible);
+	const setQuotaWidgetVisible = useUiStore((state) => state.setQuotaWidgetVisible);
 
 	return (
 		<SettingsSection title="General">
@@ -24,6 +27,9 @@ export function GeneralSettingsSection({ onConnectMobile }: { onConnectMobile: (
 					options={THEME_OPTIONS}
 					onChange={setThemePreference}
 				/>
+			</SettingsRow>
+			<SettingsRow icon={Gauge} label="Show quota widget">
+				<Switch aria-label="Show quota widget" checked={isQuotaWidgetVisible} onCheckedChange={setQuotaWidgetVisible} />
 			</SettingsRow>
 			<SettingsLinkRow icon={Smartphone} label="Connect Mobile" onClick={onConnectMobile} />
 		</SettingsSection>

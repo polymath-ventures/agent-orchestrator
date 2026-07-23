@@ -9,13 +9,17 @@ import { agentsQueryKey } from "../hooks/useAgentsQuery";
 import { modelAvailabilityQueryKey } from "../hooks/useModelAvailabilityQuery";
 import { useUiStore } from "../stores/ui-store";
 
-const { getMock, navigateMock, mockParams, renameSessionMock, updateStatusMock } = vi.hoisted(() => ({
-	getMock: vi.fn(),
-	navigateMock: vi.fn(),
-	mockParams: { projectId: undefined as string | undefined },
-	renameSessionMock: vi.fn().mockResolvedValue(undefined),
-	updateStatusMock: vi.fn(),
-}));
+const { getMock, postMock, trustedMock, navigateMock, mockParams, renameSessionMock, updateStatusMock } = vi.hoisted(
+	() => ({
+		getMock: vi.fn(),
+		postMock: vi.fn(),
+		trustedMock: vi.fn(() => false),
+		navigateMock: vi.fn(),
+		mockParams: { projectId: undefined as string | undefined },
+		renameSessionMock: vi.fn().mockResolvedValue(undefined),
+		updateStatusMock: vi.fn(),
+	}),
+);
 
 vi.mock("../lib/rename-session", () => ({ renameSession: renameSessionMock }));
 
@@ -41,7 +45,7 @@ vi.mock("../lib/bridge", async (importOriginal) => {
 });
 
 vi.mock("../lib/api-client", () => ({
-	apiClient: { GET: getMock },
+	apiClient: { GET: getMock, POST: postMock },
 	apiErrorMessage: (error: unknown) => {
 		if (error instanceof Error) return error.message;
 		if (typeof error === "object" && error !== null && "message" in error && typeof error.message === "string") {
@@ -49,6 +53,10 @@ vi.mock("../lib/api-client", () => ({
 		}
 		return "Request failed";
 	},
+	// Off by default so the quota widget's metrics query stays inert and does not
+	// consume the one-time getMock responses the agent-catalog tests seed; the
+	// quota-specific cases opt in via trustedMock.mockReturnValue(true).
+	hasTrustedApiBaseUrl: () => trustedMock(),
 }));
 
 const workspace: WorkspaceSummary = {
@@ -215,10 +223,15 @@ beforeEach(() => {
 		},
 		error: undefined,
 	});
+	postMock.mockReset();
+	postMock.mockResolvedValue({ data: { statuses: [] }, error: undefined });
+	trustedMock.mockReset();
+	trustedMock.mockReturnValue(false);
 	navigateMock.mockReset();
 	renameSessionMock.mockReset().mockResolvedValue(undefined);
 	updateStatusMock.mockReset().mockResolvedValue({ state: "idle" });
 	mockParams.projectId = undefined;
+	useUiStore.setState({ isQuotaWidgetVisible: true, isQuotaWidgetCollapsed: false });
 });
 
 afterEach(() => {
@@ -775,6 +788,50 @@ describe("Sidebar", () => {
 		renderSidebar();
 		await user.click(screen.getAllByRole("button", { name: "Settings" })[0]);
 		expect(navigateMock).toHaveBeenCalledWith({ to: "/settings" });
+	});
+
+	function seedQuotaMetrics() {
+		trustedMock.mockReturnValue(true);
+		getMock.mockImplementation((url: string) => {
+			if (url === "/api/v1/metrics") {
+				return Promise.resolve({
+					data: {
+						history: [],
+						probeStatuses: [{ harness: "codex", state: "not_probed", hasData: false }],
+						latest: { quotas: [] },
+					},
+					error: undefined,
+					response: { status: 200 },
+				});
+			}
+			return Promise.resolve({
+				data: {
+					supported: [{ id: "codex", label: "Codex" }],
+					installed: [{ id: "codex", label: "Codex" }],
+					authorized: [{ id: "codex", label: "Codex", authStatus: "authorized" }],
+				},
+				error: undefined,
+			});
+		});
+	}
+
+	it("renders the quota widget in the footer above Settings when visible", async () => {
+		seedQuotaMetrics();
+		renderSidebar();
+
+		const quota = await screen.findByText("Quota");
+		const settings = screen.getAllByRole("button", { name: "Settings" })[0];
+		// The widget precedes the Settings button in the footer DOM order.
+		expect(quota.compareDocumentPosition(settings) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+	});
+
+	it("hides the quota widget when the visibility flag is off", async () => {
+		seedQuotaMetrics();
+		useUiStore.setState({ isQuotaWidgetVisible: false });
+		renderSidebar();
+
+		await waitFor(() => expect(screen.getAllByRole("button", { name: "Settings" })[0]).toBeInTheDocument());
+		expect(screen.queryByText("Quota")).not.toBeInTheDocument();
 	});
 
 	it("shows the project name and context in the ConfirmDialog description", async () => {
