@@ -176,9 +176,9 @@ and orchestrator sessions.
 
 The system SHALL expose model overrides, harness catalogs, supported effort
 values, catalog provenance, and availability state through the daemon API,
-`ao spawn`, project creation, project settings, role/reviewer configuration, and
-worker-mix configuration without requiring clients to duplicate provider or
-effort compatibility rules.
+`ao spawn`, project creation, project settings, role/reviewer configuration,
+worker-mix configuration, and fleet Prime settings without requiring clients to
+duplicate provider or effort compatibility rules.
 
 #### Scenario: Project creation shows defaults for selected harnesses
 
@@ -224,7 +224,7 @@ effort compatibility rules.
 #### Scenario: Every picker uses the dynamic harness registry
 
 - **WHEN** the installed registry contains a supported harness
-- **THEN** project, role, reviewer, and worker-mix model selectors render its catalog and effort choices
+- **THEN** project, role, reviewer, worker-mix, and fleet Prime model selectors render its catalog and effort choices
 - **AND** no client hardcoded harness list is required
 
 #### Scenario: Fallback is visible and recorded
@@ -244,6 +244,11 @@ effort compatibility rules.
 - **WHEN** the OpenAPI and TypeScript schemas are generated
 - **THEN** project config, spawn requests, session read models, reviewer config,
   model catalog, effort metadata, and availability responses include the fields clients need
+
+#### Scenario: Prime settings use the shared model picker
+
+- **WHEN** the operator edits fleet Prime harness, model, or effort
+- **THEN** Prime settings use the same harness-local catalog, effort, custom model, and warning behavior as the shared model picker
 
 ### Requirement: Harness discovery and invocation remain native
 

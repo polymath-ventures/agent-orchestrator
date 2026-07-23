@@ -11,7 +11,9 @@ Defines the fleet-owned configuration and lifecycle contract for Prime.
 The daemon SHALL persist one fleet-level Prime settings contract outside project
 configuration. The contract SHALL include enablement, display name,
 harness/model/effort, Prime instructions/rules, Prime rules file, and wake
-policy. Fresh installations SHALL default Prime to disabled.
+policy. Fresh installations SHALL default Prime to disabled. Prime wake
+interval settings SHALL preserve the existing duration-string API/storage shape
+and SHALL reject values below 1 minute or above 360 minutes.
 
 #### Scenario: Fresh install starts disabled
 
@@ -24,6 +26,11 @@ policy. Fresh installations SHALL default Prime to disabled.
 - **WHEN** an operator saves fleet Prime settings
 - **THEN** a daemon restart reads the same settings from daemon storage
 - **AND** no project configuration file is read or rewritten to recover those settings
+
+#### Scenario: Wake interval bounds are enforced
+
+- **WHEN** an operator saves fleet Prime settings with a wake interval below 1 minute or above 360 minutes
+- **THEN** the settings write is rejected with a validation error
 
 ### Requirement: Fleet Prime is live-controllable
 
@@ -93,7 +100,10 @@ Prime fields SHALL NOT control newly spawned Prime sessions.
 
 The daemon SHALL expose headless API and CLI controls for reading and updating
 fleet Prime settings. The global Settings UI SHALL expose an Enable fleet Prime
-toggle and editable Prime configuration backed by the same API.
+toggle and editable Prime configuration backed by the same API. Prime settings
+UI SHALL label runtime selection as Harness, SHALL use the shared
+harness-aware model and effort picker behavior, and SHALL present wake interval
+as numeric minutes while saving the existing duration-string contract.
 
 #### Scenario: API and CLI share persisted settings
 
@@ -107,29 +117,29 @@ toggle and editable Prime configuration backed by the same API.
 - **THEN** the UI saves the persisted daemon setting
 - **AND** the daemon reconciles Prime lifecycle from that setting
 
+#### Scenario: Prime settings use shared model controls
+
+- **WHEN** the operator edits Prime harness, model, or effort in global Settings
+- **THEN** the UI uses the same known-model dropdown, effort options, custom model entry path, and custom model warning used by other role model selectors
+
+#### Scenario: Prime wake interval is edited in minutes
+
+- **WHEN** the operator edits Prime wake interval in global Settings
+- **THEN** the UI presents a numeric minutes value
+- **AND** saving converts that value to the existing `wakeInterval` duration field
+
 ### Requirement: Legacy environment activation requires explicit migration
 
-`AO_PRIME_PROJECT_ID` SHALL NOT silently enable Prime. When legacy Prime
-environment activation is present, the daemon SHALL expose auditable migration
-state so an operator can explicitly save fleet Prime settings and remove the old
-drop-in. A persisted disabled toggle SHALL remain authoritative even when the
-legacy environment variable is still present.
+`AO_PRIME_PROJECT_ID` SHALL NOT silently enable Prime. Persisted fleet Prime
+settings SHALL remain authoritative, and the daemon SHALL NOT expose legacy
+Prime environment or project migration warning state through Prime settings
+API, CLI, or UI surfaces.
 
 #### Scenario: Legacy env does not enable Prime
 
 - **WHEN** `AO_PRIME_PROJECT_ID` is set and persisted Prime settings are disabled
 - **THEN** the daemon does not spawn Prime from the environment variable
-- **AND** the legacy project id is reported as migration state
-
-#### Scenario: Persisted disable wins after migration
-
-- **WHEN** Prime was previously enabled through persisted settings and an operator later saves `enabled=false`
-- **THEN** `AO_PRIME_PROJECT_ID` cannot re-enable Prime on the next daemon restart
-
-#### Scenario: Operator can audit migration
-
-- **WHEN** the daemon detects legacy Prime environment activation
-- **THEN** the API, CLI, or global Settings surface reports the legacy project id and that explicit migration is required
+- **AND** Prime settings API, CLI, and UI responses do not report a legacy project warning
 
 ### Requirement: Prime remains a global sidebar session
 
