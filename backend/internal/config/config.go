@@ -47,6 +47,11 @@ const (
 	// DefaultMetricsLowQuotaPercent fires low_quota when a known quota window
 	// reports remaining usage at or below this percent. Zero disables the alert.
 	DefaultMetricsLowQuotaPercent = 10
+	// DefaultQuotaProbeInterval is how often the daemon probes each installed
+	// harness for its login's current usage. It is deliberately slow because some
+	// probes cost a real quota turn (e.g. claude -p "/usage"). Zero disables the
+	// prober entirely.
+	DefaultQuotaProbeInterval = time.Hour
 )
 
 // TelemetryRemote selects the remote telemetry exporter.
@@ -73,6 +78,9 @@ type TelemetryConfig struct {
 type MetricsConfig struct {
 	Interval        time.Duration
 	LowQuotaPercent float64
+	// QuotaProbeInterval is the cadence of the daemon harness quota prober.
+	// <=0 disables the prober and the probe endpoint reports not implemented.
+	QuotaProbeInterval time.Duration
 }
 
 // DefaultAllowedOrigins are the browser origins the daemon's CORS boundary
@@ -162,6 +170,7 @@ func (c Config) Addr() string {
 //	AO_TELEMETRY_POSTHOG_HOST  PostHog host (default DefaultTelemetryPostHogHost)
 //	AO_METRICS_INTERVAL           metrics sampling interval (Go duration, default 30s; 0 disables)
 //	AO_METRICS_LOW_QUOTA_PERCENT  low-quota threshold percent (default 10; 0 disables)
+//	AO_QUOTA_PROBE_INTERVAL       harness quota probe cadence (Go duration, default 1h; 0 disables)
 //
 // The bind host is not configurable: the daemon is loopback-only by design.
 func Load() (Config, error) {
@@ -179,8 +188,9 @@ func Load() (Config, error) {
 			PostHogHost: DefaultTelemetryPostHogHost,
 		},
 		Metrics: MetricsConfig{
-			Interval:        DefaultMetricsInterval,
-			LowQuotaPercent: DefaultMetricsLowQuotaPercent,
+			Interval:           DefaultMetricsInterval,
+			LowQuotaPercent:    DefaultMetricsLowQuotaPercent,
+			QuotaProbeInterval: DefaultQuotaProbeInterval,
 		},
 	}
 
@@ -300,6 +310,13 @@ func Load() (Config, error) {
 			return Config{}, err
 		}
 		cfg.Metrics.LowQuotaPercent = v
+	}
+	if raw := os.Getenv("AO_QUOTA_PROBE_INTERVAL"); raw != "" {
+		d, err := parseNonNegativeDuration("AO_QUOTA_PROBE_INTERVAL", raw)
+		if err != nil {
+			return Config{}, err
+		}
+		cfg.Metrics.QuotaProbeInterval = d
 	}
 
 	runFile, err := resolveRunFilePath()

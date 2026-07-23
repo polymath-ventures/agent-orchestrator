@@ -216,6 +216,9 @@ var schemaNames = map[string]string{
 	"MetricsCost":                                 "MetricsCost",
 	"MetricsAlert":                                "MetricsAlert",
 	"DomainQuotaSnapshot":                         "QuotaSnapshot",
+	"DomainHarnessQuotaStatus":                    "HarnessQuotaStatus",
+	"ControllersProbeQuotaRequest":                "ProbeQuotaRequest",
+	"ControllersProbeQuotaResponse":               "ProbeQuotaResponse",
 	// httpd/controllers — PR wire envelopes
 	"ControllersMergePRResponse":         "MergePRResponse",
 	"ControllersResolveCommentsRequest":  "ResolveCommentsRequest",
@@ -387,6 +390,17 @@ func metricsOperations() []operation {
 			summary: "Return the latest resource, usage, and quota metrics snapshot plus a short history",
 			resps: []respUnit{
 				{http.StatusOK, controllers.MetricsResponse{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/metrics/probe", id: "probeQuota", tag: "metrics",
+			summary: "Force a harness quota probe; empty body probes all installed harnesses, {harness} probes one",
+			reqBody: controllers.ProbeQuotaRequest{}, // body is optional: omit to probe every harness
+			resps: []respUnit{
+				{http.StatusOK, controllers.ProbeQuotaResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
 				{http.StatusNotImplemented, envelope.APIError{}},
 			},
 		},

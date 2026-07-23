@@ -129,6 +129,7 @@ func Run() error {
 	// (AO_AGENT validated here for compatibility), and the agent messenger, then mount it
 	// on the API.
 	agentSvc := agentsvc.New()
+	quotaProber, quotaProberDone := startQuotaProber(ctx, cfg, store, agentSvc, log)
 	configuredModels := newConfiguredProjectModels(store, log)
 	agentHealthMonitor := newAgentHealthMonitor(agentSvc, configuredModels, log)
 	modelHealthMonitor := newModelHealthMonitor(agentSvc, configuredModels, log)
@@ -201,6 +202,7 @@ func Run() error {
 		Notifications:      notifier,
 		NotificationStream: notificationHub,
 		Metrics:            metricsProvider(metricsObserver),
+		QuotaProber:        quotaProberProvider(quotaProber),
 		Push:               pushRegistry,
 		Import:             importsvc.New(importsvc.Deps{Store: store}),
 		DevImport: devimportsvc.New(devimportsvc.Deps{
@@ -289,6 +291,7 @@ func Run() error {
 	<-previewDone
 	<-primeDone
 	<-metricsDone
+	<-quotaProberDone
 	<-modelHealthDone
 	<-agentHealthDone
 	lcStack.Stop()

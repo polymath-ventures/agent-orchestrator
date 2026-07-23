@@ -10,7 +10,7 @@ import (
 func TestLoadDefaults(t *testing.T) {
 	// Clear every recognised var so we observe pure defaults regardless of the
 	// surrounding environment.
-	for _, k := range []string{"AO_PORT", "AO_REQUEST_TIMEOUT", "AO_SHUTDOWN_TIMEOUT", "AO_RUN_FILE", "AO_DATA_DIR", "AO_AGENT", "AO_AGENT_HEALTH_INTERVAL", "AO_MODEL_REVALIDATION_INTERVAL", "AO_PRIME_PROJECT_ID", "AO_PRIME_DISPLAY_NAME", "AO_ALLOWED_ORIGINS", "AO_MOBILE_ADVERTISED_HOST", "AO_TELEMETRY_EVENTS", "AO_TELEMETRY_METRICS", "AO_TELEMETRY_REMOTE", "AO_TELEMETRY_POSTHOG_KEY", "AO_TELEMETRY_POSTHOG_HOST", "AO_METRICS_INTERVAL", "AO_METRICS_LOW_QUOTA_PERCENT"} {
+	for _, k := range []string{"AO_PORT", "AO_REQUEST_TIMEOUT", "AO_SHUTDOWN_TIMEOUT", "AO_RUN_FILE", "AO_DATA_DIR", "AO_AGENT", "AO_AGENT_HEALTH_INTERVAL", "AO_MODEL_REVALIDATION_INTERVAL", "AO_PRIME_PROJECT_ID", "AO_PRIME_DISPLAY_NAME", "AO_ALLOWED_ORIGINS", "AO_MOBILE_ADVERTISED_HOST", "AO_TELEMETRY_EVENTS", "AO_TELEMETRY_METRICS", "AO_TELEMETRY_REMOTE", "AO_TELEMETRY_POSTHOG_KEY", "AO_TELEMETRY_POSTHOG_HOST", "AO_METRICS_INTERVAL", "AO_METRICS_LOW_QUOTA_PERCENT", "AO_QUOTA_PROBE_INTERVAL"} {
 		t.Setenv(k, "")
 	}
 
@@ -53,6 +53,9 @@ func TestLoadDefaults(t *testing.T) {
 	}
 	if cfg.Metrics.Interval != DefaultMetricsInterval || cfg.Metrics.LowQuotaPercent != DefaultMetricsLowQuotaPercent {
 		t.Fatalf("Metrics defaults = %+v", cfg.Metrics)
+	}
+	if cfg.Metrics.QuotaProbeInterval != DefaultQuotaProbeInterval {
+		t.Fatalf("QuotaProbeInterval default = %s, want %s", cfg.Metrics.QuotaProbeInterval, DefaultQuotaProbeInterval)
 	}
 	if cfg.AgentHealthInterval != DefaultAgentHealthInterval {
 		t.Errorf("AgentHealthInterval = %s, want %s", cfg.AgentHealthInterval, DefaultAgentHealthInterval)
@@ -121,6 +124,7 @@ func TestLoadOverrides(t *testing.T) {
 	t.Setenv("AO_TELEMETRY_POSTHOG_HOST", "https://eu.i.posthog.com")
 	t.Setenv("AO_METRICS_INTERVAL", "2m")
 	t.Setenv("AO_METRICS_LOW_QUOTA_PERCENT", "7.5")
+	t.Setenv("AO_QUOTA_PROBE_INTERVAL", "30m")
 	t.Setenv("AO_MOBILE_ADVERTISED_HOST", "  ao-server.example.ts.net  ")
 	t.Setenv("AO_PRIME_PROJECT_ID", "  ao  ")
 	t.Setenv("AO_PRIME_DISPLAY_NAME", "  AO Prime  ")
@@ -149,6 +153,9 @@ func TestLoadOverrides(t *testing.T) {
 	}
 	if cfg.Telemetry.Remote != TelemetryRemotePostHog || cfg.Telemetry.PostHogKey != "phc_test" || cfg.Telemetry.PostHogHost != "https://eu.i.posthog.com" {
 		t.Fatalf("Telemetry remote = %+v", cfg.Telemetry)
+	}
+	if cfg.Metrics.QuotaProbeInterval != 30*time.Minute {
+		t.Fatalf("QuotaProbeInterval = %s, want 30m", cfg.Metrics.QuotaProbeInterval)
 	}
 	if cfg.Metrics.Interval != 2*time.Minute || cfg.Metrics.LowQuotaPercent != 7.5 {
 		t.Fatalf("Metrics config = %+v", cfg.Metrics)
@@ -188,6 +195,8 @@ func TestLoadInvalid(t *testing.T) {
 		{"bad telemetry remote", map[string]string{"AO_TELEMETRY_REMOTE": "otlp"}},
 		{"bad metrics interval", map[string]string{"AO_METRICS_INTERVAL": "later"}},
 		{"negative metrics interval", map[string]string{"AO_METRICS_INTERVAL": "-1s"}},
+		{"bad quota probe interval", map[string]string{"AO_QUOTA_PROBE_INTERVAL": "hourly"}},
+		{"negative quota probe interval", map[string]string{"AO_QUOTA_PROBE_INTERVAL": "-1s"}},
 		{"bad low quota percent", map[string]string{"AO_METRICS_LOW_QUOTA_PERCENT": "low"}},
 		{"negative low quota percent", map[string]string{"AO_METRICS_LOW_QUOTA_PERCENT": "-1"}},
 		{"prime display name too long", map[string]string{"AO_PRIME_DISPLAY_NAME": "123456789012345678901"}},

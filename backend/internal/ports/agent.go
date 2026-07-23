@@ -137,6 +137,15 @@ type QuotaProbeResult struct {
 	Snapshots []domain.QuotaSnapshot
 }
 
+// HarnessQuotaProber pairs a harness with its adapter's quota-probe capability.
+// The agent service returns these for the installed harnesses whose adapter
+// implements AgentQuotaProber, so the daemon quota prober iterates the dynamic
+// registry rather than a hardcoded harness list.
+type HarnessQuotaProber struct {
+	Harness domain.AgentHarness
+	Prober  AgentQuotaProber
+}
+
 // AgentQuotaProber is the optional capability for adapters that can report their
 // harness login's current usage/quota independent of AO projects and sessions
 // (e.g. a CLI usage command or a passive local rollout read). Callers use it

@@ -35,6 +35,7 @@ type APIDeps struct {
 	Notifications      controllers.NotificationService
 	NotificationStream controllers.NotificationStream
 	Metrics            controllers.MetricsProvider
+	QuotaProber        controllers.QuotaProber
 	Push               controllers.PushRegistry
 	Import             controllers.ImportService
 	DevImport          controllers.DevImportService
@@ -92,7 +93,7 @@ func NewAPI(cfg config.Config, deps APIDeps) *API {
 		prs:           &controllers.PRsController{Svc: deps.PRs},
 		reviews:       &controllers.ReviewsController{Svc: deps.Reviews},
 		notifications: &controllers.NotificationsController{Svc: deps.Notifications, Stream: deps.NotificationStream, StreamContext: deps.StreamContext},
-		metrics:       &controllers.MetricsController{Provider: deps.Metrics},
+		metrics:       &controllers.MetricsController{Provider: deps.Metrics, Prober: deps.QuotaProber},
 		push:          &controllers.PushController{Registry: deps.Push},
 		imports:       &controllers.ImportController{Svc: deps.Import},
 		dev:           &controllers.DevController{Import: deps.DevImport},

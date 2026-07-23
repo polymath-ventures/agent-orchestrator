@@ -369,6 +369,44 @@ paths:
         a short history
       tags:
       - metrics
+  /api/v1/metrics/probe:
+    post:
+      operationId: probeQuota
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProbeQuotaRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProbeQuotaResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Force a harness quota probe; empty body probes all installed harnesses,
+        {harness} probes one
+      tags:
+      - metrics
   /api/v1/mobile/disable:
     post:
       operationId: disableMobile
@@ -2842,6 +2880,24 @@ components:
             Empty uses the daemon default.
           type: string
       type: object
+    HarnessQuotaStatus:
+      properties:
+        harness:
+          type: string
+        hasData:
+          type: boolean
+        probedAt:
+          format: date-time
+          type: string
+        reason:
+          type: string
+        state:
+          type: string
+      required:
+      - harness
+      - state
+      - hasData
+      type: object
     ImportReport:
       properties:
         dryRun:
@@ -3151,8 +3207,13 @@ components:
           type: array
         latest:
           $ref: '#/components/schemas/MetricsSnapshot'
+        probeStatuses:
+          items:
+            $ref: '#/components/schemas/HarnessQuotaStatus'
+          type: array
       required:
       - history
+      - probeStatuses
       type: object
     MetricsSnapshot:
       properties:
@@ -3336,6 +3397,20 @@ components:
       - agent
       - supported
       - installed
+      type: object
+    ProbeQuotaRequest:
+      properties:
+        harness:
+          type: string
+      type: object
+    ProbeQuotaResponse:
+      properties:
+        statuses:
+          items:
+            $ref: '#/components/schemas/HarnessQuotaStatus'
+          type: array
+      required:
+      - statuses
       type: object
     Project:
       properties:
