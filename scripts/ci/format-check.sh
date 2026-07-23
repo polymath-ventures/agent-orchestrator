@@ -34,13 +34,26 @@ changed_files() {
 # Collect the NUL-delimited names into an array. This stays portable to macOS's
 # stock bash 3.2 / BSD userland (no GNU `sort -z`, no `xargs --no-run-if-empty`).
 # Duplicates across the two diff sets are harmless — Prettier just checks a file
-# twice. An empty array is a clean pass, guarded below so `set -u` never trips.
+# twice.
+#
+# Write changed_files to a temp file first (not a `< <(...)` process
+# substitution): a process substitution runs asynchronously outside `pipefail`,
+# so a failing `git diff` would be swallowed into a false pass. A plain
+# redirection is covered by `set -e`, so a producer failure aborts the gate.
+# Track the count in a scalar `n` and expand `${files[@]}` only when it is
+# non-zero, because bash 3.2 treats an empty array as unset under `set -u`.
+tmp="$(mktemp)"
+trap 'rm -f "$tmp"' EXIT
+changed_files >"$tmp"
+
 files=()
+n=0
 while IFS= read -r -d '' f; do
 	files+=("$f")
-done < <(changed_files)
+	n=$((n + 1))
+done <"$tmp"
 
-[ ${#files[@]} -eq 0 ] && exit 0
+[ "$n" -eq 0 ] && exit 0
 
 # The `--` terminator stops option parsing so a changed file whose name looks
 # like a flag (e.g. `--write`) is treated as a path, never a Prettier option —

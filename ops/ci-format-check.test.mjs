@@ -94,6 +94,24 @@ test("format-check treats a flag-looking filename as a path, not a Prettier opti
 	}
 });
 
+test("format-check fails loudly instead of false-passing when the changed-file query errors", () => {
+	// A fresh repo with no commits makes `git diff HEAD` fail. The gate must
+	// surface that as a non-zero exit, not swallow it into a clean pass — a
+	// producer failure hidden behind a process substitution would silently skip
+	// the check. (Regression guard for the temp-file + set -e capture.)
+	const dir = mkdtempSync(join(tmpdir(), "fmt-gate-"));
+	try {
+		git(dir, "init", "-q");
+		git(dir, "config", "user.email", "gate@example.com");
+		git(dir, "config", "user.name", "gate");
+		writeFileSync(join(dir, "bad.md"), "# Title\n\n\n\nBody\n");
+		const r = runGate(dir);
+		assert.notEqual(r.status, 0, `expected non-zero exit\nstdout:${r.stdout}\nstderr:${r.stderr}`);
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
 test("format-check mirrors the prettier CI job command shape", () => {
 	const src = readFileSync(scriptPath, "utf8");
 	assert.match(src, /prettier@3/);
