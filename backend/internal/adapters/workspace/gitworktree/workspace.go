@@ -618,7 +618,7 @@ func (w *Workspace) ensureProjectlessPrimeRepo(ctx context.Context, repo string,
 	if _, err := w.run(ctx, w.binary, "-C", repo, "rev-parse", "--git-dir"); err == nil {
 		return nil
 	}
-	if err := os.MkdirAll(repo, 0o755); err != nil {
+	if err := os.MkdirAll(repo, 0o750); err != nil {
 		return fmt.Errorf("gitworktree: create projectless prime repo: %w", err)
 	}
 	if _, err := w.run(ctx, w.binary, "init", repo); err != nil {
@@ -633,7 +633,7 @@ func (w *Workspace) ensureProjectlessPrimeRepo(ctx context.Context, repo string,
 	if _, err := w.run(ctx, w.binary, "-C", repo, "config", "user.name", "Ao Agents"); err != nil {
 		return fmt.Errorf("gitworktree: configure projectless prime repo user: %w", err)
 	}
-	if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte(".ao-prime-workspace\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(repo, ".gitignore"), []byte(".ao-prime-workspace\n"), 0o600); err != nil {
 		return fmt.Errorf("gitworktree: seed projectless prime repo: %w", err)
 	}
 	if _, err := w.run(ctx, w.binary, "-C", repo, "add", ".gitignore"); err != nil {
