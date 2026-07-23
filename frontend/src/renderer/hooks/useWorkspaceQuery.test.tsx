@@ -199,6 +199,42 @@ describe("useWorkspaceQuery", () => {
 		expect(sessions[1].prs).toEqual([]);
 	});
 
+	it("keeps projectless prime sessions available for the global sidebar item", async () => {
+		respondWith({
+			projects: { data: { projects: [{ id: "proj-1", name: "my-app", path: "/p" }] }, error: undefined },
+			sessions: {
+				data: {
+					sessions: [
+						{
+							id: "prime-1",
+							projectId: "",
+							kind: "prime",
+							displayName: "AO Prime",
+							harness: "codex",
+							status: "working",
+							isTerminated: false,
+							updatedAt: "2026-06-10T16:15:04Z",
+						},
+					],
+				},
+				error: undefined,
+			},
+		});
+
+		const { result } = renderHook(() => useWorkspaceQuery(), { wrapper });
+		await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+		const [workspace] = result.current.data ?? [];
+		expect(workspace.sessions).toHaveLength(1);
+		expect(workspace.sessions[0]).toMatchObject({
+			id: "prime-1",
+			workspaceId: "fleet",
+			workspaceName: "AO Fleet",
+			kind: "prime",
+			title: "AO Prime",
+		});
+	});
+
 	it("preserves backend merged status for terminated merged sessions", async () => {
 		respondWith({
 			projects: { data: { projects: [{ id: "proj-1", name: "my-app", path: "/p" }] }, error: undefined },

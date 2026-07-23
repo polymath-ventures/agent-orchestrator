@@ -37,15 +37,15 @@
 
 ## 4. Frontend and Documentation
 
-- [ ] 4.1 Move Prime controls from project settings to global Settings, including
+- [x] 4.1 Move Prime controls from project settings to global Settings, including
       the Enable fleet Prime toggle and editable Prime configuration.
-- [ ] 4.2 Keep the sidebar rendering active Prime as a global top-level session
+- [x] 4.2 Keep the sidebar rendering active Prime as a global top-level session
       with no project nesting.
-- [ ] 4.3 Surface legacy `AO_PRIME_PROJECT_ID` migration state and operator
+- [x] 4.3 Surface legacy `AO_PRIME_PROJECT_ID` migration state and operator
       action in global Settings.
-- [ ] 4.4 Update docs and deployment guidance to retire the operator drop-in
+- [x] 4.4 Update docs and deployment guidance to retire the operator drop-in
       activation path.
-- [ ] 4.5 Add frontend tests for global settings round trip, sidebar display,
+- [x] 4.5 Add frontend tests for global settings round trip, sidebar display,
       and removal of project-owned Prime controls.
 
 ## 5. Verification

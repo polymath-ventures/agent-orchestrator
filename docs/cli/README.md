@@ -47,6 +47,9 @@ Every product command resolves to a daemon HTTP route. Run `ao <command>
 | `ao project config diff <p> <f>`  | `GET /api/v1/projects/{id}`                                           |
 | `ao project rm <id>`              | `DELETE /api/v1/projects/{id}`                                        |
 | `ao role prompt <project> <role>` | `GET /api/v1/projects/{id}/roles/{role}/prompt`                       |
+| `ao prime settings`               | `GET /api/v1/prime/settings`                                          |
+| `ao prime enable` / `disable`     | `GET` + `PUT /api/v1/prime/settings`                                  |
+| `ao prime prompt`                 | `GET /api/v1/prime/prompt`                                            |
 | `ao pause [project] [--hard]`     | `POST /api/v1/projects/{id}/pause` (or `/fleet/pause` with `--all`)   |
 | `ao resume [project]`             | `POST /api/v1/projects/{id}/resume` (or `/fleet/resume` with `--all`) |
 | `ao agent ls`                     | `GET /api/v1/agents`                                                  |

@@ -2,10 +2,10 @@
 
 Agent Orchestrator is a long-running Go daemon that supervises multiple parallel AI coding agent sessions. Each session runs in an isolated git worktree with its own runtime, while the daemon coordinates lifecycle, observes external state, and routes feedback.
 
-An optional daemon-gated `prime` session can supervise fleet health across
+An optional daemon-global `prime` session can supervise fleet health across
 projects. Prime is a singleton session kind owned by the session service and
-storage layer; the daemon loop only ensures, wakes, and replaces it when
-`AO_PRIME_PROJECT_ID` is configured.
+storage layer; the daemon loop ensures, wakes, replaces, or retires it from
+persisted fleet Prime settings.
 
 ## Table of Contents
 

@@ -4,6 +4,7 @@ import { Mail } from "lucide-react";
 import { ConnectMobileModal } from "./ConnectMobileModal";
 import { FleetSection } from "./FleetSection";
 import { MigrationSection } from "./MigrationSection";
+import { PrimeSection } from "./PrimeSection";
 import { GeneralSettingsSection } from "./settings/GeneralSettingsSection";
 import { ReportProblemDialog } from "./settings/ReportProblemDialog";
 import { SettingsLinkRow } from "./settings/SettingsRow";
@@ -24,6 +25,7 @@ export function GlobalSettingsForm() {
 					<GeneralSettingsSection onConnectMobile={() => setMobileOpen(true)} />
 					<UpdatesSection />
 					<FleetSection />
+					<PrimeSection />
 					<MigrationSection />
 					<SettingsSection title="Get help">
 						<SettingsLinkRow icon={Mail} label="Report a problem" onClick={() => setReportProblemOpen(true)} />

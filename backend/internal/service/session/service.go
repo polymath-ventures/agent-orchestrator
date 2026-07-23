@@ -564,14 +564,14 @@ func (s *Service) lockOrchestratorProject(projectID domain.ProjectID) func() {
 func (s *Service) Restore(ctx context.Context, id domain.SessionID) (RestoreOutcome, error) {
 	// The manual-spawn ban extends to restore: relaunching a leftover
 	// terminated prime through the public restore endpoint would create an
-	// unsupervised prime even with the env gate unset. Fail closed: a store
+	// unsupervised prime even when Prime is disabled. Fail closed: a store
 	// error here must not let the kind check be skipped.
 	rec, ok, err := s.store.GetSession(ctx, id)
 	if err != nil {
 		return RestoreOutcome{}, fmt.Errorf("restore %s: %w", id, err)
 	}
 	if ok && rec.Kind == domain.KindPrime {
-		return RestoreOutcome{}, apierr.Forbidden("PRIME_MANUAL_RESTORE_FORBIDDEN", "Prime sessions are managed only by the env-gated supervisor and cannot be restored manually", nil)
+		return RestoreOutcome{}, apierr.Forbidden("PRIME_MANUAL_RESTORE_FORBIDDEN", "Prime sessions are managed only by the fleet Prime supervisor and cannot be restored manually", nil)
 	}
 	res, err := s.manager.RestoreWithMode(ctx, id)
 	if err != nil {

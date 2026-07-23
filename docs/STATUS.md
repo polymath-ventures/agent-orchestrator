@@ -35,10 +35,10 @@ surface (`npm run sqlc`, `npm run api`).
 - Full session lifecycle over HTTP: list, get, spawn, kill, restore, rename,
   rollback, cleanup, send, activity, PR claim/list. Orchestrator routes
   (list/spawn/get) are wired too.
-- Optional daemon-gated prime supervisor: `AO_PRIME_PROJECT_ID` starts one
-  fleet-wide `prime` session after boot reconciliation, with storage-enforced
-  singleton semantics, bounded idle wakeups, bounded unhealthy replacement, and
-  restart-cap notifications.
+- Optional daemon-global prime supervisor: persisted Prime settings start one
+  projectless fleet-wide `prime` session after boot reconciliation, with
+  storage-enforced singleton semantics, bounded idle wakeups, bounded unhealthy
+  replacement, live disable retirement, and restart-cap notifications.
 - Project CRUD plus per-project config (`PUT /projects/{id}/config`).
 - PR action engine wired into the API: `POST /prs/{id}/merge` and
   `/prs/{id}/resolve-comments`.
