@@ -2,6 +2,7 @@ package metrics
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -46,6 +47,53 @@ func TestStoreQuotaCollectorDoesNotFabricatePlaceholders(t *testing.T) {
 	}
 	if len(store.rows) != 0 {
 		t.Fatalf("collector must not write placeholder rows, store has %d: %+v", len(store.rows), store.rows)
+	}
+}
+
+// TestLowQuotaAlertFiresOnProbePersistedSnapshot is the GH #97 regression that
+// low-quota alerts key off daemon-probe data, not just hook-ingested data. A
+// probe persists an exact snapshot to quota_snapshots; the collector reads it
+// and the evaluator must fire quota_low when remaining is at/below threshold and
+// stay quiet when it is healthy — proving the probe → persist → collect → alert
+// path end to end for both a used-percent (claude) and a remaining (codex) row.
+func TestLowQuotaAlertFiresOnProbePersistedSnapshot(t *testing.T) {
+	// claude -p /usage reporting 95% used on the weekly all-models window.
+	lowUsed, lowRemaining, limit := 95.0, 5.0, 100.0
+	// a healthy codex primary window (17% used → 83% remaining) must not fire.
+	okUsed, okRemaining := 17.0, 83.0
+	store := &fakeQuotaStore{rows: []domain.QuotaSnapshot{
+		{
+			Harness: domain.HarnessClaudeCode, AccountID: "unknown", WindowName: "week (all models)",
+			Used: &lowUsed, Remaining: &lowRemaining, Limit: &limit,
+			SignalQuality: domain.QuotaSignalExact, Source: "claude -p /usage", ObservedAt: time.Unix(10, 0).UTC(),
+		},
+		{
+			Harness: domain.HarnessCodex, AccountID: "unknown", WindowName: "primary",
+			Used: &okUsed, Remaining: &okRemaining, Limit: &limit,
+			SignalQuality: domain.QuotaSignalExact, Source: "codex rollout token_count.rate_limits", ObservedAt: time.Unix(10, 0).UTC(),
+		},
+	}}
+
+	rows, err := NewStoreQuotaCollector(store).CollectQuota(context.Background(), time.Unix(20, 0).UTC())
+	if err != nil {
+		t.Fatalf("CollectQuota: %v", err)
+	}
+
+	alerts, transitions := newEvaluator(Thresholds{LowQuotaPercent: 10}).evaluate(Snapshot{Quotas: rows})
+	if len(alerts) != 1 {
+		t.Fatalf("got %d firing alerts, want exactly 1 (the low claude window): %+v", len(alerts), alerts)
+	}
+	if alerts[0].Kind != AlertQuotaLow {
+		t.Fatalf("alert kind = %q, want %q", alerts[0].Kind, AlertQuotaLow)
+	}
+	if alerts[0].Value != 5.0 {
+		t.Errorf("alert value = %.1f, want 5.0%% remaining", alerts[0].Value)
+	}
+	if !strings.Contains(alerts[0].Subject, string(domain.HarnessClaudeCode)) {
+		t.Errorf("alert subject %q should name the claude-code harness", alerts[0].Subject)
+	}
+	if len(transitions) != 1 || !transitions[0].Firing {
+		t.Fatalf("want one firing transition, got %+v", transitions)
 	}
 }
 
