@@ -1,13 +1,13 @@
 ## 1. Storage and Domain
 
-- [ ] 1.1 Add `domain.PrimeSettings` with validation/defaults for enablement,
+- [x] 1.1 Add `domain.PrimeSettings` with validation/defaults for enablement,
       display name, harness/model/effort, instructions/rules, rules file, and
       wake policy.
-- [ ] 1.2 Add a SQLite migration extending daemon-owned settings with persisted
+- [x] 1.2 Add a SQLite migration extending daemon-owned settings with persisted
       Prime settings and allowing projectless sessions only for `kind='prime'`.
-- [ ] 1.3 Update sqlc queries/generated code and store methods for reading and
+- [x] 1.3 Update sqlc queries/generated code and store methods for reading and
       saving Prime settings.
-- [ ] 1.4 Add storage/domain tests for disabled defaults, restart persistence,
+- [x] 1.4 Add storage/domain tests for disabled defaults, restart persistence,
       validation, and non-Prime project ownership enforcement.
 
 ## 2. Prime Supervisor and Session Launch

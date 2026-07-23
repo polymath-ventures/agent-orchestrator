@@ -21,7 +21,7 @@ func (q *Queries) MaxChangeLogSeq(ctx context.Context) (int64, error) {
 }
 
 const readChangeLogAfter = `-- name: ReadChangeLogAfter :many
-SELECT seq, project_id, session_id, event_type, payload, created_at
+SELECT seq, COALESCE(project_id, '') AS project_id, session_id, event_type, payload, created_at
 FROM change_log WHERE seq > ? ORDER BY seq LIMIT ?
 `
 

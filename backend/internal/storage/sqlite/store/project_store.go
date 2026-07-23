@@ -271,6 +271,45 @@ func (s *Store) SetFleetPaused(ctx context.Context, paused bool) error {
 	return s.qw.SetFleetPaused(ctx, paused)
 }
 
+// GetPrimeSettings reads the daemon-owned fleet Prime settings.
+func (s *Store) GetPrimeSettings(ctx context.Context) (domain.PrimeSettings, error) {
+	raw, err := s.qr.GetPrimeSettingsJSON(ctx)
+	if err != nil {
+		return domain.PrimeSettings{}, fmt.Errorf("get prime settings: %w", err)
+	}
+	return unmarshalPrimeSettings(raw)
+}
+
+// SetPrimeSettings validates and writes the daemon-owned fleet Prime settings.
+func (s *Store) SetPrimeSettings(ctx context.Context, settings domain.PrimeSettings) error {
+	settings = settings.WithDefaults()
+	if err := settings.Validate(); err != nil {
+		return err
+	}
+	raw, err := json.Marshal(settings)
+	if err != nil {
+		return fmt.Errorf("marshal prime settings: %w", err)
+	}
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	return s.qw.SetPrimeSettingsJSON(ctx, string(raw))
+}
+
+func unmarshalPrimeSettings(raw string) (domain.PrimeSettings, error) {
+	if raw == "" || raw == "{}" {
+		return domain.DefaultPrimeSettings(), nil
+	}
+	var settings domain.PrimeSettings
+	if err := json.Unmarshal([]byte(raw), &settings); err != nil {
+		return domain.PrimeSettings{}, fmt.Errorf("decode prime settings: %w", err)
+	}
+	settings = settings.WithDefaults()
+	if err := settings.Validate(); err != nil {
+		return domain.PrimeSettings{}, fmt.Errorf("stored prime settings invalid: %w", err)
+	}
+	return settings, nil
+}
+
 func projectRowFromGen(p gen.Project) domain.ProjectRecord {
 	r := domain.ProjectRecord{
 		ID:            string(p.ID),
