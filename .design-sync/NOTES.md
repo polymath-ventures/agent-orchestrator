@@ -7,7 +7,8 @@ Repo-specific gotchas for `/design-sync`. Read this before a re-sync.
 - **This is an app, not a design-system package.** `frontend/` is a private
   Electron/web app: no library build, no `dist/` entry, no Storybook, no
   `*.stories.*`. The sync is scoped to the reusable shadcn/ui primitives in
-  `frontend/src/renderer/components/ui` (19 source files → 105 exports),
+  `frontend/src/renderer/components/ui` (20 source files → 108 exports as of
+  the Popover addition; the last sync shipped 105),
   plus the token layer.
 - The synced surface is **only** `components/ui`. The 52 app composites in
   `frontend/src/renderer/components/` are bound to daemon state, Zustand
@@ -22,9 +23,18 @@ Repo-specific gotchas for `/design-sync`. Read this before a re-sync.
    `ENOENT … node_modules/agent-orchestrator/package.json`. It is gitignored,
    so it must be recreated per clone.
 3. Install the converter deps in `.ds-sync/` (`npm i esbuild ts-morph @types/react`)
-   plus `playwright@1.60.0` — **1.60.0 specifically**, because it pins chromium
-   build 1223, which is what this machine has cached. A different playwright
-   fails with `browserType.launch: Executable doesn't exist`.
+   plus `playwright`. **Match the playwright version to whatever chromium build
+   this host already has cached** — a mismatch fails with
+   `browserType.launch: Executable doesn't exist`:
+
+   ```bash
+   ls ~/.cache/ms-playwright/            # → chromium-<build>, e.g. chromium-1223
+   # install the release whose playwright-core/browsers.json pins that build
+   ```
+
+   With nothing cached, install any recent playwright and let it fetch chromium
+   (~200 MB). The version is a property of the host, not of this repo — do not
+   pin one here.
 
 ## Why cfg.buildCmd does more than build the app
 
@@ -183,13 +193,20 @@ the missing material costs. Fixing that staleness and then shipping it under
 
 ## Docs, groups, and the docsMap enumeration
 
-`cfg.docsMap` maps all 105 components to 19 family docs in `.design-sync/docs/`,
+`cfg.docsMap` maps 105 components to 19 family docs in `.design-sync/docs/`,
 and each doc's `category:` frontmatter sets the component's group (7 semantic
 groups: Actions, Forms, Navigation, Overlays, Data Display, Layout, Feedback).
 This is a full enumeration on purpose — compound parts (`CardHeader`,
 `TableRow`, …) never slug-match their family's doc, so discovery cannot bind
 them. **A new component needs a `docsMap` entry or it lands in `general` with a
 synthesized prompt.**
+
+**Known drift right now:** a `Popover` family (`Popover`, `PopoverContent`,
+`PopoverTrigger`) was added to `components/ui` after the last sync. It builds
+(108 components) but has no `docsMap` entry, so it currently lands in `general`.
+The next re-sync should add a `.design-sync/docs/popover.md` with a
+`category: Overlays` frontmatter and three `docsMap` entries pointing at it —
+then the uploaded project matches the code again.
 
 Paths in `docsMap` are `../../../.design-sync/docs/<family>.md`: they resolve
 from `PKG_DIR`, which is the **symlink path** `frontend/node_modules/agent-orchestrator`,
@@ -239,18 +256,21 @@ so three `../` are needed to reach the repo root — not one.
 The build settles at exactly **two** warnings. Both are understood; a third one
 appearing means something changed.
 
-- **`[TOKENS_MISSING]` — 45 undefined custom properties** (`--border`,
+- **`[TOKENS_MISSING]` — 43 undefined custom properties** (`--border`,
   `--accent`, `--bg`, `--bg-card`, `--accent-glow`, …). These come from
   `frontend/src/landing/**`, the marketing page, which has its own token
-  vocabulary and is bundled into the same compiled stylesheet. **Mostly** benign
-  — but not entirely: `SidebarMenuButton`'s `outline` variant
-  (`sidebar.tsx:449`) uses `shadow-[0_0_0_1px_var(--sidebar-border)]` and
-  `var(--sidebar-accent)`, and those bare names are **not** defined — the theme
-  defines `--color-sidebar-border` / `--color-sidebar-accent`. So that variant's
-  border ring silently resolves to nothing, in the app as well as here.
-  (`SidebarRail` itself is fine — it uses the valid `bg-sidebar-border`
-  utility.) That is an app bug this sync surfaced, not a sync artifact; filed as
-  GH #127 / bead ao-oor, not fixed in this PR (no app source is touched here).
+  vocabulary and is bundled into the same compiled stylesheet. No component
+  under `components/ui` references any of them, so this is benign for the design
+  system — do not chase it.
+
+  (It was 45, and two of them were **not** benign: `SidebarMenuButton`'s
+  `outline` variant named the undefined bare `var(--sidebar-border)` /
+  `var(--sidebar-accent)` instead of the theme's `--color-sidebar-*`, so its
+  border ring silently resolved to nothing. Filed as GH #127 from this sync and
+  fixed in GH #128, which switched the variant to the `*-sidebar-border`
+  utilities. If the count climbs back above 43, check whether a component has
+  re-introduced a bare `var(--…)` the theme does not define.)
+
 - **`[FONT_MISSING]` — only the _alternate_ Nerd Fonts** further down the mono
   stack. The primary face ships. See the fonts section below.
 
@@ -294,10 +314,9 @@ Shipping it would make designs look _less_ like the real app, not more.
 `Skeleton` is styled `bg-accent`, and AO remaps `--color-accent` to the brand
 blue (`--bridge-accent`), where upstream shadcn's `accent` is a muted hover
 surface. Every skeleton therefore renders as solid blue bars. The previews
-render this **faithfully** rather than hiding it. Fixed in GH #119 / PR #120
-(`bg-accent` → `bg-muted`); once that lands, the `Skeleton` and
-`SidebarMenuSkeleton` cells change appearance and must be re-graded on the
-next sync.
+render this **faithfully** rather than hiding it. Fixed in GH #119 / PR #120 (`bg-accent` → `bg-muted`), which has landed —
+so the `Skeleton` and `SidebarMenuSkeleton` cells now render on the neutral
+surface and must be re-graded on the next sync.
 
 ## Re-sync risks
 
