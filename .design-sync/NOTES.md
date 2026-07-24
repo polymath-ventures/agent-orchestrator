@@ -129,9 +129,10 @@ so three `../` are needed to reach the repo root — not one.
 `Skeleton` is styled `bg-accent`, and AO remaps `--color-accent` to the brand
 blue (`--bridge-accent`), where upstream shadcn's `accent` is a muted hover
 surface. Every skeleton therefore renders as solid blue bars. The previews
-render this **faithfully** rather than hiding it. Filed separately; if it is
-fixed upstream of a re-sync, the `Skeleton` and `SidebarMenuSkeleton` cells
-will change appearance and should be re-graded.
+render this **faithfully** rather than hiding it. Fixed in GH #119 / PR #120
+(`bg-accent` → `bg-muted`); once that lands, the `Skeleton` and
+`SidebarMenuSkeleton` cells change appearance and must be re-graded on the
+next sync.
 
 ## Re-sync risks
 
