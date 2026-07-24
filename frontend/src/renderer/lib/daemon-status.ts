@@ -1,5 +1,5 @@
 import { aoBridge } from "./bridge";
-import { getApiBaseUrl, setApiBaseUrl } from "./api-client";
+import { getApiBaseUrl, setApiBaseUrl, setApiDaemonStatus } from "./api-client";
 import { hasElectronBridge } from "./runtime-environment";
 import { parseDaemonProbe } from "../../shared/daemon-attach";
 import type { DaemonStatus } from "../../shared/daemon-status";
@@ -7,6 +7,7 @@ import type { DaemonStatus } from "../../shared/daemon-status";
 export type { DaemonStatus };
 
 export function applyDaemonStatus(nextStatus: DaemonStatus): void {
+	setApiDaemonStatus(nextStatus);
 	if (!hasElectronBridge()) {
 		setApiBaseUrl("");
 		return;

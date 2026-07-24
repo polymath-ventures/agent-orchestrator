@@ -49,7 +49,7 @@ func TestSpawn_AtCapRefusedCreatesNothing(t *testing.T) {
 	seedLiveWorker(st, "mer-live-b")
 	before := len(st.sessions)
 
-	_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	_, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
 	if !errors.Is(err, ErrWorkerConcurrencyCap) {
 		t.Fatalf("spawn err = %v, want ErrWorkerConcurrencyCap", err)
 	}
@@ -70,12 +70,12 @@ func TestSpawn_OrchestratorDoesNotCountTowardCap(t *testing.T) {
 	seedLiveWorker(st, "mer-live-a") // project is now at the worker cap
 
 	// An orchestrator spawn is admitted even at the worker cap.
-	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindOrchestrator}); err != nil {
+	if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindOrchestrator}); err != nil {
 		t.Fatalf("orchestrator spawn at worker cap = %v, want admitted", err)
 	}
 	// And that live orchestrator does not consume worker-cap capacity: a worker
 	// spawn is still refused because only the one live worker counts.
-	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); !errors.Is(err, ErrWorkerConcurrencyCap) {
+	if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); !errors.Is(err, ErrWorkerConcurrencyCap) {
 		t.Fatalf("worker spawn err = %v, want ErrWorkerConcurrencyCap — the orchestrator must not free worker capacity", err)
 	}
 }
@@ -89,7 +89,7 @@ func TestSpawn_CapacityFreesOnTermination(t *testing.T) {
 	})
 	seedLiveWorker(st, "mer-live-a")
 
-	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); !errors.Is(err, ErrWorkerConcurrencyCap) {
+	if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); !errors.Is(err, ErrWorkerConcurrencyCap) {
 		t.Fatalf("spawn at cap err = %v, want ErrWorkerConcurrencyCap", err)
 	}
 
@@ -98,7 +98,7 @@ func TestSpawn_CapacityFreesOnTermination(t *testing.T) {
 	rec.IsTerminated = true
 	st.sessions["mer-live-a"] = rec
 
-	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); err != nil {
+	if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); err != nil {
 		t.Fatalf("spawn after a worker terminated = %v, want admitted", err)
 	}
 }
@@ -122,7 +122,7 @@ func TestSpawn_CapRefusalMarksNoCandidateDown(t *testing.T) {
 	})
 	seedLiveWorker(st, "mer-live-a") // at the cap
 
-	_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	_, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
 	if !errors.Is(err, ErrWorkerConcurrencyCap) {
 		t.Fatalf("spawn err = %v, want ErrWorkerConcurrencyCap", err)
 	}
@@ -144,7 +144,7 @@ func TestSpawn_ZeroCapIsUnbounded(t *testing.T) {
 		seedLiveWorker(st, "mer-live-"+string(rune('a'+i)))
 	}
 
-	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); err != nil {
+	if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); err != nil {
 		t.Fatalf("spawn with no cap and 5 live workers = %v, want admitted", err)
 	}
 }
@@ -175,7 +175,7 @@ func TestSpawn_ConcurrentWorkerSpawnsSerializeCapAndSeedRow(t *testing.T) {
 
 	firstErr := make(chan error, 1)
 	go func() {
-		_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+		_, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
 		firstErr <- err
 	}()
 
@@ -187,7 +187,7 @@ func TestSpawn_ConcurrentWorkerSpawnsSerializeCapAndSeedRow(t *testing.T) {
 
 	secondErr := make(chan error, 1)
 	go func() {
-		_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+		_, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
 		secondErr <- err
 	}()
 
@@ -243,7 +243,7 @@ func TestSpawn_AdmissionLockIsScopedPerProject(t *testing.T) {
 
 	firstErr := make(chan error, 1)
 	go func() {
-		_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+		_, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
 		firstErr <- err
 	}()
 
@@ -255,7 +255,7 @@ func TestSpawn_AdmissionLockIsScopedPerProject(t *testing.T) {
 
 	otherErr := make(chan error, 1)
 	go func() {
-		_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "other", Kind: domain.KindWorker})
+		_, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "other", Kind: domain.KindWorker})
 		otherErr <- err
 	}()
 

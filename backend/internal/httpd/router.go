@@ -67,7 +67,7 @@ func NewRouterWithControl(cfg config.Config, log *slog.Logger, termMgr *terminal
 	r.NotFound(notFoundJSON)
 	r.MethodNotAllowed(methodNotAllowedJSON)
 
-	mountHealth(r)
+	mountHealth(r, cfg)
 	mountTerminalMux(control.StreamContext, r, termMgr, log)
 	mountControl(r, control)
 	mountTelemetry(r, deps.Telemetry)
@@ -90,9 +90,13 @@ func previewOriginMiddleware(sessions *controllers.SessionsController) func(http
 
 // mountHealth registers the liveness and readiness probes the Electron
 // supervisor polls before letting the renderer connect.
-func mountHealth(r chi.Router) {
-	r.Get("/healthz", handleHealthz)
-	r.Get("/readyz", handleReadyz)
+func mountHealth(r chi.Router, cfg config.Config) {
+	r.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+		envelope.WriteJSON(w, http.StatusOK, daemonProbePayload("ok", cfg))
+	})
+	r.Get("/readyz", func(w http.ResponseWriter, _ *http.Request) {
+		envelope.WriteJSON(w, http.StatusOK, daemonProbePayload("ready", cfg))
+	})
 }
 
 // mountControl registers the loopback daemon-control endpoints. /shutdown is a
@@ -312,19 +316,10 @@ func localControlRequest(r *http.Request) bool {
 	return false
 }
 
-// handleHealthz is the liveness probe: it answers 200 as long as the process is
-// up and serving. It does no dependency checks by design.
-func handleHealthz(w http.ResponseWriter, _ *http.Request) {
-	envelope.WriteJSON(w, http.StatusOK, daemonProbePayload("ok"))
-}
-
-// handleReadyz is the readiness probe. Dependency initialization happens before
-// the server is constructed, so a listening daemon is ready to answer requests.
-func handleReadyz(w http.ResponseWriter, _ *http.Request) {
-	envelope.WriteJSON(w, http.StatusOK, daemonProbePayload("ready"))
-}
-
-func daemonProbePayload(status string) map[string]any {
+// daemonProbePayload is shared by /healthz and /readyz. Dependency
+// initialization happens before the server is constructed, so a listening
+// daemon is ready to answer requests.
+func daemonProbePayload(status string, cfg config.Config) map[string]any {
 	payload := map[string]any{
 		"status":  status,
 		"service": daemonmeta.ServiceName,
@@ -335,6 +330,9 @@ func daemonProbePayload(status string) map[string]any {
 	}
 	if cwd, err := os.Getwd(); err == nil && cwd != "" {
 		payload["workingDirectory"] = cwd
+	}
+	if cfg.StartupWorkingDirectory != "" {
+		payload["startupWorkingDirectory"] = cfg.StartupWorkingDirectory
 	}
 	return payload
 }

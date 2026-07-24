@@ -29,7 +29,7 @@ func TestSpawn_ProjectPausedRefusesWorker(t *testing.T) {
 	st.projects["mer"] = p
 	before := len(st.sessions)
 
-	_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	_, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
 	if !errors.Is(err, ErrProjectPaused) {
 		t.Fatalf("spawn err = %v, want ErrProjectPaused", err)
 	}
@@ -44,7 +44,7 @@ func TestSpawn_FleetPausedRefusesWorker(t *testing.T) {
 	m, st := pauseManager()
 	st.fleetPaused = true
 
-	_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	_, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
 	if !errors.Is(err, ErrProjectPaused) {
 		t.Fatalf("spawn err = %v, want ErrProjectPaused", err)
 	}
@@ -58,7 +58,7 @@ func TestSpawn_FleetPauseReadErrorRefusesWorker(t *testing.T) {
 	st.fleetPausedErr = errors.New("pause store unavailable")
 	before := len(st.sessions)
 
-	_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	_, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
 	if err == nil || !strings.Contains(err.Error(), "get fleet paused") {
 		t.Fatalf("spawn err = %v, want fleet-pause read error", err)
 	}
@@ -75,7 +75,7 @@ func TestSpawn_PausedAllowsOrchestrator(t *testing.T) {
 	p.Paused = true
 	st.projects["mer"] = p
 
-	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindOrchestrator}); err != nil {
+	if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindOrchestrator}); err != nil {
 		t.Fatalf("orchestrator spawn under pause = %v, want nil", err)
 	}
 }
@@ -88,7 +88,7 @@ func TestSpawn_PausedAllowsPrime(t *testing.T) {
 	p.Paused = true
 	st.projects["mer"] = p
 
-	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindPrime}); err != nil {
+	if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindPrime}); err != nil {
 		t.Fatalf("prime spawn under pause = %v, want nil", err)
 	}
 }
@@ -100,7 +100,7 @@ func TestSpawn_ForceOverridesPause(t *testing.T) {
 	p.Paused = true
 	st.projects["mer"] = p
 
-	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Force: true}); err != nil {
+	if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Force: true}); err != nil {
 		t.Fatalf("forced worker spawn under pause = %v, want nil", err)
 	}
 }
@@ -108,7 +108,7 @@ func TestSpawn_ForceOverridesPause(t *testing.T) {
 // With neither bit set a worker spawn proceeds normally.
 func TestSpawn_NotPausedAllowsWorker(t *testing.T) {
 	m, _ := pauseManager()
-	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); err != nil {
+	if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); err != nil {
 		t.Fatalf("unpaused worker spawn = %v, want nil", err)
 	}
 }

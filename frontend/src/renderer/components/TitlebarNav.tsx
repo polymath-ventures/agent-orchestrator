@@ -7,13 +7,12 @@ import { useSidebar } from "./ui/sidebar";
 const isMac = isMacDesktopChrome();
 const noDragStyle = isMac ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperties) : undefined;
 
-// macOS-only titlebar cluster (sidebar toggle + history arrows) pinned beside
-// the traffic lights, VS Code-style. Approved divergence from the web
-// reference, which has no window chrome (DESIGN.md banner, 2026-06-10).
-// Rendered once by the shell as a fixed overlay (.titlebar-nav in styles.css)
-// over the full-width topbar's left inset, so the buttons occupy the exact
-// same spot whether the sidebar is expanded or collapsed; the topbar starts
-// its content past the cluster (.is-under-titlebar-nav).
+// macOS-only sidebar chrome cluster (sidebar toggle + history arrows). Lives
+// in the Sidebar header below the traffic lights while windowed; in native
+// fullscreen the clearance pad drops so this cluster sits near the top edge.
+// The toggle is pinned in the icon-rail column so it never moves during
+// expand/collapse; history arrows sit absolutely to its right and only fade
+// in when expanded.
 // The installed router has no useCanGoForward, and deriving one as
 // `__TSR_index < history.length - 1` (the upstream hook's approach) is wrong
 // here: window.history.length also counts entries the router never created —
@@ -87,12 +86,14 @@ function TitlebarButton({
 	label,
 	title,
 	disabled,
+	tabIndex,
 	onClick,
 	children,
 }: {
 	label: string;
 	title: string;
 	disabled?: boolean;
+	tabIndex?: number;
 	onClick: () => void;
 	children: React.ReactNode;
 }) {
@@ -103,7 +104,7 @@ function TitlebarButton({
 			className="grid size-control-md place-items-center rounded-md text-passive transition-colors hover:bg-interactive-hover hover:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:bg-transparent disabled:hover:text-passive"
 			disabled={disabled}
 			onClick={onClick}
-			style={noDragStyle}
+			tabIndex={tabIndex}
 			title={title}
 			type="button"
 		>

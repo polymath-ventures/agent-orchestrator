@@ -457,9 +457,17 @@ type missingAgents struct{}
 func (missingAgents) Agent(domain.AgentHarness) (ports.Agent, bool) { return nil, false }
 
 type fakeWorkspace struct {
-	createErr         error
-	destroyErr        error
-	destroyed         int
+	createErr  error
+	destroyErr error
+	destroyed  int
+	// createRepoPath, when set, is returned as the RepoPath of a single-repo
+	// Create so tests can assert it survives the spawn->teardown metadata round
+	// trip (production Create resolves this path; the zero default keeps every
+	// other test's behavior unchanged).
+	createRepoPath string
+	// lastDestroyInfo records the WorkspaceInfo passed to the most recent Destroy
+	// so tests can assert teardown fed it the persisted repo path.
+	lastDestroyInfo   ports.WorkspaceInfo
 	lastCfg           ports.WorkspaceConfig
 	projectErr        error
 	projectDestroyed  int
@@ -475,6 +483,10 @@ type fakeWorkspace struct {
 	forceDestroyErr error
 	// stashCalls counts StashUncommitted invocations.
 	stashCalls int
+	// excludePatterns records patterns passed to AddExclude; addExcludeErr, when
+	// set, is returned so best-effort handling can be exercised.
+	excludePatterns []string
+	addExcludeErr   error
 	// calls records the sequence of workspace method calls for ordering assertions.
 	calls []string
 	// sharedLog, when non-nil, receives entries alongside calls so ordering
@@ -491,7 +503,7 @@ func (w *fakeWorkspace) Create(_ context.Context, cfg ports.WorkspaceConfig) (po
 	if path == "" {
 		path = "/ws/" + string(cfg.SessionID)
 	}
-	return ports.WorkspaceInfo{Path: path, Branch: cfg.Branch, SessionID: cfg.SessionID, ProjectID: cfg.ProjectID, RepoPath: cfg.RepoPath}, nil
+	return ports.WorkspaceInfo{Path: path, Branch: cfg.Branch, SessionID: cfg.SessionID, ProjectID: cfg.ProjectID, RepoPath: w.createRepoPath}, nil
 }
 func (w *fakeWorkspace) CreateWorkspaceProject(_ context.Context, cfg ports.WorkspaceProjectConfig) (ports.WorkspaceProjectInfo, error) {
 	if w.projectErr != nil {
@@ -534,6 +546,7 @@ func (w *fakeWorkspace) CreateWorkspaceProject(_ context.Context, cfg ports.Work
 	return out, nil
 }
 func (w *fakeWorkspace) Destroy(_ context.Context, info ports.WorkspaceInfo) error {
+	w.lastDestroyInfo = info
 	if info.RepoPath != "" {
 		entry := "Destroy:" + fakeWorkspaceRepoName(info)
 		w.calls = append(w.calls, entry)
@@ -593,6 +606,12 @@ func (w *fakeWorkspace) ApplyPreserved(_ context.Context, info ports.WorkspaceIn
 	}
 	w.calls = append(w.calls, entry)
 	return w.applyErr
+}
+
+func (w *fakeWorkspace) AddExclude(_ context.Context, info ports.WorkspaceInfo, patterns ...string) error {
+	w.calls = append(w.calls, "AddExclude:"+string(info.SessionID))
+	w.excludePatterns = append(w.excludePatterns, patterns...)
+	return w.addExcludeErr
 }
 
 type loggingDestroyWorkspace struct {
@@ -732,7 +751,7 @@ func TestSpawn_ResolvesProjectConfig(t *testing.T) {
 	lookPath := func(string) (string, error) { return "/bin/true", nil }
 	m := New(Deps{Runtime: rt, Agents: singleAgent{agent: agent}, Workspace: ws, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
 
-	rec, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	rec, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -756,7 +775,7 @@ func TestSpawn_ResolvesProjectConfig(t *testing.T) {
 	// when the spawn explicitly names its agent.
 	st.projects["bare"] = domain.ProjectRecord{ID: "bare"}
 	agent.lastConfig = ports.AgentConfig{Model: "stale"}
-	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "bare", Kind: domain.KindWorker, Harness: domain.HarnessCodex}); err != nil {
+	if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "bare", Kind: domain.KindWorker, Harness: domain.HarnessCodex}); err != nil {
 		t.Fatal(err)
 	}
 	if !agent.lastConfig.IsZero() {
@@ -773,13 +792,13 @@ func TestSpawn_RejectsMissingRoleHarness(t *testing.T) {
 		LookPath: func(string) (string, error) { return "/bin/true", nil },
 	})
 
-	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); !errors.Is(err, ErrMissingHarness) {
+	if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); !errors.Is(err, ErrMissingHarness) {
 		t.Fatalf("worker err = %v, want ErrMissingHarness", err)
 	}
 	if len(st.sessions) != 0 {
 		t.Fatalf("missing worker harness must not create a session row, got %d", len(st.sessions))
 	}
-	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindOrchestrator}); !errors.Is(err, ErrMissingHarness) {
+	if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindOrchestrator}); !errors.Is(err, ErrMissingHarness) {
 		t.Fatalf("orchestrator err = %v, want ErrMissingHarness", err)
 	}
 }
@@ -792,7 +811,7 @@ func TestSpawn_ExplicitHarnessWinsWithoutProjectRoleHarness(t *testing.T) {
 		Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st},
 		LookPath: func(string) (string, error) { return "/bin/true", nil },
 	})
-	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Harness: domain.HarnessCodex}); err != nil {
+	if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Harness: domain.HarnessCodex}); err != nil {
 		t.Fatal(err)
 	}
 	if got := st.sessions["mer-1"].Harness; got != domain.HarnessCodex {
@@ -802,7 +821,7 @@ func TestSpawn_ExplicitHarnessWinsWithoutProjectRoleHarness(t *testing.T) {
 
 func TestSpawn_AssignsIDAndGoesIdle(t *testing.T) {
 	m, st, rt, _ := newManager()
-	s, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Harness: domain.HarnessClaudeCode, Prompt: "do it"})
+	s, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Harness: domain.HarnessClaudeCode, Prompt: "do it"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -817,6 +836,32 @@ func TestSpawn_AssignsIDAndGoesIdle(t *testing.T) {
 	}
 	if st.sessions["mer-1"].Metadata.RuntimeHandleID != "h1" {
 		t.Fatal("handle not folded")
+	}
+}
+
+func TestSpawn_ReturnsFinalPromptByteMetrics(t *testing.T) {
+	m, _, _, _ := newManager()
+	cfg := ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Harness: domain.HarnessClaudeCode}
+	wantPrompt, wantSystemPrompt, err := m.buildSpawnTexts(ctx, cfg)
+	if err != nil {
+		t.Fatalf("buildSpawnTexts: %v", err)
+	}
+	if wantPrompt != "" {
+		t.Fatalf("promptless spawn prompt = %q, want empty", wantPrompt)
+	}
+	if wantSystemPrompt == "" {
+		t.Fatal("promptless spawn system prompt is empty")
+	}
+
+	_, promptBytes, systemPromptBytes, err := m.Spawn(ctx, cfg)
+	if err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	if promptBytes != len(wantPrompt) {
+		t.Fatalf("promptBytes = %d, want %d", promptBytes, len(wantPrompt))
+	}
+	if systemPromptBytes != len(wantSystemPrompt) {
+		t.Fatalf("systemPromptBytes = %d, want %d", systemPromptBytes, len(wantSystemPrompt))
 	}
 }
 
@@ -837,7 +882,7 @@ func TestSpawn_DeliversPromptAfterStartWhenAgentRequestsIt(t *testing.T) {
 		LookPath:  func(string) (string, error) { return "/bin/true", nil },
 	})
 
-	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Prompt: "fix the button"}); err != nil {
+	if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Prompt: "fix the button"}); err != nil {
 		t.Fatal(err)
 	}
 	if agent.lastLaunch.Prompt != "" {
@@ -875,7 +920,7 @@ func TestSpawn_AfterStartPromptWaitsForReadinessHint(t *testing.T) {
 		LookPath:  func(string) (string, error) { return "/bin/true", nil },
 	})
 
-	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Prompt: "fix the button"}); err != nil {
+	if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Prompt: "fix the button"}); err != nil {
 		t.Fatal(err)
 	}
 	if rt.outputCalls != 2 {
@@ -912,7 +957,7 @@ func TestSpawn_AfterStartPromptFallsBackWhenReadinessTimesOut(t *testing.T) {
 		Logger:    slog.New(slog.NewTextHandler(&logBuf, nil)),
 	})
 
-	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Prompt: "fix the button"}); err != nil {
+	if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Prompt: "fix the button"}); err != nil {
 		t.Fatal(err)
 	}
 	if rt.outputCalls == 0 {
@@ -951,7 +996,7 @@ func TestSpawn_AfterStartPromptFailureCleansUpSpawn(t *testing.T) {
 		LookPath:  func(string) (string, error) { return "/bin/true", nil },
 	})
 
-	_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Prompt: "fix the button"})
+	_, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Prompt: "fix the button"})
 	if err == nil {
 		t.Fatal("Spawn err = nil, want prompt delivery error")
 	}
@@ -999,7 +1044,7 @@ func TestSpawn_AfterStartPromptFailureCleansUpWorkspaceProjectRows(t *testing.T)
 		LookPath:  func(string) (string, error) { return "/bin/true", nil },
 	})
 
-	_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Prompt: "fix the button"})
+	_, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Prompt: "fix the button"})
 	if err == nil || !strings.Contains(err.Error(), "deliver prompt") {
 		t.Fatalf("Spawn err = %v, want deliver prompt failure", err)
 	}
@@ -1071,7 +1116,7 @@ func TestSpawn_AfterStartPromptSuppressedTerminationFailsSpawn(t *testing.T) {
 		LookPath:  func(string) (string, error) { return "/bin/true", nil },
 	})
 
-	_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Prompt: "fix the button"})
+	_, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Prompt: "fix the button"})
 	if err == nil {
 		t.Fatal("Spawn err = nil, want failure because the after-start prompt was suppressed (session terminated)")
 	}
@@ -1098,7 +1143,7 @@ func TestSpawn_RollsBackWhenAgentProcessAlreadyExited(t *testing.T) {
 		LookPath: func(string) (string, error) { return "/bin/true", nil },
 	})
 
-	if _, err := m.Spawn(ctx, ports.SpawnConfig{
+	if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{
 		ProjectID: "mer", Kind: domain.KindWorker, Prompt: "task",
 	}); err == nil {
 		t.Fatal("spawn must fail when the agent process has already been replaced by the keep-alive shell")
@@ -1130,7 +1175,7 @@ func TestSpawn_PrePromptLivenessDetectsImmediateExitBeforePromptInjection(t *tes
 	})
 	m.launchProbe = launchProbeConfig{retryDelay: time.Millisecond, attempts: 3}
 
-	if _, err := m.Spawn(ctx, ports.SpawnConfig{
+	if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{
 		ProjectID: "mer", Kind: domain.KindWorker, Prompt: "task",
 	}); err == nil {
 		t.Fatal("spawn must fail before after-start prompt delivery when the agent process has exited")
@@ -1161,7 +1206,7 @@ func TestSpawn_RetriesTransientFalseLaunchProcessProbe(t *testing.T) {
 	})
 	m.launchProbe = launchProbeConfig{retryDelay: time.Millisecond, attempts: 3}
 
-	if _, err := m.Spawn(ctx, ports.SpawnConfig{
+	if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{
 		ProjectID: "mer", Kind: domain.KindWorker, Prompt: "task",
 	}); err != nil {
 		t.Fatalf("healthy slow-start spawn must survive transient false launch-process probes: %v", err)
@@ -1189,7 +1234,7 @@ func TestSpawn_LateExitAfterProbeRollsBack(t *testing.T) {
 	})
 	m.launchProbe = launchProbeConfig{retryDelay: time.Millisecond, attempts: 3}
 
-	if _, err := m.Spawn(ctx, ports.SpawnConfig{
+	if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{
 		ProjectID: "mer", Kind: domain.KindWorker, Prompt: "task",
 	}); err == nil {
 		t.Fatal("spawn must roll back when the agent exits after the early probe but before completion")
@@ -1229,7 +1274,7 @@ func TestSpawn_PromptDeliveryStrategyFailureCleansUpWorkspaceProjectRows(t *test
 		LookPath:  func(string) (string, error) { return "/bin/true", nil },
 	})
 
-	_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Prompt: "fix the button"})
+	_, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Prompt: "fix the button"})
 	if err == nil || !strings.Contains(err.Error(), "prompt delivery") {
 		t.Fatalf("Spawn err = %v, want prompt delivery failure", err)
 	}
@@ -1256,7 +1301,8 @@ func TestSpawn_PromptDeliveryStrategyFailureCleansUpWorkspaceProjectRows(t *test
 // in `ao session get` (created in local time, updated in UTC).
 func TestSpawn_StampsUTCTimestamps(t *testing.T) {
 	m, st, _, _ := newManager()
-	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); err != nil {
+	_, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	if err != nil {
 		t.Fatal(err)
 	}
 	rec := st.sessions["mer-1"]
@@ -1271,7 +1317,7 @@ func TestSpawn_StampsUTCTimestamps(t *testing.T) {
 func TestSpawn_RollsBackOnRuntimeFailure(t *testing.T) {
 	m, st, _, ws := newManager()
 	m.runtime = &fakeRuntime{createErr: errors.New("boom")}
-	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer"}); err == nil {
+	if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer"}); err == nil {
 		t.Fatal("expected failure")
 	}
 	if ws.destroyed != 1 {
@@ -1303,7 +1349,7 @@ func TestSpawn_RuntimeFailureCleansAgentWorkspaceAfterDestroy(t *testing.T) {
 		LookPath:  func(string) (string, error) { return "/bin/true", nil },
 	})
 
-	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); err == nil || !strings.Contains(err.Error(), "runtime") {
+	if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); err == nil || !strings.Contains(err.Error(), "runtime") {
 		t.Fatalf("Spawn err = %v, want runtime failure", err)
 	}
 	if ws.destroyed != 1 {
@@ -1341,7 +1387,7 @@ func TestSpawn_PrepareFailureCleansAgentWorkspaceState(t *testing.T) {
 		Executable: func() (string, error) { return "/daemon/ao", nil },
 	})
 
-	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); err == nil || !strings.Contains(err.Error(), "install hooks") {
+	if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); err == nil || !strings.Contains(err.Error(), "install hooks") {
 		t.Fatalf("Spawn err = %v, want install hooks failure", err)
 	}
 	if agent.cleanupCalls != 1 {
@@ -1379,7 +1425,7 @@ func TestSpawn_AgentRuntimeEnvAugmenterReachesRuntime(t *testing.T) {
 		Executable: func() (string, error) { return "/daemon/ao", nil },
 	})
 
-	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); err != nil {
+	if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); err != nil {
 		t.Fatalf("Spawn: %v", err)
 	}
 	if got, want := rt.lastCfg.Env["AGENT_DATA_DIR"], filepath.Join("/ao/data", "agent"); got != want {
@@ -1395,7 +1441,7 @@ func TestSpawn_AgentRuntimeEnvAugmenterReachesRuntime(t *testing.T) {
 func TestSpawn_DeletesSeedRowOnWorkspaceFailure(t *testing.T) {
 	m, st, rt, ws := newManager()
 	ws.createErr = ports.ErrWorkspaceBranchCheckedOutElsewhere
-	_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	_, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
 	if !errors.Is(err, ports.ErrWorkspaceBranchCheckedOutElsewhere) {
 		t.Fatalf("err = %v, want ports.ErrWorkspaceBranchCheckedOutElsewhere", err)
 	}
@@ -1414,7 +1460,7 @@ func TestSpawn_ParksRowTerminatedWhenSeedDeleteFails(t *testing.T) {
 	m, st, _, ws := newManager()
 	ws.createErr = ports.ErrWorkspaceBranchNotFetched
 	st.deleteErr = errors.New("db locked")
-	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); !errors.Is(err, ports.ErrWorkspaceBranchNotFetched) {
+	if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); !errors.Is(err, ports.ErrWorkspaceBranchNotFetched) {
 		t.Fatalf("err = %v, want ports.ErrWorkspaceBranchNotFetched", err)
 	}
 	if !st.sessions["mer-1"].IsTerminated {
@@ -1444,7 +1490,7 @@ func TestSpawn_WorkspaceProjectRecordsRootAndChildWorktrees(t *testing.T) {
 		LookPath: func(string) (string, error) { return "/bin/true", nil },
 	})
 
-	rec, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	rec, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1509,7 +1555,7 @@ func TestSpawn_WorkspaceProjectRollsBackAllWorktreesOnRuntimeFailure(t *testing.
 	}
 	st.workspaceRepo["mer"] = []domain.WorkspaceRepoRecord{{Name: "api", RelativePath: "api"}}
 	m.runtime = &fakeRuntime{createErr: errors.New("boom")}
-	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); err == nil {
+	if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); err == nil {
 		t.Fatal("expected failure")
 	}
 	if ws.projectDestroyed != 1 {
@@ -1533,7 +1579,7 @@ func TestSpawn_WorkspaceProjectRollsBackWhenWorktreeRowsFail(t *testing.T) {
 	}
 	st.workspaceRepo["mer"] = []domain.WorkspaceRepoRecord{{Name: "api", RelativePath: "api"}}
 	st.upsertWTErr = errors.New("db locked")
-	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); err == nil || !strings.Contains(err.Error(), "record workspace worktree") {
+	if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); err == nil || !strings.Contains(err.Error(), "record workspace worktree") {
 		t.Fatalf("err = %v, want worktree row failure", err)
 	}
 	if ws.projectDestroyed != 1 {
@@ -1759,6 +1805,38 @@ func TestRestore_ReopensTerminal(t *testing.T) {
 	}
 }
 
+func TestRestore_ScratchAllowsEmptyBranch(t *testing.T) {
+	m, st, rt, ws := newManager()
+	st.projects["scratch"] = domain.ProjectRecord{ID: "scratch", Kind: domain.ProjectKindScratch, Config: testRoleAgents()}
+	st.sessions["scratch-1"] = domain.SessionRecord{
+		ID:           "scratch-1",
+		ProjectID:    "scratch",
+		Kind:         domain.KindWorker,
+		Harness:      domain.HarnessClaudeCode,
+		IsTerminated: true,
+		Activity:     domain.Activity{State: domain.ActivityExited},
+		Metadata:     domain.SessionMetadata{WorkspacePath: "/ws/scratch-1", Prompt: "continue"},
+	}
+
+	res, err := m.RestoreWithMode(ctx, "scratch-1")
+	if err != nil {
+		t.Fatalf("Restore scratch: %v", err)
+	}
+	s := res.Session
+	if s.Metadata.Branch != "" {
+		t.Fatalf("scratch restore branch = %q, want empty", s.Metadata.Branch)
+	}
+	if ws.lastCfg.Branch != "" {
+		t.Fatalf("workspace restore branch = %q, want empty", ws.lastCfg.Branch)
+	}
+	if ws.lastCfg.Path != "/ws/scratch-1" {
+		t.Fatalf("workspace restore path = %q, want stored scratch workspace path", ws.lastCfg.Path)
+	}
+	if rt.created != 1 {
+		t.Fatalf("runtime created = %d, want 1", rt.created)
+	}
+}
+
 func TestRestore_WorkspaceProjectRestoresChildrenAndRecordsInventory(t *testing.T) {
 	m, st, rt, ws := newManager()
 	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Path: "/repo/mer", Kind: domain.ProjectKindWorkspace, Config: testRoleAgents()}
@@ -1807,6 +1885,31 @@ func TestRestore_AppliesProjectAgentConfig(t *testing.T) {
 	}
 	if agent.lastConfig.Model != "restore-model" {
 		t.Fatalf("restore config model = %q, want restore-model (config must carry across restore)", agent.lastConfig.Model)
+	}
+}
+
+func TestRestore_ForwardsManagerDataDir(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+	seedTerminal(st, "mer-1", domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "b", AgentSessionID: "agent-x"})
+	agent := &recordingAgent{}
+	dataDir := t.TempDir()
+	m := New(Deps{
+		Runtime:   &fakeRuntime{},
+		Agents:    singleAgent{agent: agent},
+		Workspace: &fakeWorkspace{},
+		Store:     st,
+		Messenger: &fakeMessenger{},
+		Lifecycle: &fakeLCM{store: st},
+		DataDir:   dataDir,
+		LookPath:  func(string) (string, error) { return "/bin/true", nil },
+	})
+
+	if _, err := m.RestoreWithMode(ctx, "mer-1"); err != nil {
+		t.Fatal(err)
+	}
+	if agent.lastRestore.DataDir != dataDir {
+		t.Fatalf("restore config data dir = %q, want manager data dir %q", agent.lastRestore.DataDir, dataDir)
 	}
 }
 
@@ -1870,6 +1973,77 @@ func TestCleanup_ReportsSkippedWorkspaces(t *testing.T) {
 	}
 	if strings.Contains(res.Skipped[0].Reason, "disk on fire") {
 		t.Fatalf("raw internal error leaked into public reason: %q", res.Skipped[0].Reason)
+	}
+
+	// A teardown that fails because the session's project is archived or
+	// unregistered (its repo can no longer be resolved) is reported with a
+	// distinct reason telling the user the worktree must be removed by hand.
+	ws.destroyErr = fmt.Errorf("resolve project repo: %w", ErrProjectNotResolvable)
+	res, err = m.Cleanup(ctx, "mer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Skipped) != 1 || res.Skipped[0].SessionID != "mer-1" {
+		t.Fatalf("skipped = %v, want mer-1", res.Skipped)
+	}
+	if res.Skipped[0].Reason != "project is archived or unregistered — remove worktree manually" {
+		t.Fatalf("reason = %q, want archived-project reason", res.Skipped[0].Reason)
+	}
+}
+
+// TestSpawnTeardown_WorkspaceRepoPathRoundTrip pins the WorkspaceRepoPath round
+// trip that lets teardown reclaim a worktree without re-resolving the project
+// repo. The workspace layer needs the repo path (the canonical repo a worktree
+// hangs off of) to tear a worktree down; persisting it on spawn means teardown
+// reads it straight from metadata instead of re-deriving it from the project,
+// which fails for archived/unregistered projects (#2608).
+//
+// Two independent assertions bite the two halves of the plumbing:
+//   - WRITE side (manager.go Spawn metadata literal): the spawned session's
+//     stored metadata must carry the workspace's RepoPath. Dropping
+//     `WorkspaceRepoPath: ws.RepoPath` there leaves it empty and fails here.
+//   - READ side (manager.go workspaceInfo): teardown must feed that persisted
+//     path back into workspace.Destroy. Dropping `RepoPath:
+//     rec.Metadata.WorkspaceRepoPath` there makes teardown pass an empty repo
+//     path (a real destroyer would then have to re-resolve the project) and
+//     fails here.
+//
+// The prior suite injected teardown failures by stubbing ws.destroyErr directly,
+// so it never exercised this path and left both mutations green.
+func TestSpawnTeardown_WorkspaceRepoPathRoundTrip(t *testing.T) {
+	m, st, _, ws := newManager()
+	const repoPath = "/repos/mer/canonical"
+	// Production Create resolves and returns the canonical repo path; mirror that
+	// so the value is available to be persisted and later reused.
+	ws.createRepoPath = repoPath
+
+	rec, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Harness: domain.HarnessClaudeCode})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// WRITE side: spawn must persist the workspace repo path into stored metadata.
+	stored, ok, err := st.GetSession(ctx, rec.ID)
+	if err != nil {
+		t.Fatalf("get session: %v", err)
+	}
+	if !ok {
+		t.Fatalf("session %s not found after spawn", rec.ID)
+	}
+	if stored.Metadata.WorkspaceRepoPath != repoPath {
+		t.Fatalf("persisted WorkspaceRepoPath = %q, want %q (write side: manager.go Spawn must set WorkspaceRepoPath: ws.RepoPath)", stored.Metadata.WorkspaceRepoPath, repoPath)
+	}
+
+	// READ side: teardown must feed the persisted repo path into the destroyer
+	// rather than leaving it empty for a project re-resolution.
+	if _, err := m.Kill(ctx, rec.ID); err != nil {
+		t.Fatal(err)
+	}
+	if ws.destroyed == 0 {
+		t.Fatal("expected workspace teardown to destroy the worktree")
+	}
+	if ws.lastDestroyInfo.RepoPath != repoPath {
+		t.Fatalf("teardown RepoPath = %q, want persisted %q (read side: manager.go workspaceInfo must set RepoPath from metadata); empty means teardown fell back to re-resolving the project repo", ws.lastDestroyInfo.RepoPath, repoPath)
 	}
 }
 
@@ -1954,7 +2128,7 @@ func TestCleanup_WorkspaceProjectDirtyRowsAreSkipped(t *testing.T) {
 
 func TestSpawn_DefaultsBranchFromSessionID(t *testing.T) {
 	m, st, _, _ := newManager()
-	s, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	s, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1971,7 +2145,7 @@ func TestSpawn_DefaultsBranchUnderDevNamespaceForDevDataDir(t *testing.T) {
 	m, st, _, _ := newManager()
 	m.dataDir = filepath.Join(home, ".ao", "dev", "data")
 
-	worker, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	worker, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1979,7 +2153,7 @@ func TestSpawn_DefaultsBranchUnderDevNamespaceForDevDataDir(t *testing.T) {
 		t.Fatalf("worker branch = %q, want ao/dev/mer-1/root", got)
 	}
 
-	orchestrator, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindOrchestrator})
+	orchestrator, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindOrchestrator})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1994,7 +2168,7 @@ func TestSpawn_ExplicitBranchBypassesDevNamespace(t *testing.T) {
 	m, st, _, _ := newManager()
 	m.dataDir = filepath.Join(home, ".ao", "dev", "data")
 
-	s, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Branch: "ao/custom"})
+	s, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Branch: "ao/custom"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2016,7 +2190,7 @@ func TestSpawn_ForwardsResolvedAgentConfigPermissions(t *testing.T) {
 	lookPath := func(string) (string, error) { return "/bin/true", nil }
 	m := New(Deps{Runtime: &fakeRuntime{}, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
 
-	_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	_, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2080,7 +2254,7 @@ func TestSpawn_ExplicitModelWinsOverConfigAndIsPersisted(t *testing.T) {
 	agent := &recordingAgent{}
 	m := modelManager(st, agent)
 
-	rec, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Model: "explicit-model"})
+	rec, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Model: "explicit-model"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2101,7 +2275,7 @@ func TestSpawn_OmittedModelFallsBackToConfigResolution(t *testing.T) {
 	agent := &recordingAgent{}
 	m := modelManager(st, agent)
 
-	rec, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	rec, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2127,7 +2301,7 @@ func TestSpawn_PerHarnessModelWinsForResolvedHarness(t *testing.T) {
 	agent := &recordingAgent{}
 	m := modelManager(st, agent)
 
-	rec, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	rec, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2148,7 +2322,7 @@ func TestSpawn_ScalarCrossProviderModelDoesNotLeak(t *testing.T) {
 	agent := &recordingAgent{}
 	m := modelManager(st, agent)
 
-	rec, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	rec, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2168,7 +2342,7 @@ func TestSpawn_UnpinnedClaudeCodeUsesDefaultModel(t *testing.T) {
 	agent := &recordingAgent{}
 	m := modelManager(st, agent)
 
-	rec, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	rec, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2189,7 +2363,7 @@ func TestSpawn_EmptyMixBucketLaunchesHarnessDefault(t *testing.T) {
 	agent := &recordingAgent{}
 	m := modelManager(st, agent)
 
-	rec, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	rec, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2217,7 +2391,7 @@ func TestSpawn_FreshCachedUnreachableSelectionRejectsBeforeAnyState(t *testing.T
 		LookPath: func(string) (string, error) { return "/bin/true", nil },
 	})
 
-	_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	_, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
 	if !errors.Is(err, ErrModelUnreachable) {
 		t.Fatalf("Spawn err = %v, want ErrModelUnreachable", err)
 	}
@@ -2254,7 +2428,7 @@ func TestSpawn_UnknownCachedSelectionFailsOpenWithWarning(t *testing.T) {
 		Logger:   slog.New(slog.NewTextHandler(&logs, nil)),
 	})
 
-	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); err != nil {
+	if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); err != nil {
 		t.Fatalf("Spawn: %v", err)
 	}
 	if len(st.sessions) != 1 {
@@ -2284,7 +2458,7 @@ func TestSpawn_UnsupportedConfiguredEffortRejectsBeforeState(t *testing.T) {
 		LookPath: func(string) (string, error) { return "/bin/true", nil },
 	})
 
-	_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	_, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
 	if !errors.Is(err, ErrModelUnreachable) {
 		t.Fatalf("Spawn err = %v, want ErrModelUnreachable", err)
 	}
@@ -2311,7 +2485,7 @@ func TestSpawn_SupportedConfiguredXHighEffortReachesAdapterUnchanged(t *testing.
 		LookPath: func(string) (string, error) { return "/bin/true", nil },
 	})
 
-	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); err != nil {
+	if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); err != nil {
 		t.Fatalf("Spawn: %v", err)
 	}
 	if agent.lastConfig.Effort != domain.EffortXHigh {
@@ -2334,7 +2508,7 @@ func TestSpawn_ExplicitCrossProviderModelRejectedBeforeState(t *testing.T) {
 		LookPath:       func(string) (string, error) { return "/bin/true", nil },
 	})
 
-	_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Model: "claude-opus-4-5"})
+	_, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Model: "claude-opus-4-5"})
 	if !errors.Is(err, ErrModelHarnessMismatch) {
 		t.Fatalf("Spawn err = %v, want ErrModelHarnessMismatch", err)
 	}
@@ -2369,7 +2543,7 @@ func TestSpawn_ExplicitUnreachableModelNamesSourceBeforeState(t *testing.T) {
 		LookPath:       func(string) (string, error) { return "/bin/true", nil },
 	})
 
-	_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Model: "gpt-5-codex"})
+	_, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Model: "gpt-5-codex"})
 	if !errors.Is(err, ErrModelUnreachable) {
 		t.Fatalf("Spawn err = %v, want ErrModelUnreachable", err)
 	}
@@ -2398,7 +2572,7 @@ func TestSpawn_WorkerMixUnreachableModelNamesSourceBeforeState(t *testing.T) {
 		LookPath:       func(string) (string, error) { return "/bin/true", nil },
 	})
 
-	_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	_, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
 	if !errors.Is(err, ErrModelUnreachable) {
 		t.Fatalf("Spawn err = %v, want ErrModelUnreachable", err)
 	}
@@ -2422,7 +2596,7 @@ func TestSpawn_TrimsModelBeforePersisting(t *testing.T) {
 	agent := &recordingAgent{}
 	m := modelManager(st, agent)
 
-	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Model: "  explicit-model\n"}); err != nil {
+	if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Model: "  explicit-model\n"}); err != nil {
 		t.Fatal(err)
 	}
 	if got := st.sessions["mer-1"].Model; got != "explicit-model" {
@@ -2433,7 +2607,8 @@ func TestSpawn_TrimsModelBeforePersisting(t *testing.T) {
 	}
 
 	// A padded model reaching the spawn from config is trimmed on the same path.
-	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); err != nil {
+	_, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	if err != nil {
 		t.Fatal(err)
 	}
 	if got := st.sessions["mer-2"].Model; got != "role-model" {
@@ -2524,7 +2699,7 @@ func TestSpawnWorker_IssueWithoutPromptGetsFallbackTaskPrompt(t *testing.T) {
 	lookPath := func(string) (string, error) { return "/bin/true", nil }
 	m := New(Deps{Runtime: &fakeRuntime{}, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
 
-	s, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, IssueID: "2272"})
+	s, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, IssueID: "2272"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2555,7 +2730,7 @@ func TestSpawnWorker_ProjectRulesInSystemPrompt(t *testing.T) {
 	lookPath := func(string) (string, error) { return "/bin/true", nil }
 	m := New(Deps{Runtime: &fakeRuntime{}, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
 
-	s, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	s, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2581,7 +2756,7 @@ func TestSpawnWorker_IssueContextStaysInTaskPrompt(t *testing.T) {
 	lookPath := func(string) (string, error) { return "/bin/true", nil }
 	m := New(Deps{Runtime: &fakeRuntime{}, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
 
-	_, err := m.Spawn(ctx, ports.SpawnConfig{
+	_, _, _, err := m.Spawn(ctx, ports.SpawnConfig{
 		ProjectID:    "mer",
 		Kind:         domain.KindWorker,
 		IssueID:      "2272",
@@ -2608,7 +2783,7 @@ func TestSpawnWorker_UsesSlimPolicyScaffold(t *testing.T) {
 	lookPath := func(string) (string, error) { return "/bin/true", nil }
 	m := New(Deps{Runtime: &fakeRuntime{}, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
 
-	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Prompt: "do it"}); err != nil {
+	if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Prompt: "do it"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -2645,7 +2820,7 @@ func TestSpawnWorker_AppendsActiveOrchestratorContact(t *testing.T) {
 	lookPath := func(string) (string, error) { return "/bin/true", nil }
 	m := New(Deps{Runtime: rt, Agents: singleAgent{agent: agent}, Workspace: ws, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
 
-	s, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Harness: domain.HarnessClaudeCode, Prompt: "do it"})
+	s, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Harness: domain.HarnessClaudeCode, Prompt: "do it"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2689,7 +2864,7 @@ func TestSpawnWorker_WritesSystemPromptFile(t *testing.T) {
 		LookPath:  lookPath,
 	})
 
-	s, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Harness: domain.HarnessClaudeCode, Prompt: "do it"})
+	s, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Harness: domain.HarnessClaudeCode, Prompt: "do it"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2725,7 +2900,7 @@ func TestSpawnWorker_FallsBackToInlineWhenPromptFileUnavailable(t *testing.T) {
 		Logger:    slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil)),
 	})
 
-	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Harness: domain.HarnessClaudeCode, Prompt: "do it"}); err != nil {
+	if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Harness: domain.HarnessClaudeCode, Prompt: "do it"}); err != nil {
 		t.Fatal(err)
 	}
 	if agent.lastLaunch.SystemPrompt == "" {
@@ -2752,7 +2927,7 @@ func TestSpawnWorker_PromptFileFailureBlocksFileOnlyHarness(t *testing.T) {
 		LookPath:  lookPath,
 	})
 
-	_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Harness: domain.HarnessAider, Prompt: "do it"})
+	_, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Harness: domain.HarnessAider, Prompt: "do it"})
 	if err == nil {
 		t.Fatal("Spawn succeeded, want prompt-file error for file-only harness")
 	}
@@ -2775,7 +2950,7 @@ func TestSpawnWorker_SkipsTerminatedOrchestratorContact(t *testing.T) {
 	lookPath := func(string) (string, error) { return "/bin/true", nil }
 	m := New(Deps{Runtime: rt, Agents: singleAgent{agent: agent}, Workspace: ws, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
 
-	_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Prompt: "do it"})
+	_, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Prompt: "do it"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2794,7 +2969,7 @@ func TestSpawnOrchestrator_UsesCoordinatorPrompt(t *testing.T) {
 	lookPath := func(string) (string, error) { return "/bin/true", nil }
 	m := New(Deps{Runtime: rt, Agents: singleAgent{agent: agent}, Workspace: ws, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
 
-	_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindOrchestrator})
+	_, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindOrchestrator})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2842,7 +3017,7 @@ func TestSpawnOrchestrator_ProjectRulesInSystemPrompt(t *testing.T) {
 	lookPath := func(string) (string, error) { return "/bin/true", nil }
 	m := New(Deps{Runtime: &fakeRuntime{}, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
 
-	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindOrchestrator}); err != nil {
+	if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindOrchestrator}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -2872,7 +3047,7 @@ func TestSpawnOrchestrator_RulesFileMergedContent(t *testing.T) {
 	lookPath := func(string) (string, error) { return "/bin/true", nil }
 	m := New(Deps{Runtime: &fakeRuntime{}, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
 
-	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindOrchestrator}); err != nil {
+	if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindOrchestrator}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -2893,7 +3068,7 @@ func TestSpawnOrchestrator_MissingRulesFileFailsClosed(t *testing.T) {
 	lookPath := func(string) (string, error) { return "/bin/true", nil }
 	m := New(Deps{Runtime: &fakeRuntime{}, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
 
-	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindOrchestrator}); err == nil {
+	if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindOrchestrator}); err == nil {
 		t.Fatal("expected spawn to fail closed on missing orchestrator rules file")
 	}
 }
@@ -2911,7 +3086,7 @@ func TestSpawnOrchestrator_WorkspaceProjectPromptListsRepos(t *testing.T) {
 	lookPath := func(string) (string, error) { return "/bin/true", nil }
 	m := New(Deps{Runtime: rt, Agents: singleAgent{agent: agent}, Workspace: ws, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
 
-	_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindOrchestrator})
+	_, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindOrchestrator})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2945,7 +3120,7 @@ func TestSpawnWorker_WorkspaceProjectPromptListsRepos(t *testing.T) {
 	lookPath := func(string) (string, error) { return "/bin/true", nil }
 	m := New(Deps{Runtime: rt, Agents: singleAgent{agent: agent}, Workspace: ws, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
 
-	_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Prompt: "fix api"})
+	_, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Prompt: "fix api"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3051,7 +3226,7 @@ func TestSpawn_ProjectlessPrimeUsesFleetWorkspaceAndSettings(t *testing.T) {
 		LookPath:  func(string) (string, error) { return "/bin/true", nil },
 	})
 
-	rec, err := m.Spawn(ctx, ports.SpawnConfig{
+	rec, _, _, err := m.Spawn(ctx, ports.SpawnConfig{
 		Kind:        domain.KindPrime,
 		Harness:     domain.HarnessCodex,
 		Model:       "gpt-5-codex",
@@ -3726,7 +3901,7 @@ func TestSpawn_RejectsMissingAgentBinary(t *testing.T) {
 	}
 	m := New(Deps{Runtime: rt, Agents: fakeAgents{}, Workspace: ws, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, DataDir: dataDir, LookPath: notFound})
 
-	_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	_, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
 	if !errors.Is(err, ports.ErrAgentBinaryNotFound) {
 		t.Fatalf("err = %v, want ports.ErrAgentBinaryNotFound", err)
 	}
@@ -3762,11 +3937,15 @@ func TestSpawn_ValidatesBinaryAfterEnvPrefix(t *testing.T) {
 	agent := launchArgvAgent{argv: []string{"env", "OPENCODE_CONFIG=/tmp/ao/opencode.json", "opencode", "--agent", "ao-mer-1"}}
 	m := New(Deps{Runtime: rt, Agents: singleAgent{agent: agent}, Workspace: ws, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
 
-	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); err != nil {
+	if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); err != nil {
 		t.Fatalf("Spawn: %v", err)
 	}
-	if !reflect.DeepEqual(lookedUp, []string{"tmux", "opencode"}) {
-		t.Fatalf("lookups = %#v, want tmux then opencode", lookedUp)
+	wantLookups := []string{"opencode"}
+	if runtime.GOOS != "windows" {
+		wantLookups = []string{"tmux", "opencode"}
+	}
+	if !reflect.DeepEqual(lookedUp, wantLookups) {
+		t.Fatalf("lookups = %#v, want %#v", lookedUp, wantLookups)
 	}
 	if rt.created != 1 {
 		t.Fatalf("runtime.Create calls = %d, want 1", rt.created)
@@ -3795,12 +3974,16 @@ func TestSpawn_RejectsMissingBinaryAfterEnvPrefix(t *testing.T) {
 	agent := launchArgvAgent{argv: []string{"env", "OPENCODE_CONFIG=/tmp/ao/opencode.json", "opencode", "--agent", "ao-mer-1"}}
 	m := New(Deps{Runtime: rt, Agents: singleAgent{agent: agent}, Workspace: ws, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
 
-	_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	_, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
 	if !errors.Is(err, ports.ErrAgentBinaryNotFound) {
 		t.Fatalf("err = %v, want ports.ErrAgentBinaryNotFound", err)
 	}
-	if !reflect.DeepEqual(lookedUp, []string{"tmux", "opencode"}) {
-		t.Fatalf("lookups = %#v, want tmux then opencode", lookedUp)
+	wantLookups := []string{"opencode"}
+	if runtime.GOOS != "windows" {
+		wantLookups = []string{"tmux", "opencode"}
+	}
+	if !reflect.DeepEqual(lookedUp, wantLookups) {
+		t.Fatalf("lookups = %#v, want %#v", lookedUp, wantLookups)
 	}
 	if rt.created != 0 {
 		t.Fatal("runtime.Create must NOT run when the env-prefixed agent binary is missing")
@@ -3830,7 +4013,7 @@ func TestSpawn_RejectsEnvPrefixWithoutBinary(t *testing.T) {
 		},
 	})
 
-	_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	_, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
 	if !errors.Is(err, ports.ErrAgentBinaryNotFound) {
 		t.Fatalf("err = %v, want ports.ErrAgentBinaryNotFound", err)
 	}
@@ -3858,7 +4041,7 @@ func TestSpawn_RejectsMissingTmuxBeforeSessionRow(t *testing.T) {
 	}
 	m := New(Deps{Runtime: rt, Agents: fakeAgents{}, Workspace: ws, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
 
-	_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	_, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
 	if !errors.Is(err, ports.ErrRuntimePrerequisite) || !strings.Contains(err.Error(), "tmux required") {
 		t.Fatalf("err = %v, want missing tmux prerequisite", err)
 	}
@@ -3879,7 +4062,7 @@ func TestSpawn_RejectsUnknownHarness(t *testing.T) {
 	ws := &fakeWorkspace{}
 	m := New(Deps{Runtime: rt, Agents: missingAgents{}, Workspace: ws, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: func(string) (string, error) { return "/bin/true", nil }})
 
-	_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Harness: "bogus"})
+	_, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Harness: "bogus"})
 	if !errors.Is(err, ErrUnknownHarness) {
 		t.Fatalf("err = %v, want ErrUnknownHarness", err)
 	}
@@ -3931,7 +4114,7 @@ func TestSpawnAndRestore_PinHookPATHToDaemonBinary(t *testing.T) {
 		{
 			name: "spawn",
 			launch: func(m *Manager, _ *fakeStore) error {
-				_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+				_, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
 				return err
 			},
 		},
@@ -3972,7 +4155,7 @@ func TestSpawn_HookPATHPinUnavailable(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			m, _, rt, logBuf := pathPinManager(tc.executable)
-			if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); err != nil {
+			if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); err != nil {
 				t.Fatal(err)
 			}
 			if got, ok := rt.lastCfg.Env["PATH"]; ok {
@@ -3995,7 +4178,7 @@ func TestSpawn_ProjectPATHIsPinBase(t *testing.T) {
 		Env:    map[string]string{"PATH": "/proj/bin"},
 		Worker: domain.RoleOverride{Harness: domain.HarnessClaudeCode},
 	}}
-	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); err != nil {
+	if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); err != nil {
 		t.Fatal(err)
 	}
 	want := filepath.Dir(daemonExe) + string(os.PathListSeparator) + "/proj/bin"
@@ -4051,7 +4234,7 @@ func TestSpawnAndRestore_PrependsResolvedBinaryAndNodeDirsToRuntimePATH(t *testi
 				Executable: func() (string, error) { return daemonExe, nil },
 			})
 			if operation == "spawn" {
-				_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+				_, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
 				if err != nil {
 					t.Fatalf("Spawn: %v", err)
 				}
@@ -4094,7 +4277,7 @@ func TestSpawn_DoesNotAddNodeRuntimeForNativeBinary(t *testing.T) {
 		},
 		Executable: func() (string, error) { return "/ao/bin/ao", nil },
 	})
-	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); err != nil {
+	if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); err != nil {
 		t.Fatalf("Spawn: %v", err)
 	}
 	if nodeLookups != 0 {
@@ -4108,12 +4291,44 @@ func TestSpawn_DoesNotAddNodeRuntimeForNativeBinary(t *testing.T) {
 
 func TestSpawn_KeepsExplicitBranch(t *testing.T) {
 	m, st, _, _ := newManager()
-	s, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Branch: "feature/x"})
+	s, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Branch: "feature/x"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got := st.sessions[s.ID].Metadata.Branch; got != "feature/x" {
 		t.Fatalf("explicit branch = %q, want feature/x", got)
+	}
+}
+
+func TestSpawn_ScratchUsesBranchlessWorkspace(t *testing.T) {
+	m, st, _, ws := newManager()
+	st.projects["scratch"] = domain.ProjectRecord{ID: "scratch", Kind: domain.ProjectKindScratch, Config: testRoleAgents()}
+
+	s, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "scratch", Kind: domain.KindWorker})
+	if err != nil {
+		t.Fatalf("Spawn scratch: %v", err)
+	}
+	if s.Metadata.Branch != "" {
+		t.Fatalf("scratch session branch = %q, want empty", s.Metadata.Branch)
+	}
+	if ws.lastCfg.Branch != "" || ws.lastCfg.BaseBranch != "" {
+		t.Fatalf("workspace branch/base = %q/%q, want empty", ws.lastCfg.Branch, ws.lastCfg.BaseBranch)
+	}
+	if rows := st.worktrees[s.ID]; len(rows) != 0 {
+		t.Fatalf("scratch spawn must not write session_worktrees rows, got %#v", rows)
+	}
+}
+
+func TestSpawn_ScratchRejectsExplicitBranchBeforeSessionRow(t *testing.T) {
+	m, st, _, _ := newManager()
+	st.projects["scratch"] = domain.ProjectRecord{ID: "scratch", Kind: domain.ProjectKindScratch, Config: testRoleAgents()}
+
+	_, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "scratch", Kind: domain.KindWorker, Branch: "feature/x"})
+	if !errors.Is(err, ErrScratchBranchUnsupported) {
+		t.Fatalf("Spawn scratch explicit branch err = %v, want ErrScratchBranchUnsupported", err)
+	}
+	if len(st.sessions) != 0 {
+		t.Fatalf("scratch explicit branch must not create a session row, got %d rows", len(st.sessions))
 	}
 }
 
@@ -4221,6 +4436,34 @@ func TestSaveAndTeardownAll_CaptureOrderAndMarker(t *testing.T) {
 	}
 }
 
+func TestSaveAndTeardownAll_SkipsScratchSessions(t *testing.T) {
+	m, st, rt, ws := newLifecycleManager()
+	st.projects["scratch"] = domain.ProjectRecord{ID: "scratch", Kind: domain.ProjectKindScratch, Config: testRoleAgents()}
+	st.sessions["scratch-1"] = domain.SessionRecord{
+		ID:        "scratch-1",
+		ProjectID: "scratch",
+		Kind:      domain.KindWorker,
+		Metadata:  domain.SessionMetadata{WorkspacePath: "/ws/scratch-1", RuntimeHandleID: "h1"},
+		Activity:  domain.Activity{State: domain.ActivityActive},
+	}
+
+	if err := m.SaveAndTeardownAll(ctx); err != nil {
+		t.Fatalf("SaveAndTeardownAll err = %v", err)
+	}
+	if st.sessions["scratch-1"].IsTerminated {
+		t.Fatal("scratch session must stay live during graceful shutdown")
+	}
+	if ws.stashCalls != 0 || len(ws.calls) != 0 {
+		t.Fatalf("scratch shutdown must not stash or force destroy, calls=%v stash=%d", ws.calls, ws.stashCalls)
+	}
+	if rt.destroyed != 0 {
+		t.Fatalf("runtime Destroy calls = %d, want 0", rt.destroyed)
+	}
+	if rows := st.worktrees["scratch-1"]; len(rows) != 0 {
+		t.Fatalf("scratch shutdown must not write restore markers, got %#v", rows)
+	}
+}
+
 func TestRetireForReplacementCapturesAndReleasesWorkspace(t *testing.T) {
 	m, st, rt, ws := newLifecycleManager()
 	var sharedLog []string
@@ -4272,6 +4515,34 @@ func TestRetireForReplacementCapturesAndReleasesWorkspace(t *testing.T) {
 	}
 	if stashIdx >= forceIdx || forceIdx >= deleteIdx {
 		t.Fatalf("replacement retire must capture, force release, then clear restore marker; log=%v", sharedLog)
+	}
+}
+
+func TestRetireForReplacement_ScratchPreservesWorkspace(t *testing.T) {
+	m, st, rt, ws := newLifecycleManager()
+	st.projects["scratch"] = domain.ProjectRecord{ID: "scratch", Kind: domain.ProjectKindScratch, Config: testRoleAgents()}
+	st.sessions["scratch-1"] = domain.SessionRecord{
+		ID:        "scratch-1",
+		ProjectID: "scratch",
+		Kind:      domain.KindOrchestrator,
+		Metadata:  domain.SessionMetadata{WorkspacePath: "/ws/scratch-1", RuntimeHandleID: "orch-handle"},
+		Activity:  domain.Activity{State: domain.ActivityActive},
+	}
+
+	if err := m.RetireForReplacement(ctx, "scratch-1"); err != nil {
+		t.Fatalf("RetireForReplacement err = %v", err)
+	}
+	if !st.sessions["scratch-1"].IsTerminated {
+		t.Fatal("scratch orchestrator must be marked terminated")
+	}
+	if rt.destroyed != 1 || rt.destroyedIDs[0] != "orch-handle" {
+		t.Fatalf("runtime destroyed = %d ids=%v, want orch-handle", rt.destroyed, rt.destroyedIDs)
+	}
+	if ws.stashCalls != 0 || len(ws.calls) != 0 {
+		t.Fatalf("scratch replacement must preserve workspace without stash/force destroy, calls=%v stash=%d", ws.calls, ws.stashCalls)
+	}
+	if rows := st.worktrees["scratch-1"]; len(rows) != 0 {
+		t.Fatalf("scratch replacement must not write restore markers, got %#v", rows)
 	}
 }
 
@@ -5314,6 +5585,45 @@ func TestReconcileLive_ProbeErrorIsNotDeath(t *testing.T) {
 	}
 	if rt.destroyed != 0 {
 		t.Fatalf("Destroy calls = %d, want 0 (probe error is not death)", rt.destroyed)
+	}
+}
+
+func TestReconcileLive_ScratchDeadRuntimeTerminatesWithoutWorkspaceTeardown(t *testing.T) {
+	st := newFakeStore()
+	st.projects["scratch"] = domain.ProjectRecord{ID: "scratch", Kind: domain.ProjectKindScratch, Config: testRoleAgents()}
+	rt := &fakeRuntime{aliveByHandle: map[string]bool{}}
+	ws := &fakeWorkspace{stashRef: "refs/ao/preserved/scratch-1"}
+	lcm := &fakeLCM{store: st}
+	m := New(Deps{
+		Runtime:   rt,
+		Agents:    fakeAgents{},
+		Workspace: ws,
+		Store:     st,
+		Messenger: &fakeMessenger{},
+		Lifecycle: lcm,
+		LookPath:  func(string) (string, error) { return "/bin/true", nil },
+	})
+	rec := domain.SessionRecord{
+		ID:        "scratch-1",
+		ProjectID: "scratch",
+		Kind:      domain.KindWorker,
+		Harness:   domain.HarnessClaudeCode,
+		Metadata:  domain.SessionMetadata{WorkspacePath: "/ws/scratch-1", RuntimeHandleID: "dead"},
+		Activity:  domain.Activity{State: domain.ActivityActive},
+	}
+	st.sessions[rec.ID] = rec
+
+	if err := m.reconcileLive(ctx, rec); err != nil {
+		t.Fatalf("reconcileLive: %v", err)
+	}
+	if lcm.terminated["scratch-1"] != 1 {
+		t.Fatalf("MarkTerminated = %d, want 1", lcm.terminated["scratch-1"])
+	}
+	if ws.stashCalls != 0 || len(ws.calls) != 0 {
+		t.Fatalf("scratch reconcile must not stash or force destroy, calls=%v stash=%d", ws.calls, ws.stashCalls)
+	}
+	if rows := st.worktrees["scratch-1"]; len(rows) != 0 {
+		t.Fatalf("scratch reconcile must not write restore markers, got %#v", rows)
 	}
 }
 

@@ -44,7 +44,7 @@ type ListFilter struct {
 // commander is the command-side surface Service delegates to: the
 // *sessionmanager.Manager in production, a fake in tests.
 type commander interface {
-	Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.SessionRecord, error)
+	Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.SessionRecord, int, int, error)
 	RestoreWithMode(ctx context.Context, id domain.SessionID) (sessionmanager.RestoreResult, error)
 	Kill(ctx context.Context, id domain.SessionID) (bool, error)
 	RetireForReplacement(ctx context.Context, id domain.SessionID) error
@@ -156,14 +156,15 @@ func NewWithDeps(d Deps) *Service {
 	return s
 }
 
-// Spawn creates a session and returns the API-facing read model.
-func (s *Service) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Session, error) {
+// Spawn creates a session and returns the API-facing read model plus
+// ephemeral prompt size measurements.
+func (s *Service) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Session, int, int, error) {
 	return s.spawn(ctx, cfg, false)
 }
 
-func (s *Service) spawn(ctx context.Context, cfg ports.SpawnConfig, allowPrime bool) (domain.Session, error) {
+func (s *Service) spawn(ctx context.Context, cfg ports.SpawnConfig, allowPrime bool) (domain.Session, int, int, error) {
 	if cfg.Kind == domain.KindPrime && !allowPrime {
-		return domain.Session{}, apierr.Forbidden("PRIME_MANUAL_SPAWN_FORBIDDEN", "Prime sessions are started only by the fleet Prime supervisor", nil)
+		return domain.Session{}, 0, 0, apierr.Forbidden("PRIME_MANUAL_SPAWN_FORBIDDEN", "Prime sessions are started only by the fleet Prime supervisor", nil)
 	}
 	projectlessPrime := allowPrime && cfg.Kind == domain.KindPrime && cfg.ProjectID == ""
 	project := domain.ProjectRecord{}
@@ -171,27 +172,31 @@ func (s *Service) spawn(ctx context.Context, cfg ports.SpawnConfig, allowPrime b
 	if !projectlessPrime {
 		project, err = s.requireProject(ctx, cfg.ProjectID)
 		if err != nil {
-			return domain.Session{}, err
+			return domain.Session{}, 0, 0, err
 		}
 	}
 	start := s.now()
 	firstSession, err := s.isFirstSession(ctx)
 	if err != nil {
-		return domain.Session{}, fmt.Errorf("count sessions: %w", err)
+		return domain.Session{}, 0, 0, fmt.Errorf("count sessions: %w", err)
 	}
 	if !projectlessPrime {
 		cfg = s.withIssueContext(ctx, cfg, project)
 	}
-	rec, err := s.manager.Spawn(ctx, cfg)
+	rec, promptBytes, systemPromptBytes, err := s.manager.Spawn(ctx, cfg)
 	if err != nil {
 		s.emitSpawnFailed(cfg, err, s.now().Sub(start).Milliseconds())
-		return domain.Session{}, toAPIError(err)
+		return domain.Session{}, 0, 0, toAPIError(err)
 	}
 	s.emitSpawned(rec, s.now().Sub(start).Milliseconds())
 	if firstSession && !projectlessPrime {
 		s.emitFirstSessionSpawned(rec, project)
 	}
-	return s.toSession(ctx, rec)
+	sess, err := s.toSession(ctx, rec)
+	if err != nil {
+		return domain.Session{}, 0, 0, err
+	}
+	return sess, promptBytes, systemPromptBytes, nil
 }
 
 // requireProject verifies the project is registered before any spawn write
@@ -334,7 +339,7 @@ func (s *Service) SpawnOrchestrator(ctx context.Context, projectID domain.Projec
 			return newestSession(existing), nil
 		}
 	}
-	sess, err := s.Spawn(ctx, ports.SpawnConfig{ProjectID: projectID, Kind: domain.KindOrchestrator})
+	sess, _, _, err := s.Spawn(ctx, ports.SpawnConfig{ProjectID: projectID, Kind: domain.KindOrchestrator})
 	if err != nil {
 		return domain.Session{}, err
 	}
@@ -382,7 +387,7 @@ func (s *Service) SpawnPrime(ctx context.Context, projectID domain.ProjectID, cl
 	if displayName == "" {
 		displayName = domain.DefaultPrimeSettings().DisplayName
 	}
-	sess, err := s.spawn(ctx, ports.SpawnConfig{
+	sess, _, _, err := s.spawn(ctx, ports.SpawnConfig{
 		ProjectID:   "",
 		Kind:        domain.KindPrime,
 		DisplayName: displayName,
@@ -786,6 +791,8 @@ func toAPIError(err error) error {
 		// A selected worker-mix bucket is currently marked down. It is retryable
 		// once the candidate recovers, so surface it as a conflict.
 		return apierr.Conflict("WORKER_MIX_BUCKET_DOWN", err.Error(), nil)
+	case errors.Is(err, sessionmanager.ErrScratchBranchUnsupported):
+		return apierr.Invalid("SCRATCH_BRANCH_UNSUPPORTED", err.Error(), nil)
 	case errors.Is(err, ports.ErrWorkspaceBranchCheckedOutElsewhere):
 		return apierr.Conflict("BRANCH_CHECKED_OUT_ELSEWHERE", err.Error(), nil)
 	case errors.Is(err, ports.ErrWorkspaceBranchNotFetched):

@@ -120,7 +120,7 @@ func TestSpawn_MixSelectedBinaryMissingMarksDown(t *testing.T) {
 	tr := candidatehealth.New(candidatehealth.Config{Source: "session_manager"})
 	m, _, _ := healthMixManager(t, domain.ProjectConfig{WorkerMix: singleBucketMix()}, tr, binaryMissingLookPath())
 
-	_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	_, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
 	if !errors.Is(err, ports.ErrAgentBinaryNotFound) {
 		t.Fatalf("spawn err = %v, want ErrAgentBinaryNotFound", err)
 	}
@@ -136,7 +136,7 @@ func TestSpawn_MixSelectedLaunchCommandBinaryMissingMarksDown(t *testing.T) {
 	tr := candidatehealth.New(candidatehealth.Config{Source: "session_manager"})
 	m := launchCmdFailManager(t, tr, fmt.Errorf("copilot: %w", ports.ErrAgentBinaryNotFound))
 
-	_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	_, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
 	if !errors.Is(err, ports.ErrAgentBinaryNotFound) {
 		t.Fatalf("spawn err = %v, want ErrAgentBinaryNotFound", err)
 	}
@@ -151,7 +151,7 @@ func TestSpawn_MixSelectedLaunchCommandGenericErrorDoesNotMarkDown(t *testing.T)
 	tr := candidatehealth.New(candidatehealth.Config{Source: "session_manager"})
 	m := launchCmdFailManager(t, tr, errors.New("prompt template build failed"))
 
-	_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	_, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
 	if err == nil {
 		t.Fatal("expected spawn to fail")
 	}
@@ -168,7 +168,7 @@ func TestSpawn_MixSelectedRuntimeRefusedMarksDown(t *testing.T) {
 	m, rt, _ := healthMixManager(t, domain.ProjectConfig{WorkerMix: singleBucketMix()}, tr, nil)
 	rt.createErr = errors.New("runtime refused to create")
 
-	_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	_, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
 	if err == nil {
 		t.Fatal("expected runtime-refused spawn to fail")
 	}
@@ -191,7 +191,7 @@ func TestSpawn_MixSelectedWorkspacePreparationFailureMarksDown(t *testing.T) {
 		LookPath: func(string) (string, error) { return "/bin/true", nil }, Health: tr,
 	})
 
-	_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	_, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
 	if err == nil {
 		t.Fatal("expected workspace preparation failure")
 	}
@@ -214,7 +214,7 @@ func TestSpawn_MixSelectedAfterStartPromptFailureMarksDown(t *testing.T) {
 		LookPath: func(string) (string, error) { return "/bin/true", nil }, Health: tr,
 	})
 
-	_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Prompt: "fix the button"})
+	_, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Prompt: "fix the button"})
 	if err == nil {
 		t.Fatal("expected after-start prompt delivery failure")
 	}
@@ -235,7 +235,7 @@ func TestSpawn_MixSelectedUnknownHarnessDoesNotMarkDown(t *testing.T) {
 		LookPath: func(string) (string, error) { return "/bin/true", nil }, Health: tr,
 	})
 
-	_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	_, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
 	if !errors.Is(err, ErrUnknownHarness) {
 		t.Fatalf("spawn err = %v, want ErrUnknownHarness", err)
 	}
@@ -253,7 +253,7 @@ func TestSpawn_MixSelectedEnvironmentalErrorDoesNotMarkDown(t *testing.T) {
 	m, _, ws := healthMixManager(t, domain.ProjectConfig{WorkerMix: singleBucketMix()}, tr, nil)
 	ws.createErr = errors.New("no space left on device")
 
-	_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	_, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
 	if err == nil {
 		t.Fatal("expected workspace failure to fail the spawn")
 	}
@@ -271,7 +271,7 @@ func TestSpawn_MixSelectedCallerCanceledDoesNotMarkDown(t *testing.T) {
 
 	cctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, err := m.Spawn(cctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	_, _, _, err := m.Spawn(cctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
 	if !errors.Is(err, ports.ErrAgentBinaryNotFound) {
 		t.Fatalf("spawn err = %v, want it to reach the agent-binary check", err)
 	}
@@ -294,7 +294,7 @@ func TestSpawn_DownBucketDebitPreservedAndFailsWhenSelected(t *testing.T) {
 		t.Fatalf("first selection = %q, want codex while down bucket carries one skip debit", first.Harness)
 	}
 
-	_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	_, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
 	if !errors.Is(err, ErrWorkerMixBucketDown) {
 		t.Fatalf("second spawn err = %v, want ErrWorkerMixBucketDown when down bucket's slot is selected", err)
 	}
@@ -308,7 +308,7 @@ func TestSpawn_AllBucketsDownFailsLoudly(t *testing.T) {
 	tr.MarkDown(workerMixCandidate(domain.HarnessClaudeCode, "", ""), errors.New("binary gone"))
 	tr.MarkDown(workerMixCandidate(domain.HarnessCodex, "", ""), errors.New("runtime refused"))
 
-	_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	_, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
 	if !errors.Is(err, ErrWorkerMixExhausted) {
 		t.Fatalf("spawn err = %v, want ErrWorkerMixExhausted", err)
 	}
@@ -323,7 +323,7 @@ func TestSpawn_ModelOnlyFailureMarksExplicitModelCandidateDown(t *testing.T) {
 	}, tr, nil)
 	rt.createErr = errors.New("runtime refused explicit model")
 
-	_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Model: "gpt-5.5-codex"})
+	_, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Model: "gpt-5.5-codex"})
 	if err == nil {
 		t.Fatal("expected explicit-model launch failure")
 	}
@@ -337,12 +337,12 @@ func TestSpawn_ModelOnlyFailureMarksExplicitModelCandidateDown(t *testing.T) {
 	}
 
 	rt.createErr = nil
-	_, err = m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Model: "gpt-5.5-codex"})
+	_, _, _, err = m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Model: "gpt-5.5-codex"})
 	if !errors.Is(err, ErrWorkerMixExhausted) {
 		t.Fatalf("repeat explicit-model spawn err = %v, want ErrWorkerMixExhausted for the all-down overlaid mix", err)
 	}
 
-	_, err = m.Spawn(ctx, ports.SpawnConfig{
+	_, _, _, err = m.Spawn(ctx, ports.SpawnConfig{
 		ProjectID: "mer", Kind: domain.KindWorker, Harness: domain.HarnessCodex, Model: "gpt-5.5-codex",
 	})
 	if err != nil {
@@ -351,7 +351,7 @@ func TestSpawn_ModelOnlyFailureMarksExplicitModelCandidateDown(t *testing.T) {
 	if tr.IsDown(actual) {
 		t.Fatal("successful exact overlay spawn did not recover the explicit model candidate")
 	}
-	_, err = m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Model: "gpt-5.5-codex"})
+	_, _, _, err = m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Model: "gpt-5.5-codex"})
 	if err != nil {
 		t.Fatalf("model-only spawn after recovery: %v", err)
 	}
@@ -367,13 +367,13 @@ func TestSpawn_ModelOnlyDownOverlayDebitSelectsHealthyBucket(t *testing.T) {
 	}, tr, nil)
 	rt.createErr = errors.New("runtime refused explicit model")
 
-	_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Model: "explicit-overlay-model"})
+	_, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Model: "explicit-overlay-model"})
 	if err == nil {
 		t.Fatal("expected first explicit-overlay launch failure")
 	}
 	rt.createErr = nil
 
-	rec, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Model: "explicit-overlay-model"})
+	rec, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Model: "explicit-overlay-model"})
 	if err != nil {
 		t.Fatalf("second explicit-overlay spawn: %v", err)
 	}
@@ -397,7 +397,7 @@ func TestSpawn_SuccessfulSpawnRecoversDownBucket(t *testing.T) {
 		t.Fatal("precondition: the bucket should be down")
 	}
 
-	if _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Harness: domain.HarnessClaudeCode}); err != nil {
+	if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Harness: domain.HarnessClaudeCode}); err != nil {
 		t.Fatal(err)
 	}
 	if tr.IsDown(cand) {
@@ -415,7 +415,7 @@ func TestSpawn_PinnedFailureDoesNotMarkDown(t *testing.T) {
 	tr := candidatehealth.New(candidatehealth.Config{Source: "session_manager"})
 	m, _, _ := healthMixManager(t, domain.ProjectConfig{WorkerMix: singleBucketMix()}, tr, binaryMissingLookPath())
 
-	_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Harness: domain.HarnessClaudeCode})
+	_, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Harness: domain.HarnessClaudeCode})
 	if !errors.Is(err, ports.ErrAgentBinaryNotFound) {
 		t.Fatalf("spawn err = %v, want ErrAgentBinaryNotFound", err)
 	}

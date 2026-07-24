@@ -38,6 +38,7 @@ type APIDeps struct {
 	QuotaProber        controllers.QuotaProber
 	Push               controllers.PushRegistry
 	Import             controllers.ImportService
+	ShellTerminals     controllers.ShellTerminalService
 	DevImport          controllers.DevImportService
 	CDC                cdc.Source
 	Events             cdcSubscriber
@@ -61,6 +62,7 @@ type API struct {
 	metrics       *controllers.MetricsController
 	push          *controllers.PushController
 	imports       *controllers.ImportController
+	shellTerms    *controllers.ShellTerminalsController
 	dev           *controllers.DevController
 	events        *EventsController
 }
@@ -96,6 +98,7 @@ func NewAPI(cfg config.Config, deps APIDeps) *API {
 		metrics:       &controllers.MetricsController{Provider: deps.Metrics, Prober: deps.QuotaProber},
 		push:          &controllers.PushController{Registry: deps.Push},
 		imports:       &controllers.ImportController{Svc: deps.Import},
+		shellTerms:    &controllers.ShellTerminalsController{Svc: deps.ShellTerminals},
 		dev:           &controllers.DevController{Import: deps.DevImport},
 		events:        &EventsController{Source: deps.CDC, Live: deps.Events, StreamContext: deps.StreamContext},
 	}
@@ -126,6 +129,7 @@ func (a *API) Register(root chi.Router) {
 			a.metrics.Register(r)
 			a.push.Register(r)
 			a.imports.Register(r)
+			a.shellTerms.Register(r)
 			a.dev.Register(r)
 			// Sibling REST controllers plug in here.
 		})

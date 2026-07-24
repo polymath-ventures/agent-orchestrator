@@ -35,7 +35,7 @@ func mixManager(cfg domain.ProjectConfig) (*Manager, *fakeStore) {
 
 func spawnUnpinnedWorker(t *testing.T, m *Manager) domain.SessionRecord {
 	t.Helper()
-	rec, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	rec, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
 	if err != nil {
 		t.Fatalf("unpinned worker spawn: %v", err)
 	}
@@ -171,7 +171,7 @@ func TestSpawn_RejectsBucketsThatDuplicateAfterEffortInheritance(t *testing.T) {
 		},
 	})
 
-	_, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	_, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
 	if err == nil || !strings.Contains(err.Error(), "duplicate bucket") {
 		t.Fatalf("Spawn err = %v, want duplicate effective tuple", err)
 	}
@@ -196,7 +196,7 @@ func TestSpawn_MixOnlyProjectIsSpawnable(t *testing.T) {
 func TestSpawn_PinnedSpawnBypassesMix(t *testing.T) {
 	m, _ := mixManager(domain.ProjectConfig{WorkerMix: testMix()})
 
-	rec, err := m.Spawn(ctx, ports.SpawnConfig{
+	rec, _, _, err := m.Spawn(ctx, ports.SpawnConfig{
 		ProjectID: "mer", Kind: domain.KindWorker,
 		Harness: domain.HarnessGrok, Model: "grok-4",
 	})
@@ -216,7 +216,7 @@ func TestSpawn_ModelOnlyPinUsesMixSelectedHarness(t *testing.T) {
 		Worker:    domain.RoleOverride{Harness: domain.HarnessGrok},
 	})
 
-	rec, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Model: "grok-4"})
+	rec, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Model: "grok-4"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -236,7 +236,7 @@ func TestSpawn_ModelOnlyPinConsumesSelectedBucketShare(t *testing.T) {
 		},
 	})
 
-	first, err := m.Spawn(ctx, ports.SpawnConfig{
+	first, _, _, err := m.Spawn(ctx, ports.SpawnConfig{
 		ProjectID: "mer", Kind: domain.KindWorker, Model: "explicit-overlay-model",
 	})
 	if err != nil {
@@ -290,7 +290,7 @@ func TestSpawn_MixSelectionIsRecordedOnSession(t *testing.T) {
 		t.Fatal("persisted mixSelected = false, want true")
 	}
 
-	pinned, err := m.Spawn(ctx, ports.SpawnConfig{
+	pinned, _, _, err := m.Spawn(ctx, ports.SpawnConfig{
 		ProjectID: "mer", Kind: domain.KindWorker, Harness: domain.HarnessClaudeCode,
 	})
 	if err != nil {
