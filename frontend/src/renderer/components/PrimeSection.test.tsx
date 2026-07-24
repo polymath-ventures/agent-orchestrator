@@ -121,8 +121,32 @@ describe("PrimeSection", () => {
 		expect(screen.getByLabelText("Effort")).toHaveValue("high");
 		expect(screen.getByLabelText("Wake interval minutes")).toHaveValue(15);
 		expect(screen.getByLabelText("Instructions file path")).toHaveValue("/etc/ao/prime.md");
+		expect(screen.getByText(/Manual model IDs are allowed/i)).toBeInTheDocument();
 		expect(screen.getByText(/Inline instructions are loaded first/i)).toBeInTheDocument();
 		expect(screen.queryByText(/Legacy Prime environment/i)).not.toBeInTheDocument();
+	});
+
+	it("groups instruction fields after the model selector", async () => {
+		renderPrimeSection();
+
+		await screen.findByLabelText("Enable fleet Prime");
+		const displayName = screen.getByText("Display name");
+		const wakeInterval = screen.getByText("Wake interval minutes");
+		const modelSection = screen.getByText("Prime model and effort");
+		const manualModelHelp = screen.getByText(/Manual model IDs are allowed/i);
+		const inlineInstructions = screen.getByText("Inline instructions");
+		const instructionsFilePath = screen.getByText("Instructions file path");
+		const helpText = screen.getByText(/Inline instructions are loaded first/i);
+
+		expect(displayName.compareDocumentPosition(wakeInterval) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+		expect(wakeInterval.compareDocumentPosition(modelSection) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+		expect(modelSection.compareDocumentPosition(manualModelHelp) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+		expect(manualModelHelp.compareDocumentPosition(inlineInstructions) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+		expect(modelSection.compareDocumentPosition(inlineInstructions) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+		expect(
+			inlineInstructions.compareDocumentPosition(instructionsFilePath) & Node.DOCUMENT_POSITION_FOLLOWING,
+		).toBeTruthy();
+		expect(instructionsFilePath.compareDocumentPosition(helpText) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 	});
 
 	it("limits Prime harness choices to installed inventory plus the saved harness", async () => {
@@ -196,6 +220,34 @@ describe("PrimeSection", () => {
 			]),
 		);
 		expect(await screen.findByText(/Model catalogs are unavailable/i)).toBeInTheDocument();
+	});
+
+	it("hides non-actionable unknown model probe status", async () => {
+		modelAvailabilityResult = {
+			data: {
+				...modelAvailability,
+				harnesses: modelAvailability.harnesses.map((harness) =>
+					harness.id === "codex"
+						? {
+								...harness,
+								models: harness.models.map((model) => ({
+									...model,
+									verified: false,
+									status: "unknown" as const,
+									reason: "not probed; only configured pins are live-validated",
+								})),
+							}
+						: harness,
+				),
+			},
+			error: undefined,
+		};
+
+		renderPrimeSection();
+
+		await waitFor(() => expect(screen.getByLabelText("Model")).toHaveValue("gpt-5-codex"));
+		expect(screen.queryByText(/Status: unknown/i)).not.toBeInTheDocument();
+		expect(screen.queryByText(/only configured pins are live-validated/i)).not.toBeInTheDocument();
 	});
 
 	it("saves edited global Prime settings", async () => {

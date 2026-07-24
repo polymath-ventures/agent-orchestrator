@@ -222,6 +222,7 @@ export function WorkerMixFields({
 								isRefreshing={isRefreshing}
 								onRefresh={onRefresh}
 								showHarness={false}
+								statusVisibility="actionable"
 								emptyLabel="Default / inherit"
 							/>
 							<p className="text-[11px] text-passive">
