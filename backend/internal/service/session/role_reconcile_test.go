@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -34,6 +35,7 @@ func TestReconcileRoleRelaunchesWhenNewestRowIsTerminated(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			st := newFakeStore()
+			st.prime = domain.PrimeSettings{Enabled: true}.WithDefaults()
 			st.projects["mer"] = domain.ProjectRecord{ID: "mer"}
 			st.sessions[tc.seed.ID] = tc.seed
 
@@ -58,6 +60,7 @@ func TestReconcileRoleRelaunchesWhenNewestRowIsTerminated(t *testing.T) {
 // as-is, and nothing is spawned or released.
 func TestReconcileRoleIsIdempotentWhenHealthy(t *testing.T) {
 	st := newFakeStore()
+	st.prime = domain.PrimeSettings{Enabled: true}.WithDefaults()
 	st.sessions["prime-1"] = domain.SessionRecord{ID: "prime-1", Kind: domain.KindPrime}
 
 	fc := &fakeCommander{spawnRecord: domain.SessionRecord{ID: "prime-2", Kind: domain.KindPrime}}
@@ -82,6 +85,7 @@ func TestReconcileRoleIsIdempotentWhenHealthy(t *testing.T) {
 // then spawns.
 func TestReconcileRoleCleanRetiresThenReleasesThenSpawns(t *testing.T) {
 	st := newFakeStore()
+	st.prime = domain.PrimeSettings{Enabled: true}.WithDefaults()
 	st.sessions["prime-1"] = domain.SessionRecord{ID: "prime-1", Kind: domain.KindPrime}
 
 	fc := &fakeCommander{spawnRecord: domain.SessionRecord{ID: "prime-2", Kind: domain.KindPrime, Metadata: domain.SessionMetadata{Branch: "ao/prime"}}}
@@ -113,6 +117,7 @@ func TestReconcileRoleRejectsNonRoleTarget(t *testing.T) {
 // that is about to fail on the branch the release did not free.
 func TestReconcileRolePropagatesReleaseFailure(t *testing.T) {
 	st := newFakeStore()
+	st.prime = domain.PrimeSettings{Enabled: true}.WithDefaults()
 	st.sessions["prime-1"] = domain.SessionRecord{ID: "prime-1", Kind: domain.KindPrime, IsTerminated: true}
 
 	fc := &fakeCommander{
@@ -126,5 +131,47 @@ func TestReconcileRolePropagatesReleaseFailure(t *testing.T) {
 	}
 	if fc.spawned {
 		t.Fatal("no replacement may be spawned when stale resources could not be released")
+	}
+}
+
+// Persisted settings are the single source of truth for Prime lifecycle, so a
+// relaunch must not resurrect a Prime the operator disabled. Found by exercising
+// the live endpoint: it previously fell through to a spawn and failed with an
+// unrelated "agent harness required".
+func TestReconcileRoleRefusesPrimeWhenDisabled(t *testing.T) {
+	st := newFakeStore()
+	st.prime = domain.PrimeSettings{Enabled: false}.WithDefaults()
+
+	fc := &fakeCommander{spawnRecord: domain.SessionRecord{ID: "prime-1", Kind: domain.KindPrime}}
+	svc := &Service{manager: fc, store: st}
+
+	_, err := svc.ReconcileRole(context.Background(), domain.PrimeTarget(), ReconcileOptions{})
+	if err == nil {
+		t.Fatal("ReconcileRole() = nil error while Prime is disabled, want a refusal")
+	}
+	if !strings.Contains(err.Error(), "disabled") {
+		t.Fatalf("error = %q, want it to explain Prime is disabled", err)
+	}
+	if fc.spawned {
+		t.Fatal("no Prime may be spawned while Prime is disabled")
+	}
+	if len(fc.released) != 0 {
+		t.Fatalf("released = %v, want no stale-resource release for a disabled role", fc.released)
+	}
+}
+
+// An enabled Prime still reconciles normally.
+func TestReconcileRoleAllowsPrimeWhenEnabled(t *testing.T) {
+	st := newFakeStore()
+	st.prime = domain.PrimeSettings{Enabled: true, Harness: domain.HarnessClaudeCode}.WithDefaults()
+
+	fc := &fakeCommander{spawnRecord: domain.SessionRecord{ID: "prime-1", Kind: domain.KindPrime, Harness: domain.HarnessClaudeCode}}
+	svc := &Service{manager: fc, store: st}
+
+	if _, err := svc.ReconcileRole(context.Background(), domain.PrimeTarget(), ReconcileOptions{}); err != nil {
+		t.Fatalf("ReconcileRole: %v", err)
+	}
+	if !fc.spawned {
+		t.Fatal("an enabled Prime must reconcile into existence")
 	}
 }

@@ -26,7 +26,7 @@ is an unresolvable repo path for projectless Prime rows. See design.md Decision 
 - [x] 3.2 Write failing tests: teardown must derive the fleet Prime repo path when the row carries none, must prefer a persisted path, and must leave project-owned sessions alone
 - [x] 3.3 Derive the repo path from role identity in teardown, reusing the existing helper the restore paths already use
 - [x] 3.4 Point Kill, RetireForReplacement, save-and-teardown, and Cleanup at the deriving helper
-- [ ] 3.5 Add a real-git integration test that a projectless Prime worktree holding the canonical branch is torn down and the branch released
+- [x] 3.5 Add a real-git integration test that a projectless Prime worktree holding the canonical branch is torn down and the branch released
 
 ## 4. Reconciliation primitives in the session manager
 
@@ -57,24 +57,29 @@ is an unresolvable repo path for projectless Prime rows. See design.md Decision 
 
 ## 7. Prime presence and relaunch in the supervisor UI
 
-- [ ] 7.1 Write failing tests: the Prime nav entry is present when settings report Prime enabled and no live Prime row exists, and absent when Prime is disabled
-- [ ] 7.2 Drive Prime workspace synthesis and nav visibility from persisted Prime settings, using live rows only to choose the displayed state
-- [ ] 7.3 Update the existing active-Prime selector test that encodes the live-row-only model, deliberately and with a comment explaining the new contract
+- [x] 7.1 Write failing tests: the Prime nav entry is present when settings report Prime enabled and no live Prime row exists, and absent when Prime is disabled
+- [x] 7.2 Drive Prime workspace synthesis and nav visibility from persisted Prime settings, using live rows only to choose the displayed state
+- [x] 7.3 ~~Update the existing active-Prime selector test~~ — not needed: `findFleetPrime` ignoring terminated primes is still correct (it keeps navigation off dead terminals); the terminated-inclusive lookup went into a separate `findLatestFleetPrime` selector
 - [x] 7.4 Add a Prime relaunch client helper mirroring the existing orchestrator restart helper
-- [ ] 7.5 Write failing test then add the Prime not-running surface with one primary `Relaunch Prime` action
-- [ ] 7.6 Write failing test then make an ended Prime terminal offer relaunch instead of the generic restore strip
+- [x] 7.5 Write failing test then add the Prime not-running surface with one primary `Relaunch Prime` action
+- [x] 7.6 Write failing test then make an ended Prime terminal offer relaunch instead of the generic restore strip
 - [x] 7.7 Correct Prime settings copy to `Enable Prime` and to "Prime supervises globally"
 
 ## 8. Orchestrator recovery affordances
 
-- [ ] 8.1 Write failing test then give the missing-Orchestrator board state an action that spawns or restarts the Orchestrator
-- [ ] 8.2 Write failing test then route ended-Orchestrator terminal and restore-unavailable states through the orchestrator spawn/restart path
-- [ ] 8.3 Assert the recovery flow does not resolve by navigating back to the dead session's terminal
+- [x] 8.1 Write failing test then give the missing-Orchestrator board state an action that spawns or restarts the Orchestrator
+- [x] 8.2 Write failing test then route ended-Orchestrator terminal and restore-unavailable states through the orchestrator spawn/restart path
+- [x] 8.3 Assert the recovery flow does not resolve by navigating back to the dead session's terminal
 
 ## 9. Verification and gate
 
-- [ ] 9.1 Run the full local CI-parity gate (`npm run ci-local`)
-- [ ] 9.2 Exercise the recovery end to end against a running daemon: kill Prime from its terminal, confirm automatic or relaunch recovery with no manual git/tmux work
-- [ ] 9.3 Exercise the Orchestrator equivalent: exit an Orchestrator from its terminal, relaunch from the UI, then confirm cleanup leaves the live replacement's worktree intact
+Live verification found two real defects that unit tests did not: relaunch tried
+to spawn while Prime was disabled (now a 409 `PRIME_DISABLED`), and a settings
+save did not reconcile until the next 30s tick (task 6.5 had been checked off
+without being implemented).
+
+- [x] 9.1 Run the full local CI-parity gate (`npm run ci-local`)
+- [x] 9.2 Exercise the recovery end to end against a running daemon: kill Prime from its terminal, confirm automatic or relaunch recovery with no manual git/tmux work
+- [x] 9.3 Exercise the Orchestrator equivalent: exit an Orchestrator from its terminal, relaunch from the UI, then confirm cleanup leaves the live replacement's worktree intact
 - [ ] 9.4 Drive the Prime not-running surface and relaunch action in the browser and capture the result
 - [ ] 9.5 Run `/final-review` and record the verdict as a SHA-pinned commit status

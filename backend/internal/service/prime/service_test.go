@@ -100,3 +100,39 @@ func (f *fakePrompts) RoleSystemPrompt(_ context.Context, kind domain.SessionKin
 	f.projectID = projectID
 	return f.prompt, nil
 }
+
+// An off/save/on/save cycle must restart Prime reliably. Before this, the
+// supervisor only noticed on its next 30s tick, so the operator had to time the
+// disabled window by hand — the documented workaround.
+func TestSetSettingsSignalsImmediateReconcile(t *testing.T) {
+	pokes := 0
+	svc := New(Deps{
+		Store:             &fakeStore{settings: domain.DefaultPrimeSettings()},
+		OnSettingsChanged: func() { pokes++ },
+	})
+
+	settings := domain.PrimeSettings{Enabled: true, Harness: domain.HarnessClaudeCode}.WithDefaults()
+	if _, err := svc.SetSettings(context.Background(), settings); err != nil {
+		t.Fatalf("SetSettings: %v", err)
+	}
+	if pokes != 1 {
+		t.Fatalf("reconcile signals = %d, want 1", pokes)
+	}
+}
+
+// A rejected write must not claim a reconcile happened.
+func TestSetSettingsDoesNotSignalOnValidationFailure(t *testing.T) {
+	pokes := 0
+	svc := New(Deps{
+		Store:             &fakeStore{settings: domain.DefaultPrimeSettings()},
+		OnSettingsChanged: func() { pokes++ },
+	})
+
+	// Enabled with no agent is invalid.
+	if _, err := svc.SetSettings(context.Background(), domain.PrimeSettings{Enabled: true}); err == nil {
+		t.Fatal("SetSettings() = nil error for invalid settings")
+	}
+	if pokes != 0 {
+		t.Fatalf("reconcile signals = %d, want 0 on a rejected write", pokes)
+	}
+}

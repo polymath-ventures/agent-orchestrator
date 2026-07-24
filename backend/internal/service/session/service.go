@@ -351,15 +351,22 @@ func (s *Service) ReconcileRole(ctx context.Context, target domain.RoleTarget, o
 	unlock := s.lockRole(target)
 	defer unlock()
 
+	existing, err := s.activeRoleSessions(ctx, target)
+	if err != nil {
+		return domain.Session{}, err
+	}
+	if !opts.Clean && len(existing) > 0 {
+		// ponytail: check-then-spawn is not atomic; fine for the single-frontend ensure-on-load case. Upgrade path: a partial unique index on (project_id) where kind=orchestrator and not terminated.
+		return newestSession(existing), nil
+	}
+
+	// Planned before any retirement: if the role cannot be created (Prime
+	// disabled, project missing), we must not tear down what is running first.
 	plan, err := s.planRole(ctx, target)
 	if err != nil {
 		return domain.Session{}, err
 	}
 
-	existing, err := s.activeRoleSessions(ctx, target)
-	if err != nil {
-		return domain.Session{}, err
-	}
 	if opts.Clean {
 		for _, sess := range existing {
 			_ = s.sendRoleRetireNotice(ctx, target, sess.ID)
@@ -367,9 +374,6 @@ func (s *Service) ReconcileRole(ctx context.Context, target domain.RoleTarget, o
 				return domain.Session{}, toAPIError(err)
 			}
 		}
-	} else if len(existing) > 0 {
-		// ponytail: check-then-spawn is not atomic; fine for the single-frontend ensure-on-load case. Upgrade path: a partial unique index on (project_id) where kind=orchestrator and not terminated.
-		return newestSession(existing), nil
 	}
 
 	// Per-session release failures are already best-effort inside the manager
@@ -405,6 +409,13 @@ func (s *Service) planRole(ctx context.Context, target domain.RoleTarget) (roleP
 			return rolePlan{}, err
 		}
 		settings = settings.WithDefaults()
+		// Persisted settings are the single source of truth for Prime lifecycle:
+		// disabling Prime stops future ensure and replacement attempts. Relaunch
+		// is an explicit user action, but it is still an ensure — it must not
+		// resurrect a Prime the operator turned off.
+		if !settings.Enabled {
+			return rolePlan{}, apierr.Conflict("PRIME_DISABLED", "Fleet Prime is disabled. Enable it in Prime settings first.", nil)
+		}
 		displayName := strings.TrimSpace(settings.DisplayName)
 		if displayName == "" {
 			displayName = domain.DefaultPrimeSettings().DisplayName
