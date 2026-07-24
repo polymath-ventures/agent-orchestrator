@@ -926,7 +926,7 @@ function buildHarnessModelConfig(form: HarnessModelForm) {
 			// An entry is kept if it pins a model OR carries an effort: the
 			// daemon accepts effort-only overrides, so an empty model field
 			// must not delete a persisted effort the form cannot display.
-			const out: { model?: string; effort?: string } = {};
+			const out: components["schemas"]["DomainHarnessModel"] = {};
 			if (model) out.model = model;
 			const effort = value.effort.trim();
 			if (effort) out.effort = effort;

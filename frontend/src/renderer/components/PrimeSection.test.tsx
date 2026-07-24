@@ -119,6 +119,9 @@ describe("PrimeSection", () => {
 		await waitFor(() => expect(screen.getByLabelText("Harness")).toHaveValue("codex"));
 		expect(screen.getByLabelText("Model")).toHaveValue("gpt-5-codex");
 		expect(screen.getByLabelText("Effort")).toHaveValue("high");
+		expect(screen.getByLabelText("Harness").querySelector('option[value=""]')).toHaveTextContent("Select harness");
+		expect(screen.getByLabelText("Model")).toHaveAttribute("placeholder", "Select model");
+		expect(screen.getByLabelText("Effort").querySelector('option[value=""]')).toHaveTextContent("Select effort");
 		expect(screen.getByLabelText("Wake interval minutes")).toHaveValue(15);
 		expect(screen.getByLabelText("Instructions file path")).toHaveValue("/etc/ao/prime.md");
 		expect(screen.getByText(/Manual model IDs are allowed/i)).toBeInTheDocument();
@@ -130,6 +133,7 @@ describe("PrimeSection", () => {
 		renderPrimeSection();
 
 		await screen.findByLabelText("Enable Prime");
+		await waitFor(() => expect(screen.getByLabelText("Harness")).toHaveValue("codex"));
 		const displayName = screen.getByText("Display name");
 		const wakeInterval = screen.getByText("Wake interval minutes");
 		const modelSection = screen.getByText("Prime model and effort");

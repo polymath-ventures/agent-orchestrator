@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Loader2, TriangleAlert } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import type { components } from "../../api/schema";
 import { agentsQueryOptions } from "../hooks/useAgentsQuery";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
@@ -137,12 +137,11 @@ export function PrimeSection() {
 					isRefreshing={isRefreshingModels || modelAvailabilityQuery.isFetching}
 					onRefresh={refreshModels}
 					statusVisibility="actionable"
-					emptyLabel="Select harness"
+					harnessEmptyLabel="Select harness"
+					modelEmptyLabel="Select model"
+					effortEmptyLabel="Select effort"
+					showManualModelNotice
 				/>
-				<p className="flex items-start gap-1.5 text-[12px] text-muted-foreground">
-					<TriangleAlert className="mt-0.5 size-3.5 shrink-0 text-warning" aria-hidden="true" />
-					<span>Manual model IDs are allowed; launch may fail if the harness rejects the model.</span>
-				</p>
 				{modelAvailabilityQuery.isError && (
 					<p className="text-xs leading-row text-warning">
 						Model catalogs are unavailable; saved pins remain editable.

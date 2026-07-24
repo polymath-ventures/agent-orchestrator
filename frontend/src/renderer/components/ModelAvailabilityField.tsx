@@ -17,6 +17,7 @@ export type ModelSelection = {
 export type ConfiguredModelPin = ModelSelection;
 
 export type ModelCatalogOption = AgentModelAvailability & {
+	catalogEffortCount?: number;
 	synthetic?: boolean;
 };
 
@@ -40,6 +41,10 @@ export type ModelAvailabilityFieldProps = {
 	allowEmpty?: boolean;
 	emptyLabel?: string;
 	fieldLabelsVisible?: boolean;
+	harnessEmptyLabel?: string;
+	modelEmptyLabel?: string;
+	effortEmptyLabel?: string;
+	showManualModelNotice?: boolean;
 };
 
 const selectClassName =
@@ -61,6 +66,10 @@ export function ModelAvailabilityField({
 	allowEmpty = true,
 	emptyLabel = "Agent default",
 	fieldLabelsVisible = true,
+	harnessEmptyLabel = emptyLabel,
+	modelEmptyLabel = emptyLabel,
+	effortEmptyLabel = emptyLabel,
+	showManualModelNotice = false,
 }: ModelAvailabilityFieldProps) {
 	const harnesses = useMemo(
 		() => buildModelCatalogView(availability, value, configuredPins),
@@ -68,7 +77,13 @@ export function ModelAvailabilityField({
 	);
 	const harness = harnesses.find((option) => option.id === value.harness);
 	const model = harness?.models.find((option) => option.model === value.model);
-	const efforts = model?.efforts ?? (value.effort ? [value.effort] : []);
+	const hasSelectedHarness = value.harness.trim() !== "";
+	const manualEffort = shouldUseManualEffort(model);
+	const efforts = buildEffortOptions(
+		model?.synthetic
+			? [...(model.efforts ?? []), ...harnessEfforts(harness)]
+			: (model?.efforts ?? harnessEfforts(harness)),
+	);
 	const provenance = harness ? catalogProvenanceLabel(harness) : "";
 	const showModelStatus = model && (statusVisibility === "all" || model.status === "unreachable");
 	const columnClass = showHarness && showEffort ? "sm:grid-cols-3" : showHarness || showEffort ? "sm:grid-cols-2" : "";
@@ -88,11 +103,13 @@ export function ModelAvailabilityField({
 
 	const selectModel = (nextModelID: string) => {
 		const nextModel = harness?.models.find((option) => option.model === nextModelID);
+		const nextUsesManualEffort = shouldUseManualEffort(nextModel);
 		const keepEffort = nextModel?.efforts?.includes(value.effort);
+		const keepManualEffort = nextUsesManualEffort && value.effort.trim() !== "";
 		onChange({
 			...value,
 			model: nextModelID,
-			effort: nextModelID === "" ? "" : keepEffort ? value.effort : preferredEffort(nextModel),
+			effort: nextModelID === "" ? "" : keepEffort || keepManualEffort ? value.effort : preferredEffort(nextModel),
 		});
 	};
 	const refresh = async () => {
@@ -138,7 +155,7 @@ export function ModelAvailabilityField({
 							value={value.harness}
 							onChange={(event) => selectHarness(event.target.value)}
 						>
-							{allowEmpty && <option value="">{emptyLabel}</option>}
+							{allowEmpty && <option value="">{harnessEmptyLabel}</option>}
 							{harnesses.map((option) => (
 								<option key={option.id} value={option.id}>
 									{option.label}
@@ -161,7 +178,7 @@ export function ModelAvailabilityField({
 						className={selectClassName}
 						value={value.model}
 						list={`${id}-model-options`}
-						placeholder={allowEmpty ? emptyLabel : undefined}
+						placeholder={allowEmpty ? modelEmptyLabel : undefined}
 						required={!allowEmpty}
 						onChange={(event) => selectModel(event.target.value)}
 					/>
@@ -182,22 +199,54 @@ export function ModelAvailabilityField({
 						>
 							Effort
 						</Label>
-						<select
-							id={`${id}-effort`}
-							className={selectClassName}
-							value={value.effort}
-							onChange={(event) => onChange({ ...value, effort: event.target.value })}
-						>
-							{allowEmpty && <option value="">{emptyLabel}</option>}
-							{efforts.map((effort) => (
-								<option key={effort} value={effort}>
-									{effort}
-								</option>
-							))}
-						</select>
+						{manualEffort ? (
+							<>
+								<input
+									id={`${id}-effort`}
+									type="text"
+									className={selectClassName}
+									value={value.effort}
+									list={`${id}-effort-options`}
+									placeholder={allowEmpty ? effortEmptyLabel : undefined}
+									required={!allowEmpty}
+									onChange={(event) => onChange({ ...value, effort: event.target.value })}
+								/>
+								<datalist id={`${id}-effort-options`}>
+									{efforts.map((effort) => (
+										<option key={effort} value={effort} />
+									))}
+								</datalist>
+							</>
+						) : (
+							<select
+								id={`${id}-effort`}
+								className={selectClassName}
+								value={value.effort}
+								onChange={(event) => onChange({ ...value, effort: event.target.value })}
+							>
+								{allowEmpty && <option value="">{effortEmptyLabel}</option>}
+								{efforts.map((effort) => (
+									<option key={effort} value={effort}>
+										{effort}
+									</option>
+								))}
+							</select>
+						)}
 					</div>
 				)}
 			</div>
+
+			{showManualModelNotice && (
+				<p className="flex items-start gap-1.5 text-[12px] text-muted-foreground">
+					<TriangleAlert className="mt-0.5 size-3.5 shrink-0 text-warning" aria-hidden="true" />
+					<span>
+						Manual model IDs are allowed; launch may fail if the harness rejects the model.
+						{hasSelectedHarness && manualEffort
+							? " Manual effort values are allowed; launch may fail if the harness rejects the effort."
+							: ""}
+					</span>
+				</p>
+			)}
 
 			{showModelStatus && (
 				<p
@@ -238,7 +287,10 @@ export function buildModelCatalogView(
 ): HarnessCatalogOption[] {
 	const harnesses = new Map<string, HarnessCatalogOption>();
 	for (const harness of availability?.harnesses ?? []) {
-		harnesses.set(harness.id, { ...harness, models: harness.models.map((model) => ({ ...model })) });
+		harnesses.set(harness.id, {
+			...harness,
+			models: harness.models.map((model) => ({ ...model, catalogEffortCount: model.efforts?.length ?? 0 })),
+		});
 	}
 
 	const pins = [...configuredPins];
@@ -270,6 +322,7 @@ export function buildModelCatalogView(
 				status: "unknown",
 				reason: "Configured pin is not present in the current catalog.",
 				reasonCode: "not-probed",
+				catalogEffortCount: 0,
 				synthetic: true,
 			};
 			harness.models.push(model);
@@ -304,6 +357,34 @@ export function catalogProvenanceLabel(
 
 function preferredEffort(model?: Pick<AgentModelAvailability, "defaultEffort" | "efforts">): string {
 	return model?.defaultEffort ?? model?.efforts?.[0] ?? "";
+}
+
+function shouldUseManualEffort(
+	model: Pick<ModelCatalogOption, "catalogEffortCount" | "efforts" | "synthetic"> | undefined,
+): boolean {
+	if (!model) return true;
+	if (model.synthetic) return true;
+	return (model.catalogEffortCount ?? model.efforts?.length ?? 0) === 0;
+}
+
+function harnessEfforts(harness: HarnessCatalogOption | undefined): string[] {
+	const efforts = new Set<string>();
+	for (const model of harness?.models ?? []) {
+		for (const effort of model.efforts ?? []) {
+			efforts.add(effort);
+		}
+	}
+	return [...efforts];
+}
+
+function buildEffortOptions(efforts: string[] | undefined): string[] {
+	const options = new Set<string>();
+	for (const effort of efforts ?? []) {
+		const trimmed = effort.trim();
+		if (!trimmed) continue;
+		options.add(trimmed);
+	}
+	return [...options];
 }
 
 function formatCheckedAt(value: string): string {
