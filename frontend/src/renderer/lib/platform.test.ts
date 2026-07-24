@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
 	isLinuxPlatform,
 	isMacPlatform,
@@ -39,6 +39,7 @@ afterEach(() => {
 	restoreProperty("platform", originalPlatform);
 	restoreProperty("userAgent", originalUserAgent);
 	restoreProperty("userAgentData", originalUserAgentData);
+	vi.unstubAllEnvs();
 });
 
 describe("renderer platform behavior", () => {
@@ -68,6 +69,18 @@ describe("renderer platform behavior", () => {
 		expect(isLinuxPlatform()).toBe(true);
 		expect(isWindowsPlatform()).toBe(false);
 		expect(usesFramedAppTopbar()).toBe(true);
+		expect(hidesShellTopbar()).toBe(false);
+		expect(usesBoardActionsInPanel()).toBe(false);
+	});
+
+	it("keeps browser-mode shell topbar visible on Apple mobile browser UAs", () => {
+		vi.stubEnv("VITE_NO_ELECTRON", "1");
+		spoofPlatform(
+			"iPhone",
+			"Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Version/17.0 Mobile/15E148 Safari/604.1",
+		);
+
+		expect(isMacPlatform()).toBe(true);
 		expect(hidesShellTopbar()).toBe(false);
 		expect(usesBoardActionsInPanel()).toBe(false);
 	});

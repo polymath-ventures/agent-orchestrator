@@ -78,4 +78,17 @@ describe("renderer daemon status", () => {
 		applyDaemonStatus({ state: "error", code: "daemon_unreachable", message: "offline" });
 		expect(getApiBaseUrl()).toBe("");
 	});
+
+	it("keeps browser-mode API calls same-origin even when a bridge reports a daemon port", async () => {
+		vi.resetModules();
+		vi.stubEnv("VITE_NO_ELECTRON", "1");
+		window.ao = {} as NonNullable<typeof window.ao>;
+		const { getApiBaseUrl, setApiBaseUrl } = await import("./api-client");
+		const { applyDaemonStatus } = await import("./daemon-status");
+		setApiBaseUrl(window.location.origin);
+
+		applyDaemonStatus({ state: "ready", port: 8080, pid: 42 });
+
+		expect(getApiBaseUrl()).toBe("");
+	});
 });

@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { installBrowserModeApiFixtures } from "./fixtures";
 
 // Standalone shell terminals (#2822): shells the user opens by hand, with no
 // agent session behind them. They render as tabs beside the session's own pane.
@@ -6,10 +7,12 @@ import { expect, test } from "@playwright/test";
 // an in-memory shell list — enough to cover the parts that live in the renderer:
 // which tab is current, and that opening/closing updates the strip.
 test("opens, selects, and closes standalone shell terminals from the tab strip", async ({ page }) => {
-	await page.goto("/#/projects/ao-demo/sessions/demo-working");
+	await installBrowserModeApiFixtures(page);
+	await page.goto("/#/projects/api-gateway/sessions/refactor-mux");
 	await expect(page.getByRole("button", { name: "New terminal" })).toBeVisible();
 
 	const closeButtons = page.getByRole("button", { name: /^Close terminal / });
+	await expect(closeButtons).toHaveCount(1);
 	const initialCount = await closeButtons.count();
 
 	// The topbar action opens a shell and makes it the active pane.
@@ -17,8 +20,8 @@ test("opens, selects, and closes standalone shell terminals from the tab strip",
 	await expect(closeButtons).toHaveCount(initialCount + 1);
 
 	// Selecting the session tab hands the pane back to the agent. Matched by
-	// title, not role-name: the tab's accessible name is the session's title.
-	const sessionTab = page.getByTitle("Session terminal");
+	// its accessible name: the tab's label is the session title.
+	const sessionTab = page.getByRole("button", { name: "Split terminal mux responsibilities", exact: true }).last();
 	await sessionTab.click();
 	await expect(sessionTab).toHaveAttribute("aria-current", "true");
 
@@ -33,7 +36,8 @@ test("opens, selects, and closes standalone shell terminals from the tab strip",
 // listening. Both silently did nothing. The shell layout owns it now, and
 // routes to the standalone terminals view when there is no session on screen.
 test("opens a terminal from the board, where no session view is mounted", async ({ page }) => {
-	await page.goto("/#/projects/ao-demo");
+	await installBrowserModeApiFixtures(page);
+	await page.goto("/#/terminals");
 	await expect(page.getByRole("button", { name: "New terminal" })).toBeVisible();
 
 	await page.getByRole("button", { name: "New terminal" }).click();
@@ -43,6 +47,7 @@ test("opens a terminal from the board, where no session view is mounted", async 
 });
 
 test("shows an empty state once every standalone terminal is closed", async ({ page }) => {
+	await installBrowserModeApiFixtures(page);
 	await page.goto("/#/terminals");
 
 	// Wait for the strip to render before counting — a count taken mid-mount

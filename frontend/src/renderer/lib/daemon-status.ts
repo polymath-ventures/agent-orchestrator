@@ -6,9 +6,11 @@ import type { DaemonStatus } from "../../shared/daemon-status";
 
 export type { DaemonStatus };
 
+const isBrowserMode = import.meta.env.VITE_NO_ELECTRON === "1";
+
 export function applyDaemonStatus(nextStatus: DaemonStatus): void {
 	setApiDaemonStatus(nextStatus);
-	if (!hasElectronBridge()) {
+	if (isBrowserMode || !hasElectronBridge()) {
 		setApiBaseUrl("");
 		return;
 	}

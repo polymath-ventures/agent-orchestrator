@@ -3,6 +3,95 @@ import type { Page } from "@playwright/test";
 import type { AoBridge } from "../../src/preload";
 import type { DaemonStatus } from "../../src/shared/daemon-status";
 
+const nowIso = () => new Date().toISOString();
+
+const smokeWorkspaces = [
+	{
+		id: "ao-demo",
+		name: "ao-demo",
+		kind: "single_repo",
+		path: "/demo/ao-demo",
+		orchestratorAgent: "codex",
+		sessions: [
+			{
+				id: "ao-demo-orchestrator",
+				terminalHandleId: "ao-demo-orchestrator/terminal_0",
+				workspaceId: "ao-demo",
+				workspaceName: "ao-demo",
+				title: "Project orchestrator",
+				provider: "codex",
+				kind: "orchestrator",
+				branch: "main",
+				status: "working",
+				createdAt: nowIso(),
+				updatedAt: nowIso(),
+				activity: { state: "active", lastActivityAt: nowIso() },
+				prs: [],
+			},
+			{
+				id: "demo-working",
+				terminalHandleId: "demo-working/terminal_0",
+				workspaceId: "ao-demo",
+				workspaceName: "ao-demo",
+				title: "Build screenshot-ready dashboard data",
+				provider: "codex",
+				kind: "worker",
+				branch: "demo/dashboard-screenshot",
+				status: "working",
+				createdAt: nowIso(),
+				updatedAt: nowIso(),
+				activity: { state: "active", lastActivityAt: nowIso() },
+				prs: [],
+			},
+			{
+				id: "demo-needs-input",
+				terminalHandleId: "demo-needs-input/terminal_0",
+				workspaceId: "ao-demo",
+				workspaceName: "ao-demo",
+				title: "Resolve reviewer feedback",
+				provider: "claude-code",
+				kind: "worker",
+				branch: "demo/terminal-polish",
+				status: "changes_requested",
+				createdAt: nowIso(),
+				updatedAt: nowIso(),
+				activity: { state: "waiting_input", lastActivityAt: nowIso() },
+				prs: [],
+			},
+			{
+				id: "demo-in-review",
+				terminalHandleId: "demo-in-review/terminal_0",
+				workspaceId: "ao-demo",
+				workspaceName: "ao-demo",
+				title: "Wait for CI",
+				provider: "opencode",
+				kind: "worker",
+				branch: "demo/project-settings-copy",
+				status: "review_pending",
+				createdAt: nowIso(),
+				updatedAt: nowIso(),
+				activity: { state: "idle", lastActivityAt: nowIso() },
+				prs: [],
+			},
+			{
+				id: "demo-ready",
+				terminalHandleId: "demo-ready/terminal_0",
+				workspaceId: "ao-demo",
+				workspaceName: "ao-demo",
+				title: "Merge README screenshot update",
+				provider: "codex",
+				kind: "worker",
+				branch: "demo/readme-assets",
+				status: "mergeable",
+				createdAt: nowIso(),
+				updatedAt: nowIso(),
+				activity: { state: "idle", lastActivityAt: nowIso() },
+				prs: [],
+			},
+		],
+	},
+];
+
 // The e2e suite runs the renderer under `dev:web` (VITE_NO_ELECTRON=1) with no
 // Electron preload, so `window.ao` is undefined and lib/bridge.ts falls back to
 // a browser stub that reports the daemon as permanently "stopped" and the app
@@ -41,7 +130,7 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 	const daemonPort = opts.daemonPort ?? 8080;
 
 	await page.addInitScript(
-		({ version, daemonState, daemonPort }) => {
+		({ version, daemonState, daemonPort, workspaces }) => {
 			const unsubscribe = () => () => undefined;
 			const status: DaemonStatus =
 				daemonState === "ready" ? { state: "ready", port: daemonPort } : { state: daemonState };
@@ -142,8 +231,11 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 				},
 			} satisfies AoBridge;
 			(window as unknown as { ao: unknown }).ao = ao;
+			(window as unknown as { __aoFakeAgent: unknown }).__aoFakeAgent = {
+				snapshot: () => JSON.parse(JSON.stringify(workspaces)),
+			};
 		},
-		{ version, daemonState, daemonPort },
+		{ version, daemonState, daemonPort, workspaces: smokeWorkspaces },
 	);
 }
 

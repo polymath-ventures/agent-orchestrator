@@ -35,7 +35,7 @@ export function usesFramedAppTopbar(): boolean {
  * strip). SessionView mounts the same topbar in-panel for session actions.
  */
 export function hidesShellTopbar(): boolean {
-	return isMacPlatform();
+	return import.meta.env.VITE_NO_ELECTRON !== "1" && isMacPlatform();
 }
 
 /**

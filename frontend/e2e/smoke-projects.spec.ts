@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { installFakeBridge } from "./support/fake-bridge";
 
 // PRJ-* RENDERER SMOKE (issue #2483, renderer slice).
 //
@@ -14,6 +15,7 @@ import { expect, test } from "@playwright/test";
 test("renderer: added project appears in the sidebar and board @T0 @PRJ", async ({ page }) => {
 	// dev:web serves lib/mock-data.ts (ao-demo, docs-site). A registered project
 	// must show as a sidebar row AND drive the board it opens.
+	await installFakeBridge(page, { daemonState: "stopped" });
 	await page.goto("/#/");
 	await expect(page.getByText("Projects")).toBeVisible();
 

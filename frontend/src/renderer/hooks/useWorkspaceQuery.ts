@@ -105,7 +105,7 @@ function toWorkspaceSession(
 		issueId: session.issueId,
 		provider: toAgentProvider(session.harness),
 		kind: toSessionKind(session.kind),
-		branch: session.branch ?? `session/${session.id}`,
+		branch: session.branch || undefined,
 		status: toSessionStatus(session.status, session.isTerminated),
 		createdAt: session.createdAt,
 		updatedAt: session.updatedAt,
