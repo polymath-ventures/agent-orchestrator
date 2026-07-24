@@ -9,7 +9,7 @@ Repo-specific gotchas for `/design-sync`. Read this before a re-sync.
   `*.stories.*`. The sync is scoped to the reusable shadcn/ui primitives in
   `frontend/src/renderer/components/ui` (19 source files → 105 exports),
   plus the token layer.
-- The synced surface is **only** `components/ui`. The ~60 app composites in
+- The synced surface is **only** `components/ui`. The 52 app composites in
   `frontend/src/renderer/components/` are bound to daemon state, Zustand
   stores and TanStack Query, and are deliberately out of scope.
 
@@ -26,7 +26,7 @@ Repo-specific gotchas for `/design-sync`. Read this before a re-sync.
    build 1223, which is what this machine has cached. A different playwright
    fails with `browserType.launch: Executable doesn't exist`.
 
-## Why cfg.buildCmd does three things
+## Why cfg.buildCmd does more than build the app
 
 `buildCmd` is not just the app build. In order:
 
@@ -45,7 +45,14 @@ Repo-specific gotchas for `/design-sync`. Read this before a re-sync.
      would dangle after the copy.
 3. `tsc -p .design-sync/tsconfig.dts.json` + `node .design-sync/emit-types-barrel.mjs`
    — see the next section. Skipping this silently destroys every prop contract.
-4. `node .design-sync/validate-conventions.mjs` — see the conventions section.
+
+`buildCmd` deliberately carries **no** `|| true`: it is an `&&` chain, so a
+trailing `|| true` would mask a failed web build or a failed declaration emit,
+not just the last step.
+
+`validate-conventions.mjs` is **not** part of `buildCmd` — it checks against
+`ds-bundle/`, which does not exist until the converter has run. Run it after
+`package-build.mjs` (see the conventions section).
 
 ## The .d.ts contracts are load-bearing and fragile
 
@@ -87,6 +94,39 @@ emit fails.
 `React.ComponentProps<typeof Button|Input|Separator>`, which the extractor
 cannot flatten — they are the only three entries in `cfg.dtsPropsFor`.
 
+### Known: the emitted contracts are syntactically valid but not type-valid
+
+Type-checking the 105 emitted `.d.ts` produces **109 semantic errors** — 86
+`ref?: React.Ref;` (TS2314, `Ref<T>` takes a type argument and gets none), 17
+bare `style?: CSSProperties;` (TS2304, missing the `React.` qualifier), and one
+unresolved `ResizablePrimitive` namespace.
+
+Root cause is upstream in the sync tool, not in this config:
+`lib/dts.mjs`'s `KEEP_ALIAS` regex (`ReactNode|ReactElement|CSSProperties|
+JSX.Element|Key|Ref|RefObject`) prints those types by bare alias name, which
+discards `Ref`'s type argument and `CSSProperties`' qualifier.
+
+**The tool's own `[DTS_PARSE]` gate cannot catch this**: it inspects only
+`sf.parseDiagnostics`, i.e. pure syntax. `React.Ref` without a type argument
+parses fine and fails only at type resolution, so validate exits 0.
+
+Impact is low — the affected props are React plumbing (`ref`, `style`) that a
+design agent does not drive, and every real API prop (variant unions, `side`,
+`asChild`, …) is correct. It was left unfixed deliberately: the documented
+remedy is forking `lib/dts.mjs` into `.design-sync/overrides/`, and carrying a
+542-line fork that must be diffed against upstream on every re-sync is not
+worth correcting type text on props nobody uses. `cfg.dtsPropsFor.<Name>` can
+hand-write any single contract if one ever matters.
+
+**Check it after a re-sync** (note: `--skipLibCheck` would make this vacuous,
+since these _are_ declaration files):
+
+```bash
+./frontend/node_modules/.bin/tsc --noEmit --jsx react-jsx \
+  --typeRoots ./frontend/node_modules/@types ds-bundle/components/*/*/*.d.ts \
+  2>&1 | grep -c 'error TS'   # expect 109; materially more means something new
+```
+
 ## conventions.md is prompt-injected — validate it, don't eyeball it
 
 `conventions.md` is inlined into the design agent's system prompt, so a name in
@@ -99,8 +139,7 @@ near-black surface).
 
 `node .design-sync/validate-conventions.mjs ./ds-bundle` checks every utility
 and component named in the file against the built bundle, including escaped
-variant selectors (`hover:`) and token-kind mismatches. `cfg.buildCmd` runs it
-on every build. **Run it after editing `conventions.md`** — and note the two
+variant selectors (`hover:`) and token-kind mismatches. **Run it after every `package-build.mjs`, and after editing `conventions.md`** — and note the two
 gotchas it exists to catch: a class present in `@theme` is not necessarily
 emitted, and a `text-*` utility can legitimately exist while pointing at the
 wrong kind of token.
@@ -113,12 +152,15 @@ design agent as "design guidelines". `cfg.guidelinesGlob` is therefore pointed
 at `docs/design-guidelines/**/*.md`, which does not exist yet; drop real design
 guidance there and it ships automatically.
 
-Root `DESIGN.md` was considered and rejected as guidelines content: its useful
-substance (colour is rare and meaningful, the type scale, dark-first) is already
-distilled into `conventions.md`, while its opening sections call the product
-"ReverbCode" and point at a local filesystem path, which would mislead a design
-agent more than help it. That staleness is a docs problem worth fixing on its
-own, separately from this sync.
+Root `DESIGN.md` was considered and rejected as guidelines content, but only
+**part** of it is distilled into `conventions.md` (colour is rare and
+meaningful, the type scale, dark-first). Its sections on control heights,
+spacing rhythm, status semantics, pane layout and icon policy are **not**
+carried anywhere in this sync — that is a real gap, not a clean substitution.
+It was excluded because its opening sections call the product "ReverbCode" and
+point at a local filesystem path, which would mislead a design agent more than
+the missing material costs. Fixing that staleness and then shipping it under
+`docs/design-guidelines/` is the better long-term answer.
 
 ## Docs, groups, and the docsMap enumeration
 

@@ -45,7 +45,7 @@ rather than raw hex, and never use stock Tailwind colour names like
 | Radius         | `rounded-xs` `rounded-sm` `rounded-md` `rounded-lg` `rounded-panel` `rounded-full`                                                                        |
 | Font           | `font-sans` (system UI stack) · `font-mono` (Nerd Font / SF Mono stack)                                                                                   |
 
-Spacing, flex and grid utilities are stock Tailwind (`flex gap-2 px-3 py-1.5`).
+Spacing, flex and grid utilities are stock Tailwind (`flex gap-2 px-3 py-2`).
 
 The stylesheet is **pre-compiled, not generated on demand**: it contains the
 ~1300 utilities this product actually uses. Common layout, spacing, sizing and

@@ -4,9 +4,11 @@ category: Navigation
 
 # Sidebar
 
-The app's primary navigation rail. **Everything must be inside
-`SidebarProvider`** — the child parts read open/collapsed state from its
-context and throw without it. `defaultOpen` on the provider sets initial state.
+The app's primary navigation rail. `Sidebar`, `SidebarMenuButton`,
+`SidebarRail` and `SidebarTrigger` read the rail's open/collapsed state and
+**throw outside `SidebarProvider`**; the remaining parts are plain layout
+wrappers. Compose the whole rail inside the provider anyway — `defaultOpen`
+on it sets the initial state.
 
 `SidebarProvider` › `Sidebar` › `SidebarHeader` · `SidebarContent`
 (`SidebarGroup` › `SidebarGroupLabel`, `SidebarGroupAction`, `SidebarGroupContent`

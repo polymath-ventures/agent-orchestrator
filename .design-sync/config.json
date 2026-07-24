@@ -3,7 +3,7 @@
 	"shape": "package",
 	"pkg": "agent-orchestrator",
 	"globalName": "AODS",
-	"buildCmd": "npm --prefix frontend run build:web && cat $(ls frontend/dist/assets/*.css | sort) .design-sync/preview-surface.css > frontend/dist/ds-compiled.css && (cd frontend && npx tsc -p ../.design-sync/tsconfig.dts.json) && node .design-sync/emit-types-barrel.mjs && node .design-sync/validate-conventions.mjs ./ds-bundle || true",
+	"buildCmd": "npm --prefix frontend run build:web && cat $(ls frontend/dist/assets/*.css | sort) .design-sync/preview-surface.css > frontend/dist/ds-compiled.css && (cd frontend && npx tsc -p ../.design-sync/tsconfig.dts.json) && node .design-sync/emit-types-barrel.mjs",
 	"srcDir": "src/renderer/components/ui",
 	"tsconfig": "tsconfig.json",
 	"cssEntry": "dist/ds-compiled.css",

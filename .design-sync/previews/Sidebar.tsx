@@ -14,8 +14,9 @@ import {
 	SidebarProvider,
 } from "agent-orchestrator";
 
-// Every Sidebar part reads open/collapsed state from SidebarProvider, so the
-// only true render of any of them is the full composition.
+// Sidebar, SidebarMenuButton, SidebarRail and SidebarTrigger read open/collapsed
+// state from SidebarProvider; the rest are layout wrappers. Either way the only
+// true render of the rail is the full composition.
 //
 // Sidebar is h-svh, so it overshoots the preview viewport by the harness's
 // 24px body padding and clips its own footer. The negative margin cancels that

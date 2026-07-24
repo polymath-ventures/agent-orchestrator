@@ -36,10 +36,14 @@ const selectorPresent = (cls) => {
 	return ["{", ",", ":", " ", ">"].some((suffix) => css.includes("." + escaped + suffix));
 };
 
-const utilityRx = /`((?:[a-z-]+:)?(?:bg|text|border|ring|rounded|font|fill|stroke)-[A-Za-z0-9[\]./-]+)`/g;
-const claimedUtilities = [...new Set([...md.matchAll(utilityRx)].map((m) => m[1]))].filter(
-	(c) => !COUNTEREXAMPLES.has(c),
-);
+// Split every backticked span on whitespace so multi-class snippets like
+// `flex gap-2 px-3 py-1.5` are checked token by token, not skipped because the
+// span as a whole does not look like one class.
+const UTILITY_TOKEN =
+	/^(?:[a-z-]+:)*(?:bg|text|border|ring|rounded|font|fill|stroke|gap|p|px|py|pt|pb|pl|pr|m|mx|my|mt|mb|w|h|max-w|min-w|max-h|size|flex|grid|items|justify|self|gap-x|gap-y|space-x|space-y|opacity|shadow|z|leading|tracking)-[A-Za-z0-9[\]./%-]+$/;
+const claimedUtilities = [
+	...new Set([...md.matchAll(/`([^`\n]+)`/g)].flatMap((m) => m[1].split(/\s+/)).filter((t) => UTILITY_TOKEN.test(t))),
+].filter((c) => !COUNTEREXAMPLES.has(c));
 
 const componentDirs = new Set(
 	existsSync(join(OUT, "components"))
@@ -50,8 +54,12 @@ const claimedComponents = [...new Set([...md.matchAll(/`([A-Z][A-Za-z]+)`/g)].ma
 
 const missingUtilities = claimedUtilities.filter((c) => !selectorPresent(c));
 // A component counts as real if it has an emitted card directory or is an
-// export in the bundle (providers ship in the bundle without a card).
-const missingComponents = claimedComponents.filter((c) => !componentDirs.has(c) && !bundle.includes(c));
+// export in the bundle (providers ship in the bundle without a card). Match on
+// a word boundary: a bare substring test passes `Card` off the back of
+// `CardHeader`, and would wave through any capitalised word that happens to
+// appear anywhere in a 570 KB bundle.
+const exportedInBundle = (name) => new RegExp(`\\b${name}\\b`).test(bundle);
+const missingComponents = claimedComponents.filter((c) => !componentDirs.has(c) && !exportedInBundle(c));
 
 // A colour utility whose declaration disagrees with its family is a trap:
 // e.g. a `text-*` utility resolving to a *background* token.
