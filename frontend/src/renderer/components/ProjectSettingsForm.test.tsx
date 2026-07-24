@@ -142,6 +142,7 @@ function mockProject(project: Record<string, unknown>) {
 	getMock.mockImplementation(async (path: string) => {
 		if (path === "/api/v1/agents") return agentCatalogResponse;
 		if (path === "/api/v1/agents/models") return modelCatalogResponse;
+		if (path.includes("/roles/") && path.endsWith("/prompt")) return { data: { prompt: "" }, error: undefined };
 		return {
 			data: {
 				status: "ok",
@@ -504,6 +505,38 @@ describe("ProjectSettingsForm", () => {
 
 		expect(await screen.findAllByText("Worker and orchestrator agents are required.")).toHaveLength(2);
 		expect(putMock).not.toHaveBeenCalled();
+	});
+
+	it("disables agent selectors while the initial agent catalog is loading", async () => {
+		getMock.mockImplementation(async (path: string) => {
+			if (path === "/api/v1/agents") {
+				return new Promise(() => {});
+			}
+			return {
+				data: {
+					status: "ok",
+					project: {
+						id: "proj-1",
+						name: "Project One",
+						kind: "single_repo",
+						path: "/repo/project-one",
+						repo: "",
+						defaultBranch: "main",
+						config: {
+							worker: { agent: "codex" },
+							orchestrator: { agent: "claude-code" },
+						},
+					},
+				},
+				error: undefined,
+			};
+		});
+
+		renderSettings();
+
+		expect(await screen.findByRole("combobox", { name: "Default worker agent" })).toBeDisabled();
+		expect(screen.getByRole("combobox", { name: "Default orchestrator agent" })).toBeDisabled();
+		expect(screen.getByRole("combobox", { name: "Default reviewer agent" })).toBeDisabled();
 	});
 
 	it("shows unknown-auth agents as selectable with a warning in project settings", async () => {
@@ -1167,9 +1200,11 @@ describe("ProjectSettingsForm", () => {
 		renderSettings();
 
 		expect(await screen.findByRole("combobox", { name: "Project model harness" })).toHaveTextContent("codex");
-		expect(document.getElementById("project-model-model")).toHaveValue("gpt-5-codex");
-		await userEvent.clear(document.getElementById("project-model-model")!);
-		await userEvent.type(document.getElementById("project-model-model")!, "gpt-5.1-codex");
+		const modelInput = document.getElementById("project-model-model")!;
+		expect(modelInput).toHaveValue("gpt-5-codex");
+		await waitFor(() => expect(modelInput).not.toBeDisabled());
+		await userEvent.clear(modelInput);
+		await userEvent.type(modelInput, "gpt-5.1-codex");
 
 		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
 
@@ -1207,8 +1242,10 @@ describe("ProjectSettingsForm", () => {
 		expect(await screen.findByRole("combobox", { name: "Project model harness" })).toHaveTextContent("claude-code");
 		const projectHarness = screen.getByRole("combobox", { name: "Project model harness" });
 		await chooseOption(projectHarness, "Codex");
-		expect(document.getElementById("project-model-model")).toHaveValue("gpt-5-codex");
-		await userEvent.clear(document.getElementById("project-model-model")!);
+		const modelInput = document.getElementById("project-model-model")!;
+		expect(modelInput).toHaveValue("gpt-5-codex");
+		await waitFor(() => expect(modelInput).not.toBeDisabled());
+		await userEvent.clear(modelInput);
 
 		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
 

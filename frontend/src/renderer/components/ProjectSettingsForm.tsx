@@ -143,6 +143,7 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 	const modelAvailabilityQuery = useModelAvailabilityQuery();
 	const { refresh: refreshModels, isRefreshing: isRefreshingModels } = useRefreshModelAvailability();
 	const agentCatalog = agentsQuery.data;
+	const agentSelectorsDisabled = agentsQuery.isFetching && agentCatalog === undefined;
 	const effectiveModelAvailability = modelAvailabilityQuery.data ?? modelAvailabilityFromAgentInventory(agentCatalog);
 	const refreshAgentsMutation = useMutation({
 		mutationFn: refreshAgents,
@@ -380,6 +381,7 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 						allowDefaultHarness
 						allowScalar
 						defaultHarnessLabel="Scalar fallback"
+						disabled={agentSelectorsDisabled}
 						isRefreshingModels={isRefreshingModels || modelAvailabilityQuery.isFetching}
 						onRefreshModels={refreshModels}
 						onChange={(selection) =>
@@ -402,6 +404,7 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 						configuredPins={modelPins(form.workerModels)}
 						agentCatalog={agentCatalog}
 						availability={effectiveModelAvailability}
+						disabled={agentSelectorsDisabled}
 						invalidHarness={validationError !== null && form.workerAgent === ""}
 						isRefreshingModels={isRefreshingModels || modelAvailabilityQuery.isFetching}
 						onRefreshModels={refreshModels}
@@ -421,6 +424,7 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 						configuredPins={modelPins(form.orchestratorModels)}
 						agentCatalog={agentCatalog}
 						availability={effectiveModelAvailability}
+						disabled={agentSelectorsDisabled}
 						invalidHarness={validationError !== null && form.orchestratorAgent === ""}
 						isRefreshingModels={isRefreshingModels || modelAvailabilityQuery.isFetching}
 						onRefreshModels={refreshModels}
@@ -442,6 +446,7 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 						availability={effectiveModelAvailability}
 						allowDefaultHarness
 						defaultHarnessLabel="Automatic independent reviewer"
+						disabled={agentSelectorsDisabled}
 						reviewerOnly
 						isRefreshingModels={isRefreshingModels || modelAvailabilityQuery.isFetching}
 						onRefreshModels={refreshModels}
@@ -639,6 +644,7 @@ function HarnessModelRow({
 	allowDefaultHarness = false,
 	allowScalar = false,
 	defaultHarnessLabel = "Project default",
+	disabled = false,
 	reviewerOnly = false,
 	invalidHarness = false,
 	isRefreshingModels,
@@ -655,6 +661,7 @@ function HarnessModelRow({
 	allowDefaultHarness?: boolean;
 	allowScalar?: boolean;
 	defaultHarnessLabel?: string;
+	disabled?: boolean;
 	reviewerOnly?: boolean;
 	invalidHarness?: boolean;
 	isRefreshingModels: boolean;
@@ -691,6 +698,7 @@ function HarnessModelRow({
 				authorized={scopedCatalog.authorized}
 				installed={scopedCatalog.installed}
 				supported={scopedCatalog.supported}
+				disabled={disabled}
 				invalid={invalidHarness}
 				onChange={changeHarness}
 			/>
@@ -701,7 +709,7 @@ function HarnessModelRow({
 				onChange={onChange}
 				availability={scopedAvailability}
 				configuredPins={configuredPins}
-				disabled={selection.harness === "" && !allowScalar}
+				disabled={disabled || (selection.harness === "" && !allowScalar)}
 				isRefreshing={isRefreshingModels}
 				onRefresh={onRefreshModels}
 				showHarness={false}
