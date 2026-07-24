@@ -43,6 +43,7 @@ type APIDeps struct {
 	CDC                cdc.Source
 	Events             cdcSubscriber
 	Telemetry          ports.EventSink
+	PrimeRelaunch      controllers.PrimeRelauncher
 	Mobile             *controllers.MobileController
 	StreamContext      context.Context
 }
@@ -80,7 +81,8 @@ func NewAPI(cfg config.Config, deps APIDeps) *API {
 			Health:    deps.AgentHealth,
 		},
 		prime: &controllers.PrimeController{
-			Svc: deps.Prime,
+			Svc:      deps.Prime,
+			Relaunch: deps.PrimeRelaunch,
 		},
 		projects: &controllers.ProjectsController{
 			Mgr: deps.Projects,

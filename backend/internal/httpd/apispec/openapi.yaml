@@ -803,6 +803,25 @@ paths:
       summary: Render the exact assembled fleet Prime system prompt
       tags:
       - prime
+  /api/v1/prime/relaunch:
+    post:
+      operationId: relaunchPrime
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionResponse'
+          description: OK
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+      summary: Relaunch fleet Prime, clearing any restart-budget pause
+      tags:
+      - prime
   /api/v1/prime/settings:
     get:
       operationId: getPrimeSettings

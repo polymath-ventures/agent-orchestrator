@@ -53,6 +53,9 @@ type primeSupervisorConfig struct {
 	FleetPaused             func(context.Context) bool
 	Now                     func() time.Time
 	Logger                  *slog.Logger
+	// Reconciler carries explicit user-initiated relaunch requests into the
+	// loop. Nil means no external door (the loop still ticks normally).
+	Reconciler *PrimeReconciler
 }
 
 type primeSupervisorState struct {
@@ -65,11 +68,12 @@ type primeSupervisorState struct {
 	idleWakeBackoff time.Duration
 }
 
-func startPrimeSupervisor(ctx context.Context, _ config.Config, settings primeSettingsSource, sessions primeSessionService, notifier notificationSink, logger *slog.Logger) <-chan struct{} {
+func startPrimeSupervisor(ctx context.Context, _ config.Config, settings primeSettingsSource, sessions primeSessionService, notifier notificationSink, logger *slog.Logger, reconciler *PrimeReconciler) <-chan struct{} {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	return startPrimeSupervisorWithConfig(ctx, primeSupervisorConfig{
+		Reconciler:      reconciler,
 		Interval:        defaultPrimeSupervisorInterval,
 		UnhealthyAfter:  defaultPrimeUnhealthyAfter,
 		RestartWindow:   defaultPrimeRestartWindow,
@@ -124,6 +128,13 @@ func startPrimeSupervisorWithConfig(ctx context.Context, cfg primeSupervisorConf
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
+				ensurePrime(ctx, cfg, state, sessions, notifier)
+			case <-cfg.Reconciler.wait():
+				// An explicit user action. Clearing the budget here (rather
+				// than letting it expire) is the point: automatic replacement
+				// stays damped against crash loops, while a deliberate operator
+				// relaunch is never told to wait out a backoff window.
+				state.resetRestart()
 				ensurePrime(ctx, cfg, state, sessions, notifier)
 			}
 		}
@@ -368,9 +379,12 @@ func notifyPrimeRestartCapped(ctx context.Context, notifier notificationSink, se
 	if notifier == nil {
 		return
 	}
-	message := "AO tried to replace the unhealthy prime three times in the last hour and paused automatic replacement. Inspect the active prime before restarting it."
+	// Copy must not assume a live prime exists to inspect: the capped state is
+	// reached precisely when replacement keeps failing, which routinely means
+	// there is no active prime at all. Point at the recovery action instead.
+	message := "AO tried to replace the unhealthy prime three times in the last hour and paused automatic replacement. Open the Prime page and use Relaunch Prime to try again now."
 	if sess.ID == "" {
-		message = "AO could not start the fleet prime after three attempts in the last hour and paused automatic retries. Check fleet Prime settings."
+		message = "AO could not start the fleet prime after three attempts in the last hour and paused automatic retries. Open the Prime page to relaunch it, or check fleet Prime settings."
 	}
 	err := notifier.Notify(ctx, ports.NotificationIntent{
 		Type:               domain.NotificationPrimeRestartCapped,

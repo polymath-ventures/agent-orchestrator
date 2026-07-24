@@ -382,6 +382,14 @@ func primeOperations() []operation {
 			},
 		},
 		{
+			method: http.MethodPost, path: "/api/v1/prime/relaunch", id: "relaunchPrime", tag: "prime",
+			summary: "Relaunch fleet Prime, clearing any restart-budget pause",
+			resps: []respUnit{
+				{http.StatusOK, controllers.SessionResponse{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+			},
+		},
+		{
 			method: http.MethodGet, path: "/api/v1/prime/prompt", id: "getPrimePrompt", tag: "prime",
 			summary: "Render the exact assembled fleet Prime system prompt",
 			resps: []respUnit{

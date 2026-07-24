@@ -20,7 +20,7 @@ func TestStartPrimeSupervisorRunsFromFleetSettingsWithoutEnvProject(t *testing.T
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	done := startPrimeSupervisor(ctx, config.Config{}, source, sessions, nil, nil)
+	done := startPrimeSupervisor(ctx, config.Config{}, source, sessions, nil, nil, nil)
 	select {
 	case <-source.settingsRead:
 	case <-time.After(time.Second):
@@ -341,7 +341,7 @@ func TestStartPrimeSupervisorSuppressesWakeWhenFleetPaused(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	done := startPrimeSupervisor(ctx, config.Config{}, source, sessions, nil, nil)
+	done := startPrimeSupervisor(ctx, config.Config{}, source, sessions, nil, nil, nil)
 	select {
 	case <-source.fleetRead:
 	case <-time.After(time.Second):
