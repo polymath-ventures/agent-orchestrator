@@ -82,4 +82,4 @@ without being implemented).
 - [x] 9.2 Exercise the recovery end to end against a running daemon: kill Prime from its terminal, confirm automatic or relaunch recovery with no manual git/tmux work
 - [x] 9.3 Exercise the Orchestrator equivalent: exit an Orchestrator from its terminal, relaunch from the UI, then confirm cleanup leaves the live replacement's worktree intact
 - [x] 9.4 Drive the Prime not-running surface and relaunch action in the browser and capture the result
-- [ ] 9.5 Run `/final-review` and record the verdict as a SHA-pinned commit status
+- [x] 9.5 Run `/final-review` and record the verdict as a SHA-pinned commit status
