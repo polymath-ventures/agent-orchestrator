@@ -96,7 +96,7 @@ cannot flatten — they are the only three entries in `cfg.dtsPropsFor`.
 
 ### Known: the emitted contracts are syntactically valid but not type-valid
 
-Type-checking the 105 emitted `.d.ts` produces **109 semantic errors** — 86
+Type-checking the 105 emitted `.d.ts` produces **107 semantic errors** — 84
 `ref?: React.Ref;` (TS2314, `Ref<T>` takes a type argument and gets none), 17
 bare `style?: CSSProperties;` (TS2304, missing the `React.` qualifier), and one
 unresolved `ResizablePrimitive` namespace.
@@ -124,7 +124,7 @@ since these _are_ declaration files):
 ```bash
 ./frontend/node_modules/.bin/tsc --noEmit --jsx react-jsx \
   --typeRoots ./frontend/node_modules/@types ds-bundle/components/*/*/*.d.ts \
-  2>&1 | grep -c 'error TS'   # expect 109; materially more means something new
+  2>&1 | grep -c 'error TS'   # expect 107; materially more means something new
 ```
 
 ## conventions.md is prompt-injected — validate it, don't eyeball it
@@ -223,9 +223,14 @@ appearing means something changed.
 - **`[TOKENS_MISSING]` — 45 undefined custom properties** (`--border`,
   `--accent`, `--bg`, `--bg-card`, `--accent-glow`, …). These come from
   `frontend/src/landing/**`, the marketing page, which has its own token
-  vocabulary and is bundled into the same compiled stylesheet. **No component
-  under `components/ui` references any of them** (verified by grep). Benign for
-  the design system — do not chase it.
+  vocabulary and is bundled into the same compiled stylesheet. **Mostly** benign
+  — but not entirely: `sidebar.tsx` (SidebarRail) uses
+  `shadow-[0_0_0_1px_var(--sidebar-border)]` and `var(--sidebar-accent)`, and
+  those bare names are **not** defined — the theme defines
+  `--color-sidebar-border` / `--color-sidebar-accent`. So SidebarRail's focus
+  and hover ring silently resolve to nothing, in the app as well as here. That
+  is an app bug this sync surfaced, not a sync artifact; it is not fixed in this
+  PR (no app source is touched here).
 - **`[FONT_MISSING]` — the Nerd Font mono stack.** See the fonts section below.
 
 Related known limitation, not a warn: `cssEntry` is the app's **whole** compiled

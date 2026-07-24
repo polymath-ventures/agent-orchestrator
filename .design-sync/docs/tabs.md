@@ -4,7 +4,8 @@ category: Navigation
 
 # Tabs
 
-`Tabs` › `TabsList` › `TabsTrigger` + `TabsContent` (matched by `value`).
+`Tabs` › `TabsList` › `TabsTrigger`, then `TabsContent` as a **sibling of**
+`TabsList` (not inside it), paired to a trigger by `value`.
 
 ```tsx
 <Tabs defaultValue="diff">

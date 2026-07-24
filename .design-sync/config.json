@@ -3,7 +3,7 @@
 	"shape": "package",
 	"pkg": "agent-orchestrator",
 	"globalName": "AODS",
-	"buildCmd": "npm --prefix frontend run build:web && cat $(ls frontend/dist/assets/*.css | sort) .design-sync/preview-surface.css > frontend/dist/ds-compiled.css && (cd frontend && npx tsc -p ../.design-sync/tsconfig.dts.json) && node .design-sync/emit-types-barrel.mjs",
+	"buildCmd": "npm --prefix frontend run build:web && CSS=$(ls frontend/dist/assets/*.css 2>/dev/null | sort) && [ -n \"$CSS\" ] && cat $CSS .design-sync/preview-surface.css > frontend/dist/ds-compiled.css && (cd frontend && npx tsc -p ../.design-sync/tsconfig.dts.json) && node .design-sync/emit-types-barrel.mjs",
 	"srcDir": "src/renderer/components/ui",
 	"tsconfig": "tsconfig.json",
 	"cssEntry": "dist/ds-compiled.css",
@@ -171,8 +171,8 @@
 	},
 	"dtsPropsFor": {
 		"SidebarTrigger": "className?: string;\n  id?: string;\n  style?: React.CSSProperties;\n  children?: React.ReactNode;\n  /** Rendered as a Button — accepts every Button prop. */\n  variant?: \"outline\" | \"primary\" | \"secondary\" | \"ghost\";\n  size?: \"default\" | \"sm\" | \"icon\" | \"icon-sm\";\n  asChild?: boolean;\n  onClick?: React.MouseEventHandler<HTMLButtonElement>;\n  disabled?: boolean;",
-		"SidebarInput": "className?: string;\n  id?: string;\n  style?: React.CSSProperties;\n  /** Rendered as an Input — accepts every Input prop. */\n  placeholder?: string;\n  value?: string | number | readonly string[];\n  defaultValue?: string | number | readonly string[];\n  disabled?: boolean;\n  onChange?: React.ChangeEventHandler<HTMLInputElement>;\n  ref?: React.Ref;",
-		"SidebarSeparator": "/** Either `vertical` or `horizontal`. Defaults to `horizontal`. */\n  orientation?: \"horizontal\" | \"vertical\";\n  /** Whether or not the component is purely decorative. */\n  decorative?: boolean;\n  className?: string;\n  id?: string;\n  style?: React.CSSProperties;\n  asChild?: boolean;\n  ref?: React.Ref;"
+		"SidebarInput": "className?: string;\n  id?: string;\n  style?: React.CSSProperties;\n  /** Rendered as an Input — accepts every Input prop. */\n  placeholder?: string;\n  value?: string | number | readonly string[];\n  defaultValue?: string | number | readonly string[];\n  disabled?: boolean;\n  onChange?: React.ChangeEventHandler<HTMLInputElement>;\n  ref?: React.Ref<HTMLInputElement>;",
+		"SidebarSeparator": "/** Either `vertical` or `horizontal`. Defaults to `horizontal`. */\n  orientation?: \"horizontal\" | \"vertical\";\n  /** Whether or not the component is purely decorative. */\n  decorative?: boolean;\n  className?: string;\n  id?: string;\n  style?: React.CSSProperties;\n  asChild?: boolean;\n  ref?: React.Ref<HTMLDivElement>;"
 	},
 	"readmeHeader": ".design-sync/conventions.md",
 	"guidelinesGlob": "docs/design-guidelines/**/*.md"
