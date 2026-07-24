@@ -683,6 +683,45 @@ func TestManager_UpdateSettings(t *testing.T) {
 	wantCode(t, err, "PROJECT_NOT_FOUND")
 }
 
+func TestManager_UpdateSettingsRejectsUnreachableModelBeforePersistence(t *testing.T) {
+	ctx := context.Background()
+	store, err := sqlite.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	validator := &fakeProjectModelValidator{result: ports.ModelValidationResult{
+		Status:  ports.ModelValidationUnreachable,
+		Message: "provider rejected this model",
+	}}
+	m := project.NewWithDeps(project.Deps{Store: store, ModelValidator: validator})
+	repo := gitRepo(t)
+	if _, err := m.Add(ctx, project.AddInput{Path: repo, ProjectID: ptr("ao")}); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+
+	_, err = m.UpdateSettings(ctx, "ao", project.UpdateSettingsInput{
+		DisplayName: "Should Not Persist",
+		Config: domain.ProjectConfig{
+			Worker: domain.RoleOverride{
+				Harness:     domain.HarnessCodex,
+				AgentConfig: domain.AgentConfig{Model: "gpt-5-codex"},
+			},
+		},
+	})
+	wantCode(t, err, "MODEL_UNREACHABLE")
+	if len(validator.calls) != 1 || validator.calls[0].harness != domain.HarnessCodex || validator.calls[0].model != "gpt-5-codex" {
+		t.Fatalf("validator calls = %#v, want codex/gpt-5-codex once", validator.calls)
+	}
+	got, getErr := m.Get(ctx, "ao")
+	if getErr != nil {
+		t.Fatalf("Get: %v", getErr)
+	}
+	if got.Project == nil || got.Project.Name != "ao" || got.Project.Config != nil {
+		t.Fatalf("project changed after rejected settings update = %#v", got.Project)
+	}
+}
+
 func TestManager_SetConfigRejectsUnreachableModelBeforePersistence(t *testing.T) {
 	ctx := context.Background()
 	store, err := sqlite.Open(t.TempDir())

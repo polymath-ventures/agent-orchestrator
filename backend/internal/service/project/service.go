@@ -596,8 +596,8 @@ func (m *Service) UpdateSettings(ctx context.Context, id domain.ProjectID, in Up
 	if displayName == "" {
 		return Project{}, apierr.Invalid("DISPLAY_NAME_REQUIRED", "Display name is required", nil)
 	}
-	if err := in.Config.Validate(); err != nil {
-		return Project{}, apierr.Invalid("INVALID_PROJECT_CONFIG", err.Error(), nil)
+	if err := validateProjectConfigStatic(in.Config); err != nil {
+		return Project{}, err
 	}
 	m.configMu.Lock()
 	defer m.configMu.Unlock()
@@ -619,10 +619,8 @@ func (m *Service) UpdateSettings(ctx context.Context, id domain.ProjectID, in Up
 			map[string]any{"currentConfigETag": row.Config.ETag()},
 		)
 	}
-	if row.Kind.WithDefault() == domain.ProjectKindScratch {
-		if err := validateScratchProjectConfig(in.Config); err != nil {
-			return Project{}, apierr.Invalid("INVALID_PROJECT_CONFIG", err.Error(), nil)
-		}
+	if err := m.validateLoadedProjectConfig(ctx, row.Kind.WithDefault(), in.Config); err != nil {
+		return Project{}, err
 	}
 	updated, err := m.store.UpdateProjectSettings(ctx, string(id), displayName, in.Config)
 	if err != nil {
@@ -716,13 +714,8 @@ func (m *Service) SetConfig(ctx context.Context, id domain.ProjectID, in SetConf
 			map[string]any{"currentConfigETag": row.Config.ETag()},
 		)
 	}
-	if err := m.validateConfiguredModels(ctx, in.Config); err != nil {
+	if err := m.validateLoadedProjectConfig(ctx, row.Kind.WithDefault(), in.Config); err != nil {
 		return Project{}, err
-	}
-	if row.Kind.WithDefault() == domain.ProjectKindScratch {
-		if err := validateScratchProjectConfig(in.Config); err != nil {
-			return Project{}, apierr.Invalid("INVALID_PROJECT_CONFIG", err.Error(), nil)
-		}
 	}
 	row.Config = in.Config
 	updated, err := m.store.SetProjectConfig(ctx, row.ID, row.Config)
@@ -749,6 +742,18 @@ func (m *Service) validateProjectConfig(ctx context.Context, cfg domain.ProjectC
 		return err
 	}
 	return m.validateConfiguredModels(ctx, cfg)
+}
+
+func (m *Service) validateLoadedProjectConfig(ctx context.Context, kind domain.ProjectKind, cfg domain.ProjectConfig) error {
+	if err := m.validateConfiguredModels(ctx, cfg); err != nil {
+		return err
+	}
+	if kind == domain.ProjectKindScratch {
+		if err := validateScratchProjectConfig(cfg); err != nil {
+			return apierr.Invalid("INVALID_PROJECT_CONFIG", err.Error(), nil)
+		}
+	}
+	return nil
 }
 
 func validateProjectConfigStatic(cfg domain.ProjectConfig) error {
