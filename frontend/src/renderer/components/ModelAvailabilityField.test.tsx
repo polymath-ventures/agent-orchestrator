@@ -7,6 +7,11 @@ import {
 	ModelAvailabilityField,
 	type ModelSelection,
 } from "./ModelAvailabilityField";
+import {
+	filterModelAvailabilityToSelectableAgents,
+	modelAvailabilityFromAgentInventory,
+	selectableAgentCatalog,
+} from "../lib/agent-selection";
 
 const availability: AgentModelAvailabilityResponse = {
 	checkedAt: "2026-07-22T01:02:03Z",
@@ -68,6 +73,127 @@ describe("buildModelCatalogView", () => {
 		expect(openCode?.catalogSource).toBe("configured-pins");
 		expect(openCode?.models[0]).toMatchObject({ model: "custom/provider-model", synthetic: true });
 		expect(openCode?.models[0].efforts).toContain("turbo");
+	});
+});
+
+describe("shared agent/model selection helpers", () => {
+	it("builds model fallback rows from installed inventory instead of the theoretical supported set", () => {
+		const fallback = modelAvailabilityFromAgentInventory({
+			supported: [
+				{ id: "codex", label: "Codex", reviewerCapable: true },
+				{ id: "kiro", label: "Kiro", reviewerCapable: false },
+			],
+			installed: [{ id: "codex", label: "Codex", authStatus: "authorized", reviewerCapable: true }],
+			authorized: [{ id: "codex", label: "Codex", authStatus: "authorized", reviewerCapable: true }],
+		});
+
+		expect(fallback?.harnesses.map((harness) => harness.id)).toEqual(["codex"]);
+	});
+
+	it("filters model availability to selectable installed harnesses while preserving the current saved harness", () => {
+		const filtered = filterModelAvailabilityToSelectableAgents(
+			availability,
+			{
+				supported: [
+					{ id: "claude-code", label: "Claude Code", reviewerCapable: true },
+					{ id: "codex-fugu", label: "Codex Fugu", reviewerCapable: false },
+					{ id: "kiro", label: "Kiro", reviewerCapable: false },
+				],
+				installed: [{ id: "claude-code", label: "Claude Code", authStatus: "authorized", reviewerCapable: true }],
+				authorized: [{ id: "claude-code", label: "Claude Code", authStatus: "authorized", reviewerCapable: true }],
+			},
+			{ current: "codex-fugu" },
+		);
+
+		expect(filtered?.harnesses.map((harness) => harness.id)).toEqual(["claude-code", "codex-fugu"]);
+	});
+
+	it("synthesizes a missing current harness after filtering so configured selections remain selectable", () => {
+		const filtered = filterModelAvailabilityToSelectableAgents(
+			availability,
+			{
+				supported: [
+					{ id: "claude-code", label: "Claude Code", reviewerCapable: true },
+					{ id: "opencode", label: "OpenCode", reviewerCapable: true },
+					{ id: "kiro", label: "Kiro", reviewerCapable: false },
+				],
+				installed: [{ id: "claude-code", label: "Claude Code", authStatus: "authorized", reviewerCapable: true }],
+				authorized: [{ id: "claude-code", label: "Claude Code", authStatus: "authorized", reviewerCapable: true }],
+			},
+			{ current: "opencode" },
+		);
+
+		expect(filtered?.harnesses.map((harness) => harness.id)).toEqual(["claude-code", "opencode"]);
+		expect(filtered?.harnesses.find((harness) => harness.id === "opencode")).toMatchObject({
+			label: "OpenCode",
+			catalogSource: "configured-pins",
+			catalogVerified: false,
+			models: [],
+		});
+	});
+
+	it("can require authorized inventory while preserving the current saved harness", () => {
+		const filtered = filterModelAvailabilityToSelectableAgents(
+			{
+				...availability,
+				harnesses: [
+					...availability.harnesses,
+					{
+						id: "cursor",
+						label: "Cursor",
+						reviewerCapable: false,
+						catalogSource: "none",
+						catalogVerified: false,
+						models: [],
+					},
+				],
+			},
+			{
+				supported: [
+					{ id: "claude-code", label: "Claude Code", reviewerCapable: true },
+					{ id: "cursor", label: "Cursor", reviewerCapable: false },
+					{ id: "opencode", label: "OpenCode", reviewerCapable: true },
+				],
+				installed: [
+					{ id: "claude-code", label: "Claude Code", authStatus: "authorized", reviewerCapable: true },
+					{ id: "cursor", label: "Cursor", authStatus: "unauthorized", reviewerCapable: false },
+				],
+				authorized: [{ id: "claude-code", label: "Claude Code", authStatus: "authorized", reviewerCapable: true }],
+			},
+			{ current: "opencode", requireAuthorized: true },
+		);
+
+		expect(filtered?.harnesses.map((harness) => harness.id)).toEqual(["claude-code", "opencode"]);
+		expect(filtered?.harnesses.some((harness) => harness.id === "cursor")).toBe(false);
+	});
+
+	it("can build model fallback rows from authorized inventory only", () => {
+		const fallback = modelAvailabilityFromAgentInventory(
+			{
+				supported: [
+					{ id: "codex", label: "Codex", reviewerCapable: true },
+					{ id: "cursor", label: "Cursor", reviewerCapable: false },
+				],
+				installed: [
+					{ id: "codex", label: "Codex", authStatus: "authorized", reviewerCapable: true },
+					{ id: "cursor", label: "Cursor", authStatus: "unauthorized", reviewerCapable: false },
+				],
+				authorized: [{ id: "codex", label: "Codex", authStatus: "authorized", reviewerCapable: true }],
+			},
+			{ requireAuthorized: true },
+		);
+
+		expect(fallback?.harnesses.map((harness) => harness.id)).toEqual(["codex"]);
+	});
+
+	it("keeps model availability unchanged while the agent inventory is still unknown", () => {
+		expect(filterModelAvailabilityToSelectableAgents(availability, undefined)).toBe(availability);
+	});
+
+	it("uses a friendly label for a current saved harness that is absent from inventory", () => {
+		const catalog = selectableAgentCatalog(undefined, { current: "claude-code", currentLabel: "Claude Code" });
+
+		expect(catalog.supported).toEqual([{ id: "claude-code", label: "Claude Code", reviewerCapable: false }]);
 	});
 });
 

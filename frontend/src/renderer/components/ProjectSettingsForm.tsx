@@ -10,10 +10,17 @@ import {
 } from "../hooks/useModelAvailabilityQuery";
 import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
+import {
+	agentDisplayLabel,
+	type AgentInfo,
+	filterModelAvailabilityToSelectableAgents,
+	modelAvailabilityFromAgentInventory,
+	selectableAgentCatalog,
+} from "../lib/agent-selection";
 import { captureRendererEvent } from "../lib/telemetry";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { newestActiveOrchestrator } from "../types/workspace";
-import { modelAvailabilityFromAgentInventory, RequiredAgentField } from "./CreateProjectAgentSheet";
+import { RequiredAgentField } from "./CreateProjectAgentSheet";
 import { DashboardSubhead } from "./DashboardSubhead";
 import { buildIntake, deriveGitHubRepo, IntakeFields, type IntakeForm, intakeNeedsRule } from "./IntakeFields";
 import { type ConfiguredModelPin, ModelAvailabilityField, type ModelSelection } from "./ModelAvailabilityField";
@@ -34,7 +41,6 @@ import {
 type Project = components["schemas"]["Project"];
 type ProjectConfig = components["schemas"]["ProjectConfig"];
 type AgentConfig = components["schemas"]["AgentConfig"];
-type AgentInfo = components["schemas"]["AgentInfo"];
 type TrackerIntakeConfig = components["schemas"]["TrackerIntakeConfig"];
 
 const PERMISSION_MODE_OPTIONS = [
@@ -640,15 +646,19 @@ function HarnessModelRow({
 	onRefreshModels: () => void | Promise<unknown>;
 	onChange: (selection: ModelSelection) => void;
 }) {
-	const scopedAvailability = reviewerOnly ? reviewerModelAvailability(availability, selection.harness) : availability;
-	const scopedCatalog = modelHarnessCatalog(
-		agentCatalog,
-		availability,
-		selection.harness,
+	const scopedAvailability = filterModelAvailabilityToSelectableAgents(availability, agentCatalog, {
+		current: selection.harness,
 		reviewerOnly,
-		allowDefaultHarness,
-		defaultHarnessLabel,
-	);
+	});
+	const defaultAgent = allowDefaultHarness
+		? { id: DEFAULT_HARNESS_ID, label: defaultHarnessLabel, authStatus: "authorized" as const, reviewerCapable: false }
+		: undefined;
+	const scopedCatalog = selectableAgentCatalog(agentCatalog, {
+		current: selection.harness,
+		currentLabel: selection.harness ? agentDisplayLabel(agentCatalog, availability, selection.harness) : undefined,
+		reviewerOnly,
+		includeDefault: defaultAgent,
+	});
 	const harnessValue = allowDefaultHarness && selection.harness === "" ? DEFAULT_HARNESS_ID : selection.harness;
 	const changeHarness = (rawHarness: string) => {
 		const harness = rawHarness === DEFAULT_HARNESS_ID ? "" : rawHarness;
@@ -930,75 +940,4 @@ function buildReviewerConfig(
 		},
 		...rest,
 	];
-}
-
-function reviewerModelAvailability(
-	availability: AgentModelAvailabilityResponse | undefined,
-	currentHarness: string,
-): AgentModelAvailabilityResponse | undefined {
-	if (!availability) return undefined;
-	return {
-		...availability,
-		harnesses: (availability.harnesses ?? []).filter(
-			(harness) => harness.reviewerCapable || harness.id === currentHarness,
-		),
-	};
-}
-
-function modelHarnessCatalog(
-	catalog: { authorized?: AgentInfo[]; installed?: AgentInfo[]; supported?: AgentInfo[] } | undefined,
-	availability: AgentModelAvailabilityResponse | undefined,
-	currentHarness: string,
-	reviewerOnly: boolean,
-	includeDefault: boolean,
-	defaultLabel: string,
-) {
-	const availabilityByID = new Map((availability?.harnesses ?? []).map((harness) => [harness.id, harness]));
-	const reviewerIDs = new Set(
-		(availability?.harnesses ?? []).filter((harness) => harness.reviewerCapable).map((harness) => harness.id),
-	);
-	for (const agents of [catalog?.supported, catalog?.installed, catalog?.authorized]) {
-		for (const agent of agents ?? []) {
-			if (agent.reviewerCapable) reviewerIDs.add(agent.id);
-		}
-	}
-	const allowed = (id: string) => !reviewerOnly || reviewerIDs.has(id) || id === currentHarness;
-	const supportedByID = new Map<string, AgentInfo>();
-	for (const agent of catalog?.supported ?? []) {
-		if (allowed(agent.id)) supportedByID.set(agent.id, agent);
-	}
-	for (const harness of availability?.harnesses ?? []) {
-		if (allowed(harness.id) && !supportedByID.has(harness.id)) {
-			supportedByID.set(harness.id, {
-				id: harness.id,
-				label: harness.label,
-				reviewerCapable: harness.reviewerCapable,
-			});
-		}
-	}
-	if (currentHarness && !supportedByID.has(currentHarness)) {
-		supportedByID.set(currentHarness, {
-			id: currentHarness,
-			label: availabilityByID.get(currentHarness)?.label ?? currentHarness,
-			reviewerCapable: availabilityByID.get(currentHarness)?.reviewerCapable ?? false,
-		});
-	}
-	const defaultAgent: AgentInfo = {
-		id: DEFAULT_HARNESS_ID,
-		label: defaultLabel,
-		authStatus: "authorized",
-		reviewerCapable: false,
-	};
-	if (includeDefault) supportedByID.set(defaultAgent.id, defaultAgent);
-	const filter = (agents: AgentInfo[] | undefined) => {
-		if (!agents) return undefined;
-		const out = agents.filter((agent) => allowed(agent.id));
-		if (includeDefault) out.push(defaultAgent);
-		return out;
-	};
-	return {
-		supported: [...supportedByID.values()],
-		installed: filter(catalog?.installed),
-		authorized: filter(catalog?.authorized),
-	};
 }

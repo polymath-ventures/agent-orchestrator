@@ -2,8 +2,10 @@ import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
 import type { components } from "../../api/schema";
+import { agentsQueryOptions } from "../hooks/useAgentsQuery";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { useModelAvailabilityQuery, useRefreshModelAvailability } from "../hooks/useModelAvailabilityQuery";
+import { filterModelAvailabilityToSelectableAgents, modelAvailabilityFromAgentInventory } from "../lib/agent-selection";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { ModelAvailabilityField, type ModelSelection } from "./ModelAvailabilityField";
 import { Button } from "./ui/button";
@@ -34,6 +36,7 @@ async function fetchPrimeSettings(): Promise<PrimeSettingsView> {
 
 export function PrimeSection() {
 	const queryClient = useQueryClient();
+	const agentsQuery = useQuery(agentsQueryOptions);
 	const modelAvailabilityQuery = useModelAvailabilityQuery();
 	const { refresh: refreshModels, isRefreshing: isRefreshingModels } = useRefreshModelAvailability();
 	const query = useQuery({
@@ -81,6 +84,15 @@ export function PrimeSection() {
 		model: form.agentConfig?.model ?? "",
 		effort: form.agentConfig?.effort ?? "",
 	};
+	const inventoryModelAvailability = modelAvailabilityFromAgentInventory(agentsQuery.data, {
+		current: modelSelection.harness,
+		requireAuthorized: true,
+	});
+	const effectiveModelAvailability = modelAvailabilityQuery.data ?? inventoryModelAvailability;
+	const modelAvailability = filterModelAvailabilityToSelectableAgents(effectiveModelAvailability, agentsQuery.data, {
+		current: modelSelection.harness,
+		requireAuthorized: true,
+	});
 	const updateModelSelection = (selection: ModelSelection) =>
 		setForm((f) => ({
 			...f,
@@ -137,7 +149,7 @@ export function PrimeSection() {
 					label="Prime model and effort"
 					value={modelSelection}
 					onChange={updateModelSelection}
-					availability={modelAvailabilityQuery.data}
+					availability={modelAvailability}
 					configuredPins={[modelSelection]}
 					disabled={busy}
 					isRefreshing={isRefreshingModels || modelAvailabilityQuery.isFetching}

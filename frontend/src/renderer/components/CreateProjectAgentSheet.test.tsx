@@ -179,6 +179,29 @@ describe("CreateProjectAgentSheet", () => {
 		expect(await screen.findByRole("listbox")).toHaveClass("max-h-select-menu-max!");
 	});
 
+	it("does not offer supported-only theoretical harnesses", async () => {
+		render(
+			<RequiredAgentField
+				id="agent"
+				label="Agent"
+				onChange={() => undefined}
+				placeholder="Project default"
+				value=""
+				supported={[
+					{ id: "codex", label: "Codex", reviewerCapable: true },
+					{ id: "kiro", label: "Kiro", reviewerCapable: false },
+				]}
+				installed={[{ id: "codex", label: "Codex", authStatus: "authorized", reviewerCapable: true }]}
+				authorized={[{ id: "codex", label: "Codex", authStatus: "authorized", reviewerCapable: true }]}
+			/>,
+		);
+
+		await userEvent.click(screen.getByLabelText("Agent"));
+
+		expect(await screen.findByRole("option", { name: "Codex" })).toBeInTheDocument();
+		expect(screen.queryByRole("option", { name: "Kiro" })).not.toBeInTheDocument();
+	});
+
 	it("creates without intake when the toggle is left off", async () => {
 		const onSubmit = renderSheet();
 

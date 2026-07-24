@@ -47,10 +47,23 @@ const modelAvailability: AgentModelAvailabilityResponse = {
 				},
 			],
 		},
+		{
+			id: "kiro",
+			label: "Kiro",
+			reviewerCapable: false,
+			catalogSource: "none",
+			catalogVerified: false,
+			models: [],
+		},
 	],
 };
 
 let primeSettings: components["schemas"]["DomainPrimeSettings"];
+let agentCatalog: components["schemas"]["ListAgentsResponse"];
+let modelAvailabilityResult: {
+	data?: AgentModelAvailabilityResponse;
+	error?: { message: string };
+};
 
 beforeEach(() => {
 	primeSettings = {
@@ -62,6 +75,15 @@ beforeEach(() => {
 		rulesFile: "/etc/ao/prime.md",
 		wakeInterval: "15m",
 	};
+	agentCatalog = {
+		supported: [
+			{ id: "codex", label: "Codex", reviewerCapable: true },
+			{ id: "kiro", label: "Kiro", reviewerCapable: false },
+		],
+		installed: [{ id: "codex", label: "Codex", authStatus: "authorized", reviewerCapable: true }],
+		authorized: [{ id: "codex", label: "Codex", authStatus: "authorized", reviewerCapable: true }],
+	};
+	modelAvailabilityResult = { data: modelAvailability, error: undefined };
 	getMock.mockReset().mockImplementation((path: string) => {
 		if (path === "/api/v1/prime/settings") {
 			return Promise.resolve({
@@ -70,7 +92,13 @@ beforeEach(() => {
 			});
 		}
 		if (path === "/api/v1/agents/models") {
-			return Promise.resolve({ data: modelAvailability, error: undefined });
+			return Promise.resolve(modelAvailabilityResult);
+		}
+		if (path === "/api/v1/agents") {
+			return Promise.resolve({
+				data: agentCatalog,
+				error: undefined,
+			});
 		}
 		return Promise.resolve({ data: undefined, error: { message: `unexpected GET ${path}` } });
 	});
@@ -95,6 +123,79 @@ describe("PrimeSection", () => {
 		expect(screen.getByLabelText("Instructions file path")).toHaveValue("/etc/ao/prime.md");
 		expect(screen.getByText(/Inline instructions are loaded first/i)).toBeInTheDocument();
 		expect(screen.queryByText(/Legacy Prime environment/i)).not.toBeInTheDocument();
+	});
+
+	it("limits Prime harness choices to installed inventory plus the saved harness", async () => {
+		renderPrimeSection();
+
+		const harness = await screen.findByLabelText("Harness");
+		await waitFor(() =>
+			expect(
+				Array.from(harness.querySelectorAll("option")).map((option) => ({
+					value: option.value,
+					label: option.textContent,
+				})),
+			).toEqual([
+				{ value: "", label: "Select harness" },
+				{ value: "codex", label: "Codex" },
+			]),
+		);
+	});
+
+	it("does not offer installed harnesses that are explicitly unauthorized", async () => {
+		agentCatalog = {
+			...agentCatalog,
+			supported: [...(agentCatalog.supported ?? []), { id: "cursor", label: "Cursor", reviewerCapable: false }],
+			installed: [
+				...(agentCatalog.installed ?? []),
+				{ id: "cursor", label: "Cursor", authStatus: "unauthorized", reviewerCapable: false },
+			],
+		};
+		modelAvailabilityResult = {
+			data: {
+				...modelAvailability,
+				harnesses: [
+					...modelAvailability.harnesses,
+					{
+						id: "cursor",
+						label: "Cursor",
+						reviewerCapable: false,
+						catalogSource: "none",
+						catalogVerified: false,
+						models: [],
+					},
+				],
+			},
+			error: undefined,
+		};
+
+		renderPrimeSection();
+
+		const harness = await screen.findByLabelText("Harness");
+		await waitFor(() =>
+			expect(Array.from(harness.querySelectorAll("option")).map((option) => option.value)).toEqual(["", "codex"]),
+		);
+	});
+
+	it("falls back to authorized agent inventory when model catalogs are unavailable", async () => {
+		modelAvailabilityResult = { data: undefined, error: { message: "offline" } };
+		primeSettings = { ...primeSettings, agent: "", agentConfig: {} };
+
+		renderPrimeSection();
+
+		const harness = await screen.findByLabelText("Harness");
+		await waitFor(() =>
+			expect(
+				Array.from(harness.querySelectorAll("option")).map((option) => ({
+					value: option.value,
+					label: option.textContent,
+				})),
+			).toEqual([
+				{ value: "", label: "Select harness" },
+				{ value: "codex", label: "Codex" },
+			]),
+		);
+		expect(await screen.findByText(/Model catalogs are unavailable/i)).toBeInTheDocument();
 	});
 
 	it("saves edited global Prime settings", async () => {

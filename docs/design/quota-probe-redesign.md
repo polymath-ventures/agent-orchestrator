@@ -100,8 +100,9 @@ show/hide it.
 
 The widget derives its harness set and human labels from the **same
 `useAgentsQuery` inventory the pickers use** (labels = adapter `Manifest.Name`),
-reusing `AGENT_OPTIONS`/`AgentProvider` only for the id vocabulary — no parallel
-hardcoded harness list. This keeps it aligned with #98's picker-registry work.
+reusing the shared frontend agent-selection helpers for selectable ids and
+labels — no parallel hardcoded harness list. This keeps it aligned with #98's
+picker-registry work.
 
 ### Alerting
 
