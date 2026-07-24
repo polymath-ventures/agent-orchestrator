@@ -179,6 +179,22 @@ describe("CreateProjectAgentSheet", () => {
 		expect(await screen.findByRole("listbox")).toHaveClass("max-h-select-menu-max!");
 	});
 
+	it("applies a caller-supplied field gap so callers can match a sibling field's row height", () => {
+		render(
+			<RequiredAgentField
+				id="agent"
+				label="Agent"
+				onChange={() => undefined}
+				placeholder="Project default"
+				value=""
+				fieldGapClassName="gap-2"
+			/>,
+		);
+
+		expect(screen.getByLabelText("Agent").closest("div.flex.flex-col")).toHaveClass("gap-2");
+		expect(screen.getByLabelText("Agent").closest("div.flex.flex-col")).not.toHaveClass("gap-1.5");
+	});
+
 	it("does not offer supported-only theoretical harnesses", async () => {
 		render(
 			<RequiredAgentField

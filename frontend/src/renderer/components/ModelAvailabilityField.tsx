@@ -39,6 +39,7 @@ export type ModelAvailabilityFieldProps = {
 	statusVisibility?: "all" | "actionable";
 	allowEmpty?: boolean;
 	emptyLabel?: string;
+	fieldLabelsVisible?: boolean;
 };
 
 const selectClassName =
@@ -59,6 +60,7 @@ export function ModelAvailabilityField({
 	statusVisibility = "all",
 	allowEmpty = true,
 	emptyLabel = "Agent default",
+	fieldLabelsVisible = true,
 }: ModelAvailabilityFieldProps) {
 	const harnesses = useMemo(
 		() => buildModelCatalogView(availability, value, configuredPins),
@@ -124,7 +126,10 @@ export function ModelAvailabilityField({
 			<div className={`grid gap-2 ${columnClass}`}>
 				{showHarness && (
 					<div className="flex min-w-0 flex-col gap-1">
-						<Label htmlFor={`${id}-harness`} className="text-[11px] text-muted-foreground">
+						<Label
+							htmlFor={`${id}-harness`}
+							className={fieldLabelsVisible ? "text-[11px] text-muted-foreground" : "sr-only"}
+						>
 							Harness
 						</Label>
 						<select
@@ -144,7 +149,10 @@ export function ModelAvailabilityField({
 				)}
 
 				<div className="flex min-w-0 flex-col gap-1">
-					<Label htmlFor={`${id}-model`} className="text-[11px] text-muted-foreground">
+					<Label
+						htmlFor={`${id}-model`}
+						className={fieldLabelsVisible ? "text-[11px] text-muted-foreground" : "sr-only"}
+					>
 						Model
 					</Label>
 					<input
@@ -168,7 +176,10 @@ export function ModelAvailabilityField({
 
 				{showEffort && (
 					<div className="flex min-w-0 flex-col gap-1">
-						<Label htmlFor={`${id}-effort`} className="text-[11px] text-muted-foreground">
+						<Label
+							htmlFor={`${id}-effort`}
+							className={fieldLabelsVisible ? "text-[11px] text-muted-foreground" : "sr-only"}
+						>
 							Effort
 						</Label>
 						<select

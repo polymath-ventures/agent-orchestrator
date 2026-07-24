@@ -1213,6 +1213,47 @@ describe("ProjectSettingsForm", () => {
 		expect(effort).toHaveValue("high");
 	}, 20_000);
 
+	it("aligns the harness dropdown with the Model/Effort controls in each harness/model row", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "",
+			defaultBranch: "main",
+			config: {
+				worker: { agent: "codex" },
+				orchestrator: { agent: "claude-code" },
+			},
+		});
+
+		renderSettings();
+		await screen.findByRole("combobox", { name: "Project model harness" });
+
+		// The harness picker's control sits directly under its single label. The
+		// Model/Effort controls must match that — their per-field labels stay in
+		// the DOM (for native label-click focus + a11y association) but are
+		// visually hidden, or they render one row lower than the harness
+		// dropdown sharing their bordered row.
+		for (const text of ["Model", "Effort"]) {
+			for (const label of screen.getAllByText(text, { selector: "label" })) {
+				expect(label).toHaveClass("sr-only");
+			}
+		}
+
+		// ...but must still be reachable with an accessible name for a11y.
+		expect(document.getElementById("project-model-model")).toHaveAccessibleName("Model");
+		expect(document.getElementById("project-model-effort")).toHaveAccessibleName("Effort");
+
+		// The Model/Effort header row's height is set by its refresh button
+		// (h-control-form). The harness label must be pinned to that same
+		// token — not a hand-matched pixel value — so the two columns' controls
+		// land on the same row.
+		const harnessLabel = document.querySelector('label[for="project-model-harness"]');
+		expect(harnessLabel).toHaveClass("h-control-form");
+		expect(harnessLabel?.parentElement).toHaveClass("gap-2");
+	}, 20_000);
+
 	it("keeps a synthetic configured project pin visible when no catalog row exists", async () => {
 		mockProject({
 			id: "proj-1",

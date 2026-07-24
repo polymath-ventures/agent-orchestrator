@@ -425,6 +425,51 @@ describe("ModelAvailabilityField", () => {
 		expect(onChange).toHaveBeenCalledWith({ harness: "codex-fugu", model: "", effort: "xhigh" });
 	});
 
+	it("keeps per-field <label> elements but visually hides them when fieldLabelsVisible is false", () => {
+		render(
+			<ModelAvailabilityField
+				id="worker-model"
+				label="Worker model and effort"
+				value={{ harness: "codex-fugu", model: "fugu", effort: "xhigh" }}
+				onChange={vi.fn()}
+				availability={availability}
+				showHarness
+				fieldLabelsVisible={false}
+			/>,
+		);
+
+		// Real <label htmlFor> elements stay in the DOM — for native label-click
+		// focus behavior and reliable a11y-tree association — just visually
+		// hidden, not swapped for aria-label.
+		for (const text of ["Harness", "Model", "Effort"]) {
+			const label = screen.getByText(text, { selector: "label" });
+			expect(label).toHaveClass("sr-only");
+			expect(label).not.toHaveClass("text-[11px]");
+		}
+		expect(screen.getByLabelText("Harness")).toHaveValue("codex-fugu");
+		expect(screen.getByLabelText("Model")).toHaveValue("fugu");
+		expect(screen.getByLabelText("Effort")).toHaveValue("xhigh");
+	});
+
+	it("shows visible per-field labels by default", () => {
+		render(
+			<ModelAvailabilityField
+				id="worker-model"
+				label="Worker model and effort"
+				value={{ harness: "codex-fugu", model: "fugu", effort: "xhigh" }}
+				onChange={vi.fn()}
+				availability={availability}
+				showHarness
+			/>,
+		);
+
+		for (const text of ["Harness", "Model", "Effort"]) {
+			const label = screen.getByText(text, { selector: "label" });
+			expect(label).not.toHaveClass("sr-only");
+			expect(label).toHaveClass("text-[11px]");
+		}
+	});
+
 	it("keeps a zero-row harness usable through its configured synthetic pin", () => {
 		const zeroRowAvailability: AgentModelAvailabilityResponse = {
 			...availability,
