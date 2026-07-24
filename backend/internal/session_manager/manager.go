@@ -1320,7 +1320,7 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 		return false, nil // already gone: benign race
 	}
 	handle := runtimeHandle(rec.Metadata)
-	ws := workspaceInfo(rec)
+	ws := workspaceInfoForTeardown(rec, m.dataDir)
 
 	var workspaceProjectRows []ports.WorkspaceRepoInfo
 	workspaceProject := false
@@ -1437,7 +1437,7 @@ func (m *Manager) RetireForReplacement(ctx context.Context, id domain.SessionID)
 		return m.retireWorkspaceProjectForReplacement(ctx, rec, rows)
 	}
 
-	ws := workspaceInfo(rec)
+	ws := workspaceInfoForTeardown(rec, m.dataDir)
 	staleWorkspace := false
 	if _, err := m.workspace.StashUncommitted(ctx, ws); err != nil {
 		if !errors.Is(err, ports.ErrWorkspaceStale) {
@@ -1721,7 +1721,7 @@ func (m *Manager) saveAndTeardownOne(ctx context.Context, rec domain.SessionReco
 	}
 
 	// 1. Capture uncommitted work (ref may be "" for clean worktrees).
-	ws := workspaceInfo(rec)
+	ws := workspaceInfoForTeardown(rec, m.dataDir)
 	ref, err := m.workspace.StashUncommitted(ctx, ws)
 	if err != nil {
 		return fmt.Errorf("save %s: stash: %w", rec.ID, err)
@@ -2534,7 +2534,7 @@ func (m *Manager) Cleanup(ctx context.Context, project domain.ProjectID) (Cleanu
 		if !rec.IsTerminated {
 			continue
 		}
-		ws := workspaceInfo(rec)
+		ws := workspaceInfoForTeardown(rec, m.dataDir)
 		if ws.Path == "" {
 			m.cleanupSystemPromptDir(rec.ID)
 			continue
@@ -3768,6 +3768,27 @@ func workspaceInfo(rec domain.SessionRecord) ports.WorkspaceInfo {
 		ProjectID: rec.ProjectID,
 		RepoPath:  rec.Metadata.WorkspaceRepoPath,
 	}
+}
+
+// workspaceInfoForTeardown is workspaceInfo with the repo path derived from the
+// role identity when the row does not carry one.
+//
+// A projectless Prime has no project id to resolve a repo through, so if
+// WorkspaceRepoPath is empty the workspace layer fails with "project id is
+// required". Cleanup renders that as the generic "workspace teardown failed"
+// and skips the row — leaving the stale worktree holding the canonical
+// ao/prime branch, which makes every replacement spawn fail with "branch is
+// already checked out in another worktree" until the restart budget is spent.
+//
+// The derivation already exists (singleRepoOverridePath) and is used by the
+// restore paths; teardown simply was not using it. The persisted path still
+// wins — this is a fallback, not an override.
+func workspaceInfoForTeardown(rec domain.SessionRecord, dataDir string) ports.WorkspaceInfo {
+	info := workspaceInfo(rec)
+	if info.RepoPath == "" {
+		info.RepoPath = singleRepoOverridePath(rec, dataDir)
+	}
+	return info
 }
 
 func workspaceInfoFromRepoInfo(info ports.WorkspaceRepoInfo) ports.WorkspaceInfo {

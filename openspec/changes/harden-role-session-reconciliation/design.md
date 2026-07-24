@@ -20,16 +20,16 @@ Current state, as read from the tree:
   `branch is already checked out in another worktree` — surfaced as a 409 and burning a restart-budget
   slot per attempt. The Orchestrator's path is canonical per-project, so the replacement silently
   **adopts** the dead worktree instead of failing.
-- `Destroy` shells out to `git worktree remove` **without** `--force`. Git's own cleanliness check
-  consults `status --porcelain --ignored`, but AO's `isDirty` probe omits `--ignored`. So ignored
-  `.claude/` runtime residue makes git refuse while AO believes the tree is clean, and cleanup reports
-  the generic `workspace teardown failed`. `ForceDestroy` exists and would handle it, but no cleanup
-  path calls it.
+- Teardown builds its workspace handle from the session row alone, taking the repo path only from
+  `WorkspaceRepoPath`. A projectless Prime has no project id to fall back on, so an empty field makes
+  the workspace layer fail with `project id is required`, which cleanup reports as the generic
+  `workspace teardown failed`. See Decision 4 — an earlier reading blamed ignored `.claude/` residue,
+  which direct probing of git disproved.
 - `Manager.Cleanup` iterates every terminated row and destroys the workspace recorded on that row
   **with no check that a live session now owns that path**. Because Orchestrator role workspaces are
   canonical and therefore _shared across successive role rows_, a historical terminated row points at
-  the live replacement's worktree. Today the residue bug is the only thing preventing cleanup from
-  deleting it.
+  the live replacement's worktree. The only thing preventing cleanup from deleting it is that a live
+  role worktree is _usually_ dirty, so git refuses — a clean one is already exposed today.
 - `reconcileReap` correctly kills runtimes that outlived their terminated row, but it is reachable
   only from the one-shot boot `Reconcile`. A tmux session leaked by an agent `/exit` survives until the
   next daemon restart.
@@ -113,20 +113,46 @@ _Why a predicate and not "cleanup simply never touches role workspaces":_ Prime'
 must still be reclaimed once they are genuinely nobody's, or they leak forever. Ownership is the
 correct invariant; "role" is not.
 
-### Decision 4 — Teardown escalation for role paths, and an honest dirtiness probe
+### Decision 4 — Teardown derives a role's repo path from role identity
 
-The dirtiness probe starts accounting for ignored paths, so AO's view matches the view git enforces.
-Role-workspace teardown then escalates to the existing force path when the only obstacle is ignored
-runtime residue.
+**Corrected after empirical verification.** This decision originally proposed teaching the dirtiness
+probe about version-control-ignored paths and escalating role teardown to the force path. Probing real
+git (2.51.0) disproved the premise:
 
-_Alternative considered — always force-destroy._ Rejected: worker worktrees can hold real uncommitted
-work, and force-destroying them on cleanup would be a data-loss regression far worse than the bug.
-Escalation is scoped to role workspaces, whose contents are AO-managed by construction.
+| worktree contains               | `git worktree remove` |
+| ------------------------------- | --------------------- |
+| ignored files only (`.claude/`) | **removes**           |
+| untracked non-ignored file      | refuses               |
+| modified tracked file           | refuses               |
 
-**Ordering is load-bearing.** Decision 3 must land before Decision 4. Today the teardown failure in
-Decision 4 is the accidental guard preventing the deletion in Decision 3. Fixing teardown first would
-briefly ship a build whose cleanup deletes live Orchestrator worktrees. The phase order in `tasks.md`
-encodes this and it is not a stylistic preference.
+Git refuses only on modified-or-untracked **non-ignored** content, which is exactly what AO's existing
+`status --porcelain` probe reports. There is no mismatch to fix, and adding `--ignored` would make AO
+refuse teardown _more_ often than git does — a regression, not a fix.
+
+The real cause of the reported `workspace teardown failed` is narrower. Teardown builds its workspace
+handle from the session row alone, taking the repo path only from `WorkspaceRepoPath`. A projectless
+Prime has no project id to resolve a repo through, so when that field is empty the workspace layer
+fails with `project id is required` — a plain error, which cleanup renders as the generic
+`workspace teardown failed`. The row is skipped, the stale worktree keeps holding `ao/prime`, and every
+replacement spawn hits `branch is already checked out in another worktree` until the restart budget is
+spent. That is the reported outage, end to end.
+
+The fix is correspondingly small: teardown derives the repo path from the role identity when the row
+does not carry one. The derivation already exists and is already used by the restore paths; teardown
+simply was not using it. A persisted path still wins, so this is a fallback rather than an override —
+one fact, derived in one place, instead of a field every writer must remember to populate.
+
+_Alternative considered — always force-destroy role workspaces._ Rejected: it treats the symptom, and
+force-destroying on cleanup risks discarding real work if a role workspace ever holds any.
+
+_Alternative considered — backfill `WorkspaceRepoPath` on existing rows via a migration._ Rejected:
+it repairs today's rows but leaves the derivation absent, so the next row written without the field
+reintroduces the bug. Deriving at read time keeps the property true by construction.
+
+**Ordering note.** Decision 3 still lands first, but the reason is not the one originally recorded.
+Ignored residue was never the accidental guard — the guard is that live role worktrees are _usually
+dirty_, so git refuses. A clean live Orchestrator worktree is therefore already exposed to deletion
+today. That makes Decision 3 more urgent than first assessed, not less.
 
 ### Decision 5 — Reap leaked runtimes on the reconcile path, reusing the existing reaper
 

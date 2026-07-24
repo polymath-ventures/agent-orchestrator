@@ -15,12 +15,18 @@
 - [ ] 2.4 Add a distinct ownership-skip reason so an ownership skip is not reported as a workspace teardown failure
 - [ ] 2.5 Write failing test then confirm: a terminated role row whose path and branch are held by nobody is still reclaimed
 
-## 3. Honest dirtiness probe and role teardown escalation
+## 3. Teardown resolves a role's repo path (re-scoped after empirical verification)
 
-- [ ] 3.1 Write a failing integration test that puts version-control-ignored runtime residue in a real worktree and asserts teardown succeeds
-- [ ] 3.2 Make the dirtiness probe account for ignored paths so AO's view matches the view git enforces
-- [ ] 3.3 Escalate role-workspace teardown to the existing force path when the only obstacle is ignored AO runtime residue, leaving worker teardown semantics unchanged
-- [ ] 3.4 Add a regression test asserting worker workspaces with real uncommitted work are still never force-destroyed by cleanup
+Original plan was an ignored-path dirtiness probe plus force escalation. Probing real git disproved
+the premise: `git worktree remove` removes a worktree containing only ignored files and refuses only
+on non-ignored modified/untracked content — exactly what AO's existing probe reports. The real cause
+is an unresolvable repo path for projectless Prime rows. See design.md Decision 4.
+
+- [x] 3.1 Probe real git to establish which conditions actually make `git worktree remove` refuse
+- [x] 3.2 Write failing tests: teardown must derive the fleet Prime repo path when the row carries none, must prefer a persisted path, and must leave project-owned sessions alone
+- [x] 3.3 Derive the repo path from role identity in teardown, reusing the existing helper the restore paths already use
+- [x] 3.4 Point Kill, RetireForReplacement, save-and-teardown, and Cleanup at the deriving helper
+- [ ] 3.5 Add a real-git integration test that a projectless Prime worktree holding the canonical branch is torn down and the branch released
 
 ## 4. Reconciliation primitives in the session manager
 
