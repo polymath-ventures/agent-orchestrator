@@ -1,0 +1,43 @@
+/*
+ * Ships the mono face the design system's --font-family-mono actually asks
+ * for. Without it, every mono string in a design (session ids, branch names,
+ * badges) falls through to the system monospace, which is not what the app
+ * looks like on a machine that has the font installed.
+ *
+ * The family name below is the long-form typographic name (nameID 16) the
+ * token stack references. The files' own nameID 1 is the abbreviated
+ * "JetBrainsMono NFM", so declaring the family explicitly here is what makes
+ * the match deterministic rather than dependent on the consumer honouring
+ * preferred-family records.
+ *
+ * Weights shipped: 400 (Regular), 700 (Bold), plus 400 Italic. Note that
+ * Badge — the most prominent mono element — requests font-medium (500). No 500
+ * face ships, so the browser synthesises a faux-medium from the 400 face; the
+ * difference at badge size is slight. To render the true Medium instead, drop
+ * in JetBrainsMonoNerdFontMono-Medium.woff2 and add a weight:500 @font-face
+ * rule (the Italic asset is a candidate to swap out — no synced component
+ * renders italic mono).
+ *
+ * JetBrains Mono is SIL OFL 1.1; the Nerd Font patch is MIT.
+ */
+@font-face {
+	font-family: "JetBrainsMono Nerd Font Mono";
+	font-style: normal;
+	font-weight: 400;
+	font-display: swap;
+	src: url("./JetBrainsMonoNerdFontMono-Regular.woff2") format("woff2");
+}
+@font-face {
+	font-family: "JetBrainsMono Nerd Font Mono";
+	font-style: normal;
+	font-weight: 700;
+	font-display: swap;
+	src: url("./JetBrainsMonoNerdFontMono-Bold.woff2") format("woff2");
+}
+@font-face {
+	font-family: "JetBrainsMono Nerd Font Mono";
+	font-style: italic;
+	font-weight: 400;
+	font-display: swap;
+	src: url("./JetBrainsMonoNerdFontMono-Italic.woff2") format("woff2");
+}

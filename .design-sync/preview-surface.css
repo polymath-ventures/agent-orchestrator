@@ -1,0 +1,44 @@
+/*
+ * Appended to the compiled app CSS to form the design-system stylesheet
+ * (see cfg.buildCmd). Two jobs:
+ *
+ * 1. Agent Orchestrator is dark-first — :root carries the dark token set and
+ *    the app's own `body` rule paints the base surface. The preview harness
+ *    injects `body{background:#fff}` in a <style> block AFTER our stylesheet,
+ *    which wins on document order at equal specificity. `html body` (0,0,2)
+ *    outranks it, so cards render on the real app surface instead of white.
+ *
+ * 2. Designs built with this DS get only the styles.css @import closure, so
+ *    the same rule is what puts them on AO's surface too. This is the app's
+ *    real appearance, not a preview-only hack.
+ */
+html body {
+	background: var(--color-bg-primary);
+	color: var(--color-text-primary);
+	font-family: var(--font-family-base);
+}
+
+/*
+ * The harness's "preview not yet authored" floor card is emitted with inline
+ * light-theme colors, which read as dark-on-dark once the surface above is
+ * applied. Re-tone it for the dark surface. Inline styles need !important to
+ * lose. These selectors only match that harness markup, so they are inert in
+ * designs built with the DS.
+ */
+[data-ds-fallback] {
+	background: var(--color-bg-secondary) !important;
+	border-color: var(--color-border-strong) !important;
+	font-family: var(--font-family-base) !important;
+}
+[data-ds-fallback] > div {
+	color: var(--color-text-muted) !important;
+}
+[data-ds-fallback] > div[data-ds-eyebrow] {
+	color: var(--color-text-passive) !important;
+}
+[data-ds-fallback] > div:nth-child(2) {
+	color: var(--color-text-primary) !important;
+}
+[data-ds-fallback] code {
+	color: var(--color-accent) !important;
+}
