@@ -231,6 +231,145 @@ appearing means something changed.
   and hover ring silently resolve to nothing, in the app as well as here. That
   is an app bug this sync surfaced, not a sync artifact; it is not fixed in this
   PR (no app source is touched here).
+- **`[FONT_MISSING]` — only the _alternate_ Nerd Fonts** further down the mono
+  stack. The primary face ships. See the fonts section below.
+
+Related known limitation, not a warn: `cssEntry` is the app's **whole** compiled
+stylesheet (~175 KB), so designs also receive the landing page's CSS and xterm's
+terminal CSS. Scoping a Tailwind build to `components/ui` alone would trim it,
+but that is a separate pipeline and was judged not worth the complexity for a
+one-time size cost. This is why `[TOKENS_MISSING]` exists at all.
+
+## Fonts
+
+`--font-family-mono` asks for `"JetBrainsMono Nerd Font Mono"` first. The repo
+ships no font files of its own, so the design system carries its own copy:
+`.design-sync/fonts/` holds Regular/Bold/Italic as **woff2** (3.0 MB total,
+down from 7.1 MB as TTF) plus `jetbrains-mono.css`, wired through
+`cfg.extraFonts`. Verified: `document.fonts` reports the face **loaded** in a
+rendered card and computed `font-family` resolves to it.
+
+Two non-obvious details:
+
+- The files' own family name (nameID 1) is the abbreviated
+  **"JetBrainsMono NFM"**; the long "JetBrainsMono Nerd Font Mono" is only the
+  typographic family (nameID 16). `jetbrains-mono.css` declares the long name
+  explicitly, so matching does not depend on the consumer honouring
+  preferred-family records.
+- **`[FONT_MISSING]` still fires and that is expected.** It now lists only the
+  _alternates_ further down the stack (JetBrainsMono Nerd Font, FiraCode, Meslo,
+  CaskaydiaCove, Hack, Symbols). Those are deliberate fallbacks for machines
+  with a different Nerd Font installed, not missing brand fonts. The primary is
+  no longer in that list — if it ever reappears, the font wiring has regressed.
+
+**Oxygen is deliberately NOT shipped.** It sits fifth in `--font-family-base`,
+behind `-apple-system` and `BlinkMacSystemFont`, so it never renders on macOS.
+Shipping it would make designs look _less_ like the real app, not more.
+
+## conventions.md is prompt-injected — validate it, don't eyeball it
+
+`conventions.md` is inlined into the design agent's system prompt, so a name in
+it that does not exist is worse than silence: the agent trusts it, writes
+vocabulary that never resolves, and ships silently unstyled output. Hand-checking
+missed real bugs twice (`text-base`, defined in `@theme` but never emitted
+because Tailwind is JIT; and `text-terminal`, which resolves to
+`--color-bg-terminal` — a _background_ token, i.e. near-black text on a
+near-black surface).
+
+`node .design-sync/validate-conventions.mjs ./ds-bundle` checks every utility
+and component named in the file against the built bundle, including escaped
+variant selectors (`hover:`) and token-kind mismatches. **Run it after every `package-build.mjs`, and after editing `conventions.md`** — and note the two
+gotchas it exists to catch: a class present in `@theme` is not necessarily
+emitted, and a `text-*` utility can legitimately exist while pointing at the
+wrong kind of token.
+
+## Guidelines are deliberately empty
+
+The converter's default `guidelinesGlob` picked up `frontend/docs/*.md`, whose
+only file is a **desktop release runbook** — actively misleading shipped to a
+design agent as "design guidelines". `cfg.guidelinesGlob` is therefore pointed
+at `docs/design-guidelines/**/*.md`, which does not exist yet; drop real design
+guidance there and it ships automatically.
+
+Root `DESIGN.md` was considered and rejected as guidelines content, but only
+**part** of it is distilled into `conventions.md` (colour is rare and
+meaningful, the type scale, dark-first). Its sections on control heights,
+spacing rhythm, status semantics, pane layout and icon policy are **not**
+carried anywhere in this sync — that is a real gap, not a clean substitution.
+It was excluded because its opening sections call the product "ReverbCode" and
+point at a local filesystem path, which would mislead a design agent more than
+the missing material costs. Fixing that staleness and then shipping it under
+`docs/design-guidelines/` is the better long-term answer.
+
+## Docs, groups, and the docsMap enumeration
+
+`cfg.docsMap` maps all 105 components to 19 family docs in `.design-sync/docs/`,
+and each doc's `category:` frontmatter sets the component's group (7 semantic
+groups: Actions, Forms, Navigation, Overlays, Data Display, Layout, Feedback).
+This is a full enumeration on purpose — compound parts (`CardHeader`,
+`TableRow`, …) never slug-match their family's doc, so discovery cannot bind
+them. **A new component needs a `docsMap` entry or it lands in `general` with a
+synthesized prompt.**
+
+Paths in `docsMap` are `../../../.design-sync/docs/<family>.md`: they resolve
+from `PKG_DIR`, which is the **symlink path** `frontend/node_modules/agent-orchestrator`,
+so three `../` are needed to reach the repo root — not one.
+
+## Rendering
+
+- **AO is dark-first.** The preview harness injects `body{background:#fff}` in a
+  `<style>` block _after_ the stylesheet, so it wins on document order.
+  `preview-surface.css` uses `html body` (specificity 0,0,2) to beat it. The
+  same rule ships to designs, which is correct — designs built with this DS
+  belong on AO's surface.
+- The harness's "preview not yet authored" floor card is emitted with inline
+  light-theme colors and is illegible on the dark surface; `preview-surface.css`
+  re-tones it via `[data-ds-fallback]` with `!important` (inline styles).
+- **No icon library is exported.** `lucide-react` is bundled _inside_ the
+  components but is not on `window.AODS`, so previews cannot import icons — use
+  text or a unicode glyph.
+- Radix portal components (Dialog, Sheet, DropdownMenu, Select, Tooltip) **do**
+  capture correctly with `defaultOpen` + a real trigger in the tree — an earlier
+  assumption that they would escape the card was wrong. They still need a
+  `cardMode` override for the product's grid; see below.
+- **The `cfg.overrides` cardModes are load-bearing, not cosmetic.** A preview
+  can capture perfectly on its own and still present broken in the product's
+  multi-story grid, which `package-validate` reports as `[GRID_OVERFLOW]`.
+  Portal components (Dialog, Sheet, DropdownMenu, Select, Tooltip) are
+  `cardMode: single` because portal content is positioned outside its grid cell
+  and no grid layout can present it; wide ones (Command, Tabs) are
+  `cardMode: column` so each story gets full card width instead of being
+  cropped. **Do not drop these when adding components** — re-read the
+  `[GRID_OVERFLOW]` warns after any preview change.
+- `Tooltip`/`TooltipContent` throw outside `TooltipProvider`. Only four sidebar
+  parts actually consume the rail context — `Sidebar`, `SidebarMenuButton`,
+  `SidebarRail`, `SidebarTrigger` — and those throw outside `SidebarProvider`;
+  the rest are plain layout wrappers (verified against `useSidebar()` call
+  sites in `sidebar.tsx`).
+- `Sidebar` is `h-svh` and overshoots the card by the harness's 24px body
+  padding, clipping its own footer — the preview cancels this with `margin: -24`.
+- `ResizablePanelGroup` needs an explicit height on a wrapper or it collapses,
+  and the installed `react-resizable-panels@4.11.2` uses **`orientation`**, not
+  the older `direction` prop.
+- Radix `Select` anchors its open menu so the selected item lands on the
+  trigger; without top padding the first group scrolls off the card.
+
+## Known validate warns (triaged — anything NOT on this list is new)
+
+The build settles at exactly **two** warnings. Both are understood; a third one
+appearing means something changed.
+
+- **`[TOKENS_MISSING]` — 45 undefined custom properties** (`--border`,
+  `--accent`, `--bg`, `--bg-card`, `--accent-glow`, …). These come from
+  `frontend/src/landing/**`, the marketing page, which has its own token
+  vocabulary and is bundled into the same compiled stylesheet. **Mostly** benign
+  — but not entirely: `sidebar.tsx` (SidebarRail) uses
+  `shadow-[0_0_0_1px_var(--sidebar-border)]` and `var(--sidebar-accent)`, and
+  those bare names are **not** defined — the theme defines
+  `--color-sidebar-border` / `--color-sidebar-accent`. So SidebarRail's focus
+  and hover ring silently resolve to nothing, in the app as well as here. That
+  is an app bug this sync surfaced, not a sync artifact; it is not fixed in this
+  PR (no app source is touched here).
 - **`[FONT_MISSING]` — the Nerd Font mono stack.** See the fonts section below.
 
 Related known limitation, not a warn: `cssEntry` is the app's **whole** compiled

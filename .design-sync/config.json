@@ -175,5 +175,6 @@
 		"SidebarSeparator": "/** Either `vertical` or `horizontal`. Defaults to `horizontal`. */\n  orientation?: \"horizontal\" | \"vertical\";\n  /** Whether or not the component is purely decorative. */\n  decorative?: boolean;\n  className?: string;\n  id?: string;\n  style?: React.CSSProperties;\n  asChild?: boolean;\n  ref?: React.Ref<HTMLDivElement>;"
 	},
 	"readmeHeader": ".design-sync/conventions.md",
-	"guidelinesGlob": "docs/design-guidelines/**/*.md"
+	"guidelinesGlob": "docs/design-guidelines/**/*.md",
+	"extraFonts": ["../../../.design-sync/fonts/jetbrains-mono.css"]
 }
