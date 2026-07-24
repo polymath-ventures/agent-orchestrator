@@ -17,6 +17,7 @@ export type AgentSelectionCatalog = {
 
 export type AgentSelectionOptions = {
 	current?: string;
+	currentLabel?: string;
 	includeDefault?: AgentInfo;
 	reviewerOnly?: boolean;
 };
@@ -42,7 +43,7 @@ export function selectableAgentCatalog(
 		if (options.includeDefault?.id === id) return options.includeDefault;
 		const merged = mergeAgentInfo(supportedByID.get(id), installedByID.get(id), authorizedByID.get(id));
 		if (merged) return merged;
-		if (id === options.current) return { id, label: id, reviewerCapable: false };
+		if (id === options.current) return { id, label: options.currentLabel ?? id, reviewerCapable: false };
 		return undefined;
 	};
 	const fromIDs = (ids: Iterable<string>) =>
@@ -94,6 +95,7 @@ export function filterModelAvailabilityToSelectableAgents(
 	options: Pick<AgentSelectionOptions, "current" | "reviewerOnly"> = {},
 ): AgentModelAvailabilityResponse | undefined {
 	if (!availability) return undefined;
+	if (!catalog) return availability;
 	const selectable = selectableAgentCatalog(catalog, options);
 	const selectableIDs = new Set((selectable.supported ?? []).map((agent) => agent.id));
 	return {

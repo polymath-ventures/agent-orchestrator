@@ -11,6 +11,7 @@ import {
 import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import {
+	agentDisplayLabel,
 	type AgentInfo,
 	filterModelAvailabilityToSelectableAgents,
 	modelAvailabilityFromAgentInventory,
@@ -654,6 +655,7 @@ function HarnessModelRow({
 		: undefined;
 	const scopedCatalog = selectableAgentCatalog(agentCatalog, {
 		current: selection.harness,
+		currentLabel: selection.harness ? agentDisplayLabel(agentCatalog, availability, selection.harness) : undefined,
 		reviewerOnly,
 		includeDefault: defaultAgent,
 	});

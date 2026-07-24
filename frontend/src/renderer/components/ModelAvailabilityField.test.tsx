@@ -7,7 +7,11 @@ import {
 	ModelAvailabilityField,
 	type ModelSelection,
 } from "./ModelAvailabilityField";
-import { filterModelAvailabilityToSelectableAgents, modelAvailabilityFromAgentInventory } from "../lib/agent-selection";
+import {
+	filterModelAvailabilityToSelectableAgents,
+	modelAvailabilityFromAgentInventory,
+	selectableAgentCatalog,
+} from "../lib/agent-selection";
 
 const availability: AgentModelAvailabilityResponse = {
 	checkedAt: "2026-07-22T01:02:03Z",
@@ -102,6 +106,16 @@ describe("shared agent/model selection helpers", () => {
 		);
 
 		expect(filtered?.harnesses.map((harness) => harness.id)).toEqual(["claude-code", "codex-fugu"]);
+	});
+
+	it("keeps model availability unchanged while the agent inventory is still unknown", () => {
+		expect(filterModelAvailabilityToSelectableAgents(availability, undefined)).toBe(availability);
+	});
+
+	it("uses a friendly label for a current saved harness that is absent from inventory", () => {
+		const catalog = selectableAgentCatalog(undefined, { current: "claude-code", currentLabel: "Claude Code" });
+
+		expect(catalog.supported).toEqual([{ id: "claude-code", label: "Claude Code", reviewerCapable: false }]);
 	});
 });
 
