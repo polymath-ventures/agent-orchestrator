@@ -212,6 +212,7 @@ describe("ProjectSettingsForm", () => {
 		const projectHarness = screen.getByRole("combobox", { name: "Project model harness" });
 		expect(projectHarness).toHaveTextContent("claude-code");
 		expect(document.getElementById("project-model-model")).toHaveValue("opus");
+		expect(screen.queryByText(/Status: unknown/i)).not.toBeInTheDocument();
 		expect(document.getElementById("reviewer-model-model")).toHaveValue("claude-review");
 
 		const workerAgent = screen.getByRole("combobox", { name: "Default worker agent" });

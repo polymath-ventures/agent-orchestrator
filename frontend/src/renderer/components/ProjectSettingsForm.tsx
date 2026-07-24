@@ -690,6 +690,7 @@ function HarnessModelRow({
 				isRefreshing={isRefreshingModels}
 				onRefresh={onRefreshModels}
 				showHarness={false}
+				statusVisibility="actionable"
 				emptyLabel="Inherit default"
 			/>
 		</div>
