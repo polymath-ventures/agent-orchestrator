@@ -204,6 +204,9 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 					ariaLabel={terminalTarget?.kind === "shell" ? "Shell terminal" : "Session terminal"}
 					// No handle means no PTY behind the pane and the empty-state overlay
 					// covering it, so focusing would swallow keystrokes into nothing.
+					// Today's opt-in call sites are shell targets, which always carry a
+					// handle; this keeps the prop's contract true for any owner that opts
+					// a handle-less pane in later.
 					autoFocus={autoFocus && !showEmptyState}
 					fontSize={fontSize}
 					onError={handleInitError}

@@ -222,6 +222,20 @@ describe("XtermTerminal", () => {
 		overlay.remove();
 	});
 
+	// The mount effect runs once, so yielding to an overlay that merely exists
+	// would leave the pane deaf for good once that overlay closed.
+	it("still focuses when an overlay is open but holds no keyboard focus", () => {
+		const overlay = document.createElement("div");
+		overlay.setAttribute("role", "menu");
+		overlay.setAttribute("data-state", "open");
+		document.body.appendChild(overlay);
+
+		const { container } = render(<XtermTerminal autoFocus theme="dark" />);
+
+		expect(document.activeElement).toBe(container.querySelector("textarea"));
+		overlay.remove();
+	});
+
 	it("copies selected terminal text on the terminal copy shortcut", () => {
 		render(<XtermTerminal theme="dark" />);
 		state.lastTerminal!.selection = "copied selection";

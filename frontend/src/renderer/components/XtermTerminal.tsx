@@ -30,7 +30,7 @@ import { WebglAddon } from "@xterm/addon-webgl";
 import type { AttachableTerminal, TerminalUserInputSource } from "../hooks/useTerminalSession";
 import { aoBridge } from "../lib/bridge";
 import { TERMINAL_FONT_SIZE_DEFAULT } from "../lib/design-tokens";
-import { isDialogOrMenuOpen } from "../lib/dom-selectors";
+import { OPEN_DIALOG_OR_MENU_SELECTOR } from "../lib/dom-selectors";
 import { buildTerminalThemes } from "../lib/terminal-themes";
 import type { Theme } from "../stores/ui-store";
 import {
@@ -178,13 +178,16 @@ function terminalHasFocus(host: HTMLElement): boolean {
 
 // Whether an autoFocus mount may actually take the keyboard. The owner already
 // decided this pane is the surface the user switched to; this only yields to
-// something that is currently holding keyboard input for its own reasons — an
-// open dialog/menu, or a text field the user is typing in.
+// whatever is *holding* keyboard input right now — an open dialog or menu, or a
+// text field being typed in. Deliberately "holds focus" rather than "an overlay
+// exists somewhere": this effect runs once per mount, so a document-global veto
+// would leave the pane permanently deaf when a menu merely happened to be open
+// as it mounted, which is the very bug this focus work exists to remove.
 function canTakeFocusOnMount(host: HTMLElement): boolean {
 	if (terminalHasFocus(host)) return true;
-	if (isDialogOrMenuOpen()) return false;
 	const activeElement = document.activeElement as HTMLElement | null;
 	if (!activeElement || activeElement === document.body) return true;
+	if (activeElement.closest(OPEN_DIALOG_OR_MENU_SELECTOR)) return false;
 	if (activeElement.isContentEditable) return false;
 	const tag = activeElement.tagName;
 	return tag !== "INPUT" && tag !== "TEXTAREA" && tag !== "SELECT";

@@ -17,16 +17,44 @@ test("terminals screen hands keyboard focus to the terminal with no extra click"
 	await expect.poll(() => activeElementClass(page)).toContain("xterm-helper-textarea");
 });
 
-// Opening a shell moves focus to the button that was clicked and remounts the
-// pane (TerminalPane keys mounts by terminal handle); focus must follow the new
-// terminal rather than stay on the button.
-test("focus follows the terminal when a new shell tab is opened", async ({ page }) => {
+// Selecting another shell tab puts focus on the tab button and remounts the
+// pane (TerminalPane keys mounts by terminal handle); focus must follow the
+// newly selected terminal rather than stay on the button. Asserted against
+// aria-current so it cannot pass while some other tab is the active one.
+test("focus follows the terminal when another shell tab is selected", async ({ page }) => {
 	await installBrowserModeApiFixtures(page);
 	await page.goto("/#/terminals");
-	await expect(page.getByTestId("session-terminal")).toBeVisible();
-
 	await page.getByRole("button", { name: "New terminal" }).click();
 	await expect(page.getByRole("button", { name: /^Close terminal / })).toHaveCount(2);
+
+	// Tabs are scoped by their working-dir title: the sidebar project button
+	// carries the same accessible name as the first tab. Asserting which tab is
+	// current before and after the click keeps this from passing while some other
+	// terminal is the one on screen.
+	const opened = page.locator('button[title="/Users/me/api-gateway"]');
+	const unopened = page.locator('button[title="/Users/me/.ao"]');
+	await expect(opened).toHaveAttribute("aria-current", "true");
+
+	await unopened.click();
+	await expect(unopened).toHaveAttribute("aria-current", "true");
+
+	await expect.poll(() => activeElementClass(page)).toContain("xterm-helper-textarea");
+});
+
+// The same shells also live in a session's tab strip, reached by the same
+// controls; #131 applies there identically.
+test("focus follows a shell selected from a session's tab strip", async ({ page }) => {
+	await installBrowserModeApiFixtures(page);
+	await page.goto("/#/projects/api-gateway/sessions/refactor-mux");
+	await expect(page.getByTestId("session-terminal")).toBeVisible();
+
+	const shellTab = page.getByRole("button", {
+		name: "api-gateway",
+		exact: true,
+		description: "/Users/me/api-gateway",
+	});
+	await shellTab.click();
+	await expect(shellTab).toHaveAttribute("aria-current", "true");
 
 	await expect.poll(() => activeElementClass(page)).toContain("xterm-helper-textarea");
 });
