@@ -167,6 +167,28 @@ describe("XtermTerminal", () => {
 		expect(document.activeElement).toBe(container.querySelector("textarea"));
 	});
 
+	// Selecting another shell tab remounts the pane (TerminalPane keys mounts by
+	// terminal handle) while focus sits on the tab button that was just clicked.
+	it("takes focus from the control that mounted it, such as a shell tab button", () => {
+		const tab = document.body.appendChild(document.createElement("button"));
+		tab.focus();
+
+		const { container } = render(<XtermTerminal theme="dark" />);
+
+		expect(document.activeElement).toBe(container.querySelector("textarea"));
+		tab.remove();
+	});
+
+	it("keeps focus on a text field that is not inside an overlay", () => {
+		const filter = document.body.appendChild(document.createElement("input"));
+		filter.focus();
+
+		render(<XtermTerminal theme="dark" />);
+
+		expect(document.activeElement).toBe(filter);
+		filter.remove();
+	});
+
 	it("keeps focus on an overlay text field that already owns keyboard input", () => {
 		const dialog = document.createElement("div");
 		dialog.setAttribute("role", "dialog");
