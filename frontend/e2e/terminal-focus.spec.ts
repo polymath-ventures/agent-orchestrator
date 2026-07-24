@@ -30,3 +30,14 @@ test("focus follows the terminal when a new shell tab is opened", async ({ page 
 
 	await expect.poll(() => activeElementClass(page)).toContain("xterm-helper-textarea");
 });
+
+// Deliberate scope: only the terminals screen opts in. A session pane also
+// mounts behind pop-out overlays and re-keys when a background poll assigns a
+// starting session its terminal handle, so it must keep waiting for a click.
+test("a session terminal does not grab focus on arrival", async ({ page }) => {
+	await installBrowserModeApiFixtures(page);
+	await page.goto("/#/projects/api-gateway/sessions/refactor-mux");
+	await expect(page.getByTestId("session-terminal")).toBeVisible();
+
+	expect(await activeElementClass(page)).not.toContain("xterm-helper-textarea");
+});

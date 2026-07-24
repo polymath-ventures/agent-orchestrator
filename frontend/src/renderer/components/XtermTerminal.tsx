@@ -30,6 +30,7 @@ import { WebglAddon } from "@xterm/addon-webgl";
 import type { AttachableTerminal, TerminalUserInputSource } from "../hooks/useTerminalSession";
 import { aoBridge } from "../lib/bridge";
 import { TERMINAL_FONT_SIZE_DEFAULT } from "../lib/design-tokens";
+import { isDialogOrMenuOpen } from "../lib/dom-selectors";
 import { buildTerminalThemes } from "../lib/terminal-themes";
 import type { Theme } from "../stores/ui-store";
 import {
@@ -52,6 +53,14 @@ export type XtermTerminalProps = {
 	 * on every platform (see the wheel handler), fixing it under a mux too.
 	 */
 	paneScrollsByKeyboard?: boolean;
+	/**
+	 * Take the keyboard when this terminal mounts, so the user can type
+	 * immediately instead of clicking into the pane first. Only the owner knows
+	 * whether a mount means "the user switched to this terminal" — a pane can
+	 * also mount behind an overlay, or before its PTY exists — so this is opt-in
+	 * per call site rather than decided here.
+	 */
+	autoFocus?: boolean;
 	/** Terminal construction failed; the owner decides how to surface it. */
 	onError?: (error: unknown) => void;
 	/** Called after a terminal hyperlink is opened in the OS browser. */
@@ -167,17 +176,15 @@ function terminalHasFocus(host: HTMLElement): boolean {
 	return !!activeElement && host.contains(activeElement);
 }
 
-// Whether a freshly-mounted pane should pull keyboard focus into itself. Every
-// TerminalPane call site renders only the target the user is currently looking
-// at and keys the mount by terminal handle, so the mount *is* the moment the
-// terminal becomes the thing being typed into — no separate "is this pane
-// active?" signal has to be plumbed in. The exception is an overlay that
-// already owns keyboard input: a dialog, or any text field, keeps it.
+// Whether an autoFocus mount may actually take the keyboard. The owner already
+// decided this pane is the surface the user switched to; this only yields to
+// something that is currently holding keyboard input for its own reasons — an
+// open dialog/menu, or a text field the user is typing in.
 function canTakeFocusOnMount(host: HTMLElement): boolean {
+	if (terminalHasFocus(host)) return true;
+	if (isDialogOrMenuOpen()) return false;
 	const activeElement = document.activeElement as HTMLElement | null;
 	if (!activeElement || activeElement === document.body) return true;
-	if (terminalHasFocus(host)) return true;
-	if (activeElement.closest("[role='dialog'], [role='alertdialog']")) return false;
 	if (activeElement.isContentEditable) return false;
 	const tag = activeElement.tagName;
 	return tag !== "INPUT" && tag !== "TEXTAREA" && tag !== "SELECT";
@@ -416,7 +423,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		// nav control they just clicked — xterm reads keys through a hidden helper
 		// textarea, so without this the pane renders attached but deaf until a
 		// second click lands inside it.
-		if (canTakeFocusOnMount(host)) focusTerminal();
+		if (callbacksRef.current.autoFocus && canTakeFocusOnMount(host)) focusTerminal();
 		contextMenuActionsRef.current = {
 			clear: () => {
 				term.clear();

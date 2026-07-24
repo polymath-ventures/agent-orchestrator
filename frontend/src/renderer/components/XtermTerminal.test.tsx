@@ -158,13 +158,26 @@ describe("XtermTerminal", () => {
 		window.ao!.clipboard.readText = vi.fn().mockResolvedValue("");
 	});
 
-	// A pane only mounts when it is the surface the user just switched to, so the
-	// mount is the moment keystrokes should start reaching the shell. Without
-	// this the terminals screen renders attached but deaf until a second click.
-	it("takes keyboard focus when the pane mounts", () => {
-		const { container } = render(<XtermTerminal theme="dark" />);
+	// An autoFocus mount is the owner saying "the user just switched to this
+	// terminal", so keystrokes must reach the shell straight away. Without it the
+	// terminals screen renders attached but deaf until a second click.
+	it("takes keyboard focus when an autoFocus pane mounts", () => {
+		const { container } = render(<XtermTerminal autoFocus theme="dark" />);
 
 		expect(document.activeElement).toBe(container.querySelector("textarea"));
+	});
+
+	// Session panes mount for reasons that are not a user switching to them —
+	// behind a pop-out overlay, or re-keyed by a background poll assigning a
+	// terminal handle. They must not move focus.
+	it("leaves focus alone when the owner did not ask for autoFocus", () => {
+		const sidebarButton = document.body.appendChild(document.createElement("button"));
+		sidebarButton.focus();
+
+		render(<XtermTerminal theme="dark" />);
+
+		expect(document.activeElement).toBe(sidebarButton);
+		sidebarButton.remove();
 	});
 
 	// Selecting another shell tab remounts the pane (TerminalPane keys mounts by
@@ -173,7 +186,7 @@ describe("XtermTerminal", () => {
 		const tab = document.body.appendChild(document.createElement("button"));
 		tab.focus();
 
-		const { container } = render(<XtermTerminal theme="dark" />);
+		const { container } = render(<XtermTerminal autoFocus theme="dark" />);
 
 		expect(document.activeElement).toBe(container.querySelector("textarea"));
 		tab.remove();
@@ -183,23 +196,30 @@ describe("XtermTerminal", () => {
 		const filter = document.body.appendChild(document.createElement("input"));
 		filter.focus();
 
-		render(<XtermTerminal theme="dark" />);
+		render(<XtermTerminal autoFocus theme="dark" />);
 
 		expect(document.activeElement).toBe(filter);
 		filter.remove();
 	});
 
-	it("keeps focus on an overlay text field that already owns keyboard input", () => {
-		const dialog = document.createElement("div");
-		dialog.setAttribute("role", "dialog");
-		const input = dialog.appendChild(document.createElement("input"));
-		document.body.appendChild(dialog);
-		input.focus();
+	// The shared open-overlay predicate covers menus too, so a mount underneath an
+	// open dropdown does not yank the keyboard out of it.
+	it.each([
+		["dialog", "dialog"],
+		["alertdialog", "alertdialog"],
+		["menu", "menu"],
+	])("keeps focus inside an open %s overlay", (_label, role) => {
+		const overlay = document.createElement("div");
+		overlay.setAttribute("role", role);
+		overlay.setAttribute("data-state", "open");
+		const item = overlay.appendChild(document.createElement("button"));
+		document.body.appendChild(overlay);
+		item.focus();
 
-		render(<XtermTerminal theme="dark" />);
+		render(<XtermTerminal autoFocus theme="dark" />);
 
-		expect(document.activeElement).toBe(input);
-		dialog.remove();
+		expect(document.activeElement).toBe(item);
+		overlay.remove();
 	});
 
 	it("copies selected terminal text on the terminal copy shortcut", () => {

@@ -19,9 +19,16 @@ type TerminalPaneProps = {
 	daemonReady: boolean;
 	terminalTarget?: TerminalTarget;
 	fontSize: number;
+	/**
+	 * The mount means the user switched to this terminal, so it should take the
+	 * keyboard rather than wait for a click. Opt-in: a pane also mounts behind a
+	 * pop-out overlay, and re-keys in the background when a starting session is
+	 * finally assigned a terminal handle — neither should move focus.
+	 */
+	autoFocus?: boolean;
 };
 
-export function TerminalPane({ session, theme, daemonReady, terminalTarget, fontSize }: TerminalPaneProps) {
+export function TerminalPane({ session, theme, daemonReady, terminalTarget, fontSize, autoFocus }: TerminalPaneProps) {
 	const terminalKey =
 		terminalTarget?.kind === "reviewer" || terminalTarget?.kind === "shell"
 			? terminalTarget.handleId
@@ -30,6 +37,7 @@ export function TerminalPane({ session, theme, daemonReady, terminalTarget, font
 	return (
 		<AttachedTerminal
 			key={terminalKey}
+			autoFocus={autoFocus}
 			session={session}
 			theme={theme}
 			daemonReady={daemonReady}
@@ -57,7 +65,7 @@ function bannerText(state: TerminalSessionState, error?: string): string | undef
 	return undefined;
 }
 
-function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSize }: TerminalPaneProps) {
+function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSize, autoFocus }: TerminalPaneProps) {
 	const attachSession =
 		session && terminalTarget?.kind === "reviewer"
 			? { ...session, terminalHandleId: terminalTarget.handleId }
@@ -194,6 +202,9 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 			<div className="relative min-h-0 flex-1 p-2">
 				<XtermTerminal
 					ariaLabel={terminalTarget?.kind === "shell" ? "Shell terminal" : "Session terminal"}
+					// No handle means no PTY behind the pane and the empty-state overlay
+					// covering it, so focusing would swallow keystrokes into nothing.
+					autoFocus={autoFocus && !showEmptyState}
 					fontSize={fontSize}
 					onError={handleInitError}
 					onLinkOpen={handleLinkOpen}
