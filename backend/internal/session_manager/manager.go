@@ -1322,11 +1322,29 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 	handle := runtimeHandle(rec.Metadata)
 	ws := workspaceInfoForTeardown(rec, m.dataDir)
 
+	// Same ownership invariant cleanup enforces. Role workspaces are canonical
+	// and therefore shared across successive role rows, so killing an older row
+	// whose path a live replacement already occupies would destroy the live
+	// worktree. Its own runtime is still destroyed and the row still terminates;
+	// only the shared workspace is spared.
+	killWorkspaceOwnedElsewhere := false
+	if ws.Path != "" || rec.Metadata.Branch != "" {
+		live, liveErr := m.liveSessions(ctx)
+		if liveErr != nil {
+			return false, fmt.Errorf("kill %s: %w", id, liveErr)
+		}
+		if owner, inUse := workspaceOwnedByLiveSession(rec, live); inUse {
+			m.logger.Info("kill: workspace still owned by a live session; preserving",
+				"sessionID", rec.ID, "path", ws.Path, "owner", owner)
+			killWorkspaceOwnedElsewhere = true
+		}
+	}
+
 	var workspaceProjectRows []ports.WorkspaceRepoInfo
 	workspaceProject := false
 	if rows, ok, rowErr := m.workspaceProjectRows(ctx, rec); rowErr != nil {
 		return false, fmt.Errorf("kill %s: workspace rows: %w", id, rowErr)
-	} else if ok {
+	} else if ok && !killWorkspaceOwnedElsewhere {
 		workspaceProjectRows = rows
 		workspaceProject = true
 	}
@@ -1353,7 +1371,7 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 		if cleaned {
 			m.cleanupAgentWorkspace(ctx, rec, ws.Path)
 		}
-	} else if ws.Path != "" {
+	} else if ws.Path != "" && !killWorkspaceOwnedElsewhere {
 		if err := m.workspace.Destroy(ctx, ws); err != nil {
 			if errors.Is(err, ports.ErrWorkspaceDirty) {
 				if err := m.store.DeleteSessionWorktrees(ctx, id); err != nil {

@@ -2,9 +2,11 @@ package sessionmanager
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
 // ReleaseResult reports what releasing stale role resources reclaimed and what
@@ -96,20 +98,16 @@ func (m *Manager) releaseRoleWorkspace(ctx context.Context, rec domain.SessionRe
 	} else if ok {
 		for i := len(rows) - 1; i >= 0; i-- {
 			info := workspaceInfoFromRepoInfo(rows[i])
-			if _, err := m.workspace.StashUncommitted(ctx, info); err != nil {
-				m.logger.Warn("release stale role resources: stash failed; releasing anyway",
-					"sessionID", rec.ID, "repo", rows[i].RepoName, "error", err)
+			if err := m.stashBeforeRelease(ctx, rec, info, rows[i].RepoName); err != nil {
+				return err
 			}
 			if err := m.workspace.ForceDestroy(ctx, info); err != nil {
 				return fmt.Errorf("force destroy %s: %w", rows[i].RepoName, err)
 			}
 		}
 	} else {
-		if _, err := m.workspace.StashUncommitted(ctx, ws); err != nil {
-			// A stale or unreadable worktree cannot be stashed, and that is
-			// precisely the state we are here to clear. Log and continue.
-			m.logger.Warn("release stale role resources: stash failed; releasing anyway",
-				"sessionID", rec.ID, "path", ws.Path, "error", err)
+		if err := m.stashBeforeRelease(ctx, rec, ws, ""); err != nil {
+			return err
 		}
 		if err := m.workspace.ForceDestroy(ctx, ws); err != nil {
 			return fmt.Errorf("force destroy: %w", err)
@@ -118,6 +116,30 @@ func (m *Manager) releaseRoleWorkspace(ctx context.Context, rec domain.SessionRe
 	m.cleanupAgentWorkspace(ctx, rec, rec.Metadata.WorkspacePath)
 	if err := m.store.DeleteSessionWorktrees(ctx, rec.ID); err != nil {
 		return fmt.Errorf("clear restore markers: %w", err)
+	}
+	return nil
+}
+
+// stashBeforeRelease captures uncommitted work before a force-release, and
+// refuses the release when capture fails for any reason other than the
+// worktree being stale.
+//
+// A stale worktree is exactly the state release exists to clear, so it cannot
+// be stashed and must not block. Every OTHER stash failure — a transient git
+// error, a full disk, a permissions problem — means work may still be there,
+// and force-destroying past it would delete it permanently. That is the same
+// contract RetireForReplacement follows; diverging from it here would make
+// "work is stashed before release" a comment rather than a guarantee.
+func (m *Manager) stashBeforeRelease(ctx context.Context, rec domain.SessionRecord, info ports.WorkspaceInfo, repoName string) error {
+	if _, err := m.workspace.StashUncommitted(ctx, info); err != nil {
+		if !errors.Is(err, ports.ErrWorkspaceStale) {
+			if repoName != "" {
+				return fmt.Errorf("stash %s before release: %w", repoName, err)
+			}
+			return fmt.Errorf("stash before release: %w", err)
+		}
+		m.logger.Warn("release stale role resources: stale workspace; skipping preserve",
+			"sessionID", rec.ID, "repo", repoName, "path", info.Path, "error", err)
 	}
 	return nil
 }

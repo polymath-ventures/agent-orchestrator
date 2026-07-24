@@ -3,7 +3,10 @@ package session
 import (
 	"context"
 	"strings"
+	"sync"
 	"testing"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
@@ -174,4 +177,83 @@ func TestReconcileRoleAllowsPrimeWhenEnabled(t *testing.T) {
 	if !fc.spawned {
 		t.Fatal("an enabled Prime must reconcile into existence")
 	}
+}
+
+// The singleton guarantee under concurrency. Two callers race the same role
+// target (the supervisor tick and a user relaunch is the real pairing); the
+// role lock must serialize them so exactly one spawn happens and the second
+// caller observes the first caller's session.
+//
+// This test was listed in the plan and checked off before it existed — a
+// reviewer caught that. Without it, a future change that narrows the lock scope
+// would silently reintroduce double-Prime.
+func TestReconcileRoleSerializesCompetingCallers(t *testing.T) {
+	st := newFakeStore()
+	st.prime = domain.PrimeSettings{Enabled: true}.WithDefaults()
+
+	fc := &concurrentCommander{
+		store:       st,
+		spawnRecord: domain.SessionRecord{ID: "prime-1", Kind: domain.KindPrime, Metadata: domain.SessionMetadata{Branch: "ao/prime"}},
+	}
+	svc := &Service{manager: fc, store: st}
+
+	const callers = 8
+	var start sync.WaitGroup
+	var done sync.WaitGroup
+	start.Add(1)
+	results := make([]domain.Session, callers)
+	errs := make([]error, callers)
+	for i := 0; i < callers; i++ {
+		done.Add(1)
+		go func(i int) {
+			defer done.Done()
+			start.Wait()
+			results[i], errs[i] = svc.ReconcileRole(context.Background(), domain.PrimeTarget(), ReconcileOptions{})
+		}(i)
+	}
+	start.Done()
+	done.Wait()
+
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("caller %d: ReconcileRole: %v", i, err)
+		}
+	}
+	if got := fc.spawnCount(); got != 1 {
+		t.Fatalf("spawns = %d, want exactly 1 — the role lock must serialize competing reconciles", got)
+	}
+	for i, sess := range results {
+		if sess.ID != "prime-1" {
+			t.Fatalf("caller %d saw session %q, want the single prime-1", i, sess.ID)
+		}
+	}
+}
+
+// concurrentCommander is a fakeCommander that publishes the spawned session into
+// the store, so a second caller's active-session lookup can observe it — which
+// is what makes the idempotence half of the guarantee testable.
+type concurrentCommander struct {
+	fakeCommander
+	mu          sync.Mutex
+	store       *fakeStore
+	spawnRecord domain.SessionRecord
+	spawns      int
+}
+
+func (f *concurrentCommander) Spawn(_ context.Context, cfg ports.SpawnConfig) (domain.SessionRecord, int, int, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.spawns++
+	rec := f.spawnRecord
+	rec.Kind = cfg.Kind
+	// The fake store has no lock of its own; the commander's mutex is the one
+	// serializing writes here, and ReconcileRole's role lock serializes readers.
+	f.store.sessions[rec.ID] = rec
+	return rec, 0, 0, nil
+}
+
+func (f *concurrentCommander) spawnCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.spawns
 }

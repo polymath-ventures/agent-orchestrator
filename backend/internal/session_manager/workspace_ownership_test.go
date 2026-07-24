@@ -269,3 +269,88 @@ func TestRetireForReplacementSkipsWorkspaceOwnedByLiveSession(t *testing.T) {
 		t.Fatalf("runtime destroyed = %d ids=%v, want old-handle", rt.destroyed, rt.destroyedIDs)
 	}
 }
+
+// Branch names are derived from a project's session prefix, so two projects
+// that share a prefix generate the same orchestrator branch. The branch arm
+// must be scoped to the SAME role target, or they preserve each other's stale
+// worktrees and the canonical branch stays occupied — reproducing the outage
+// this change exists to end.
+func TestWorkspaceOwnershipBranchArmIsScopedToRoleTarget(t *testing.T) {
+	live := []domain.SessionRecord{{
+		ID: "beta-orch", ProjectID: "beta", Kind: domain.KindOrchestrator,
+		Metadata: domain.SessionMetadata{WorkspacePath: "/ws/beta", Branch: "ao/shared-orchestrator"},
+	}}
+	// Same branch string, DIFFERENT project — not an ownership conflict.
+	stale := domain.SessionRecord{
+		ID: "acme-orch", ProjectID: "acme", Kind: domain.KindOrchestrator,
+		Metadata: domain.SessionMetadata{WorkspacePath: "/ws/acme", Branch: "ao/shared-orchestrator"},
+	}
+	if owner, owned := workspaceOwnedByLiveSession(stale, live); owned {
+		t.Fatalf("owned by %q; a different project's identical branch name is not an ownership conflict", owner)
+	}
+
+	// Same branch AND same target — genuinely owned.
+	sameTarget := domain.SessionRecord{
+		ID: "beta-orch-old", ProjectID: "beta", Kind: domain.KindOrchestrator,
+		Metadata: domain.SessionMetadata{WorkspacePath: "/ws/beta-old", Branch: "ao/shared-orchestrator"},
+	}
+	if _, owned := workspaceOwnedByLiveSession(sameTarget, live); !owned {
+		t.Fatal("same role target on the same canonical branch must be treated as owned")
+	}
+}
+
+// Rows can record the same worktree with different spellings. A raw string
+// compare would miss the match, conclude "not owned", and destroy a live
+// worktree — so comparison is normalized.
+func TestWorkspaceOwnershipNormalizesPaths(t *testing.T) {
+	live := []domain.SessionRecord{{
+		ID: "orch-live", ProjectID: "mer", Kind: domain.KindOrchestrator,
+		Metadata: domain.SessionMetadata{WorkspacePath: "/ws/mer/orchestrator"},
+	}}
+	for _, spelling := range []string{
+		"/ws/mer/orchestrator/",
+		"/ws/mer/./orchestrator",
+		"/ws/mer/sibling/../orchestrator",
+	} {
+		rec := domain.SessionRecord{
+			ID: "orch-old", ProjectID: "mer", Kind: domain.KindOrchestrator,
+			Metadata: domain.SessionMetadata{WorkspacePath: spelling},
+		}
+		if _, owned := workspaceOwnedByLiveSession(rec, live); !owned {
+			t.Errorf("path %q not recognized as the live worktree; it would be destroyed", spelling)
+		}
+	}
+}
+
+// Killing a stale role row must not destroy the worktree a live replacement
+// already occupies on the shared canonical path.
+func TestKillSkipsWorkspaceOwnedByLiveSession(t *testing.T) {
+	m, st, rt, ws := newLifecycleManager()
+
+	const canonical = "/ws/mer/orchestrator/mer-orchestrator"
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID: "mer-1", ProjectID: "mer", Kind: domain.KindOrchestrator,
+		Metadata: domain.SessionMetadata{WorkspacePath: canonical, Branch: "ao/mer-orchestrator", RuntimeHandleID: "old-handle"},
+		Activity: domain.Activity{State: domain.ActivityActive},
+	}
+	st.sessions["mer-2"] = domain.SessionRecord{
+		ID: "mer-2", ProjectID: "mer", Kind: domain.KindOrchestrator,
+		Metadata: domain.SessionMetadata{WorkspacePath: canonical, Branch: "ao/mer-orchestrator", RuntimeHandleID: "new-handle"},
+		Activity: domain.Activity{State: domain.ActivityActive},
+	}
+
+	if _, err := m.Kill(ctx, "mer-1"); err != nil {
+		t.Fatalf("Kill err = %v", err)
+	}
+	for _, call := range ws.calls {
+		if strings.HasPrefix(call, "Destroy:") || strings.HasPrefix(call, "ForceDestroy:") {
+			t.Fatalf("call %q ran; the live replacement's worktree must be preserved", call)
+		}
+	}
+	if !st.sessions["mer-1"].IsTerminated {
+		t.Fatal("the killed row must still be marked terminated")
+	}
+	if rt.destroyed != 1 || rt.destroyedIDs[0] != "old-handle" {
+		t.Fatalf("runtime destroyed = %d ids=%v, want old-handle", rt.destroyed, rt.destroyedIDs)
+	}
+}

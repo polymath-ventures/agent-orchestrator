@@ -1,6 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { RotateCcw } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useNavigate } from "@tanstack/react-router";
 import { relaunchPrime } from "../lib/relaunch-prime";
 import type { TerminalTarget } from "../types/terminal";
 import { isPrimeSession, type WorkspaceSession } from "../types/workspace";
@@ -80,6 +81,7 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 	const [restoreError, setRestoreError] = useState<string | undefined>();
 	const [restoreUnavailable, setRestoreUnavailable] = useState(false);
 	const [isRelaunchingPrime, setIsRelaunchingPrime] = useState(false);
+	const navigate = useNavigate();
 	const queryClient = useQueryClient();
 	const restoreSessionById = useRestoreSession();
 	// A shell pane has no session, so it hands the hook its handle directly
@@ -171,6 +173,27 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 		return attach(terminal);
 	}, [terminal, handleId, attach, attachSession?.id]);
 
+	// Declared above every conditional return: a hook after the initFailed early
+	// return changes the hook count between renders and crashes React with
+	// "Rendered fewer hooks than expected".
+	const relaunchDeadPrime = useCallback(async () => {
+		if (isRelaunchingPrime) return;
+		setIsRelaunchingPrime(true);
+		setRestoreError(undefined);
+		try {
+			const sessionId = await relaunchPrime();
+			await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+			// Leave the dead session behind. Without this the pane stays bound to
+			// the terminated row and keeps showing the recovery strip even though
+			// a healthy Prime now exists.
+			void navigate({ to: "/sessions/$sessionId", params: { sessionId } });
+		} catch (err) {
+			setRestoreError(err instanceof Error ? err.message : "Unable to relaunch Prime");
+		} finally {
+			setIsRelaunchingPrime(false);
+		}
+	}, [isRelaunchingPrime, queryClient, navigate]);
+
 	if (initFailed) {
 		return (
 			<div className="grid h-full place-items-center bg-terminal p-4 font-mono text-xs text-muted-foreground">
@@ -181,20 +204,6 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 
 	const banner = bannerText(state, error);
 	const showEmptyState = !handleId;
-	const relaunchDeadPrime = useCallback(async () => {
-		if (isRelaunchingPrime) return;
-		setIsRelaunchingPrime(true);
-		setRestoreError(undefined);
-		try {
-			await relaunchPrime();
-			await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
-		} catch (err) {
-			setRestoreError(err instanceof Error ? err.message : "Unable to relaunch Prime");
-		} finally {
-			setIsRelaunchingPrime(false);
-		}
-	}, [isRelaunchingPrime, queryClient]);
-
 	const showEndedState = state === "exited" || canRestoreSession || isDeadPrime;
 	const emptyStateTitle = session ? "Starting session" : "Agent Orchestrator";
 	const emptyStateMessage = session

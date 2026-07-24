@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"errors"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	sessionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/session"
@@ -24,8 +25,10 @@ type primeRelauncher struct {
 }
 
 func (p *primeRelauncher) RelaunchPrime(ctx context.Context) (domain.Session, error) {
+	// Never report success with an empty session: the controller would answer
+	// 200 with no session and the UI would believe Prime had relaunched.
 	if p == nil || p.sessions == nil {
-		return domain.Session{}, nil
+		return domain.Session{}, errors.New("prime relaunch is not available: reconciliation is not wired")
 	}
 	// Clear the budget and wake the loop first, so the supervisor stops
 	// refusing to act even if the reconcile below races it. Reconciliation is

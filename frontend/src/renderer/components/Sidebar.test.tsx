@@ -110,7 +110,7 @@ function renderSidebar({
 	onInitializeProject = vi.fn().mockResolvedValue(undefined) as InitializeProjectHandler,
 	onRemoveProject = vi.fn().mockResolvedValue(undefined) as RemoveProjectHandler,
 	primeSession,
-	primeEnabled = false,
+	primeVisible = false,
 	seedAgents = true,
 	workspaces = [workspace],
 }: {
@@ -118,7 +118,7 @@ function renderSidebar({
 	onInitializeProject?: InitializeProjectHandler;
 	onRemoveProject?: RemoveProjectHandler;
 	primeSession?: WorkspaceSession;
-	primeEnabled?: boolean;
+	primeVisible?: boolean;
 	seedAgents?: boolean;
 	workspaces?: WorkspaceSummary[];
 } = {}) {
@@ -153,7 +153,7 @@ function renderSidebar({
 					onInitializeProject={onInitializeProject}
 					onRemoveProject={onRemoveProject}
 					primeSession={primeSession}
-					primeEnabled={primeEnabled}
+					primeVisible={primeVisible}
 					workspaces={workspaces}
 				/>
 			</SidebarProvider>
@@ -247,7 +247,7 @@ describe("Sidebar", () => {
 	// Presence now follows persisted settings.
 	it("keeps a Prime entry when Prime is enabled but no live session exists", async () => {
 		const user = userEvent.setup();
-		renderSidebar({ primeEnabled: true });
+		renderSidebar({ primeVisible: true });
 
 		const entry = screen.getByRole("button", { name: "Open Prime" });
 		await user.click(entry);
@@ -255,15 +255,36 @@ describe("Sidebar", () => {
 		expect(navigateMock).toHaveBeenCalledWith({ to: "/prime" });
 	});
 
+	// Persisted settings are the source of truth. A lingering live row must not
+	// resurrect the Prime entry after Prime has been disabled.
+	it("hides the Prime entry when disabled even if a live prime row lingers", () => {
+		// primeSession IS supplied here — the gate must still hide the entry, which
+		// is what makes this test bite.
+		renderSidebar({
+			primeVisible: false,
+			primeSession,
+			workspaces: [{ ...workspace, sessions: [session, primeSession] }],
+		});
+
+		expect(screen.queryByRole("button", { name: "Open AO Prime" })).not.toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Open Prime" })).not.toBeInTheDocument();
+	});
+
 	it("renders no Prime entry when Prime is disabled and no session exists", () => {
-		renderSidebar({ primeEnabled: false });
+		renderSidebar({ primeVisible: false });
 
 		expect(screen.queryByRole("button", { name: "Open Prime" })).not.toBeInTheDocument();
 	});
 
 	it("renders prime as a top-level global session and not a project child", async () => {
 		const user = userEvent.setup();
-		renderSidebar({ primeSession, workspaces: [{ ...workspace, sessions: [session, primeSession] }] });
+		// Visibility is now resolved by the caller (from persisted settings), so a
+		// live prime is rendered only when the caller says the entry is visible.
+		renderSidebar({
+			primeVisible: true,
+			primeSession,
+			workspaces: [{ ...workspace, sessions: [session, primeSession] }],
+		});
 
 		await user.click(screen.getByRole("button", { name: "Open AO Prime" }));
 

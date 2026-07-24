@@ -3,6 +3,7 @@ package sessionmanager
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
@@ -28,23 +29,47 @@ const skipReasonWorkspaceInUse = "workspace is in use by an active session"
 //     not canonical, and two workers re-using one feature branch in separate
 //     worktrees must still be able to clean up independently.
 func workspaceOwnedByLiveSession(rec domain.SessionRecord, live []domain.SessionRecord) (domain.SessionID, bool) {
-	path := rec.Metadata.WorkspacePath
+	path := normalizeWorkspacePath(rec.Metadata.WorkspacePath)
 	branch := rec.Metadata.Branch
 	if path == "" && branch == "" {
 		return "", false
 	}
+	recTarget, recIsRole := domain.RoleTargetForSession(rec)
 	for _, other := range live {
 		if other.ID == rec.ID || other.IsTerminated {
 			continue
 		}
-		if path != "" && other.Metadata.WorkspacePath == path {
+		if path != "" && normalizeWorkspacePath(other.Metadata.WorkspacePath) == path {
 			return other.ID, true
 		}
-		if branch != "" && rec.Kind.IsRole() && other.Kind.IsRole() && other.Metadata.Branch == branch {
+		if branch == "" || !recIsRole || other.Metadata.Branch != branch {
+			continue
+		}
+		// Scope the branch arm to the SAME role target. Branch names are derived
+		// from a project's session prefix, so two projects that share a prefix
+		// (explicitly configured, or colliding on the first 12 chars of their
+		// ids) generate the same orchestrator branch. Without this check they
+		// would preserve each other's stale worktrees, leaving the canonical
+		// branch occupied — the very outage this change exists to end.
+		if otherTarget, ok := domain.RoleTargetForSession(other); ok && otherTarget == recTarget {
 			return other.ID, true
 		}
 	}
 	return "", false
+}
+
+// normalizeWorkspacePath canonicalizes a recorded workspace path for comparison.
+// Rows can record the same worktree with different spellings (a trailing
+// separator, an uncleaned "..") and a raw string compare would miss the match —
+// which, in this predicate, means concluding "not owned" and destroying a live
+// worktree. Cleaning is deliberately lexical: this runs against DB rows for
+// sessions whose directories may already be gone, so it must not touch the
+// filesystem.
+func normalizeWorkspacePath(path string) string {
+	if path == "" {
+		return ""
+	}
+	return filepath.Clean(path)
 }
 
 // liveSessions returns every non-terminated session, the set the ownership

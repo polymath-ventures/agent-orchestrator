@@ -27,6 +27,9 @@ export function PrimeBoard() {
 	const workspaces = workspaceQuery.data ?? [];
 	const activePrime = findFleetPrime(workspaces);
 	const state = primeSurfaceState(primeEnabledQuery.data === true, activePrime);
+	// A failed settings read is not "disabled". Saying Prime is off when we
+	// simply could not ask is a lie an operator would act on.
+	const settingsUnavailable = primeEnabledQuery.isError;
 
 	// A live Prime has a real terminal; send the operator straight to it.
 	useEffect(() => {
@@ -50,6 +53,16 @@ export function PrimeBoard() {
 
 	if (workspaceQuery.isLoading || primeEnabledQuery.isLoading) {
 		return <p className="py-10 text-center text-xs text-passive">Loading Prime…</p>;
+	}
+
+	if (settingsUnavailable) {
+		return (
+			<div className="p-4.5" data-testid="prime-settings-unavailable">
+				<p className="text-xs text-destructive">
+					Could not load Prime settings, so Prime&apos;s state is unknown. Retry once the daemon is reachable.
+				</p>
+			</div>
+		);
 	}
 
 	if (state === "disabled") {

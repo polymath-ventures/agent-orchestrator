@@ -386,6 +386,10 @@ func primeOperations() []operation {
 			summary: "Relaunch fleet Prime, clearing any restart-budget pause",
 			resps: []respUnit{
 				{http.StatusOK, controllers.SessionResponse{}},
+				// Prime disabled in persisted settings: relaunch is still an
+				// ensure, so it refuses rather than resurrecting a Prime the
+				// operator turned off.
+				{http.StatusConflict, envelope.APIError{}},
 				{http.StatusInternalServerError, envelope.APIError{}},
 			},
 		},

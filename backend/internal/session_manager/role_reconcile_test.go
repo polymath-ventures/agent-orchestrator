@@ -1,10 +1,13 @@
 package sessionmanager
 
 import (
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
 // The reported outage: a terminated Prime row whose worktree still holds
@@ -120,5 +123,52 @@ func TestReleaseStaleRoleResourcesRejectsNonRoleTarget(t *testing.T) {
 	m, _, _, _ := newLifecycleManager()
 	if _, err := m.ReleaseStaleRoleResources(ctx, domain.RoleTarget{Kind: domain.KindWorker, ProjectID: "mer"}); err == nil {
 		t.Fatal("ReleaseStaleRoleResources() = nil error for a worker target, want an error")
+	}
+}
+
+// A stash failure must ABORT the release, not fall through to ForceDestroy.
+// Force-destroying past a failed capture deletes uncommitted work permanently.
+func TestReleaseStaleRoleResourcesRefusesReleaseWhenStashFails(t *testing.T) {
+	m, st, _, ws := newLifecycleManager()
+	ws.stashErr = errors.New("git stash exploded")
+
+	st.sessions["prime-1"] = domain.SessionRecord{
+		ID: "prime-1", Kind: domain.KindPrime,
+		Metadata:     domain.SessionMetadata{WorkspacePath: "/ws/prime-1", Branch: "ao/prime"},
+		IsTerminated: true, Activity: domain.Activity{State: domain.ActivityExited},
+	}
+
+	res, err := m.ReleaseStaleRoleResources(ctx, domain.PrimeTarget())
+	if err != nil {
+		t.Fatalf("ReleaseStaleRoleResources err = %v", err)
+	}
+	for _, call := range ws.calls {
+		if strings.HasPrefix(call, "ForceDestroy:") {
+			t.Fatalf("call %q ran after a failed stash; uncommitted work would be destroyed", call)
+		}
+	}
+	if len(res.Released) != 0 {
+		t.Fatalf("Released = %v, want none when work could not be captured", res.Released)
+	}
+}
+
+// A stale worktree cannot be stashed and is exactly what release exists to
+// clear, so that one failure mode must NOT block the release.
+func TestReleaseStaleRoleResourcesProceedsWhenWorktreeIsStale(t *testing.T) {
+	m, st, _, ws := newLifecycleManager()
+	ws.stashErr = fmt.Errorf("worktree gone: %w", ports.ErrWorkspaceStale)
+
+	st.sessions["prime-1"] = domain.SessionRecord{
+		ID: "prime-1", Kind: domain.KindPrime,
+		Metadata:     domain.SessionMetadata{WorkspacePath: "/ws/prime-1", Branch: "ao/prime"},
+		IsTerminated: true, Activity: domain.Activity{State: domain.ActivityExited},
+	}
+
+	res, err := m.ReleaseStaleRoleResources(ctx, domain.PrimeTarget())
+	if err != nil {
+		t.Fatalf("ReleaseStaleRoleResources err = %v", err)
+	}
+	if len(res.Released) != 1 {
+		t.Fatalf("Released = %v, want prime-1 released despite the stale worktree", res.Released)
 	}
 }

@@ -94,10 +94,12 @@ type SidebarProps = {
 	/** Hide the sidebar's right edge stroke on the welcome board inset chrome. */
 	hideEdgeBorder?: boolean;
 	primeSession?: WorkspaceSession;
-	/** Prime is enabled in persisted settings. The nav entry follows this, not
-	 *  the existence of a live session row — otherwise Prime vanishes exactly
-	 *  when the operator needs it to recover. */
-	primeEnabled?: boolean;
+	/** Whether the Prime nav entry should be shown at all. The caller resolves
+	 *  this from persisted settings (not from the existence of a live session
+	 *  row — otherwise Prime vanishes exactly when the operator needs it to
+	 *  recover), so the decision lives in one place rather than being
+	 *  re-derived here. */
+	primeVisible?: boolean;
 	underTopbar?: boolean;
 	/** Chrome height to clear when underTopbar is set. Defaults to the 56px shell toolbar. */
 	topbarOffset?: "toolbar" | "titlebar";
@@ -147,7 +149,7 @@ function SessionDot({ session }: { session: WorkspaceSession }) {
 export function Sidebar({
 	hideEdgeBorder = false,
 	primeSession,
-	primeEnabled = false,
+	primeVisible = false,
 	underTopbar = true,
 	topbarOffset = "toolbar",
 	historyLocked = false,
@@ -323,7 +325,7 @@ export function Sidebar({
 			</SidebarHeader>
 
 			<SidebarContent className="gap-0 pl-2.5 pr-1.75 group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:px-1.5">
-				{(primeSession || primeEnabled) && (
+				{primeVisible && (
 					<SidebarGroup className="p-0 pb-3">
 						<SidebarGroupContent>
 							<SidebarMenu className="gap-1">

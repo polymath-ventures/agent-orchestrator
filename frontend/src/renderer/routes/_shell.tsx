@@ -136,8 +136,19 @@ function ShellLayout() {
 	const workspaceQuery = useWorkspaceQuery();
 	const workspaces = workspaceQuery.data ?? [];
 	const projectWorkspaces = useMemo(() => workspaces.filter((workspace) => !isFleetWorkspace(workspace)), [workspaces]);
-	const primeSession = findFleetPrime(workspaces);
-	const primeEnabled = usePrimeEnabledQuery().data === true;
+	const primeEnabledQuery = usePrimeEnabledQuery();
+	// Persisted settings are the source of truth for whether Prime is desired.
+	// While the settings request is still resolving we fall back to the live row
+	// so the entry does not flicker; once it resolves, a disabled Prime hides the
+	// entry even if a terminated/lingering row is still in the workspace list.
+	const primeEnabled = primeEnabledQuery.data === true;
+	const livePrime = findFleetPrime(workspaces);
+	// One decision, made here: show the Prime entry when settings say Prime is
+	// desired, or while settings are still resolving and a live Prime exists (so
+	// the entry does not flicker on load). Once settings resolve to disabled, a
+	// lingering live row must not resurrect it.
+	const primeVisible = primeEnabled || (!primeEnabledQuery.isSuccess && !!livePrime);
+	const primeSession = primeVisible ? livePrime : undefined;
 	const daemonStatus = useDaemonStatus(queryClient);
 	const agentCatalogPortRef = useRef<number | undefined>(undefined);
 	const { themePreference, resolvedTheme, isSidebarOpen, toggleSidebar } = useUiStore();
@@ -536,7 +547,7 @@ function ShellLayout() {
 					<Sidebar
 						hideEdgeBorder={isWelcomeBoard}
 						primeSession={primeSession}
-						primeEnabled={primeEnabled}
+						primeVisible={primeVisible}
 						historyLocked={isWelcomeBoard}
 						isFullScreen={isFullScreen}
 						underTopbar={

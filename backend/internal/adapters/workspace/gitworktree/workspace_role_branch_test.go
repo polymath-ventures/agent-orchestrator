@@ -45,13 +45,29 @@ func TestWorkspaceIntegrationCanonicalRoleBranchIsReusableAfterRelease(t *testin
 		t.Fatalf("create stale role worktree: %v", err)
 	}
 
-	// AO-managed runtime residue that version control ignores.
+	// AO-managed runtime residue that version control ignores. Commit the ignore
+	// rule first, then assert git really treats the residue as ignored — without
+	// that, the test would pass because ForceDestroy removes untracked content,
+	// not because ignored residue was established.
+	if err := os.WriteFile(filepath.Join(stale.Path, ".gitignore"), []byte(".claude/\n"), 0o600); err != nil {
+		t.Fatalf("write gitignore: %v", err)
+	}
+	runGit(t, git, stale.Path, "add", ".gitignore")
+	runGit(t, git, stale.Path, "commit", "-m", "ignore runtime residue")
+
 	claudeDir := filepath.Join(stale.Path, ".claude")
 	if err := os.MkdirAll(claudeDir, 0o755); err != nil {
 		t.Fatalf("mkdir .claude: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(claudeDir, "settings.local.json"), []byte("{}\n"), 0o600); err != nil {
 		t.Fatalf("write residue: %v", err)
+	}
+
+	if out := gitOutput(t, git, stale.Path, "status", "--porcelain"); out != "" {
+		t.Fatalf("precondition failed: worktree is not clean to git: %q", out)
+	}
+	if out := gitOutput(t, git, stale.Path, "status", "--porcelain", "--ignored"); out == "" {
+		t.Fatalf("precondition failed: residue is not reported as ignored")
 	}
 
 	// RED: while the stale worktree holds the branch, a replacement cannot take it.
