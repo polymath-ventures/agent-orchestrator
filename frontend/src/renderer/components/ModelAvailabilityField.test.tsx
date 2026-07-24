@@ -108,6 +108,30 @@ describe("shared agent/model selection helpers", () => {
 		expect(filtered?.harnesses.map((harness) => harness.id)).toEqual(["claude-code", "codex-fugu"]);
 	});
 
+	it("synthesizes a missing current harness after filtering so configured selections remain selectable", () => {
+		const filtered = filterModelAvailabilityToSelectableAgents(
+			availability,
+			{
+				supported: [
+					{ id: "claude-code", label: "Claude Code", reviewerCapable: true },
+					{ id: "opencode", label: "OpenCode", reviewerCapable: true },
+					{ id: "kiro", label: "Kiro", reviewerCapable: false },
+				],
+				installed: [{ id: "claude-code", label: "Claude Code", authStatus: "authorized", reviewerCapable: true }],
+				authorized: [{ id: "claude-code", label: "Claude Code", authStatus: "authorized", reviewerCapable: true }],
+			},
+			{ current: "opencode" },
+		);
+
+		expect(filtered?.harnesses.map((harness) => harness.id)).toEqual(["claude-code", "opencode"]);
+		expect(filtered?.harnesses.find((harness) => harness.id === "opencode")).toMatchObject({
+			label: "OpenCode",
+			catalogSource: "configured-pins",
+			catalogVerified: false,
+			models: [],
+		});
+	});
+
 	it("keeps model availability unchanged while the agent inventory is still unknown", () => {
 		expect(filterModelAvailabilityToSelectableAgents(availability, undefined)).toBe(availability);
 	});

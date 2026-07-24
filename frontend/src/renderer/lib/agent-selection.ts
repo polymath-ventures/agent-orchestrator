@@ -88,15 +88,32 @@ export function modelAvailabilityFromAgentInventory(
 export function filterModelAvailabilityToSelectableAgents(
 	availability: AgentModelAvailabilityResponse | undefined,
 	catalog: AgentInventory | undefined,
-	options: Pick<AgentSelectionOptions, "current" | "reviewerOnly"> = {},
+	options: Pick<AgentSelectionOptions, "current" | "currentLabel" | "reviewerOnly"> = {},
 ): AgentModelAvailabilityResponse | undefined {
 	if (!availability) return undefined;
 	if (!catalog) return availability;
 	const selectable = selectableAgentCatalog(catalog, options);
 	const selectableIDs = new Set((selectable.supported ?? []).map((agent) => agent.id));
+	const harnesses = (availability.harnesses ?? []).filter((harness) => selectableIDs.has(harness.id));
+	const currentAgent = selectable.supported?.find((agent) => agent.id === options.current);
+	if (
+		options.current &&
+		selectableIDs.has(options.current) &&
+		!harnesses.some((harness) => harness.id === options.current)
+	) {
+		harnesses.push({
+			id: options.current,
+			label: currentAgent?.label ?? options.currentLabel ?? options.current,
+			reviewerCapable: currentAgent?.reviewerCapable ?? false,
+			catalogSource: "configured-pins",
+			catalogVerified: false,
+			catalogReason: "Harness is preserved from the current selection.",
+			models: [],
+		});
+	}
 	return {
 		...availability,
-		harnesses: (availability.harnesses ?? []).filter((harness) => selectableIDs.has(harness.id)),
+		harnesses,
 	};
 }
 
