@@ -65,7 +65,10 @@ test("focus follows a shell selected from a session's tab strip", async ({ page 
 test("a session terminal does not grab focus on arrival", async ({ page }) => {
 	await installBrowserModeApiFixtures(page);
 	await page.goto("/#/projects/api-gateway/sessions/refactor-mux");
-	await expect(page.getByTestId("session-terminal")).toBeVisible();
+	// Wait for the helper textarea itself, not just the pane: the pane's testid
+	// exists before xterm's mount effect runs, so asserting on it alone would
+	// pass in the window before the effect that could have taken focus.
+	await expect(page.locator(".xterm-helper-textarea")).toBeAttached();
 
 	expect(await activeElementClass(page)).not.toContain("xterm-helper-textarea");
 });
