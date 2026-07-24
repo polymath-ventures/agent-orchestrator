@@ -582,6 +582,7 @@ function reviewerAgentCatalog(
 	};
 	return selectableAgentCatalog(filteredCatalog, {
 		current: currentHarness,
+		currentLabel: currentHarness ? agentDisplayLabel(catalog, availability, currentHarness) : undefined,
 		includeDefault: automatic,
 		reviewerOnly: true,
 	});

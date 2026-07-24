@@ -9,11 +9,7 @@ export type AgentInventory = {
 	supported?: AgentInfo[];
 };
 
-export type AgentSelectionCatalog = {
-	authorized?: AgentInfo[];
-	installed?: AgentInfo[];
-	supported?: AgentInfo[];
-};
+export type AgentSelectionCatalog = AgentInventory;
 
 export type AgentSelectionOptions = {
 	current?: string;
