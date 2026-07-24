@@ -495,6 +495,8 @@ type fakeCommander struct {
 	cleanupProjects []domain.ProjectID
 	killErr         error
 	retireErr       error
+	releaseErr      error
+	released        []domain.RoleTarget
 	sendErr         error
 	cleanupErr      error
 	spawnErr        error
@@ -539,6 +541,16 @@ func (f *fakeCommander) RetireForReplacement(_ context.Context, id domain.Sessio
 	}
 	f.retired = append(f.retired, id)
 	return nil
+}
+
+// released records the role targets reconciliation asked to have their stale
+// resources freed, so tests can assert the release runs before the spawn.
+func (f *fakeCommander) ReleaseStaleRoleResources(_ context.Context, target domain.RoleTarget) (sessionmanager.ReleaseResult, error) {
+	if f.releaseErr != nil {
+		return sessionmanager.ReleaseResult{}, f.releaseErr
+	}
+	f.released = append(f.released, target)
+	return sessionmanager.ReleaseResult{}, nil
 }
 func (f *fakeCommander) Send(_ context.Context, id domain.SessionID, message string) error {
 	if f.sendErr != nil {

@@ -52,6 +52,7 @@ type commander interface {
 	RestoreWithMode(ctx context.Context, id domain.SessionID) (sessionmanager.RestoreResult, error)
 	Kill(ctx context.Context, id domain.SessionID) (bool, error)
 	RetireForReplacement(ctx context.Context, id domain.SessionID) error
+	ReleaseStaleRoleResources(ctx context.Context, target domain.RoleTarget) (sessionmanager.ReleaseResult, error)
 	Send(ctx context.Context, id domain.SessionID, message string) error
 	Cleanup(ctx context.Context, project domain.ProjectID) (sessionmanager.CleanupResult, error)
 	RollbackSpawn(ctx context.Context, id domain.SessionID) (deleted, killed bool, err error)
@@ -310,27 +311,59 @@ func (s *Service) emitSpawnFailed(cfg ports.SpawnConfig, err error, durationMs i
 	})
 }
 
-// SpawnOrchestrator spawns an orchestrator session for a project. When clean is
-// true it first tears down any active orchestrator(s) for that project so the new
-// one is the only live coordinator. When clean is false it is idempotent: if an
-// active orchestrator already exists it is returned as-is. A business rule that
-// belongs here, not in the HTTP controller.
-func (s *Service) SpawnOrchestrator(ctx context.Context, projectID domain.ProjectID, clean bool) (domain.Session, error) {
-	unlock := s.lockRole(domain.OrchestratorTarget(projectID))
+// ReconcileOptions tunes one role reconciliation.
+type ReconcileOptions struct {
+	// Clean retires the active role session before creating a replacement.
+	// Without it, reconciliation is idempotent: an existing active role session
+	// is returned as-is.
+	Clean bool
+}
+
+// rolePlan is the only part of reconciliation that differs per role kind: how
+// to build the spawn, and what a valid replacement looks like.
+type rolePlan struct {
+	spawn  ports.SpawnConfig
+	force  bool
+	verify func(domain.Session) error
+}
+
+// ReconcileRole makes the desired role session true for target, and is the one
+// entry point every caller uses: orchestrator spawn, prime spawn, the prime
+// supervisor's missing- and unhealthy-session paths, prime settings save, and
+// the user-initiated relaunch.
+//
+// The sequence is the same for both role kinds:
+//
+//  1. Serialize on the role target.
+//  2. Resolve the active role session. Idempotent unless Clean is set.
+//  3. Release stale resources left by *terminated* rows for this role — leaked
+//     runtimes and the worktree still holding the canonical role branch. This
+//     step is the fix for the reported outage: previously nothing retired a
+//     terminated role row, so a Prime killed from its terminal left ao/prime
+//     checked out and every replacement failed with "branch is already checked
+//     out in another worktree".
+//  4. Create the replacement and verify it, retiring it if verification fails
+//     so an unverified singleton is never left for the next pass to adopt.
+func (s *Service) ReconcileRole(ctx context.Context, target domain.RoleTarget, opts ReconcileOptions) (domain.Session, error) {
+	if err := target.Validate(); err != nil {
+		return domain.Session{}, apierr.Invalid("ROLE_TARGET_INVALID", err.Error(), nil)
+	}
+	unlock := s.lockRole(target)
 	defer unlock()
 
-	project, err := s.requireProject(ctx, projectID)
+	plan, err := s.planRole(ctx, target)
 	if err != nil {
 		return domain.Session{}, err
 	}
-	existing, err := s.activeRoleSessions(ctx, domain.OrchestratorTarget(projectID))
+
+	existing, err := s.activeRoleSessions(ctx, target)
 	if err != nil {
 		return domain.Session{}, err
 	}
-	if clean {
-		for _, orch := range existing {
-			_ = s.sendRetireNotice(ctx, orch.ID)
-			if err := s.manager.RetireForReplacement(ctx, orch.ID); err != nil {
+	if opts.Clean {
+		for _, sess := range existing {
+			_ = s.sendRoleRetireNotice(ctx, target, sess.ID)
+			if err := s.manager.RetireForReplacement(ctx, sess.ID); err != nil {
 				return domain.Session{}, toAPIError(err)
 			}
 		}
@@ -338,75 +371,88 @@ func (s *Service) SpawnOrchestrator(ctx context.Context, projectID domain.Projec
 		// ponytail: check-then-spawn is not atomic; fine for the single-frontend ensure-on-load case. Upgrade path: a partial unique index on (project_id) where kind=orchestrator and not terminated.
 		return newestSession(existing), nil
 	}
-	sess, _, _, err := s.Spawn(ctx, ports.SpawnConfig{ProjectID: projectID, Kind: domain.KindOrchestrator})
+
+	// Per-session release failures are already best-effort inside the manager
+	// (and logged there), so that one wedged row cannot keep the whole role
+	// unrecoverable — the exact failure mode this reconciliation exists to end.
+	// An error surfacing here means the session list itself failed, which the
+	// spawn below could not survive either, so it propagates.
+	if _, err := s.manager.ReleaseStaleRoleResources(ctx, target); err != nil {
+		return domain.Session{}, err
+	}
+
+	sess, _, _, err := s.spawn(ctx, plan.spawn, plan.force)
 	if err != nil {
 		return domain.Session{}, err
 	}
-	if err := s.verifyOrchestratorReplacement(project, sess); err != nil {
-		// Same rollback contract as SpawnPrime: never leave an unverified
-		// singleton live for the next ensure pass to adopt.
+	if err := plan.verify(sess); err != nil {
+		// The unverified session is already live; without retiring it the next
+		// ensure pass would see an active role session and silently adopt it.
 		if retireErr := s.manager.RetireForReplacement(ctx, sess.ID); retireErr != nil {
-			return domain.Session{}, errors.Join(err, fmt.Errorf("retiring the unverified orchestrator failed: %w", retireErr))
+			return domain.Session{}, errors.Join(err, fmt.Errorf("retiring the unverified %s failed: %w", roleVerificationLabel(target), retireErr))
 		}
 		return domain.Session{}, err
 	}
 	return sess, nil
 }
 
+// planRole resolves the per-role spawn configuration and replacement check.
+func (s *Service) planRole(ctx context.Context, target domain.RoleTarget) (rolePlan, error) {
+	switch target.Kind {
+	case domain.KindPrime:
+		settings, err := s.store.GetPrimeSettings(ctx)
+		if err != nil {
+			return rolePlan{}, err
+		}
+		settings = settings.WithDefaults()
+		displayName := strings.TrimSpace(settings.DisplayName)
+		if displayName == "" {
+			displayName = domain.DefaultPrimeSettings().DisplayName
+		}
+		return rolePlan{
+			spawn: ports.SpawnConfig{
+				ProjectID:   "",
+				Kind:        domain.KindPrime,
+				DisplayName: displayName,
+				Harness:     settings.Harness,
+				Model:       settings.AgentConfig.Model,
+				Effort:      settings.AgentConfig.Effort,
+			},
+			// Prime is spawned through the internal path: the public one bans
+			// kind=prime so a client cannot create an unsupervised Prime.
+			force: true,
+			verify: func(sess domain.Session) error {
+				return verifyPrimeReplacement(settings, sess, s.dataDir)
+			},
+		}, nil
+	default:
+		project, err := s.requireProject(ctx, target.ProjectID)
+		if err != nil {
+			return rolePlan{}, err
+		}
+		return rolePlan{
+			spawn: ports.SpawnConfig{ProjectID: target.ProjectID, Kind: domain.KindOrchestrator},
+			verify: func(sess domain.Session) error {
+				return s.verifyOrchestratorReplacement(project, sess)
+			},
+		}, nil
+	}
+}
+
+// SpawnOrchestrator spawns an orchestrator session for a project. When clean is
+// true it first tears down any active orchestrator(s) for that project so the new
+// one is the only live coordinator. When clean is false it is idempotent: if an
+// active orchestrator already exists it is returned as-is. A business rule that
+// belongs here, not in the HTTP controller.
+func (s *Service) SpawnOrchestrator(ctx context.Context, projectID domain.ProjectID, clean bool) (domain.Session, error) {
+	return s.ReconcileRole(ctx, domain.OrchestratorTarget(projectID), ReconcileOptions{Clean: clean})
+}
+
 // SpawnPrime spawns or returns the optional global prime supervisor. Prime
 // settings are fleet-owned; projectID is accepted only for compatibility and no
 // longer owns launch configuration.
-func (s *Service) SpawnPrime(ctx context.Context, projectID domain.ProjectID, clean bool) (domain.Session, error) {
-	// Prime is a fleet-wide singleton; serialize on the role target so two
-	// concurrent ensure calls cannot race check-then-spawn (the DB partial
-	// unique index would fail the loser with an opaque 500 otherwise).
-	unlock := s.lockRole(domain.PrimeTarget())
-	defer unlock()
-
-	settings, err := s.store.GetPrimeSettings(ctx)
-	if err != nil {
-		return domain.Session{}, err
-	}
-	settings = settings.WithDefaults()
-	existing, err := s.activePrimeSessions(ctx)
-	if err != nil {
-		return domain.Session{}, err
-	}
-	if clean {
-		for _, prime := range existing {
-			_ = s.sendPrimeRetireNotice(ctx, prime.ID)
-			if err := s.manager.RetireForReplacement(ctx, prime.ID); err != nil {
-				return domain.Session{}, toAPIError(err)
-			}
-		}
-	} else if len(existing) > 0 {
-		return newestSession(existing), nil
-	}
-	displayName := strings.TrimSpace(settings.DisplayName)
-	if displayName == "" {
-		displayName = domain.DefaultPrimeSettings().DisplayName
-	}
-	sess, _, _, err := s.spawn(ctx, ports.SpawnConfig{
-		ProjectID:   "",
-		Kind:        domain.KindPrime,
-		DisplayName: displayName,
-		Harness:     settings.Harness,
-		Model:       settings.AgentConfig.Model,
-		Effort:      settings.AgentConfig.Effort,
-	}, true)
-	if err != nil {
-		return domain.Session{}, err
-	}
-	if err := verifyPrimeReplacement(settings, sess, s.dataDir); err != nil {
-		// The unverified session is already live; without retiring it the
-		// next supervisor tick would see an active prime and silently adopt
-		// it. Retire so the fleet is primeless and replacement re-enters.
-		if retireErr := s.manager.RetireForReplacement(ctx, sess.ID); retireErr != nil {
-			return domain.Session{}, errors.Join(err, fmt.Errorf("retiring the unverified prime failed: %w", retireErr))
-		}
-		return domain.Session{}, err
-	}
-	return sess, nil
+func (s *Service) SpawnPrime(ctx context.Context, _ domain.ProjectID, clean bool) (domain.Session, error) {
+	return s.ReconcileRole(ctx, domain.PrimeTarget(), ReconcileOptions{Clean: clean})
 }
 
 // ActivePrime returns the newest active fleet prime without spawning one.
@@ -446,6 +492,15 @@ func (s *Service) sendPrimeRetireNotice(ctx context.Context, id domain.SessionID
 		return fmt.Errorf("send prime retire notice to %s: %w", id, err)
 	}
 	return nil
+}
+
+// sendRoleRetireNotice dispatches the retire notice for a role target, keeping
+// the existing per-role wording.
+func (s *Service) sendRoleRetireNotice(ctx context.Context, target domain.RoleTarget, id domain.SessionID) error {
+	if target.Kind == domain.KindPrime {
+		return s.sendPrimeRetireNotice(ctx, id)
+	}
+	return s.sendRetireNotice(ctx, id)
 }
 
 // verifyRoleReplacement is the single replacement check both role kinds run.
