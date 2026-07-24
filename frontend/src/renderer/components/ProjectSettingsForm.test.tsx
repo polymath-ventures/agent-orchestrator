@@ -1213,6 +1213,35 @@ describe("ProjectSettingsForm", () => {
 		expect(effort).toHaveValue("high");
 	}, 20_000);
 
+	it("aligns the harness dropdown with the Model/Effort controls in each harness/model row", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "",
+			defaultBranch: "main",
+			config: {
+				worker: { agent: "codex" },
+				orchestrator: { agent: "claude-code" },
+			},
+		});
+
+		renderSettings();
+		await screen.findByRole("combobox", { name: "Project model harness" });
+
+		// The harness picker's control sits directly under its single label. The
+		// Model/Effort controls must match that — no separate visible per-field
+		// label — or they render one row lower than the harness dropdown sharing
+		// their bordered row.
+		expect(screen.queryAllByText("Model")).toHaveLength(0);
+		expect(screen.queryAllByText("Effort")).toHaveLength(0);
+
+		// ...but must still be reachable with an accessible name for a11y.
+		expect(document.getElementById("project-model-model")).toHaveAccessibleName("Model");
+		expect(document.getElementById("project-model-effort")).toHaveAccessibleName("Effort");
+	}, 20_000);
+
 	it("keeps a synthetic configured project pin visible when no catalog row exists", async () => {
 		mockProject({
 			id: "proj-1",
