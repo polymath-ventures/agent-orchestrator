@@ -479,14 +479,16 @@ function PrimeNotRunningItem({ onOpen }: { onOpen: () => void }) {
 					"group-data-[collapsible=icon]:size-9! group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:rounded-lg group-data-[collapsible=icon]:p-0!",
 				)}
 				onClick={onOpen}
-				tooltip="Prime — not running"
+				tooltip="Prime — enabled but not running"
 			>
 				<OrchestratorIcon aria-hidden="true" className="size-4 shrink-0" />
 				<span className="sidebar-expanded-chrome min-w-0 flex-1 truncate group-data-[collapsible=icon]:hidden">
 					Prime
 				</span>
-				<span className="sidebar-expanded-chrome text-caption uppercase tracking-wide-md text-passive group-data-[collapsible=icon]:hidden">
-					Off
+				{/* Not "Off": Prime is enabled here, just not running. Labelling this
+				    state Off is exactly the confusion this change exists to remove. */}
+				<span className="sidebar-expanded-chrome text-caption uppercase tracking-wide-md text-warning group-data-[collapsible=icon]:hidden">
+					Down
 				</span>
 			</SidebarMenuButton>
 		</SidebarMenuItem>
