@@ -50,10 +50,6 @@ Repo-specific gotchas for `/design-sync`. Read this before a re-sync.
 trailing `|| true` would mask a failed web build or a failed declaration emit,
 not just the last step.
 
-`validate-conventions.mjs` is **not** part of `buildCmd` — it checks against
-`ds-bundle/`, which does not exist until the converter has run. Run it after
-`package-build.mjs` (see the conventions section).
-
 ## The .d.ts contracts are load-bearing and fragile
 
 The app is `noEmit`, so there is no declaration tree. Without one the converter
@@ -96,7 +92,7 @@ cannot flatten — they are the only three entries in `cfg.dtsPropsFor`.
 
 ### Known: the emitted contracts are syntactically valid but not type-valid
 
-Type-checking the 105 emitted `.d.ts` produces **107 semantic errors** — 84
+Type-checking the 105 emitted `.d.ts` produces **107 semantic errors** — 89
 `ref?: React.Ref;` (TS2314, `Ref<T>` takes a type argument and gets none), 17
 bare `style?: CSSProperties;` (TS2304, missing the `React.` qualifier), and one
 unresolved `ResizablePrimitive` namespace.
@@ -127,22 +123,45 @@ since these _are_ declaration files):
   2>&1 | grep -c 'error TS'   # expect 107; materially more means something new
 ```
 
-## conventions.md is prompt-injected — validate it, don't eyeball it
+## conventions.md is prompt-injected — check it against the build when you edit it
 
 `conventions.md` is inlined into the design agent's system prompt, so a name in
 it that does not exist is worse than silence: the agent trusts it, writes
-vocabulary that never resolves, and ships silently unstyled output. Hand-checking
+vocabulary that never resolves, and ships silently unstyled output. Hand-eyeballing
 missed real bugs twice (`text-base`, defined in `@theme` but never emitted
 because Tailwind is JIT; and `text-terminal`, which resolves to
 `--color-bg-terminal` — a _background_ token, i.e. near-black text on a
 near-black surface).
 
-`node .design-sync/validate-conventions.mjs ./ds-bundle` checks every utility
-and component named in the file against the built bundle, including escaped
-variant selectors (`hover:`) and token-kind mismatches. **Run it after every `package-build.mjs`, and after editing `conventions.md`** — and note the two
-gotchas it exists to catch: a class present in `@theme` is not necessarily
-emitted, and a `text-*` utility can legitimately exist while pointing at the
-wrong kind of token.
+**Whenever you edit `conventions.md`, grep every class and component it names
+against the freshly built bundle** — the check the base skill prescribes, run
+once at authoring, not a standing tool. Two gotchas it exists to catch: a class
+present in `@theme` is not necessarily emitted, and a `text-*` utility can
+legitimately exist while pointing at the wrong kind of token (background).
+
+````bash
+node - <<'JS'
+const fs=require('fs');
+const md=fs.readFileSync('.design-sync/conventions.md','utf8');
+const css=fs.readFileSync('ds-bundle/_ds_bundle.css','utf8');
+const bundle=fs.readFileSync('ds-bundle/_ds_bundle.js','utf8');
+const fences=[...md.matchAll(/```[a-z]*\n([\s\S]*?)```/g)].map(m=>m[1]).join('\n');
+const JS=new Set(['const','window','document','className','style','div','span','props','children','return','import','from','true','false']);
+const cand=t=>/^([a-z][a-z0-9]*:)*[a-z][a-z0-9]*(-[a-z0-9[\]./%-]+)*$/.test(t)&&!JS.has(t)&&(t.includes('-')||t.includes(':')||['flex','grid','block','hidden','relative','absolute','truncate'].includes(t));
+const toks=[...[...md.matchAll(/`([^`\n]+)`/g)].flatMap(m=>m[1].split(/\s+/)),...[...fences.matchAll(/className="([^"]+)"/g)].flatMap(m=>m[1].split(/\s+/))];
+const classes=[...new Set(toks.filter(cand))].filter(c=>!['bg-slate-800','text-gray-400'].includes(c));
+const present=c=>{const e=c.replace(/[:/]/g,x=>'\\'+x);return ['{',',',':',' ','>'].some(s=>css.includes('.'+e+s));};
+const exports=new Set(JSON.parse(bundle.match(/@ds-bundle: (\{.*?\}) \*\//s)[1]).components.map(c=>c.name));
+const claimed=[...new Set([...[...md.matchAll(/`([A-Z][A-Za-z]+)`/g)].map(m=>m[1]),...[...fences.matchAll(/<([A-Z][A-Za-z]+)[\s/>]/g)].map(m=>m[1])])];
+console.log('classes MISSING:',classes.filter(c=>!present(c)).join(', ')||'(none)');
+console.log('components MISSING:',claimed.filter(c=>!exports.has(c)).join(', ')||'(none)');
+JS
+````
+
+(An earlier revision of this sync committed a standing `validate-conventions.mjs`
+for this. It was removed as over-engineering — the base skill asks for a
+one-time check, not a build-step linter, and a completeness-chasing linter over
+free-form prose generates more review churn than it prevents.)
 
 ## Guidelines are deliberately empty
 
@@ -268,94 +287,6 @@ Two non-obvious details:
 **Oxygen is deliberately NOT shipped.** It sits fifth in `--font-family-base`,
 behind `-apple-system` and `BlinkMacSystemFont`, so it never renders on macOS.
 Shipping it would make designs look _less_ like the real app, not more.
-
-## conventions.md is prompt-injected — validate it, don't eyeball it
-
-`conventions.md` is inlined into the design agent's system prompt, so a name in
-it that does not exist is worse than silence: the agent trusts it, writes
-vocabulary that never resolves, and ships silently unstyled output. Hand-checking
-missed real bugs twice (`text-base`, defined in `@theme` but never emitted
-because Tailwind is JIT; and `text-terminal`, which resolves to
-`--color-bg-terminal` — a _background_ token, i.e. near-black text on a
-near-black surface).
-
-`node .design-sync/validate-conventions.mjs ./ds-bundle` checks every utility
-and component named in the file against the built bundle, including escaped
-variant selectors (`hover:`) and token-kind mismatches. **Run it after every `package-build.mjs`, and after editing `conventions.md`** — and note the two
-gotchas it exists to catch: a class present in `@theme` is not necessarily
-emitted, and a `text-*` utility can legitimately exist while pointing at the
-wrong kind of token.
-
-## Guidelines are deliberately empty
-
-The converter's default `guidelinesGlob` picked up `frontend/docs/*.md`, whose
-only file is a **desktop release runbook** — actively misleading shipped to a
-design agent as "design guidelines". `cfg.guidelinesGlob` is therefore pointed
-at `docs/design-guidelines/**/*.md`, which does not exist yet; drop real design
-guidance there and it ships automatically.
-
-Root `DESIGN.md` was considered and rejected as guidelines content, but only
-**part** of it is distilled into `conventions.md` (colour is rare and
-meaningful, the type scale, dark-first). Its sections on control heights,
-spacing rhythm, status semantics, pane layout and icon policy are **not**
-carried anywhere in this sync — that is a real gap, not a clean substitution.
-It was excluded because its opening sections call the product "ReverbCode" and
-point at a local filesystem path, which would mislead a design agent more than
-the missing material costs. Fixing that staleness and then shipping it under
-`docs/design-guidelines/` is the better long-term answer.
-
-## Docs, groups, and the docsMap enumeration
-
-`cfg.docsMap` maps all 105 components to 19 family docs in `.design-sync/docs/`,
-and each doc's `category:` frontmatter sets the component's group (7 semantic
-groups: Actions, Forms, Navigation, Overlays, Data Display, Layout, Feedback).
-This is a full enumeration on purpose — compound parts (`CardHeader`,
-`TableRow`, …) never slug-match their family's doc, so discovery cannot bind
-them. **A new component needs a `docsMap` entry or it lands in `general` with a
-synthesized prompt.**
-
-Paths in `docsMap` are `../../../.design-sync/docs/<family>.md`: they resolve
-from `PKG_DIR`, which is the **symlink path** `frontend/node_modules/agent-orchestrator`,
-so three `../` are needed to reach the repo root — not one.
-
-## Rendering
-
-- **AO is dark-first.** The preview harness injects `body{background:#fff}` in a
-  `<style>` block _after_ the stylesheet, so it wins on document order.
-  `preview-surface.css` uses `html body` (specificity 0,0,2) to beat it. The
-  same rule ships to designs, which is correct — designs built with this DS
-  belong on AO's surface.
-- The harness's "preview not yet authored" floor card is emitted with inline
-  light-theme colors and is illegible on the dark surface; `preview-surface.css`
-  re-tones it via `[data-ds-fallback]` with `!important` (inline styles).
-- **No icon library is exported.** `lucide-react` is bundled _inside_ the
-  components but is not on `window.AODS`, so previews cannot import icons — use
-  text or a unicode glyph.
-- Radix portal components (Dialog, Sheet, DropdownMenu, Select, Tooltip) **do**
-  capture correctly with `defaultOpen` + a real trigger in the tree — an earlier
-  assumption that they would escape the card was wrong. They still need a
-  `cardMode` override for the product's grid; see below.
-- **The `cfg.overrides` cardModes are load-bearing, not cosmetic.** A preview
-  can capture perfectly on its own and still present broken in the product's
-  multi-story grid, which `package-validate` reports as `[GRID_OVERFLOW]`.
-  Portal components (Dialog, Sheet, DropdownMenu, Select, Tooltip) are
-  `cardMode: single` because portal content is positioned outside its grid cell
-  and no grid layout can present it; wide ones (Command, Tabs) are
-  `cardMode: column` so each story gets full card width instead of being
-  cropped. **Do not drop these when adding components** — re-read the
-  `[GRID_OVERFLOW]` warns after any preview change.
-- `Tooltip`/`TooltipContent` throw outside `TooltipProvider`. Only four sidebar
-  parts actually consume the rail context — `Sidebar`, `SidebarMenuButton`,
-  `SidebarRail`, `SidebarTrigger` — and those throw outside `SidebarProvider`;
-  the rest are plain layout wrappers (verified against `useSidebar()` call
-  sites in `sidebar.tsx`).
-- `Sidebar` is `h-svh` and overshoots the card by the harness's 24px body
-  padding, clipping its own footer — the preview cancels this with `margin: -24`.
-- `ResizablePanelGroup` needs an explicit height on a wrapper or it collapses,
-  and the installed `react-resizable-panels@4.11.2` uses **`orientation`**, not
-  the older `direction` prop.
-- Radix `Select` anchors its open menu so the selected item lands on the
-  trigger; without top padding the first group scrolls off the card.
 
 ## Source bug found during the sync (not a sync defect)
 
