@@ -30,6 +30,7 @@ import { WebglAddon } from "@xterm/addon-webgl";
 import type { AttachableTerminal, TerminalUserInputSource } from "../hooks/useTerminalSession";
 import { aoBridge } from "../lib/bridge";
 import { TERMINAL_FONT_SIZE_DEFAULT } from "../lib/design-tokens";
+import { OPEN_DIALOG_OR_MENU_SELECTOR } from "../lib/dom-selectors";
 import { buildTerminalThemes } from "../lib/terminal-themes";
 import type { Theme } from "../stores/ui-store";
 import {
@@ -52,6 +53,14 @@ export type XtermTerminalProps = {
 	 * on every platform (see the wheel handler), fixing it under a mux too.
 	 */
 	paneScrollsByKeyboard?: boolean;
+	/**
+	 * Take the keyboard when this terminal mounts, so the user can type
+	 * immediately instead of clicking into the pane first. Only the owner knows
+	 * whether a mount means "the user switched to this terminal" — a pane can
+	 * also mount behind an overlay, or before its PTY exists — so this is opt-in
+	 * per call site rather than decided here.
+	 */
+	autoFocus?: boolean;
 	/** Terminal construction failed; the owner decides how to surface it. */
 	onError?: (error: unknown) => void;
 	/** Called after a terminal hyperlink is opened in the OS browser. */
@@ -165,6 +174,23 @@ function normalizedTerminalShortcut(event: KeyboardEvent): string | null {
 function terminalHasFocus(host: HTMLElement): boolean {
 	const activeElement = document.activeElement;
 	return !!activeElement && host.contains(activeElement);
+}
+
+// Whether an autoFocus mount may actually take the keyboard. The owner already
+// decided this pane is the surface the user switched to; this only yields to
+// whatever is *holding* keyboard input right now — an open dialog or menu, or a
+// text field being typed in. Deliberately "holds focus" rather than "an overlay
+// exists somewhere": this effect runs once per mount, so a document-global veto
+// would leave the pane permanently deaf when a menu merely happened to be open
+// as it mounted, which is the very bug this focus work exists to remove.
+function canTakeFocusOnMount(host: HTMLElement): boolean {
+	if (terminalHasFocus(host)) return true;
+	const activeElement = document.activeElement as HTMLElement | null;
+	if (!activeElement || activeElement === document.body) return true;
+	if (activeElement.closest(OPEN_DIALOG_OR_MENU_SELECTOR)) return false;
+	if (activeElement.isContentEditable) return false;
+	const tag = activeElement.tagName;
+	return tag !== "INPUT" && tag !== "TEXTAREA" && tag !== "SELECT";
 }
 
 type XtermInternal = Terminal & {
@@ -395,6 +421,12 @@ export function XtermTerminal(props: XtermTerminalProps) {
 				// Terminal is being torn down or its hidden textarea is unavailable.
 			}
 		};
+		// Switching to the terminals screen (or to another shell tab, which remounts
+		// this component) must leave the user typing into the shell, not into the
+		// nav control they just clicked — xterm reads keys through a hidden helper
+		// textarea, so without this the pane renders attached but deaf until a
+		// second click lands inside it.
+		if (callbacksRef.current.autoFocus && canTakeFocusOnMount(host)) focusTerminal();
 		contextMenuActionsRef.current = {
 			clear: () => {
 				term.clear();

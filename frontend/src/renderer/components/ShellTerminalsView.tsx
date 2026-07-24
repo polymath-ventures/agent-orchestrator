@@ -101,6 +101,10 @@ export function ShellTerminalsView() {
 			<div className="min-h-0 flex-1">
 				{active ? (
 					<TerminalPane
+						// This screen exists to be typed into, and a mount here always
+						// follows a user action: arriving at the route, opening a shell, or
+						// selecting another tab (which re-keys the pane).
+						autoFocus
 						daemonReady={daemonStatus.state === "ready"}
 						fontSize={12}
 						terminalTarget={{ kind: "shell", handleId: active.handleId, title: active.title }}

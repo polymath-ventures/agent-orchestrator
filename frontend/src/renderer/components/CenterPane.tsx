@@ -216,6 +216,12 @@ export function CenterPane({
 			) : null}
 			<div className="relative min-h-0 flex-1">
 				<TerminalPane
+					// Shells are the other home for the terminals screen's tab strip, and
+					// they reach this pane only by a user opening or selecting one, so
+					// they focus the same way. The worker/reviewer pane does not: it also
+					// mounts on arrival and re-keys in the background when a starting
+					// session is finally assigned its terminal handle.
+					autoFocus={target.kind === "shell"}
 					daemonReady={daemonReady}
 					fontSize={fontSize}
 					session={session}

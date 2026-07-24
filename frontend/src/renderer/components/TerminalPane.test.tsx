@@ -5,10 +5,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkspaceSession } from "../types/workspace";
 import { TerminalPane, providerScrollsByKeyboard } from "./TerminalPane";
 
-const { postMock, terminalError, terminalState } = vi.hoisted(() => ({
+const { postMock, terminalError, terminalState, terminalProps } = vi.hoisted(() => ({
 	postMock: vi.fn(),
 	terminalError: { value: undefined as string | undefined },
 	terminalState: { value: "idle" },
+	terminalProps: { value: {} as { autoFocus?: boolean } },
 }));
 let terminalLinkHandler: ((uri: string) => void) | undefined;
 
@@ -18,8 +19,9 @@ vi.mock("../lib/api-client", () => ({
 }));
 
 vi.mock("./XtermTerminal", () => ({
-	XtermTerminal: (props: { onLinkOpen?: (uri: string) => void }) => {
+	XtermTerminal: (props: { onLinkOpen?: (uri: string) => void; autoFocus?: boolean }) => {
 		terminalLinkHandler = props.onLinkOpen;
+		terminalProps.value = props;
 		return <div data-testid="xterm" />;
 	},
 }));
@@ -77,6 +79,42 @@ function renderPane(session?: WorkspaceSession) {
 		},
 	};
 }
+
+describe("TerminalPane autoFocus", () => {
+	function renderAutoFocusPane(session?: WorkspaceSession) {
+		const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+		const previousAO = window.ao;
+		window.ao = {} as typeof window.ao;
+		const result = render(
+			<QueryClientProvider client={queryClient}>
+				<TerminalPane autoFocus daemonReady fontSize={12} session={session} theme="dark" />
+			</QueryClientProvider>,
+		);
+		return { ...result, restore: () => (window.ao = previousAO) };
+	}
+
+	// A starting session has no handle, so the pane is covered by the opaque
+	// "Starting session" overlay with no PTY behind it. Focusing there would
+	// swallow the user's keystrokes into nothing — and the handle arrives from a
+	// background poll, so the remount is not a user switching to the terminal.
+	it("does not focus a pane whose session has no terminal handle yet", () => {
+		const view = renderAutoFocusPane(worker);
+		try {
+			expect(terminalProps.value.autoFocus).toBe(false);
+		} finally {
+			view.restore();
+		}
+	});
+
+	it("focuses once the pane has a terminal handle to attach", () => {
+		const view = renderAutoFocusPane({ ...worker, terminalHandleId: "term-1" });
+		try {
+			expect(terminalProps.value.autoFocus).toBe(true);
+		} finally {
+			view.restore();
+		}
+	});
+});
 
 describe("TerminalPane empty states", () => {
 	it("shows a no-selection message when no session is selected", () => {
