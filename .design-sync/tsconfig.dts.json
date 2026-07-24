@@ -1,0 +1,29 @@
+{
+	// Declaration-only emit for /design-sync.
+	//
+	// The frontend is an app (noEmit), so it ships no .d.ts tree — without one
+	// the converter's prop extraction resolves every component to
+	// `[key: string]: unknown` and the design agent loses the real API
+	// (Button's `variant`, Badge's `variant`, Sheet's `side`, …).
+	// cfg.buildCmd runs this to emit declarations under frontend/dist/types,
+	// which is inside the package, so the converter's .d.ts scan picks them up.
+	"extends": "../frontend/tsconfig.json",
+	"compilerOptions": {
+		"noEmit": false,
+		"declaration": true,
+		"emitDeclarationOnly": true,
+		"outDir": "../frontend/dist/decl",
+		"rootDir": "../frontend/src",
+		"skipLibCheck": true,
+		"noUnusedLocals": false,
+		"noUnusedParameters": false,
+		"typeRoots": ["../frontend/node_modules/@types"],
+		"types": []
+	},
+	"include": [
+		"../frontend/src/renderer/components/ui/**/*.tsx",
+		"../frontend/src/renderer/lib/utils.ts",
+		"../frontend/src/renderer/hooks/use-mobile.ts"
+	],
+	"exclude": ["../frontend/src/renderer/components/ui/*.test.tsx"]
+}
