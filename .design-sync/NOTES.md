@@ -243,13 +243,14 @@ appearing means something changed.
   `--accent`, `--bg`, `--bg-card`, `--accent-glow`, …). These come from
   `frontend/src/landing/**`, the marketing page, which has its own token
   vocabulary and is bundled into the same compiled stylesheet. **Mostly** benign
-  — but not entirely: `sidebar.tsx` (SidebarRail) uses
-  `shadow-[0_0_0_1px_var(--sidebar-border)]` and `var(--sidebar-accent)`, and
-  those bare names are **not** defined — the theme defines
-  `--color-sidebar-border` / `--color-sidebar-accent`. So SidebarRail's focus
-  and hover ring silently resolve to nothing, in the app as well as here. That
-  is an app bug this sync surfaced, not a sync artifact; it is not fixed in this
-  PR (no app source is touched here).
+  — but not entirely: `SidebarMenuButton`'s `outline` variant
+  (`sidebar.tsx:449`) uses `shadow-[0_0_0_1px_var(--sidebar-border)]` and
+  `var(--sidebar-accent)`, and those bare names are **not** defined — the theme
+  defines `--color-sidebar-border` / `--color-sidebar-accent`. So that variant's
+  border ring silently resolves to nothing, in the app as well as here.
+  (`SidebarRail` itself is fine — it uses the valid `bg-sidebar-border`
+  utility.) That is an app bug this sync surfaced, not a sync artifact; filed as
+  GH #127 / bead ao-oor, not fixed in this PR (no app source is touched here).
 - **`[FONT_MISSING]` — only the _alternate_ Nerd Fonts** further down the mono
   stack. The primary face ships. See the fonts section below.
 
