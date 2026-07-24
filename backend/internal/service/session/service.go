@@ -35,10 +35,14 @@ type Store interface {
 
 // ListFilter captures API-facing session list query filters.
 type ListFilter struct {
-	ProjectID        domain.ProjectID
-	Active           *bool
-	OrchestratorOnly bool
-	Fresh            bool
+	ProjectID domain.ProjectID
+	Active    *bool
+	// Kind restricts results to one session kind. Empty means every kind. The
+	// wire contract still exposes the narrower `orchestratorOnly` boolean; the
+	// controller translates it into this field so the filter has exactly one
+	// internal representation.
+	Kind  domain.SessionKind
+	Fresh bool
 }
 
 // commander is the command-side surface Service delegates to: the
@@ -111,7 +115,9 @@ type Service struct {
 	dataDir             string
 	telemetry           ports.EventSink
 	orchestratorLocksMu sync.Mutex
-	orchestratorLocks   map[domain.ProjectID]*sync.Mutex
+	// orchestratorLocks is keyed by domain.RoleTarget.Key(), one mutex per
+	// reconcilable role session.
+	orchestratorLocks map[string]*sync.Mutex
 	// signalCapable reports whether a harness has a hook pipeline that can
 	// deliver activity signals at all. Only capable harnesses are eligible for
 	// the no_signal downgrade: a hook-less harness staying silent forever is
@@ -310,34 +316,27 @@ func (s *Service) emitSpawnFailed(cfg ports.SpawnConfig, err error, durationMs i
 // active orchestrator already exists it is returned as-is. A business rule that
 // belongs here, not in the HTTP controller.
 func (s *Service) SpawnOrchestrator(ctx context.Context, projectID domain.ProjectID, clean bool) (domain.Session, error) {
-	unlock := s.lockOrchestratorProject(projectID)
+	unlock := s.lockRole(domain.OrchestratorTarget(projectID))
 	defer unlock()
 
 	project, err := s.requireProject(ctx, projectID)
 	if err != nil {
 		return domain.Session{}, err
 	}
-	active := true
+	existing, err := s.activeRoleSessions(ctx, domain.OrchestratorTarget(projectID))
+	if err != nil {
+		return domain.Session{}, err
+	}
 	if clean {
-		existing, err := s.List(ctx, ListFilter{ProjectID: projectID, Active: &active, OrchestratorOnly: true})
-		if err != nil {
-			return domain.Session{}, err
-		}
 		for _, orch := range existing {
 			_ = s.sendRetireNotice(ctx, orch.ID)
 			if err := s.manager.RetireForReplacement(ctx, orch.ID); err != nil {
 				return domain.Session{}, toAPIError(err)
 			}
 		}
-	} else {
+	} else if len(existing) > 0 {
 		// ponytail: check-then-spawn is not atomic; fine for the single-frontend ensure-on-load case. Upgrade path: a partial unique index on (project_id) where kind=orchestrator and not terminated.
-		existing, err := s.List(ctx, ListFilter{ProjectID: projectID, Active: &active, OrchestratorOnly: true})
-		if err != nil {
-			return domain.Session{}, err
-		}
-		if len(existing) > 0 {
-			return newestSession(existing), nil
-		}
+		return newestSession(existing), nil
 	}
 	sess, _, _, err := s.Spawn(ctx, ports.SpawnConfig{ProjectID: projectID, Kind: domain.KindOrchestrator})
 	if err != nil {
@@ -358,10 +357,10 @@ func (s *Service) SpawnOrchestrator(ctx context.Context, projectID domain.Projec
 // settings are fleet-owned; projectID is accepted only for compatibility and no
 // longer owns launch configuration.
 func (s *Service) SpawnPrime(ctx context.Context, projectID domain.ProjectID, clean bool) (domain.Session, error) {
-	// Prime is a fleet-wide singleton; serialize under a fixed key so two
+	// Prime is a fleet-wide singleton; serialize on the role target so two
 	// concurrent ensure calls cannot race check-then-spawn (the DB partial
 	// unique index would fail the loser with an opaque 500 otherwise).
-	unlock := s.lockOrchestratorProject("__fleet_prime__")
+	unlock := s.lockRole(domain.PrimeTarget())
 	defer unlock()
 
 	settings, err := s.store.GetPrimeSettings(ctx)
@@ -449,57 +448,68 @@ func (s *Service) sendPrimeRetireNotice(ctx context.Context, id domain.SessionID
 	return nil
 }
 
-func (s *Service) verifyOrchestratorReplacement(project domain.ProjectRecord, sess domain.Session) error {
+// verifyRoleReplacement is the single replacement check both role kinds run.
+// The only per-role inputs are the expected harness and the canonical branch;
+// everything else (liveness, kind, error shape) is identical, so keeping one
+// implementation stops the two roles from drifting apart again.
+func verifyRoleReplacement(target domain.RoleTarget, sess domain.Session, expectedHarness domain.AgentHarness, expectedBranch string) error {
+	label := roleVerificationLabel(target)
 	if sess.IsTerminated {
-		return fmt.Errorf("orchestrator replacement verification failed: new session %s is terminated", sess.ID)
+		return fmt.Errorf("%s replacement verification failed: new session %s is terminated", label, sess.ID)
 	}
-	if sess.Kind != domain.KindOrchestrator {
-		return fmt.Errorf("orchestrator replacement verification failed: new session %s has kind %q", sess.ID, sess.Kind)
+	if sess.Kind != target.Kind {
+		return fmt.Errorf("%s replacement verification failed: new session %s has kind %q", label, sess.ID, sess.Kind)
 	}
-	if expected := project.Config.Orchestrator.Harness; expected != "" && sess.Harness != expected {
-		return fmt.Errorf("orchestrator replacement verification failed: new session %s uses harness %q, want %q", sess.ID, sess.Harness, expected)
+	if expectedHarness != "" && sess.Harness != expectedHarness {
+		return fmt.Errorf("%s replacement verification failed: new session %s uses harness %q, want %q", label, sess.ID, sess.Harness, expectedHarness)
 	}
-	expectedBranch := sessionmanager.DefaultOrchestratorBranch(serviceSessionPrefix(project), s.dataDir)
 	if sess.Metadata.Branch != "" && sess.Metadata.Branch != expectedBranch {
-		return fmt.Errorf("orchestrator replacement verification failed: new session %s uses branch %q, want %q", sess.ID, sess.Metadata.Branch, expectedBranch)
+		return fmt.Errorf("%s replacement verification failed: new session %s uses branch %q, want %q", label, sess.ID, sess.Metadata.Branch, expectedBranch)
 	}
 	return nil
+}
+
+// roleVerificationLabel keeps the existing per-role wording in error messages;
+// operators and tests already grep for "orchestrator replacement verification
+// failed" and "prime replacement verification failed".
+func roleVerificationLabel(target domain.RoleTarget) string {
+	if target.Kind == domain.KindPrime {
+		return "prime"
+	}
+	return "orchestrator"
+}
+
+func (s *Service) verifyOrchestratorReplacement(project domain.ProjectRecord, sess domain.Session) error {
+	return verifyRoleReplacement(
+		domain.OrchestratorTarget(domain.ProjectID(project.ID)),
+		sess,
+		project.Config.Orchestrator.Harness,
+		sessionmanager.DefaultOrchestratorBranch(serviceSessionPrefix(project), s.dataDir),
+	)
 }
 
 func verifyPrimeReplacement(settings domain.PrimeSettings, sess domain.Session, dataDir string) error {
-	if sess.IsTerminated {
-		return fmt.Errorf("prime replacement verification failed: new session %s is terminated", sess.ID)
+	return verifyRoleReplacement(
+		domain.PrimeTarget(),
+		sess,
+		settings.Harness,
+		sessionmanager.DefaultPrimeBranch(dataDir),
+	)
+}
+
+// activeRoleSessions returns the non-terminated sessions for one role target.
+// Both role kinds resolve their active singleton through this one path, so a
+// change to "what counts as active" cannot apply to one role and miss the other.
+func (s *Service) activeRoleSessions(ctx context.Context, target domain.RoleTarget) ([]domain.Session, error) {
+	if err := target.Validate(); err != nil {
+		return nil, err
 	}
-	if sess.Kind != domain.KindPrime {
-		return fmt.Errorf("prime replacement verification failed: new session %s has kind %q", sess.ID, sess.Kind)
-	}
-	if expected := settings.Harness; expected != "" && sess.Harness != expected {
-		return fmt.Errorf("prime replacement verification failed: new session %s uses harness %q, want %q", sess.ID, sess.Harness, expected)
-	}
-	expectedBranch := sessionmanager.DefaultPrimeBranch(dataDir)
-	if sess.Metadata.Branch != "" && sess.Metadata.Branch != expectedBranch {
-		return fmt.Errorf("prime replacement verification failed: new session %s uses branch %q, want %q", sess.ID, sess.Metadata.Branch, expectedBranch)
-	}
-	return nil
+	active := true
+	return s.List(ctx, ListFilter{ProjectID: target.ProjectID, Active: &active, Kind: target.Kind})
 }
 
 func (s *Service) activePrimeSessions(ctx context.Context) ([]domain.Session, error) {
-	recs, err := s.listRecords(ctx, "")
-	if err != nil {
-		return nil, err
-	}
-	out := make([]domain.Session, 0, len(recs))
-	for _, rec := range recs {
-		if rec.Kind != domain.KindPrime || rec.IsTerminated {
-			continue
-		}
-		sess, err := s.toSession(ctx, rec)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, sess)
-	}
-	return out, nil
+	return s.activeRoleSessions(ctx, domain.PrimeTarget())
 }
 
 func serviceSessionPrefix(project domain.ProjectRecord) string {
@@ -533,15 +543,20 @@ func sessionNewer(a, b domain.SessionRecord) bool {
 	return string(a.ID) > string(b.ID)
 }
 
-func (s *Service) lockOrchestratorProject(projectID domain.ProjectID) func() {
+// lockRole serializes reconciliation per role target. Keying on the target
+// rather than on a project id means Prime no longer has to borrow the
+// orchestrator lock map through a magic "__fleet_prime__" project, and a real
+// project can never collide with it.
+func (s *Service) lockRole(target domain.RoleTarget) func() {
+	key := target.Key()
 	s.orchestratorLocksMu.Lock()
 	if s.orchestratorLocks == nil {
-		s.orchestratorLocks = make(map[domain.ProjectID]*sync.Mutex)
+		s.orchestratorLocks = make(map[string]*sync.Mutex)
 	}
-	mu := s.orchestratorLocks[projectID]
+	mu := s.orchestratorLocks[key]
 	if mu == nil {
 		mu = &sync.Mutex{}
-		s.orchestratorLocks[projectID] = mu
+		s.orchestratorLocks[key] = mu
 	}
 	s.orchestratorLocksMu.Unlock()
 
@@ -718,7 +733,7 @@ func matchesSessionFilter(rec domain.SessionRecord, filter ListFilter) bool {
 	if filter.Active != nil && rec.IsTerminated == *filter.Active {
 		return false
 	}
-	if filter.OrchestratorOnly && rec.Kind != domain.KindOrchestrator {
+	if filter.Kind != "" && rec.Kind != filter.Kind {
 		return false
 	}
 	if filter.Fresh && rec.IsTerminated {

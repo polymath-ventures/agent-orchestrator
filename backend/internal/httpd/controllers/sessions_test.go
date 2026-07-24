@@ -52,7 +52,7 @@ func (f *fakeSessionService) List(_ context.Context, filter sessionsvc.ListFilte
 		if filter.Active != nil && s.IsTerminated == *filter.Active {
 			continue
 		}
-		if filter.OrchestratorOnly && s.Kind != domain.KindOrchestrator {
+		if filter.Kind != "" && s.Kind != filter.Kind {
 			continue
 		}
 		out = append(out, s)
@@ -73,7 +73,7 @@ func (f *fakeSessionService) Spawn(_ context.Context, cfg ports.SpawnConfig) (do
 func (f *fakeSessionService) SpawnOrchestrator(ctx context.Context, projectID domain.ProjectID, clean bool) (domain.Session, error) {
 	if clean {
 		active := true
-		existing, err := f.List(ctx, sessionsvc.ListFilter{ProjectID: projectID, Active: &active, OrchestratorOnly: true})
+		existing, err := f.List(ctx, sessionsvc.ListFilter{ProjectID: projectID, Active: &active, Kind: domain.KindOrchestrator})
 		if err != nil {
 			return domain.Session{}, err
 		}

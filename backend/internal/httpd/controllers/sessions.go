@@ -749,7 +749,7 @@ func (c *SessionsController) listOrchestrators(w http.ResponseWriter, r *http.Re
 		apispec.NotImplemented(w, r, "GET", "/api/v1/orchestrators")
 		return
 	}
-	sessions, err := c.Svc.List(r.Context(), sessionsvc.ListFilter{OrchestratorOnly: true})
+	sessions, err := c.Svc.List(r.Context(), sessionsvc.ListFilter{Kind: domain.KindOrchestrator})
 	if err != nil {
 		envelope.WriteError(w, r, err)
 		return
@@ -797,7 +797,11 @@ func parseSessionListFilter(r *http.Request) (sessionsvc.ListFilter, error) {
 		if err != nil {
 			return sessionsvc.ListFilter{}, errors.New("orchestratorOnly must be a boolean")
 		}
-		filter.OrchestratorOnly = orchestratorOnly
+		// The wire contract stays the narrower boolean; the service filter is
+		// kind-based, so translate here rather than carrying both spellings.
+		if orchestratorOnly {
+			filter.Kind = domain.KindOrchestrator
+		}
 	}
 	if raw := q.Get("fresh"); raw != "" {
 		fresh, err := strconv.ParseBool(raw)
