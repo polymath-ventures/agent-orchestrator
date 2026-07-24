@@ -32,6 +32,7 @@ import { isLinuxPlatform, isWindowsPlatform, usesFramedAppTopbar, hidesShellTopb
 import { hasElectronBridge, isMacDesktopChrome } from "../lib/runtime-environment";
 import { useUiStore } from "../stores/ui-store";
 import { findFleetPrime, isFleetWorkspace, toProjectKind, type WorkspaceSummary } from "../types/workspace";
+import { usePrimeEnabledQuery } from "../hooks/usePrimeSettingsQuery";
 import type { components } from "../../api/schema";
 
 export const Route = createFileRoute("/_shell")({
@@ -135,7 +136,24 @@ function ShellLayout() {
 	const workspaceQuery = useWorkspaceQuery();
 	const workspaces = workspaceQuery.data ?? [];
 	const projectWorkspaces = useMemo(() => workspaces.filter((workspace) => !isFleetWorkspace(workspace)), [workspaces]);
-	const primeSession = findFleetPrime(workspaces);
+	const primeEnabledQuery = usePrimeEnabledQuery();
+	// Persisted settings are the source of truth for whether Prime is desired.
+	// While the settings request is still resolving we fall back to the live row
+	// so the entry does not flicker; once it resolves, a disabled Prime hides the
+	// entry even if a terminated/lingering row is still in the workspace list.
+	const primeEnabled = primeEnabledQuery.data === true;
+	const livePrime = findFleetPrime(workspaces);
+	// One decision, made here: show the Prime entry when settings say Prime is
+	// desired, or while settings are still resolving and a live Prime exists (so
+	// the entry does not flicker on load). Once settings resolve to disabled, a
+	// lingering live row must not resurrect it.
+	// The live-row fallback covers ONLY the first load, before any settings have
+	// ever resolved. Keying it on "not currently successful" would also fire on a
+	// failed background refetch, letting a lingering live row resurrect an entry
+	// that cached settings already said was disabled.
+	const primeSettingsUnknown = primeEnabledQuery.data === undefined;
+	const primeVisible = primeEnabled || (primeSettingsUnknown && !!livePrime);
+	const primeSession = primeVisible ? livePrime : undefined;
 	const daemonStatus = useDaemonStatus(queryClient);
 	const agentCatalogPortRef = useRef<number | undefined>(undefined);
 	const { themePreference, resolvedTheme, isSidebarOpen, toggleSidebar } = useUiStore();
@@ -534,6 +552,7 @@ function ShellLayout() {
 					<Sidebar
 						hideEdgeBorder={isWelcomeBoard}
 						primeSession={primeSession}
+						primeVisible={primeVisible}
 						historyLocked={isWelcomeBoard}
 						isFullScreen={isFullScreen}
 						underTopbar={

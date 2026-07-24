@@ -265,6 +265,19 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 								<RotateCw className="size-3.5" aria-hidden="true" />
 								Restart
 							</TopbarButton>
+						) : health.state === "missing" ? (
+							// A missing orchestrator used to render a warning with no way to
+							// act on it. openOrchestrator spawns through the orchestrator
+							// path and navigates to the *new* session, never back to a dead
+							// terminal.
+							<TopbarButton
+								disabled={isSpawning || isProjectRestarting}
+								onClick={() => void openOrchestrator()}
+								variant="primary"
+							>
+								<RotateCw className="size-3.5" aria-hidden="true" />
+								{isSpawning ? "Starting…" : "Start orchestrator"}
+							</TopbarButton>
 						) : null}
 					</div>
 				) : null}

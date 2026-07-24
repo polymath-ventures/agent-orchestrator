@@ -1320,11 +1320,44 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 		return false, nil // already gone: benign race
 	}
 	handle := runtimeHandle(rec.Metadata)
-	ws := workspaceInfo(rec)
+	ws := workspaceInfoForTeardown(rec, m.dataDir)
+
+	// Same ownership invariant cleanup enforces. Role workspaces are canonical
+	// and therefore shared across successive role rows, so killing an older row
+	// whose path a live replacement already occupies would destroy the live
+	// worktree. Its own runtime is still destroyed and the row still terminates;
+	// only the shared workspace is spared.
+	killWorkspaceOwnedElsewhere := false
+	if ws.Path != "" || rec.Metadata.Branch != "" {
+		live, liveErr := m.liveSessions(ctx)
+		if liveErr != nil {
+			return false, fmt.Errorf("kill %s: %w", id, liveErr)
+		}
+		if owner, inUse := workspaceOwnedByLiveSession(rec, live); inUse {
+			m.logger.Info("kill: workspace still owned by a live session; preserving",
+				"sessionID", rec.ID, "path", ws.Path, "owner", owner)
+			killWorkspaceOwnedElsewhere = true
+		}
+	}
 
 	var workspaceProjectRows []ports.WorkspaceRepoInfo
 	workspaceProject := false
-	if rows, ok, rowErr := m.workspaceProjectRows(ctx, rec); rowErr != nil {
+	// Skip row resolution entirely when the workspace belongs to a live session:
+	// we are not going to tear it down, and a stale/unregistered child row could
+	// error out here before the runtime is destroyed and the row terminated —
+	// leaving the old process alive, which is the opposite of what Kill promises.
+	if killWorkspaceOwnedElsewhere {
+		// Nothing is torn down here, and the restore markers are still cleared
+		// below: keeping them would let RestoreAll resurrect this killed session
+		// into the worktree the live replacement is using, which is worse than
+		// the residue. Log the preserved path so an operator can reclaim any
+		// multi-repo child that the live owner does not actually cover
+		// (tracked separately; it requires a stale child under a live root,
+		// which canonical role layouts make contrived).
+		m.logger.Warn("kill: workspace preserved for a live owner; restore markers cleared",
+			"sessionID", rec.ID, "path", ws.Path, "branch", rec.Metadata.Branch)
+		workspaceProject = false
+	} else if rows, ok, rowErr := m.workspaceProjectRows(ctx, rec); rowErr != nil {
 		return false, fmt.Errorf("kill %s: workspace rows: %w", id, rowErr)
 	} else if ok {
 		workspaceProjectRows = rows
@@ -1353,7 +1386,7 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 		if cleaned {
 			m.cleanupAgentWorkspace(ctx, rec, ws.Path)
 		}
-	} else if ws.Path != "" {
+	} else if ws.Path != "" && !killWorkspaceOwnedElsewhere {
 		if err := m.workspace.Destroy(ctx, ws); err != nil {
 			if errors.Is(err, ports.ErrWorkspaceDirty) {
 				if err := m.store.DeleteSessionWorktrees(ctx, id); err != nil {
@@ -1399,7 +1432,24 @@ func (m *Manager) RetireForReplacement(ctx context.Context, id domain.SessionID)
 	if !ok || rec.IsTerminated {
 		return nil
 	}
-	if rec.Metadata.WorkspacePath == "" || rec.Metadata.Branch == "" {
+	// A workspace is destroyed only by the session that still owns it. A role
+	// row can share its canonical path/branch with a live replacement, and
+	// retiring the older row must not tear down the worktree the newer one is
+	// running in. Its own runtime is still reaped and the row still terminates —
+	// only the shared workspace is spared.
+	workspaceOwnedElsewhere := false
+	if rec.Metadata.WorkspacePath != "" || rec.Metadata.Branch != "" {
+		live, liveErr := m.liveSessions(ctx)
+		if liveErr != nil {
+			return fmt.Errorf("retire replacement %s: %w", id, liveErr)
+		}
+		if owner, inUse := workspaceOwnedByLiveSession(rec, live); inUse {
+			m.logger.Info("retire replacement: workspace still owned by a live session; preserving",
+				"sessionID", rec.ID, "path", rec.Metadata.WorkspacePath, "owner", owner)
+			workspaceOwnedElsewhere = true
+		}
+	}
+	if rec.Metadata.WorkspacePath == "" || rec.Metadata.Branch == "" || workspaceOwnedElsewhere {
 		if err := m.store.DeleteSessionWorktrees(ctx, rec.ID); err != nil {
 			return fmt.Errorf("retire replacement %s: clear restore markers: %w", id, err)
 		}
@@ -1420,7 +1470,7 @@ func (m *Manager) RetireForReplacement(ctx context.Context, id domain.SessionID)
 		return m.retireWorkspaceProjectForReplacement(ctx, rec, rows)
 	}
 
-	ws := workspaceInfo(rec)
+	ws := workspaceInfoForTeardown(rec, m.dataDir)
 	staleWorkspace := false
 	if _, err := m.workspace.StashUncommitted(ctx, ws); err != nil {
 		if !errors.Is(err, ports.ErrWorkspaceStale) {
@@ -1704,7 +1754,7 @@ func (m *Manager) saveAndTeardownOne(ctx context.Context, rec domain.SessionReco
 	}
 
 	// 1. Capture uncommitted work (ref may be "" for clean worktrees).
-	ws := workspaceInfo(rec)
+	ws := workspaceInfoForTeardown(rec, m.dataDir)
 	ref, err := m.workspace.StashUncommitted(ctx, ws)
 	if err != nil {
 		return fmt.Errorf("save %s: stash: %w", rec.ID, err)
@@ -2504,14 +2554,28 @@ func (m *Manager) Cleanup(ctx context.Context, project domain.ProjectID) (Cleanu
 	if err != nil {
 		return CleanupResult{}, fmt.Errorf("cleanup %s: %w", project, err)
 	}
+	// Resolved once for the whole pass: a workspace is destroyed only by the
+	// session that still owns it. Role workspaces and role branches are
+	// canonical and therefore shared across successive role rows, so a
+	// terminated row routinely points at the live replacement's worktree.
+	live, err := m.liveSessions(ctx)
+	if err != nil {
+		return CleanupResult{}, fmt.Errorf("cleanup %s: %w", project, err)
+	}
 	result := CleanupResult{Cleaned: make([]domain.SessionID, 0, len(recs)), Skipped: []CleanupSkip{}}
 	for _, rec := range recs {
 		if !rec.IsTerminated {
 			continue
 		}
-		ws := workspaceInfo(rec)
+		ws := workspaceInfoForTeardown(rec, m.dataDir)
 		if ws.Path == "" {
 			m.cleanupSystemPromptDir(rec.ID)
+			continue
+		}
+		if owner, inUse := workspaceOwnedByLiveSession(rec, live); inUse {
+			m.logger.Info("cleanup: workspace still owned by a live session; preserving",
+				"sessionID", rec.ID, "path", ws.Path, "owner", owner)
+			result.Skipped = append(result.Skipped, CleanupSkip{SessionID: rec.ID, Reason: skipReasonWorkspaceInUse})
 			continue
 		}
 		if h := runtimeHandle(rec.Metadata); h.ID != "" {
@@ -3737,6 +3801,27 @@ func workspaceInfo(rec domain.SessionRecord) ports.WorkspaceInfo {
 		ProjectID: rec.ProjectID,
 		RepoPath:  rec.Metadata.WorkspaceRepoPath,
 	}
+}
+
+// workspaceInfoForTeardown is workspaceInfo with the repo path derived from the
+// role identity when the row does not carry one.
+//
+// A projectless Prime has no project id to resolve a repo through, so if
+// WorkspaceRepoPath is empty the workspace layer fails with "project id is
+// required". Cleanup renders that as the generic "workspace teardown failed"
+// and skips the row — leaving the stale worktree holding the canonical
+// ao/prime branch, which makes every replacement spawn fail with "branch is
+// already checked out in another worktree" until the restart budget is spent.
+//
+// The derivation already exists (singleRepoOverridePath) and is used by the
+// restore paths; teardown simply was not using it. The persisted path still
+// wins — this is a fallback, not an override.
+func workspaceInfoForTeardown(rec domain.SessionRecord, dataDir string) ports.WorkspaceInfo {
+	info := workspaceInfo(rec)
+	if info.RepoPath == "" {
+		info.RepoPath = singleRepoOverridePath(rec, dataDir)
+	}
+	return info
 }
 
 func workspaceInfoFromRepoInfo(info ports.WorkspaceRepoInfo) ports.WorkspaceInfo {

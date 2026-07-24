@@ -94,6 +94,12 @@ type SidebarProps = {
 	/** Hide the sidebar's right edge stroke on the welcome board inset chrome. */
 	hideEdgeBorder?: boolean;
 	primeSession?: WorkspaceSession;
+	/** Whether the Prime nav entry should be shown at all. The caller resolves
+	 *  this from persisted settings (not from the existence of a live session
+	 *  row — otherwise Prime vanishes exactly when the operator needs it to
+	 *  recover), so the decision lives in one place rather than being
+	 *  re-derived here. */
+	primeVisible?: boolean;
 	underTopbar?: boolean;
 	/** Chrome height to clear when underTopbar is set. Defaults to the 56px shell toolbar. */
 	topbarOffset?: "toolbar" | "titlebar";
@@ -120,6 +126,7 @@ function useSelection() {
 		activeSessionId: params.sessionId,
 		goHome: () => void navigate({ to: "/" }),
 		goGlobalSession: (sessionId: string) => void navigate({ to: "/sessions/$sessionId", params: { sessionId } }),
+		goPrime: () => void navigate({ to: "/prime" }),
 		goGlobalSettings: () => void navigate({ to: "/settings" }),
 		goSettings: (projectId: string) => void navigate({ to: "/projects/$projectId/settings", params: { projectId } }),
 		goProject: (projectId: string) => void navigate({ to: "/projects/$projectId", params: { projectId } }),
@@ -142,6 +149,7 @@ function SessionDot({ session }: { session: WorkspaceSession }) {
 export function Sidebar({
 	hideEdgeBorder = false,
 	primeSession,
+	primeVisible = false,
 	underTopbar = true,
 	topbarOffset = "toolbar",
 	historyLocked = false,
@@ -317,15 +325,19 @@ export function Sidebar({
 			</SidebarHeader>
 
 			<SidebarContent className="gap-0 pl-2.5 pr-1.75 group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:px-1.5">
-				{primeSession && (
+				{primeVisible && (
 					<SidebarGroup className="p-0 pb-3">
 						<SidebarGroupContent>
 							<SidebarMenu className="gap-1">
-								<PrimeItem
-									active={selection.activeSessionId === primeSession.id}
-									onOpen={() => selection.goGlobalSession(primeSession.id)}
-									session={primeSession}
-								/>
+								{primeSession ? (
+									<PrimeItem
+										active={selection.activeSessionId === primeSession.id}
+										onOpen={() => selection.goGlobalSession(primeSession.id)}
+										session={primeSession}
+									/>
+								) : (
+									<PrimeNotRunningItem onOpen={selection.goPrime} />
+								)}
 							</SidebarMenu>
 						</SidebarGroupContent>
 					</SidebarGroup>
@@ -450,6 +462,35 @@ function PrimeItem({ session, active, onOpen }: { session: WorkspaceSession; act
 				</span>
 				<span className="sidebar-expanded-chrome group-data-[collapsible=icon]:hidden">
 					<SessionDot session={session} />
+				</span>
+			</SidebarMenuButton>
+		</SidebarMenuItem>
+	);
+}
+
+/** Prime is enabled but has no live session. The entry stays visible and routes
+ *  to the Prime surface, which explains the state and offers Relaunch Prime. */
+function PrimeNotRunningItem({ onOpen }: { onOpen: () => void }) {
+	return (
+		<SidebarMenuItem>
+			<SidebarMenuButton
+				aria-label="Open Prime"
+				className={cn(
+					"relative h-9 gap-[9px] rounded-[5px] px-2 py-0 text-[13px] font-medium text-muted-foreground transition-colors",
+					"hover:bg-interactive-hover hover:text-foreground",
+					"group-data-[collapsible=icon]:size-9! group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:rounded-lg group-data-[collapsible=icon]:p-0!",
+				)}
+				onClick={onOpen}
+				tooltip="Prime — enabled but not running"
+			>
+				<OrchestratorIcon aria-hidden="true" className="size-4 shrink-0" />
+				<span className="sidebar-expanded-chrome min-w-0 flex-1 truncate group-data-[collapsible=icon]:hidden">
+					Prime
+				</span>
+				{/* Not "Off": Prime is enabled here, just not running. Labelling this
+				    state Off is exactly the confusion this change exists to remove. */}
+				<span className="sidebar-expanded-chrome text-caption uppercase tracking-wide-md text-warning group-data-[collapsible=icon]:hidden">
+					Down
 				</span>
 			</SidebarMenuButton>
 		</SidebarMenuItem>

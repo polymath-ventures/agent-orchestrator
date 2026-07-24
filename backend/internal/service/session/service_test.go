@@ -495,6 +495,8 @@ type fakeCommander struct {
 	cleanupProjects []domain.ProjectID
 	killErr         error
 	retireErr       error
+	releaseErr      error
+	released        []domain.RoleTarget
 	sendErr         error
 	cleanupErr      error
 	spawnErr        error
@@ -539,6 +541,16 @@ func (f *fakeCommander) RetireForReplacement(_ context.Context, id domain.Sessio
 	}
 	f.retired = append(f.retired, id)
 	return nil
+}
+
+// released records the role targets reconciliation asked to have their stale
+// resources freed, so tests can assert the release runs before the spawn.
+func (f *fakeCommander) ReleaseStaleRoleResources(_ context.Context, target domain.RoleTarget) (sessionmanager.ReleaseResult, error) {
+	if f.releaseErr != nil {
+		return sessionmanager.ReleaseResult{}, f.releaseErr
+	}
+	f.released = append(f.released, target)
+	return sessionmanager.ReleaseResult{}, nil
 }
 func (f *fakeCommander) Send(_ context.Context, id domain.SessionID, message string) error {
 	if f.sendErr != nil {
@@ -1201,6 +1213,7 @@ func TestSpawnPrimeCleanRetiresAllActivePrimesBeforeSpawn(t *testing.T) {
 	st.sessions["ao-prime"] = domain.SessionRecord{ID: "ao-prime", ProjectID: "ao", Kind: domain.KindPrime}
 	st.sessions["mer-prime"] = domain.SessionRecord{ID: "mer-prime", ProjectID: "mer", Kind: domain.KindPrime}
 	st.sessions["dead-prime"] = domain.SessionRecord{ID: "dead-prime", ProjectID: "ao", Kind: domain.KindPrime, IsTerminated: true}
+	st.prime = domain.PrimeSettings{Enabled: true}.WithDefaults()
 
 	fc := &fakeCommander{spawnRecord: domain.SessionRecord{
 		ID:       "prime-1",
@@ -1263,7 +1276,7 @@ func TestSpawnPrimeUsesFleetSettingsWithoutProject(t *testing.T) {
 
 func TestSpawnPrimePassesPersistedDisplayName(t *testing.T) {
 	st := newFakeStore()
-	st.prime = domain.PrimeSettings{DisplayName: "Saved Prime", Harness: domain.HarnessCodex}.WithDefaults()
+	st.prime = domain.PrimeSettings{Enabled: true, DisplayName: "Saved Prime", Harness: domain.HarnessCodex}.WithDefaults()
 	fc := &fakeCommander{spawnRecord: domain.SessionRecord{ID: "ao-prime", ProjectID: "ao", Kind: domain.KindPrime, Harness: domain.HarnessCodex}}
 	svc := NewWithDeps(Deps{Manager: fc, Store: st})
 
@@ -1277,6 +1290,7 @@ func TestSpawnPrimePassesPersistedDisplayName(t *testing.T) {
 
 func TestSpawnPrimeUsesProjectDisplayNameFallback(t *testing.T) {
 	st := newFakeStore()
+	st.prime = domain.PrimeSettings{Enabled: true}.WithDefaults()
 	st.projects["ao"] = domain.ProjectRecord{ID: "ao", DisplayName: "Agent Orchestrator"}
 	fc := &fakeCommander{spawnRecord: domain.SessionRecord{ID: "ao-prime", ProjectID: "ao", Kind: domain.KindPrime}}
 	svc := NewWithDeps(Deps{Manager: fc, Store: st})
@@ -1291,7 +1305,7 @@ func TestSpawnPrimeUsesProjectDisplayNameFallback(t *testing.T) {
 
 func TestSpawnPrimeVerifiesReplacementHarnessAndBranch(t *testing.T) {
 	st := newFakeStore()
-	st.prime = domain.PrimeSettings{Harness: domain.HarnessCodex}.WithDefaults()
+	st.prime = domain.PrimeSettings{Enabled: true, Harness: domain.HarnessCodex}.WithDefaults()
 	fc := &fakeCommander{spawnRecord: domain.SessionRecord{
 		ID:       "prime-1",
 		Kind:     domain.KindPrime,
@@ -1722,7 +1736,7 @@ func TestToAPIError_RulesLoadError(t *testing.T) {
 // not left live for the next ensure tick to adopt.
 func TestSpawnPrimeRetiresUnverifiedReplacement(t *testing.T) {
 	st := newFakeStore()
-	st.prime = domain.PrimeSettings{Harness: domain.HarnessCodex}.WithDefaults()
+	st.prime = domain.PrimeSettings{Enabled: true, Harness: domain.HarnessCodex}.WithDefaults()
 	fc := &fakeCommander{spawnRecord: domain.SessionRecord{
 		ID:       "prime-1",
 		Kind:     domain.KindPrime,

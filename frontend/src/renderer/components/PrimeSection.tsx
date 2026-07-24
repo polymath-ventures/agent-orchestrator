@@ -7,15 +7,13 @@ import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { useModelAvailabilityQuery, useRefreshModelAvailability } from "../hooks/useModelAvailabilityQuery";
 import { filterModelAvailabilityToSelectableAgents, modelAvailabilityFromAgentInventory } from "../lib/agent-selection";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
+import { primeSettingsQueryKey, primeSettingsQueryOptions } from "../hooks/usePrimeSettingsQuery";
 import { ModelAvailabilityField, type ModelSelection } from "./ModelAvailabilityField";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Switch } from "./ui/switch";
 
 type PrimeSettings = components["schemas"]["DomainPrimeSettings"];
-type PrimeSettingsView = components["schemas"]["PrimeSettingsView"];
-
-export const primeSettingsQueryKey = ["prime-settings"] as const;
 
 const emptySettings: PrimeSettings = {
 	enabled: false,
@@ -27,23 +25,12 @@ const emptySettings: PrimeSettings = {
 	wakeInterval: "15m",
 };
 
-async function fetchPrimeSettings(): Promise<PrimeSettingsView> {
-	const { data, error } = await apiClient.GET("/api/v1/prime/settings");
-	if (error) throw new Error(apiErrorMessage(error));
-	if (!data) throw new Error("Prime settings are unavailable.");
-	return data;
-}
-
 export function PrimeSection() {
 	const queryClient = useQueryClient();
 	const agentsQuery = useQuery(agentsQueryOptions);
 	const modelAvailabilityQuery = useModelAvailabilityQuery();
 	const { refresh: refreshModels, isRefreshing: isRefreshingModels } = useRefreshModelAvailability();
-	const query = useQuery({
-		queryKey: primeSettingsQueryKey,
-		queryFn: fetchPrimeSettings,
-		refetchInterval: 15_000,
-	});
+	const query = useQuery(primeSettingsQueryOptions);
 	const [form, setForm] = useState<PrimeSettings>(emptySettings);
 	const [wakeMinutes, setWakeMinutes] = useState("15");
 	const [validationError, setValidationError] = useState<string | null>(null);
@@ -109,10 +96,10 @@ export function PrimeSection() {
 				<div className="flex items-center justify-between gap-3 rounded-md border border-border px-3 py-2">
 					<div className="min-w-0">
 						<label htmlFor="prime-enabled" className="block text-control text-foreground">
-							Enable fleet Prime
+							Enable Prime
 						</label>
 						<p className="mt-0.5 text-xs leading-row text-muted-foreground">
-							{form.enabled ? "Prime will be supervised globally." : "Prime is disabled globally."}
+							{form.enabled ? "Prime supervises the fleet globally." : "Prime is disabled globally."}
 						</p>
 					</div>
 					<Switch

@@ -26,19 +26,23 @@ type SettingsView struct {
 
 // Service implements fleet Prime settings and prompt inspection.
 type Service struct {
-	store   Store
-	prompts PromptAssembler
+	store     Store
+	prompts   PromptAssembler
+	onChanged func()
 }
 
 // Deps captures Service collaborators.
 type Deps struct {
 	Store   Store
 	Prompts PromptAssembler
+	// OnSettingsChanged is invoked after settings are persisted, so the Prime
+	// supervisor reconciles immediately instead of on its next tick. Optional.
+	OnSettingsChanged func()
 }
 
 // New builds a Service.
 func New(d Deps) *Service {
-	return &Service{store: d.Store, prompts: d.Prompts}
+	return &Service{store: d.Store, prompts: d.Prompts, onChanged: d.OnSettingsChanged}
 }
 
 // GetSettings returns the persisted fleet Prime settings with defaults.
@@ -64,6 +68,13 @@ func (s *Service) SetSettings(ctx context.Context, settings domain.PrimeSettings
 	}
 	if err := s.store.SetPrimeSettings(ctx, settings); err != nil {
 		return SettingsView{}, err
+	}
+	// Reconcile now rather than on the next supervisor tick. Without this an
+	// off/save/on/save cycle only restarts Prime if a tick happens to land in
+	// the disabled window — the "hold Prime disabled long enough for a tick"
+	// workaround the operator had to time by hand.
+	if s.onChanged != nil {
+		s.onChanged()
 	}
 	return s.view(settings), nil
 }

@@ -25,16 +25,45 @@ type PrimeSettingsRequest struct {
 	Settings domain.PrimeSettings `json:"settings"`
 }
 
-// PrimeController owns the daemon-global /prime routes.
-type PrimeController struct {
-	Svc PrimeService
+// PrimeRelauncher performs an explicit, user-initiated Prime relaunch: it
+// clears budget-paused replacement state and reconciles Prime immediately.
+//
+// Deliberately separate from generic session spawn and restore, both of which
+// stay forbidden for Prime (PRIME_MANUAL_SPAWN_FORBIDDEN /
+// PRIME_MANUAL_RESTORE_FORBIDDEN). Those bans keep Prime a supervisor-managed
+// singleton; relaunch honours that by routing through the same reconciliation
+// the supervisor uses, so it cannot create a second Prime.
+type PrimeRelauncher interface {
+	RelaunchPrime(ctx context.Context) (domain.Session, error)
 }
 
-// Register mounts Prime settings and prompt visibility routes.
+// PrimeController owns the daemon-global /prime routes.
+type PrimeController struct {
+	Svc      PrimeService
+	Relaunch PrimeRelauncher
+}
+
+// Register mounts Prime settings, prompt visibility, and relaunch routes.
 func (c *PrimeController) Register(r chi.Router) {
 	r.Get("/prime/settings", c.getSettings)
 	r.Put("/prime/settings", c.setSettings)
 	r.Get("/prime/prompt", c.prompt)
+	r.Post("/prime/relaunch", c.relaunch)
+}
+
+// relaunch is idempotent with respect to the Prime singleton: reconciliation
+// returns the existing active Prime rather than creating a second one.
+func (c *PrimeController) relaunch(w http.ResponseWriter, r *http.Request) {
+	if c.Relaunch == nil {
+		apispec.NotImplemented(w, r, "POST", "/api/v1/prime/relaunch")
+		return
+	}
+	sess, err := c.Relaunch.RelaunchPrime(r.Context())
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusOK, SessionResponse{Session: sessionView(sess)})
 }
 
 func (c *PrimeController) getSettings(w http.ResponseWriter, r *http.Request) {

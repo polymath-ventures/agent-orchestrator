@@ -1,6 +1,8 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { RotateCcw } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useNavigate } from "@tanstack/react-router";
+import { relaunchPrime } from "../lib/relaunch-prime";
 import type { TerminalTarget } from "../types/terminal";
 import { isPrimeSession, type WorkspaceSession } from "../types/workspace";
 import type { Theme } from "../stores/ui-store";
@@ -78,6 +80,8 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 	const [isRestoring, setIsRestoring] = useState(false);
 	const [restoreError, setRestoreError] = useState<string | undefined>();
 	const [restoreUnavailable, setRestoreUnavailable] = useState(false);
+	const [isRelaunchingPrime, setIsRelaunchingPrime] = useState(false);
+	const navigate = useNavigate();
 	const queryClient = useQueryClient();
 	const restoreSessionById = useRestoreSession();
 	// A shell pane has no session, so it hands the hook its handle directly
@@ -88,8 +92,15 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 	const provider = terminalTarget?.kind === "reviewer" ? terminalTarget.harness : session?.provider;
 	const hadAttachmentRef = useRef(false);
 	// A standalone shell is never restorable: there is no session row to restore.
+	// Prime is excluded too: the daemon forbids generic restore for Prime
+	// (PRIME_MANUAL_RESTORE_FORBIDDEN), so offering the restore control here
+	// only ever produced a 403. Prime recovers through relaunch instead.
+	const isDeadPrime = !!session && isPrimeSession(session) && session.status === "terminated";
 	const canRestoreSession =
-		terminalTarget?.kind !== "reviewer" && terminalTarget?.kind !== "shell" && session?.status === "terminated";
+		terminalTarget?.kind !== "reviewer" &&
+		terminalTarget?.kind !== "shell" &&
+		session?.status === "terminated" &&
+		!isDeadPrime;
 
 	const handleReady = useCallback((handle: AttachableTerminal) => {
 		setTerminal(handle);
@@ -162,6 +173,27 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 		return attach(terminal);
 	}, [terminal, handleId, attach, attachSession?.id]);
 
+	// Declared above every conditional return: a hook after the initFailed early
+	// return changes the hook count between renders and crashes React with
+	// "Rendered fewer hooks than expected".
+	const relaunchDeadPrime = useCallback(async () => {
+		if (isRelaunchingPrime) return;
+		setIsRelaunchingPrime(true);
+		setRestoreError(undefined);
+		try {
+			const sessionId = await relaunchPrime();
+			await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+			// Leave the dead session behind. Without this the pane stays bound to
+			// the terminated row and keeps showing the recovery strip even though
+			// a healthy Prime now exists.
+			void navigate({ to: "/sessions/$sessionId", params: { sessionId } });
+		} catch (err) {
+			setRestoreError(err instanceof Error ? err.message : "Unable to relaunch Prime");
+		} finally {
+			setIsRelaunchingPrime(false);
+		}
+	}, [isRelaunchingPrime, queryClient, navigate]);
+
 	if (initFailed) {
 		return (
 			<div className="grid h-full place-items-center bg-terminal p-4 font-mono text-xs text-muted-foreground">
@@ -172,7 +204,7 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 
 	const banner = bannerText(state, error);
 	const showEmptyState = !handleId;
-	const showEndedState = state === "exited" || canRestoreSession;
+	const showEndedState = state === "exited" || canRestoreSession || isDeadPrime;
 	const emptyStateTitle = session ? "Starting session" : "Agent Orchestrator";
 	const emptyStateMessage = session
 		? isPrimeSession(session)
@@ -187,6 +219,9 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 			{showEndedState && (
 				<TerminalEndedStrip
 					canRestore={canRestoreSession}
+					canRelaunchPrime={isDeadPrime}
+					isRelaunchingPrime={isRelaunchingPrime}
+					onRelaunchPrime={relaunchDeadPrime}
 					error={restoreError}
 					isRestoring={isRestoring}
 					onRestore={restoreSession}
@@ -245,20 +280,34 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 
 type TerminalEndedStripProps = {
 	canRestore: boolean;
+	canRelaunchPrime?: boolean;
+	isRelaunchingPrime?: boolean;
+	onRelaunchPrime?: () => void;
 	error?: string;
 	isRestoring: boolean;
 	onRestore: () => void;
 	variant: "reviewer" | "session" | "shell";
 };
 
-function TerminalEndedStrip({ canRestore, error, isRestoring, onRestore, variant }: TerminalEndedStripProps) {
-	const message = canRestore
-		? "Restore the session to attach a live terminal and continue writing."
-		: variant === "reviewer"
-			? "This reviewer terminal has ended. Re-run review from the summary panel, or switch back to the agent terminal."
-			: variant === "shell"
-				? "This shell exited. Close the tab, or open a new terminal."
-				: "This terminal process ended, but the session is not marked terminated yet.";
+function TerminalEndedStrip({
+	canRestore,
+	canRelaunchPrime = false,
+	isRelaunchingPrime = false,
+	onRelaunchPrime,
+	error,
+	isRestoring,
+	onRestore,
+	variant,
+}: TerminalEndedStripProps) {
+	const message = canRelaunchPrime
+		? "Prime has stopped. Relaunch Prime to start a fresh supervisor on the canonical branch."
+		: canRestore
+			? "Restore the session to attach a live terminal and continue writing."
+			: variant === "reviewer"
+				? "This reviewer terminal has ended. Re-run review from the summary panel, or switch back to the agent terminal."
+				: variant === "shell"
+					? "This shell exited. Close the tab, or open a new terminal."
+					: "This terminal process ended, but the session is not marked terminated yet.";
 
 	return (
 		<div className="shrink-0 border-b border-border bg-surface/80 px-4 py-2">
@@ -270,6 +319,19 @@ function TerminalEndedStrip({ canRestore, error, isRestoring, onRestore, variant
 					<div className="mt-0.5 truncate text-xs text-muted-foreground">{message}</div>
 				</div>
 				{error && <div className="max-w-content-max truncate text-xs text-destructive">{error}</div>}
+				{canRelaunchPrime && (
+					<button
+						type="button"
+						aria-label="Relaunch Prime"
+						title="Relaunch Prime"
+						className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-border bg-raised px-2.5 py-1 text-xs text-foreground transition hover:bg-interactive-hover disabled:cursor-not-allowed disabled:opacity-50"
+						disabled={isRelaunchingPrime}
+						onClick={() => onRelaunchPrime?.()}
+					>
+						<RotateCcw className={cn("size-icon-base", isRelaunchingPrime && "animate-spin")} aria-hidden="true" />
+						Relaunch Prime
+					</button>
+				)}
 				{canRestore && (
 					<button
 						type="button"

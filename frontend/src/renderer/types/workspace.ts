@@ -291,6 +291,18 @@ export function findFleetPrime(workspaces: WorkspaceSummary[]): WorkspaceSession
 	);
 }
 
+/** What the Prime surface should present. */
+export type PrimeSurfaceState = "disabled" | "running" | "not_running";
+
+/**
+ * Prime state for the nav and the Prime route. Enablement comes from persisted
+ * settings; the live session row only chooses *which* enabled state to show.
+ */
+export function primeSurfaceState(enabled: boolean, activePrime: WorkspaceSession | undefined): PrimeSurfaceState {
+	if (!enabled) return "disabled";
+	return activePrime ? "running" : "not_running";
+}
+
 function sessionNewer(a: WorkspaceSession, b: WorkspaceSession): boolean {
 	const aCreated = timestamp(a.createdAt);
 	const bCreated = timestamp(b.createdAt);

@@ -225,8 +225,19 @@ func Run() error {
 		go dispatcher.Run(ctx)
 	}
 
+	// Created here (before the HTTP surface) so the relaunch endpoint and the
+	// supervisor loop below share one door into Prime reconciliation.
+	primeReconciler := newPrimeReconciler()
+
 	srv, err := httpd.NewWithDeps(cfg, log, termMgr, httpd.APIDeps{
-		Prime:              primesvc.New(primesvc.Deps{Store: store, Prompts: sessMgr}),
+		Prime: primesvc.New(primesvc.Deps{
+			Store:   store,
+			Prompts: sessMgr,
+			// A settings save is an explicit user action, so it clears any
+			// budget-paused replacement state and reconciles immediately.
+			OnSettingsChanged: primeReconciler.RequestRelaunch,
+		}),
+		PrimeRelaunch:      &primeRelauncher{reconciler: primeReconciler, sessions: sessionSvc},
 		Projects:           projectSvc,
 		RolePrompt:         roleprompt.New(sessMgr, store),
 		Agents:             agentSvc,
@@ -287,7 +298,7 @@ func Run() error {
 	if reconcileErr := sessMgr.Reconcile(ctx); reconcileErr != nil {
 		log.Error("reconcile sessions on boot failed", "err", reconcileErr)
 	}
-	primeDone := startPrimeSupervisor(ctx, cfg, store, sessionSvc, notificationWriter, log)
+	primeDone := startPrimeSupervisor(ctx, cfg, store, sessionSvc, notificationWriter, log, primeReconciler)
 
 	// Start the fleet drain sweeper only AFTER boot reconciliation: its immediate
 	// first poll terminates drainable workers of paused projects, which must not

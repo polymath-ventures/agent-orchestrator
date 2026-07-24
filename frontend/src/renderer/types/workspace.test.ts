@@ -3,6 +3,7 @@ import {
 	attentionZone,
 	canonicalTrackerIssueId,
 	findFleetPrime,
+	primeSurfaceState,
 	findProjectOrchestrator,
 	newestActiveOrchestrator,
 	orchestratorHealth,
@@ -251,6 +252,24 @@ describe("findFleetPrime", () => {
 	it("ignores terminated prime sessions", () => {
 		const dead = sessionWith({ id: "ao-prime", kind: "prime", status: "terminated" });
 		expect(findFleetPrime([workspaceWith("ao", [dead])])).toBeUndefined();
+	});
+});
+
+describe("primeSurfaceState", () => {
+	const live = sessionWith({ id: "ao-prime", kind: "prime", status: "working" });
+
+	it("is disabled when settings say Prime is off, even if a row lingers", () => {
+		expect(primeSurfaceState(false, live)).toBe("disabled");
+	});
+
+	// The whole point: enablement comes from settings, so Prime stays reachable
+	// when its session row is gone.
+	it("is not_running when enabled with no live prime", () => {
+		expect(primeSurfaceState(true, undefined)).toBe("not_running");
+	});
+
+	it("is running when enabled with a live prime", () => {
+		expect(primeSurfaceState(true, live)).toBe("running");
 	});
 });
 

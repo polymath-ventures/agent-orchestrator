@@ -1,0 +1,356 @@
+package sessionmanager
+
+import (
+	"strings"
+	"testing"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+)
+
+// Role workspaces are canonical: successive Orchestrator rows for one project
+// share a single worktree path. That means a *historical terminated* row points
+// at the worktree the *live replacement* is running in. Cleanup must not read
+// "terminated row + recorded path" as permission to delete that path.
+//
+// Today this is masked only by the ignored-residue teardown failure that the
+// next phase fixes; without this guard, fixing teardown would ship a build that
+// deletes the live orchestrator's worktree.
+func TestCleanup_SkipsWorkspaceOwnedByLiveReplacement(t *testing.T) {
+	m, st, _, ws := newManager()
+
+	const canonical = "/ws/mer/orchestrator/mer-orchestrator"
+	// Two historical terminated orchestrator rows, both pointing at the
+	// canonical path the live replacement now occupies.
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID: "mer-1", ProjectID: "mer", Kind: domain.KindOrchestrator,
+		Metadata:     domain.SessionMetadata{WorkspacePath: canonical, Branch: "ao/mer-orchestrator"},
+		IsTerminated: true, Activity: domain.Activity{State: domain.ActivityExited},
+	}
+	st.sessions["mer-2"] = domain.SessionRecord{
+		ID: "mer-2", ProjectID: "mer", Kind: domain.KindOrchestrator,
+		Metadata:     domain.SessionMetadata{WorkspacePath: canonical, Branch: "ao/mer-orchestrator"},
+		IsTerminated: true, Activity: domain.Activity{State: domain.ActivityExited},
+	}
+	// The live replacement, on the same canonical path and branch.
+	st.sessions["mer-3"] = domain.SessionRecord{
+		ID: "mer-3", ProjectID: "mer", Kind: domain.KindOrchestrator,
+		Metadata: domain.SessionMetadata{WorkspacePath: canonical, Branch: "ao/mer-orchestrator"},
+		Activity: domain.Activity{State: domain.ActivityActive},
+	}
+
+	res, err := m.Cleanup(ctx, "mer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ws.destroyed != 0 {
+		t.Fatalf("destroyed %d workspaces; the live replacement's canonical worktree must never be destroyed", ws.destroyed)
+	}
+	if len(res.Cleaned) != 0 {
+		t.Fatalf("cleaned = %v, want none", res.Cleaned)
+	}
+	if len(res.Skipped) != 2 {
+		t.Fatalf("skipped = %v, want both historical rows skipped", res.Skipped)
+	}
+	for _, skip := range res.Skipped {
+		if skip.Reason != "workspace is in use by an active session" {
+			t.Errorf("session %s skip reason = %q, want the ownership reason (an ownership skip is not a teardown failure)", skip.SessionID, skip.Reason)
+		}
+	}
+}
+
+// The branch arm of the guard: a terminated role row whose canonical role
+// branch is held by an active role session must not have its worktree torn
+// down, even when the recorded paths differ (a stale recorded path must not
+// become a licence to delete).
+func TestCleanup_SkipsRoleWorkspaceWhenCanonicalBranchIsLive(t *testing.T) {
+	m, st, _, ws := newManager()
+
+	st.sessions["prime-1"] = domain.SessionRecord{
+		ID: "prime-1", Kind: domain.KindPrime,
+		Metadata:     domain.SessionMetadata{WorkspacePath: "/ws/prime/prime-1", Branch: "ao/prime"},
+		IsTerminated: true, Activity: domain.Activity{State: domain.ActivityExited},
+	}
+	st.sessions["prime-2"] = domain.SessionRecord{
+		ID: "prime-2", Kind: domain.KindPrime,
+		Metadata: domain.SessionMetadata{WorkspacePath: "/ws/prime/prime-2", Branch: "ao/prime"},
+		Activity: domain.Activity{State: domain.ActivityActive},
+	}
+
+	res, err := m.Cleanup(ctx, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ws.destroyed != 0 {
+		t.Fatalf("destroyed %d workspaces; a worktree on a live canonical role branch must be preserved", ws.destroyed)
+	}
+	if len(res.Skipped) != 1 || res.Skipped[0].SessionID != "prime-1" {
+		t.Fatalf("skipped = %v, want prime-1", res.Skipped)
+	}
+	if res.Skipped[0].Reason != "workspace is in use by an active session" {
+		t.Fatalf("reason = %q, want the ownership reason", res.Skipped[0].Reason)
+	}
+}
+
+// The guard must not become a leak: a terminated role row that nobody live
+// holds is still reclaimed. Ownership is the invariant, not "role".
+func TestCleanup_ReclaimsUnownedRoleWorkspace(t *testing.T) {
+	m, st, _, ws := newManager()
+
+	st.sessions["prime-1"] = domain.SessionRecord{
+		ID: "prime-1", Kind: domain.KindPrime,
+		Metadata:     domain.SessionMetadata{WorkspacePath: "/ws/prime/prime-1", Branch: "ao/prime"},
+		IsTerminated: true, Activity: domain.Activity{State: domain.ActivityExited},
+	}
+
+	res, err := m.Cleanup(ctx, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ws.destroyed != 1 {
+		t.Fatalf("destroyed = %d, want 1; an unowned role workspace must still be reclaimed", ws.destroyed)
+	}
+	if len(res.Cleaned) != 1 || res.Cleaned[0] != "prime-1" {
+		t.Fatalf("cleaned = %v, want prime-1", res.Cleaned)
+	}
+	if len(res.Skipped) != 0 {
+		t.Fatalf("skipped = %v, want none", res.Skipped)
+	}
+}
+
+// A terminated worker sharing no path with anything live is untouched by the
+// new guard — worker cleanup semantics must not change.
+func TestCleanup_WorkerCleanupUnaffectedByOwnershipGuard(t *testing.T) {
+	m, st, _, ws := newManager()
+
+	seedTerminal(st, "mer-1", domain.SessionMetadata{WorkspacePath: "/ws/mer-1"})
+	st.sessions["mer-2"] = mkLive("mer-2")
+
+	res, err := m.Cleanup(ctx, "mer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ws.destroyed != 1 {
+		t.Fatalf("destroyed = %d, want 1", ws.destroyed)
+	}
+	if len(res.Cleaned) != 1 || res.Cleaned[0] != "mer-1" {
+		t.Fatalf("cleaned = %v, want mer-1", res.Cleaned)
+	}
+}
+
+// Two workers that happen to record the same branch (a re-used feature branch)
+// must not block each other's cleanup: the branch arm of the guard is scoped to
+// role sessions, where the branch is canonical and shared by design.
+func TestCleanup_SharedWorkerBranchDoesNotBlockCleanup(t *testing.T) {
+	m, st, _, ws := newManager()
+
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker,
+		Metadata:     domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "feat/shared"},
+		IsTerminated: true, Activity: domain.Activity{State: domain.ActivityExited},
+	}
+	st.sessions["mer-2"] = domain.SessionRecord{
+		ID: "mer-2", ProjectID: "mer", Kind: domain.KindWorker,
+		Metadata: domain.SessionMetadata{WorkspacePath: "/ws/mer-2", Branch: "feat/shared"},
+		Activity: domain.Activity{State: domain.ActivityActive},
+	}
+
+	res, err := m.Cleanup(ctx, "mer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Cleaned) != 1 || res.Cleaned[0] != "mer-1" {
+		t.Fatalf("cleaned = %v, want mer-1 (a shared worker branch is not an ownership conflict)", res.Cleaned)
+	}
+	if ws.destroyed != 1 {
+		t.Fatalf("destroyed = %d, want 1", ws.destroyed)
+	}
+}
+
+// The predicate itself, exercised directly: it answers "does this terminated
+// row still own the workspace recorded on it?" and every teardown path consults
+// this one implementation.
+func TestWorkspaceOwnedByLiveSession(t *testing.T) {
+	live := []domain.SessionRecord{
+		{
+			ID: "orch-live", ProjectID: "mer", Kind: domain.KindOrchestrator,
+			Metadata: domain.SessionMetadata{WorkspacePath: "/ws/canonical", Branch: "ao/mer-orchestrator"},
+		},
+	}
+
+	tests := []struct {
+		name string
+		rec  domain.SessionRecord
+		want bool
+	}{
+		{
+			name: "same path is owned",
+			rec: domain.SessionRecord{
+				ID: "orch-old", ProjectID: "mer", Kind: domain.KindOrchestrator,
+				Metadata: domain.SessionMetadata{WorkspacePath: "/ws/canonical"},
+			},
+			want: true,
+		},
+		{
+			name: "same canonical role branch is owned",
+			rec: domain.SessionRecord{
+				ID: "orch-older", ProjectID: "mer", Kind: domain.KindOrchestrator,
+				Metadata: domain.SessionMetadata{WorkspacePath: "/ws/stale", Branch: "ao/mer-orchestrator"},
+			},
+			want: true,
+		},
+		{
+			name: "unrelated path and branch is not owned",
+			rec: domain.SessionRecord{
+				ID: "worker-old", ProjectID: "mer", Kind: domain.KindWorker,
+				Metadata: domain.SessionMetadata{WorkspacePath: "/ws/other", Branch: "feat/x"},
+			},
+			want: false,
+		},
+		{
+			name: "a row does not own against itself",
+			rec: domain.SessionRecord{
+				ID: "orch-live", ProjectID: "mer", Kind: domain.KindOrchestrator,
+				Metadata: domain.SessionMetadata{WorkspacePath: "/ws/canonical", Branch: "ao/mer-orchestrator"},
+			},
+			want: false,
+		},
+		{
+			name: "empty path is not owned",
+			rec: domain.SessionRecord{
+				ID: "no-ws", ProjectID: "mer", Kind: domain.KindOrchestrator,
+			},
+			want: false,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			owner, got := workspaceOwnedByLiveSession(tc.rec, live)
+			if got != tc.want {
+				t.Fatalf("workspaceOwnedByLiveSession() = %v (owner %q), want %v", got, owner, tc.want)
+			}
+		})
+	}
+}
+
+// Retiring a historical role row must not destroy a worktree that a live
+// replacement already occupies. Cleanup is not the only teardown path that can
+// reach a canonical role workspace, so the ownership predicate gates this one
+// too — the row is still marked terminated, just without the destroy.
+func TestRetireForReplacementSkipsWorkspaceOwnedByLiveSession(t *testing.T) {
+	m, st, rt, ws := newLifecycleManager()
+
+	const canonical = "/ws/mer/orchestrator/mer-orchestrator"
+	st.sessions["mer-orch-1"] = domain.SessionRecord{
+		ID: "mer-orch-1", ProjectID: "mer", Kind: domain.KindOrchestrator,
+		Metadata: domain.SessionMetadata{WorkspacePath: canonical, Branch: "ao/mer-orchestrator", RuntimeHandleID: "old-handle"},
+		Activity: domain.Activity{State: domain.ActivityActive},
+	}
+	// A replacement is already live on the same canonical path.
+	st.sessions["mer-orch-2"] = domain.SessionRecord{
+		ID: "mer-orch-2", ProjectID: "mer", Kind: domain.KindOrchestrator,
+		Metadata: domain.SessionMetadata{WorkspacePath: canonical, Branch: "ao/mer-orchestrator", RuntimeHandleID: "new-handle"},
+		Activity: domain.Activity{State: domain.ActivityActive},
+	}
+
+	if err := m.RetireForReplacement(ctx, "mer-orch-1"); err != nil {
+		t.Fatalf("RetireForReplacement err = %v", err)
+	}
+
+	for _, call := range ws.calls {
+		if strings.HasPrefix(call, "ForceDestroy:") {
+			t.Fatalf("workspace call %q ran; the live replacement's worktree must not be destroyed (calls: %v)", call, ws.calls)
+		}
+	}
+	if !st.sessions["mer-orch-1"].IsTerminated {
+		t.Fatal("the retired row must still be marked terminated")
+	}
+	// Its own leaked runtime is still reaped — only the shared workspace is spared.
+	if rt.destroyed != 1 || rt.destroyedIDs[0] != "old-handle" {
+		t.Fatalf("runtime destroyed = %d ids=%v, want old-handle", rt.destroyed, rt.destroyedIDs)
+	}
+}
+
+// Branch names are derived from a project's session prefix, so two projects
+// that share a prefix generate the same orchestrator branch. The branch arm
+// must be scoped to the SAME role target, or they preserve each other's stale
+// worktrees and the canonical branch stays occupied — reproducing the outage
+// this change exists to end.
+func TestWorkspaceOwnershipBranchArmIsScopedToRoleTarget(t *testing.T) {
+	live := []domain.SessionRecord{{
+		ID: "beta-orch", ProjectID: "beta", Kind: domain.KindOrchestrator,
+		Metadata: domain.SessionMetadata{WorkspacePath: "/ws/beta", Branch: "ao/shared-orchestrator"},
+	}}
+	// Same branch string, DIFFERENT project — not an ownership conflict.
+	stale := domain.SessionRecord{
+		ID: "acme-orch", ProjectID: "acme", Kind: domain.KindOrchestrator,
+		Metadata: domain.SessionMetadata{WorkspacePath: "/ws/acme", Branch: "ao/shared-orchestrator"},
+	}
+	if owner, owned := workspaceOwnedByLiveSession(stale, live); owned {
+		t.Fatalf("owned by %q; a different project's identical branch name is not an ownership conflict", owner)
+	}
+
+	// Same branch AND same target — genuinely owned.
+	sameTarget := domain.SessionRecord{
+		ID: "beta-orch-old", ProjectID: "beta", Kind: domain.KindOrchestrator,
+		Metadata: domain.SessionMetadata{WorkspacePath: "/ws/beta-old", Branch: "ao/shared-orchestrator"},
+	}
+	if _, owned := workspaceOwnedByLiveSession(sameTarget, live); !owned {
+		t.Fatal("same role target on the same canonical branch must be treated as owned")
+	}
+}
+
+// Rows can record the same worktree with different spellings. A raw string
+// compare would miss the match, conclude "not owned", and destroy a live
+// worktree — so comparison is normalized.
+func TestWorkspaceOwnershipNormalizesPaths(t *testing.T) {
+	live := []domain.SessionRecord{{
+		ID: "orch-live", ProjectID: "mer", Kind: domain.KindOrchestrator,
+		Metadata: domain.SessionMetadata{WorkspacePath: "/ws/mer/orchestrator"},
+	}}
+	for _, spelling := range []string{
+		"/ws/mer/orchestrator/",
+		"/ws/mer/./orchestrator",
+		"/ws/mer/sibling/../orchestrator",
+	} {
+		rec := domain.SessionRecord{
+			ID: "orch-old", ProjectID: "mer", Kind: domain.KindOrchestrator,
+			Metadata: domain.SessionMetadata{WorkspacePath: spelling},
+		}
+		if _, owned := workspaceOwnedByLiveSession(rec, live); !owned {
+			t.Errorf("path %q not recognized as the live worktree; it would be destroyed", spelling)
+		}
+	}
+}
+
+// Killing a stale role row must not destroy the worktree a live replacement
+// already occupies on the shared canonical path.
+func TestKillSkipsWorkspaceOwnedByLiveSession(t *testing.T) {
+	m, st, rt, ws := newLifecycleManager()
+
+	const canonical = "/ws/mer/orchestrator/mer-orchestrator"
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID: "mer-1", ProjectID: "mer", Kind: domain.KindOrchestrator,
+		Metadata: domain.SessionMetadata{WorkspacePath: canonical, Branch: "ao/mer-orchestrator", RuntimeHandleID: "old-handle"},
+		Activity: domain.Activity{State: domain.ActivityActive},
+	}
+	st.sessions["mer-2"] = domain.SessionRecord{
+		ID: "mer-2", ProjectID: "mer", Kind: domain.KindOrchestrator,
+		Metadata: domain.SessionMetadata{WorkspacePath: canonical, Branch: "ao/mer-orchestrator", RuntimeHandleID: "new-handle"},
+		Activity: domain.Activity{State: domain.ActivityActive},
+	}
+
+	if _, err := m.Kill(ctx, "mer-1"); err != nil {
+		t.Fatalf("Kill err = %v", err)
+	}
+	for _, call := range ws.calls {
+		if strings.HasPrefix(call, "Destroy:") || strings.HasPrefix(call, "ForceDestroy:") {
+			t.Fatalf("call %q ran; the live replacement's worktree must be preserved", call)
+		}
+	}
+	if !st.sessions["mer-1"].IsTerminated {
+		t.Fatal("the killed row must still be marked terminated")
+	}
+	if rt.destroyed != 1 || rt.destroyedIDs[0] != "old-handle" {
+		t.Fatalf("runtime destroyed = %d ids=%v, want old-handle", rt.destroyed, rt.destroyedIDs)
+	}
+}
