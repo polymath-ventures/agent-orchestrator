@@ -1342,9 +1342,15 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 
 	var workspaceProjectRows []ports.WorkspaceRepoInfo
 	workspaceProject := false
-	if rows, ok, rowErr := m.workspaceProjectRows(ctx, rec); rowErr != nil {
+	// Skip row resolution entirely when the workspace belongs to a live session:
+	// we are not going to tear it down, and a stale/unregistered child row could
+	// error out here before the runtime is destroyed and the row terminated —
+	// leaving the old process alive, which is the opposite of what Kill promises.
+	if killWorkspaceOwnedElsewhere {
+		workspaceProject = false
+	} else if rows, ok, rowErr := m.workspaceProjectRows(ctx, rec); rowErr != nil {
 		return false, fmt.Errorf("kill %s: workspace rows: %w", id, rowErr)
-	} else if ok && !killWorkspaceOwnedElsewhere {
+	} else if ok {
 		workspaceProjectRows = rows
 		workspaceProject = true
 	}

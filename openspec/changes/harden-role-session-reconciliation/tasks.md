@@ -59,7 +59,7 @@ is an unresolvable repo path for projectless Prime rows. See design.md Decision 
 
 - [x] 7.1 Write failing tests: the Prime nav entry is present when settings report Prime enabled and no live Prime row exists, and absent when Prime is disabled
 - [x] 7.2 Drive Prime workspace synthesis and nav visibility from persisted Prime settings, using live rows only to choose the displayed state
-- [x] 7.3 ~~Update the existing active-Prime selector test~~ — not needed: `findFleetPrime` ignoring terminated primes is still correct (it keeps navigation off dead terminals); the terminated-inclusive lookup went into a separate `findLatestFleetPrime` selector
+- [x] 7.3 ~~Update the existing active-Prime selector test~~ — not needed: `findFleetPrime` ignoring terminated primes is still correct (it keeps navigation off dead terminals); a terminated-inclusive selector proved unnecessary — the recovery surface uses `findFleetPrime` plus `primeSurfaceState`, and the extra selector was removed in review as dead code
 - [x] 7.4 Add a Prime relaunch client helper mirroring the existing orchestrator restart helper
 - [x] 7.5 Write failing test then add the Prime not-running surface with one primary `Relaunch Prime` action
 - [x] 7.6 Write failing test then make an ended Prime terminal offer relaunch instead of the generic restore strip

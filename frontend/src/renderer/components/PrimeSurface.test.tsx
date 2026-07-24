@@ -6,7 +6,11 @@ const navigate = vi.fn();
 const invalidateQueries = vi.fn().mockResolvedValue(undefined);
 const relaunchPrimeMock = vi.fn();
 const workspaceState: { data: unknown; isLoading: boolean } = { data: [], isLoading: false };
-const primeEnabledState: { data: boolean | undefined; isLoading: boolean } = { data: true, isLoading: false };
+const primeEnabledState: { data: boolean | undefined; isLoading: boolean; isError: boolean } = {
+	data: true,
+	isLoading: false,
+	isError: false,
+};
 
 vi.mock("@tanstack/react-router", async (importOriginal) => ({
 	...(await importOriginal<typeof import("@tanstack/react-router")>()),
@@ -53,6 +57,7 @@ describe("Prime surface", () => {
 		workspaceState.isLoading = false;
 		primeEnabledState.data = true;
 		primeEnabledState.isLoading = false;
+		primeEnabledState.isError = false;
 	});
 
 	// The regression this whole change exists to prevent: Prime enabled, no live
@@ -99,6 +104,18 @@ describe("Prime surface", () => {
 				replace: true,
 			}),
 		);
+	});
+
+	// A failed settings read is not "disabled" — telling an operator Prime is off
+	// when we could not ask is a lie they would act on.
+	it("reports unknown, not disabled, when the settings request fails", async () => {
+		primeEnabledState.data = undefined;
+		primeEnabledState.isError = true;
+		render(<PrimeRoute />);
+
+		expect(await screen.findByTestId("prime-settings-unavailable")).toBeInTheDocument();
+		expect(screen.queryByTestId("prime-disabled")).not.toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: /Relaunch Prime/i })).not.toBeInTheDocument();
 	});
 
 	it("says Prime is disabled when settings say so", async () => {

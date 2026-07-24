@@ -147,7 +147,12 @@ function ShellLayout() {
 	// desired, or while settings are still resolving and a live Prime exists (so
 	// the entry does not flicker on load). Once settings resolve to disabled, a
 	// lingering live row must not resurrect it.
-	const primeVisible = primeEnabled || (!primeEnabledQuery.isSuccess && !!livePrime);
+	// The live-row fallback covers ONLY the first load, before any settings have
+	// ever resolved. Keying it on "not currently successful" would also fire on a
+	// failed background refetch, letting a lingering live row resurrect an entry
+	// that cached settings already said was disabled.
+	const primeSettingsUnknown = primeEnabledQuery.data === undefined;
+	const primeVisible = primeEnabled || (primeSettingsUnknown && !!livePrime);
 	const primeSession = primeVisible ? livePrime : undefined;
 	const daemonStatus = useDaemonStatus(queryClient);
 	const agentCatalogPortRef = useRef<number | undefined>(undefined);

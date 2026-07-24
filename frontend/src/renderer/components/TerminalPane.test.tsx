@@ -5,9 +5,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkspaceSession } from "../types/workspace";
 import { TerminalPane, providerScrollsByKeyboard } from "./TerminalPane";
 
-const { postMock, relaunchPrimeMock, terminalError, terminalState, terminalProps } = vi.hoisted(() => ({
+const { postMock, relaunchPrimeMock, navigateMock, terminalError, terminalState, terminalProps } = vi.hoisted(() => ({
 	postMock: vi.fn(),
 	relaunchPrimeMock: vi.fn(),
+	navigateMock: vi.fn(),
 	terminalError: { value: undefined as string | undefined },
 	terminalState: { value: "idle" },
 	terminalProps: { value: {} as { autoFocus?: boolean } },
@@ -25,6 +26,11 @@ vi.mock("./XtermTerminal", () => ({
 		terminalProps.value = props;
 		return <div data-testid="xterm" />;
 	},
+}));
+
+vi.mock("@tanstack/react-router", async (importOriginal) => ({
+	...(await importOriginal<typeof import("@tanstack/react-router")>()),
+	useNavigate: () => navigateMock,
 }));
 
 vi.mock("../lib/relaunch-prime", () => ({
@@ -63,6 +69,7 @@ beforeEach(() => {
 	postMock.mockReset();
 	relaunchPrimeMock.mockReset();
 	relaunchPrimeMock.mockResolvedValue("ao-prime-2");
+	navigateMock.mockReset();
 	postMock.mockResolvedValue({ data: {} });
 	terminalError.value = undefined;
 	terminalState.value = "idle";
@@ -323,13 +330,22 @@ describe("TerminalPane dead Prime recovery", () => {
 		restore();
 	});
 
-	it("relaunches Prime when the control is pressed", async () => {
+	// Relaunching must leave the dead session behind; otherwise the pane stays
+	// bound to the terminated row and keeps showing the recovery strip even
+	// though a healthy Prime now exists.
+	it("relaunches Prime and navigates to the returned session", async () => {
 		const user = userEvent.setup();
 		const { restore } = renderPane(deadPrime);
 
 		await user.click(await screen.findByRole("button", { name: "Relaunch Prime" }));
 
 		await waitFor(() => expect(relaunchPrimeMock).toHaveBeenCalledTimes(1));
+		await waitFor(() =>
+			expect(navigateMock).toHaveBeenCalledWith({
+				to: "/sessions/$sessionId",
+				params: { sessionId: "ao-prime-2" },
+			}),
+		);
 		restore();
 	});
 

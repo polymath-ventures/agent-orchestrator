@@ -118,3 +118,22 @@ func TestSupervisorRelaunchRequestClearsBudgetAndEnsures(t *testing.T) {
 			state.restartAttempts, state.nextRestartAt, state.restartBackoff)
 	}
 }
+
+// A miswired relauncher must not report success with an empty session — the
+// controller would answer 200 and the UI would believe Prime had relaunched.
+func TestRelaunchPrimeErrorsWhenNotWired(t *testing.T) {
+	for name, relauncher := range map[string]*primeRelauncher{
+		"nil receiver":     nil,
+		"nil sessions dep": {reconciler: newPrimeReconciler()},
+	} {
+		t.Run(name, func(t *testing.T) {
+			sess, err := relauncher.RelaunchPrime(context.Background())
+			if err == nil {
+				t.Fatal("RelaunchPrime() = nil error, want a failure rather than an empty success")
+			}
+			if sess.ID != "" {
+				t.Fatalf("session = %q, want empty", sess.ID)
+			}
+		})
+	}
+}
