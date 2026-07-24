@@ -524,7 +524,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	if len(cfg.Attachments) > 0 {
 		refs, err := writeSpawnAttachments(ws.Path, cfg.Attachments)
 		if err != nil {
-			_ = m.workspace.Destroy(ctx, ws)
+			m.destroySpawnWorkspace(ctx, ws, workspaceProject)
 			m.rollbackSpawnSeedRow(ctx, id)
 			return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: attachments: %w", id, err)
 		}

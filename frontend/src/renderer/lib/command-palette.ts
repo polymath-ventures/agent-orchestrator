@@ -56,10 +56,6 @@ export const commandGroupLabel: Record<CommandGroupId, string> = {
 	global: "Global",
 };
 
-function isSyntheticBranch(session: WorkspaceSession): boolean {
-	return session.branch === `session/${session.id}`;
-}
-
 type SessionCommandGroup = Extract<CommandGroupId, "attention" | "sessions">;
 
 const SESSION_ID_PREFIX: Record<SessionCommandGroup, string> = { attention: "attention", sessions: "session" };
@@ -144,7 +140,7 @@ export function buildCommands(ctx: CommandPaletteContext): CommandItem[] {
 	}
 
 	const currentBranch = currentSession?.branch;
-	if (currentSession && currentBranch && currentSession.kind !== "orchestrator" && !isSyntheticBranch(currentSession)) {
+	if (currentSession && currentBranch && currentSession.kind !== "orchestrator") {
 		items.push({
 			id: "current-copy-branch",
 			group: "current",

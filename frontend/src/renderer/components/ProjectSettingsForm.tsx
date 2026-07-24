@@ -52,6 +52,7 @@ const PERMISSION_MODE_OPTIONS = [
 
 const ROLE_PROMPT_OPTIONS = ["worker", "orchestrator", "reviewer"] as const;
 type RolePromptRole = (typeof ROLE_PROMPT_OPTIONS)[number];
+const MAX_PROJECT_DISPLAY_NAME_RUNES = 20;
 
 const projectQueryKey = (id: string) => ["project", id] as const;
 const rolePromptQueryKey = (id: string, role: string) => ["project", id, "role-prompt", role] as const;
@@ -219,7 +220,10 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 					: buildReviewerConfig(config.reviewers, form.reviewerHarness, initialReviewerHarness, form.reviewerModels),
 			};
 			const { error } = await apiClient.PUT("/api/v1/projects/{id}", {
-				params: { path: { id: projectId } },
+				params: {
+					path: { id: projectId },
+					header: project.configETag ? { "If-Match": project.configETag } : undefined,
+				},
 				body: { displayName, config: next },
 			});
 			if (error) throw new Error(apiErrorMessage(error));
@@ -267,6 +271,13 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 					setValidationError("Project name is required.");
 					return;
 				}
+				if (
+					form.displayName.trim() !== project.name &&
+					Array.from(form.displayName.trim()).length > MAX_PROJECT_DISPLAY_NAME_RUNES
+				) {
+					setValidationError("Project name must be 20 characters or fewer.");
+					return;
+				}
 				if (intakeIncomplete) {
 					setValidationError("Enabling intake requires an assignee.");
 					return;
@@ -294,6 +305,7 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 							id="projectName"
 							className="h-control-form w-full rounded-md border border-input bg-transparent px-2.5 font-sans text-control text-foreground placeholder:text-passive focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-weak"
 							value={form.displayName}
+							maxLength={Math.max(MAX_PROJECT_DISPLAY_NAME_RUNES, project.name.length)}
 							onChange={(e) => setForm((f) => ({ ...f, displayName: e.target.value }))}
 						/>
 					</Field>

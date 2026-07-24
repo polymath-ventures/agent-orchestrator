@@ -33,6 +33,7 @@ type InitializeRepositoryResult struct {
 type UpdateSettingsInput struct {
 	DisplayName string               `json:"displayName" minLength:"1" maxLength:"20"`
 	Config      domain.ProjectConfig `json:"config"`
+	IfMatch     string               `json:"-"`
 }
 
 // SetConfigInput is the body shape for PUT /api/v1/projects/{id}/config. Config

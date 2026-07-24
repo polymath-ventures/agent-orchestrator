@@ -596,18 +596,28 @@ func (m *Service) UpdateSettings(ctx context.Context, id domain.ProjectID, in Up
 	if displayName == "" {
 		return Project{}, apierr.Invalid("DISPLAY_NAME_REQUIRED", "Display name is required", nil)
 	}
-	if utf8.RuneCountInString(displayName) > maxDisplayNameLen {
-		return Project{}, apierr.Invalid("DISPLAY_NAME_TOO_LONG", "Display name must be 20 characters or fewer", nil)
-	}
 	if err := in.Config.Validate(); err != nil {
 		return Project{}, apierr.Invalid("INVALID_PROJECT_CONFIG", err.Error(), nil)
 	}
+	m.configMu.Lock()
+	defer m.configMu.Unlock()
+
 	row, ok, err := m.store.GetProject(ctx, string(id))
 	if err != nil {
 		return Project{}, apierr.Internal("PROJECT_LOAD_FAILED", "Failed to load project")
 	}
 	if !ok || !row.ArchivedAt.IsZero() {
 		return Project{}, apierr.NotFound("PROJECT_NOT_FOUND", "Unknown project")
+	}
+	if utf8.RuneCountInString(displayName) > maxDisplayNameLen && displayName != strings.TrimSpace(row.DisplayName) {
+		return Project{}, apierr.Invalid("DISPLAY_NAME_TOO_LONG", "Display name must be 20 characters or fewer", nil)
+	}
+	if in.IfMatch != "" && !row.Config.ETagMatches(in.IfMatch) {
+		return Project{}, apierr.Conflict(
+			"PROJECT_CONFIG_STALE",
+			"The project config changed since it was read; reload and reapply the edit.",
+			map[string]any{"currentConfigETag": row.Config.ETag()},
+		)
 	}
 	if row.Kind.WithDefault() == domain.ProjectKindScratch {
 		if err := validateScratchProjectConfig(in.Config); err != nil {

@@ -224,6 +224,17 @@ func TestProjectsAPI_UpdateSettings(t *testing.T) {
 	body, status, _ = doRequest(t, srv, "PUT", "/api/v1/projects/legacy-project", `{"displayName":"`+strings.Repeat("x", 21)+`","config":{}}`)
 	assertErrorCode(t, body, status, http.StatusBadRequest, "DISPLAY_NAME_TOO_LONG")
 
+	longID := "tg_content_factory_5863f66be3"
+	longRepo := gitRepo(t, longID)
+	body, status, _ = doRequest(t, srv, "POST", "/api/v1/projects", `{"path":`+quote(longRepo)+`,"projectId":`+quote(longID)+`}`)
+	if status != http.StatusCreated {
+		t.Fatalf("seed long-name create = %d, want 201; body=%s", status, body)
+	}
+	body, status, _ = doRequest(t, srv, "PUT", "/api/v1/projects/"+longID, `{"displayName":`+quote(longID)+`,"config":{"defaultBranch":"develop"}}`)
+	if status != http.StatusOK {
+		t.Fatalf("PUT unchanged long display name = %d, want 200; body=%s", status, body)
+	}
+
 	body, status, _ = doRequest(t, srv, "PUT", "/api/v1/projects/missing", `{"displayName":"Missing","config":{}}`)
 	assertErrorCode(t, body, status, http.StatusNotFound, "PROJECT_NOT_FOUND")
 
@@ -571,6 +582,57 @@ func TestProjectsAPI_ConfigETagAndIfMatch(t *testing.T) {
 	}
 	if headers.Get("ETag") == "" {
 		t.Fatal("current If-Match PUT omitted ETag")
+	}
+
+	body, status, _ = doRequest(t, srv, "GET", "/api/v1/projects/config-etag", "")
+	if status != http.StatusOK {
+		t.Fatalf("GET project after config update = %d, want 200; body=%s", status, body)
+	}
+	mustJSON(t, body, &get)
+	settingsBase := get.Project.ConfigETag
+	_, status, _ = put(settingsBase, `{"sessionPrefix":"concurrent"}`)
+	if status != http.StatusOK {
+		t.Fatalf("concurrent config PUT = %d, want 200", status)
+	}
+
+	req, err := http.NewRequest(http.MethodPut, srv.URL+"/api/v1/projects/config-etag",
+		strings.NewReader(`{"displayName":"Config ETag","config":{"defaultBranch":"settings"}}`))
+	if err != nil {
+		t.Fatalf("new settings request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("If-Match", settingsBase)
+	resp, err := srv.Client().Do(req)
+	if err != nil {
+		t.Fatalf("PUT settings: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, _ = io.ReadAll(resp.Body)
+	assertErrorCode(t, body, resp.StatusCode, http.StatusConflict, "PROJECT_CONFIG_STALE")
+
+	body, status, _ = doRequest(t, srv, "GET", "/api/v1/projects/config-etag", "")
+	if status != http.StatusOK {
+		t.Fatalf("GET project after stale settings = %d, want 200; body=%s", status, body)
+	}
+	mustJSON(t, body, &get)
+	req, err = http.NewRequest(http.MethodPut, srv.URL+"/api/v1/projects/config-etag",
+		strings.NewReader(`{"displayName":"Config ETag","config":{"defaultBranch":"settings"}}`))
+	if err != nil {
+		t.Fatalf("new current settings request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("If-Match", get.Project.ConfigETag)
+	resp, err = srv.Client().Do(req)
+	if err != nil {
+		t.Fatalf("PUT current settings: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, _ = io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("current If-Match settings PUT = %d, want 200; body=%s", resp.StatusCode, body)
+	}
+	if resp.Header.Get("ETag") == "" {
+		t.Fatal("current If-Match settings PUT omitted ETag")
 	}
 }
 

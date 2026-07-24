@@ -802,11 +802,12 @@ func projectOperations() []operation {
 		{
 			method: http.MethodPut, path: "/api/v1/projects/{id}", id: "updateProjectSettings", tag: "projects",
 			summary:    "Atomically replace a project's display name and config",
-			pathParams: []any{controllers.ProjectIDParam{}},
+			pathParams: []any{controllers.ProjectIDParam{}, controllers.ProjectConfigIfMatchParam{}},
 			reqBody:    projectsvc.UpdateSettingsInput{},
 			resps: []respUnit{
 				{http.StatusOK, controllers.ProjectResponse{}},
 				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusConflict, envelope.APIError{}},
 				{http.StatusNotFound, envelope.APIError{}},
 				{http.StatusInternalServerError, envelope.APIError{}},
 			},

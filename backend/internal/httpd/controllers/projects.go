@@ -115,16 +115,16 @@ func (c *ProjectsController) updateSettings(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	var in projectsvc.UpdateSettingsInput
-	if err := decodeJSONStrict(r, &in); err != nil {
-		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
+	if !decodeProjectJSON(w, r, &in) {
 		return
 	}
+	in.IfMatch = strings.TrimSpace(r.Header.Get("If-Match"))
 	p, err := c.Mgr.UpdateSettings(r.Context(), projectID(r), in)
 	if err != nil {
 		envelope.WriteError(w, r, err)
 		return
 	}
-	envelope.WriteJSON(w, http.StatusOK, ProjectResponse{Project: p})
+	writeProjectResponse(w, p)
 }
 
 func (c *ProjectsController) setConfig(w http.ResponseWriter, r *http.Request) {
@@ -133,8 +133,7 @@ func (c *ProjectsController) setConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in projectsvc.SetConfigInput
-	if err := decodeJSONStrict(r, &in); err != nil {
-		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
+	if !decodeProjectJSON(w, r, &in) {
 		return
 	}
 	in.IfMatch = strings.TrimSpace(r.Header.Get("If-Match"))
@@ -143,6 +142,18 @@ func (c *ProjectsController) setConfig(w http.ResponseWriter, r *http.Request) {
 		envelope.WriteError(w, r, err)
 		return
 	}
+	writeProjectResponse(w, p)
+}
+
+func decodeProjectJSON(w http.ResponseWriter, r *http.Request, dst any) bool {
+	if err := decodeJSONStrict(r, dst); err != nil {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
+		return false
+	}
+	return true
+}
+
+func writeProjectResponse(w http.ResponseWriter, p projectsvc.Project) {
 	if p.ConfigETag != "" {
 		w.Header().Set("ETag", strconv.Quote(p.ConfigETag))
 	}

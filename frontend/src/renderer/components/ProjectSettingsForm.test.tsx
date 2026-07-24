@@ -199,6 +199,7 @@ describe("ProjectSettingsForm", () => {
 		mockProject({
 			id: "proj-1",
 			name: "Project One",
+			configETag: "etag-project-one",
 			kind: "single_repo",
 			path: "/repo/project-one",
 			repo: "git@github.com:acme/project-one.git",
@@ -275,7 +276,7 @@ describe("ProjectSettingsForm", () => {
 
 		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
 		expect(putMock).toHaveBeenCalledWith("/api/v1/projects/{id}", {
-			params: { path: { id: "proj-1" } },
+			params: { path: { id: "proj-1" }, header: { "If-Match": "etag-project-one" } },
 			body: {
 				displayName: "Project One",
 				config: {
@@ -477,6 +478,60 @@ describe("ProjectSettingsForm", () => {
 		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
 
 		expect(await screen.findByText("Project name is required.")).toBeInTheDocument();
+		expect(putMock).not.toHaveBeenCalled();
+	});
+
+	it("allows saving an unchanged legacy project name over the current display-name cap", async () => {
+		mockProject({
+			id: "tg_content_factory_5863f66be3",
+			name: "tg_content_factory_5863f66be3",
+			configETag: "etag-long-name",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "",
+			defaultBranch: "main",
+			config: {
+				worker: { agent: "codex" },
+				orchestrator: { agent: "claude-code" },
+			},
+		});
+
+		renderSettings("tg_content_factory_5863f66be3");
+
+		await userEvent.click(await screen.findByRole("button", { name: "Save changes" }));
+
+		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
+		expect(putMock).toHaveBeenCalledWith(
+			"/api/v1/projects/{id}",
+			expect.objectContaining({
+				params: { path: { id: "tg_content_factory_5863f66be3" }, header: { "If-Match": "etag-long-name" } },
+				body: expect.objectContaining({ displayName: "tg_content_factory_5863f66be3" }),
+			}),
+		);
+	});
+
+	it("rejects a changed project name over the current display-name cap before sending the settings update", async () => {
+		mockProject({
+			id: "tg_content_factory_5863f66be3",
+			name: "tg_content_factory_5863f66be3",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "",
+			defaultBranch: "main",
+			config: {
+				worker: { agent: "codex" },
+				orchestrator: { agent: "claude-code" },
+			},
+		});
+
+		renderSettings("tg_content_factory_5863f66be3");
+
+		const projectName = await screen.findByLabelText("Project name");
+		await userEvent.clear(projectName);
+		await userEvent.type(projectName, "changed_factory_5863f66be3");
+		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+		expect(await screen.findByText("Project name must be 20 characters or fewer.")).toBeInTheDocument();
 		expect(putMock).not.toHaveBeenCalled();
 	});
 

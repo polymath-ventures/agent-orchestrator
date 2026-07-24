@@ -120,9 +120,12 @@ describe("buildCommands grouping", () => {
 		expect(map.get("current-project-settings")?.disabled).toBeFalsy();
 	});
 
-	it("omits Copy branch for a synthetic (session/<id>) branch and for orchestrators", () => {
+	it("keeps Copy branch for real session-prefixed branches but omits it for orchestrators", () => {
 		const synthetic = buildCommands({ workspaces: workspaces(), currentSessionId: "w-synthetic" });
-		expect(byId(synthetic).has("current-copy-branch")).toBe(false);
+		expect(byId(synthetic).get("current-copy-branch")?.action).toEqual({
+			kind: "copy-branch",
+			branch: "session/w-synthetic",
+		});
 		const orch = buildCommands({ workspaces: workspaces(), currentSessionId: "orch" });
 		expect(byId(orch).has("current-copy-branch")).toBe(false);
 	});
