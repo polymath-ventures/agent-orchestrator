@@ -40,8 +40,14 @@ vi.mock("@xterm/xterm", () => ({
 		buffer = { active: { type: "normal" } };
 		scrollLines = vi.fn();
 		clear = vi.fn();
-		focus = vi.fn();
+		// Mirrors xterm: focus() moves DOM focus to the hidden helper textarea, so
+		// tests can assert on document.activeElement the way the user experiences
+		// it rather than only on the spy.
+		focus = vi.fn(() => {
+			this.helperTextarea?.focus();
+		});
 		selectAll = vi.fn();
+		helperTextarea: HTMLTextAreaElement | null = null;
 		dataListeners = new Set<(data: string) => void>();
 		keyListeners = new Set<(event: { key: string }) => void>();
 		selectionListeners = new Set<() => void>();
@@ -60,7 +66,7 @@ vi.mock("@xterm/xterm", () => ({
 
 		loadAddon() {}
 		open(host: HTMLElement) {
-			host.appendChild(document.createElement("textarea"));
+			this.helperTextarea = host.appendChild(document.createElement("textarea"));
 		}
 		write() {}
 		writeln() {}
@@ -150,6 +156,28 @@ describe("XtermTerminal", () => {
 		setNavigatorPlatform("Linux x86_64");
 		window.ao!.clipboard.writeText = vi.fn().mockResolvedValue(undefined);
 		window.ao!.clipboard.readText = vi.fn().mockResolvedValue("");
+	});
+
+	// A pane only mounts when it is the surface the user just switched to, so the
+	// mount is the moment keystrokes should start reaching the shell. Without
+	// this the terminals screen renders attached but deaf until a second click.
+	it("takes keyboard focus when the pane mounts", () => {
+		const { container } = render(<XtermTerminal theme="dark" />);
+
+		expect(document.activeElement).toBe(container.querySelector("textarea"));
+	});
+
+	it("keeps focus on an overlay text field that already owns keyboard input", () => {
+		const dialog = document.createElement("div");
+		dialog.setAttribute("role", "dialog");
+		const input = dialog.appendChild(document.createElement("input"));
+		document.body.appendChild(dialog);
+		input.focus();
+
+		render(<XtermTerminal theme="dark" />);
+
+		expect(document.activeElement).toBe(input);
+		dialog.remove();
 	});
 
 	it("copies selected terminal text on the terminal copy shortcut", () => {
