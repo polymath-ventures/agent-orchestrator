@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { render, screen } from "@testing-library/react";
@@ -6,11 +6,16 @@ import { describe, expect, it } from "vitest";
 import { SidebarMenuButton, SidebarProvider } from "./sidebar";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const sidebarSource = readFileSync(path.join(here, "sidebar.tsx"), "utf8");
+const primitives = readdirSync(here)
+	.filter((file) => file.endsWith(".tsx") && !file.endsWith(".test.tsx"))
+	.sort();
 const stylesheets = [
 	readFileSync(path.resolve(here, "../../styles.css"), "utf8"),
 	readFileSync(path.resolve(here, "../../../styles/tokens.css"), "utf8"),
 ];
+
+/** Radix writes these onto the element itself at runtime; no stylesheet declares them. */
+const RUNTIME_INJECTED = /^--radix-/;
 
 /**
  * Custom properties that actually exist at runtime.
@@ -65,21 +70,25 @@ function inlineSetCustomProperties(source: string): Set<string> {
 	return new Set(Array.from(source.matchAll(/"(--[\w-]+)"\s*:/g), ([, name]) => name));
 }
 
-describe("sidebar custom properties", () => {
-	// #127: the outline variant named `var(--sidebar-border)` / `var(--sidebar-accent)`
-	// — upstream shadcn's bare token names. This fork remapped those to
-	// `--color-sidebar-*` under `@theme inline`, so neither name resolves. A
-	// `box-shadow` whose `var()` has no value and no fallback is invalid at
-	// computed-value time, which drops the whole declaration: no ring rendered,
-	// no warning. Same class as #119 (Skeleton `bg-accent`).
-	it("only names custom properties that resolve at runtime", () => {
-		const resolvable = new Set([
-			...stylesheets.flatMap((css) => Array.from(declaredCustomProperties(css))),
-			...inlineSetCustomProperties(sidebarSource),
-		]);
+describe("ui primitive custom properties", () => {
+	// #127: the sidebar outline variant named `var(--sidebar-border)` /
+	// `var(--sidebar-accent)` — upstream shadcn's bare token names. This fork
+	// remapped those to `--color-sidebar-*` under `@theme inline`, so neither
+	// name resolves. A `box-shadow` whose `var()` has no value and no fallback
+	// is invalid at computed-value time, which drops the whole declaration: no
+	// ring rendered, no warning. Same class as #119 (Skeleton `bg-accent`).
+	//
+	// These primitives are vendored from shadcn, so every one of them is a place
+	// the remapping can be half-applied. Check the whole directory rather than
+	// the one file that happened to be reported.
+	const declared = new Set(stylesheets.flatMap((css) => Array.from(declaredCustomProperties(css))));
 
-		const dangling = Array.from(referencedCustomProperties(sidebarSource))
-			.filter((name) => !resolvable.has(name))
+	it.each(primitives)("%s only names custom properties that resolve at runtime", (file) => {
+		const source = readFileSync(path.join(here, file), "utf8");
+		const inlineSet = inlineSetCustomProperties(source);
+
+		const dangling = Array.from(referencedCustomProperties(source))
+			.filter((name) => !declared.has(name) && !inlineSet.has(name) && !RUNTIME_INJECTED.test(name))
 			.sort();
 
 		expect(dangling).toEqual([]);
