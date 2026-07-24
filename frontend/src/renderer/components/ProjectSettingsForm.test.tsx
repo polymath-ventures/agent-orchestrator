@@ -1231,11 +1231,15 @@ describe("ProjectSettingsForm", () => {
 		await screen.findByRole("combobox", { name: "Project model harness" });
 
 		// The harness picker's control sits directly under its single label. The
-		// Model/Effort controls must match that — no separate visible per-field
-		// label — or they render one row lower than the harness dropdown sharing
-		// their bordered row.
-		expect(screen.queryAllByText("Model")).toHaveLength(0);
-		expect(screen.queryAllByText("Effort")).toHaveLength(0);
+		// Model/Effort controls must match that — their per-field labels stay in
+		// the DOM (for native label-click focus + a11y association) but are
+		// visually hidden, or they render one row lower than the harness
+		// dropdown sharing their bordered row.
+		for (const text of ["Model", "Effort"]) {
+			for (const label of screen.getAllByText(text, { selector: "label" })) {
+				expect(label).toHaveClass("sr-only");
+			}
+		}
 
 		// ...but must still be reachable with an accessible name for a11y.
 		expect(document.getElementById("project-model-model")).toHaveAccessibleName("Model");

@@ -126,16 +126,16 @@ export function ModelAvailabilityField({
 			<div className={`grid gap-2 ${columnClass}`}>
 				{showHarness && (
 					<div className="flex min-w-0 flex-col gap-1">
-						{fieldLabelsVisible && (
-							<Label htmlFor={`${id}-harness`} className="text-[11px] text-muted-foreground">
-								Harness
-							</Label>
-						)}
+						<Label
+							htmlFor={`${id}-harness`}
+							className={fieldLabelsVisible ? "text-[11px] text-muted-foreground" : "sr-only"}
+						>
+							Harness
+						</Label>
 						<select
 							id={`${id}-harness`}
 							className={selectClassName}
 							value={value.harness}
-							aria-label={fieldLabelsVisible ? undefined : "Harness"}
 							onChange={(event) => selectHarness(event.target.value)}
 						>
 							{allowEmpty && <option value="">{emptyLabel}</option>}
@@ -149,11 +149,12 @@ export function ModelAvailabilityField({
 				)}
 
 				<div className="flex min-w-0 flex-col gap-1">
-					{fieldLabelsVisible && (
-						<Label htmlFor={`${id}-model`} className="text-[11px] text-muted-foreground">
-							Model
-						</Label>
-					)}
+					<Label
+						htmlFor={`${id}-model`}
+						className={fieldLabelsVisible ? "text-[11px] text-muted-foreground" : "sr-only"}
+					>
+						Model
+					</Label>
 					<input
 						id={`${id}-model`}
 						type="text"
@@ -162,7 +163,6 @@ export function ModelAvailabilityField({
 						list={`${id}-model-options`}
 						placeholder={allowEmpty ? emptyLabel : undefined}
 						required={!allowEmpty}
-						aria-label={fieldLabelsVisible ? undefined : "Model"}
 						onChange={(event) => selectModel(event.target.value)}
 					/>
 					<datalist id={`${id}-model-options`}>
@@ -176,16 +176,16 @@ export function ModelAvailabilityField({
 
 				{showEffort && (
 					<div className="flex min-w-0 flex-col gap-1">
-						{fieldLabelsVisible && (
-							<Label htmlFor={`${id}-effort`} className="text-[11px] text-muted-foreground">
-								Effort
-							</Label>
-						)}
+						<Label
+							htmlFor={`${id}-effort`}
+							className={fieldLabelsVisible ? "text-[11px] text-muted-foreground" : "sr-only"}
+						>
+							Effort
+						</Label>
 						<select
 							id={`${id}-effort`}
 							className={selectClassName}
 							value={value.effort}
-							aria-label={fieldLabelsVisible ? undefined : "Effort"}
 							onChange={(event) => onChange({ ...value, effort: event.target.value })}
 						>
 							{allowEmpty && <option value="">{emptyLabel}</option>}
