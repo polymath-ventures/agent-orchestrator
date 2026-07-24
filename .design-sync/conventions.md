@@ -14,7 +14,10 @@ const { Button, Card, CardHeader, CardTitle, CardContent } = window.AODS;
 
 Three exceptions throw or render blank without a wrapper:
 
-- Anything named `Sidebar*` must be inside `SidebarProvider`.
+- `Sidebar`, `SidebarMenuButton`, `SidebarRail` and `SidebarTrigger` read the
+  rail's open/collapsed state and must be inside `SidebarProvider`. The other
+  `Sidebar*` parts are plain layout wrappers, but you are composing the rail
+  anyway — put the whole thing inside the provider.
 - `Tooltip` / `TooltipContent` / `TooltipTrigger` must be inside `TooltipProvider`
   (mount one high in the tree).
 - `ResizablePanelGroup` needs an explicit height on an ancestor or it collapses
@@ -33,11 +36,11 @@ rather than raw hex, and never use stock Tailwind colour names like
 | Family         | Real names                                                                                                                                                |
 | -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Surfaces       | `bg-background` `bg-surface` `bg-raised` `bg-card` `bg-popover` `bg-sidebar` `bg-terminal`                                                                |
-| Text           | `text-foreground` `text-muted-foreground` `text-passive` `text-terminal`                                                                                  |
+| Text           | `text-foreground` `text-muted-foreground` `text-passive` `text-terminal-dim`                                                                              |
 | Borders        | `border-border` `border-border-strong` `border-input`                                                                                                     |
-| Accent / brand | `bg-primary` `text-primary-foreground` `text-accent` `bg-accent-weak` `border-accent-dim` `ring-ring`                                                     |
+| Accent / brand | `bg-primary` `text-primary-foreground` `text-accent` `bg-accent-weak` `border-accent-dim`                                                                 |
 | State          | `text-success` `text-warning` `text-error` `text-working` `text-destructive`                                                                              |
-| Interaction    | `hover:bg-interactive-hover` `active:bg-interactive-active`                                                                                               |
+| Interaction    | `hover:bg-interactive-hover`                                                                                                                              |
 | Type scale     | `text-micro` `text-2xs` `text-caption` `text-xs` `text-sm` `text-control` `text-subtitle` `text-heading-sm` `text-heading` `text-heading-lg` `text-brand` |
 | Radius         | `rounded-xs` `rounded-sm` `rounded-md` `rounded-lg` `rounded-panel` `rounded-full`                                                                        |
 | Font           | `font-sans` (system UI stack) · `font-mono` (Nerd Font / SF Mono stack)                                                                                   |

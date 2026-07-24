@@ -5,7 +5,7 @@
 	// the converter's prop extraction resolves every component to
 	// `[key: string]: unknown` and the design agent loses the real API
 	// (Button's `variant`, Badge's `variant`, Sheet's `side`, …).
-	// cfg.buildCmd runs this to emit declarations under frontend/dist/types,
+	// cfg.buildCmd runs this to emit declarations under frontend/dist/decl,
 	// which is inside the package, so the converter's .d.ts scan picks them up.
 	"extends": "../frontend/tsconfig.json",
 	"compilerOptions": {
@@ -23,7 +23,7 @@
 	"include": [
 		"../frontend/src/renderer/components/ui/**/*.tsx",
 		"../frontend/src/renderer/lib/utils.ts",
-		"../frontend/src/renderer/hooks/use-mobile.ts"
+		"../frontend/src/renderer/hooks/use-mobile.tsx"
 	],
 	"exclude": ["../frontend/src/renderer/components/ui/*.test.tsx"]
 }

@@ -12,7 +12,7 @@ category: Overlays
 	<Tooltip defaultOpen>
 		<TooltipTrigger asChild>
 			<Button variant="ghost" size="icon">
-				<Info />
+				ⓘ
 			</Button>
 		</TooltipTrigger>
 		<TooltipContent>Rebuild the worktree</TooltipContent>

@@ -31,9 +31,12 @@ Repo-specific gotchas for `/design-sync`. Read this before a re-sync.
 `buildCmd` is not just the app build. In order:
 
 1. `npm --prefix frontend run build:web` — produces the compiled CSS.
-2. `cat frontend/dist/assets/index-*.css .design-sync/preview-surface.css > frontend/dist/ds-compiled.css`
+2. `cat $(ls frontend/dist/assets/*.css | sort) .design-sync/preview-surface.css > frontend/dist/ds-compiled.css`
    - The Vite CSS asset is **content-hashed**, so its filename changes every
-     build; the concat gives `cssEntry` a stable path to point at.
+     build; the concat gives `cssEntry` a stable path to point at. It globs
+     _every_ emitted `.css` (sorted, so the order is deterministic) rather than
+     just `index-*` — a future chunk that emits its own stylesheet would
+     otherwise be silently dropped from the design system.
    - `styles.css` cannot be used directly as `cssEntry`: it opens with
      `@import "tailwindcss"`, which the converter cannot resolve. Only the
      _compiled_ stylesheet works.
@@ -42,6 +45,7 @@ Repo-specific gotchas for `/design-sync`. Read this before a re-sync.
      would dangle after the copy.
 3. `tsc -p .design-sync/tsconfig.dts.json` + `node .design-sync/emit-types-barrel.mjs`
    — see the next section. Skipping this silently destroys every prop contract.
+4. `node .design-sync/validate-conventions.mjs` — see the conventions section.
 
 ## The .d.ts contracts are load-bearing and fragile
 
@@ -63,18 +67,58 @@ Two non-obvious constraints make it work:
   re-export there for any new `components/ui` file** (the script derives it
   from the directory listing, so just re-run `buildCmd`).
 
-**Verify after every build:**
-`grep -l 'key: string\]: unknown' ds-bundle/components/*/*/*.d.ts | wc -l`
-should print `0`. Anything above 0 means the declaration step regressed.
+**Verify after every build** — this one-liner asserts the file set is non-empty
+first, because a bare `grep | wc -l` prints a reassuring `0` when there are no
+declaration files at all, i.e. it certifies loudest exactly when the step has
+failed hardest:
+
+```bash
+total=$(ls ds-bundle/components/*/*/*.d.ts | wc -l)
+weak=$(grep -l 'key: string\]: unknown' ds-bundle/components/*/*/*.d.ts | wc -l)
+[ "$total" -gt 0 ] && [ "$weak" -eq 0 ] && echo "ok: $total real contracts" || echo "REGRESSED: total=$total weak=$weak"
+```
 
 `tsconfig.dts.json`'s `include` is deliberately narrow (ui + `lib/utils.ts` +
-`hooks/use-mobile.ts`). Widening it to `lib/**` or `hooks/**` drags in modules
+`hooks/use-mobile.tsx`). Widening it to `lib/**` or `hooks/**` drags in modules
 that need Vite/Electron ambient types (`import.meta.env`, `window.ao`) and the
 emit fails.
 
 `SidebarTrigger`, `SidebarInput` and `SidebarSeparator` type their props as
 `React.ComponentProps<typeof Button|Input|Separator>`, which the extractor
 cannot flatten — they are the only three entries in `cfg.dtsPropsFor`.
+
+## conventions.md is prompt-injected — validate it, don't eyeball it
+
+`conventions.md` is inlined into the design agent's system prompt, so a name in
+it that does not exist is worse than silence: the agent trusts it, writes
+vocabulary that never resolves, and ships silently unstyled output. Hand-checking
+missed real bugs twice (`text-base`, defined in `@theme` but never emitted
+because Tailwind is JIT; and `text-terminal`, which resolves to
+`--color-bg-terminal` — a _background_ token, i.e. near-black text on a
+near-black surface).
+
+`node .design-sync/validate-conventions.mjs ./ds-bundle` checks every utility
+and component named in the file against the built bundle, including escaped
+variant selectors (`hover:`) and token-kind mismatches. `cfg.buildCmd` runs it
+on every build. **Run it after editing `conventions.md`** — and note the two
+gotchas it exists to catch: a class present in `@theme` is not necessarily
+emitted, and a `text-*` utility can legitimately exist while pointing at the
+wrong kind of token.
+
+## Guidelines are deliberately empty
+
+The converter's default `guidelinesGlob` picked up `frontend/docs/*.md`, whose
+only file is a **desktop release runbook** — actively misleading shipped to a
+design agent as "design guidelines". `cfg.guidelinesGlob` is therefore pointed
+at `docs/design-guidelines/**/*.md`, which does not exist yet; drop real design
+guidance there and it ships automatically.
+
+Root `DESIGN.md` was considered and rejected as guidelines content: its useful
+substance (colour is rare and meaningful, the type scale, dark-first) is already
+distilled into `conventions.md`, while its opening sections call the product
+"ReverbCode" and point at a local filesystem path, which would mislead a design
+agent more than help it. That staleness is a docs problem worth fixing on its
+own, separately from this sync.
 
 ## Docs, groups, and the docsMap enumeration
 
@@ -104,11 +148,23 @@ so three `../` are needed to reach the repo root — not one.
   components but is not on `window.AODS`, so previews cannot import icons — use
   text or a unicode glyph.
 - Radix portal components (Dialog, Sheet, DropdownMenu, Select, Tooltip) **do**
-  capture correctly with `defaultOpen` + a real trigger in the tree; no
-  `cardMode`/`viewport` override was needed. An earlier assumption that portals
-  would escape the card was wrong.
-- `Tooltip`/`TooltipContent` throw outside `TooltipProvider`. Every `Sidebar*`
-  part requires `SidebarProvider`.
+  capture correctly with `defaultOpen` + a real trigger in the tree — an earlier
+  assumption that they would escape the card was wrong. They still need a
+  `cardMode` override for the product's grid; see below.
+- **The `cfg.overrides` cardModes are load-bearing, not cosmetic.** A preview
+  can capture perfectly on its own and still present broken in the product's
+  multi-story grid, which `package-validate` reports as `[GRID_OVERFLOW]`.
+  Portal components (Dialog, Sheet, DropdownMenu, Select, Tooltip) are
+  `cardMode: single` because portal content is positioned outside its grid cell
+  and no grid layout can present it; wide ones (Command, Tabs) are
+  `cardMode: column` so each story gets full card width instead of being
+  cropped. **Do not drop these when adding components** — re-read the
+  `[GRID_OVERFLOW]` warns after any preview change.
+- `Tooltip`/`TooltipContent` throw outside `TooltipProvider`. Only four sidebar
+  parts actually consume the rail context — `Sidebar`, `SidebarMenuButton`,
+  `SidebarRail`, `SidebarTrigger` — and those throw outside `SidebarProvider`;
+  the rest are plain layout wrappers (verified against `useSidebar()` call
+  sites in `sidebar.tsx`).
 - `Sidebar` is `h-svh` and overshoots the card by the harness's 24px body
   padding, clipping its own footer — the preview cancels this with `margin: -24`.
 - `ResizablePanelGroup` needs an explicit height on a wrapper or it collapses,
@@ -117,12 +173,38 @@ so three `../` are needed to reach the repo root — not one.
 - Radix `Select` anchors its open menu so the selected item lands on the
   trigger; without top padding the first group scrolls off the card.
 
-## Known render warns (triaged, expected — not new)
+## Known validate warns (triaged — anything NOT on this list is new)
 
-- `variants render identically` on single-look components (`Label`, `Switch`)
-  — they genuinely have one appearance per state.
-- `[RENDER_THIN]` on hairline components (`Separator`, `SidebarSeparator`) —
-  they really are ~1px tall.
+The build settles at exactly **two** warnings. Both are understood; a third one
+appearing means something changed.
+
+- **`[TOKENS_MISSING]` — 45 undefined custom properties** (`--border`,
+  `--accent`, `--bg`, `--bg-card`, `--accent-glow`, …). These come from
+  `frontend/src/landing/**`, the marketing page, which has its own token
+  vocabulary and is bundled into the same compiled stylesheet. **No component
+  under `components/ui` references any of them** (verified by grep). Benign for
+  the design system — do not chase it.
+- **`[FONT_MISSING]` — the Nerd Font mono stack.** See the fonts section below.
+
+Related known limitation, not a warn: `cssEntry` is the app's **whole** compiled
+stylesheet (~175 KB), so designs also receive the landing page's CSS and xterm's
+terminal CSS. Scoping a Tailwind build to `components/ui` alone would trim it,
+but that is a separate pipeline and was judged not worth the complexity for a
+one-time size cost. This is why `[TOKENS_MISSING]` exists at all.
+
+## Fonts
+
+`--font-family-mono` lists JetBrainsMono / FiraCode / Meslo / CaskaydiaCove /
+Hack Nerd Fonts. **The repo ships no font files at all** (no `.woff2`/`.ttf`/
+`.otf`, no `@font-face` in `src/`) — the app itself relies on those fonts being
+installed on the developer's machine and otherwise falls through its own stack
+to `ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace`.
+
+So there is nothing to wire into `cfg.extraFonts`, and `runtimeFontPrefixes`
+does not apply either (no font service serves them). Mono text in the design
+system renders in the system monospace fallback — the same thing the app does
+on a machine without Nerd Fonts. `[FONT_MISSING]` is therefore expected and
+permanent unless the repo starts shipping webfonts.
 
 ## Source bug found during the sync (not a sync defect)
 
