@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Loader2 } from "lucide-react";
+import { Loader2, TriangleAlert } from "lucide-react";
 import type { components } from "../../api/schema";
 import { agentsQueryOptions } from "../hooks/useAgentsQuery";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
@@ -137,11 +137,6 @@ export function PrimeSection() {
 						value={wakeMinutes}
 						onChange={setWakeMinutes}
 					/>
-					<PrimeInput
-						label="Instructions file path"
-						value={form.rulesFile ?? ""}
-						onChange={(rulesFile) => setForm((f) => ({ ...f, rulesFile }))}
-					/>
 				</div>
 
 				<ModelAvailabilityField
@@ -154,8 +149,13 @@ export function PrimeSection() {
 					disabled={busy}
 					isRefreshing={isRefreshingModels || modelAvailabilityQuery.isFetching}
 					onRefresh={refreshModels}
+					statusVisibility="actionable"
 					emptyLabel="Select harness"
 				/>
+				<p className="flex items-start gap-1.5 text-[12px] text-muted-foreground">
+					<TriangleAlert className="mt-0.5 size-3.5 shrink-0 text-warning" aria-hidden="true" />
+					<span>Manual model IDs are allowed; launch may fail if the harness rejects the model.</span>
+				</p>
 				{modelAvailabilityQuery.isError && (
 					<p className="text-xs leading-row text-warning">
 						Model catalogs are unavailable; saved pins remain editable.
@@ -170,6 +170,11 @@ export function PrimeSection() {
 						onChange={(event) => setForm((f) => ({ ...f, rules: event.target.value }))}
 					/>
 				</label>
+				<PrimeInput
+					label="Instructions file path"
+					value={form.rulesFile ?? ""}
+					onChange={(rulesFile) => setForm((f) => ({ ...f, rulesFile }))}
+				/>
 				<p className="text-xs leading-row text-muted-foreground">
 					Inline instructions are loaded first. File content is appended after it; the file does not override inline
 					instructions. Use an absolute path for fleet Prime.
