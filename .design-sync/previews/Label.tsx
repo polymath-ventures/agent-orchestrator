@@ -9,11 +9,18 @@ export function WithInput() {
 	);
 }
 
+// The required marker lives in the Label's children — Label itself has no
+// `required` prop; the constraint goes on the control.
 export function RequiredField() {
 	return (
 		<div style={{ display: "grid", gap: 6, maxWidth: 320 }}>
-			<Label htmlFor="project-repo">Project repository</Label>
-			<Input id="project-repo" placeholder="owner/agent-orchestrator" />
+			<Label htmlFor="project-repo">
+				Project repository{" "}
+				<span aria-hidden="true" style={{ color: "var(--color-danger)" }}>
+					*
+				</span>
+			</Label>
+			<Input id="project-repo" placeholder="owner/agent-orchestrator" required aria-required="true" />
 		</div>
 	);
 }
