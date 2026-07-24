@@ -10,6 +10,14 @@
  * the match deterministic rather than dependent on the consumer honouring
  * preferred-family records.
  *
+ * Weights shipped: 400 (Regular), 700 (Bold), plus 400 Italic. Note that
+ * Badge — the most prominent mono element — requests font-medium (500). No 500
+ * face ships, so the browser synthesises a faux-medium from the 400 face; the
+ * difference at badge size is slight. To render the true Medium instead, drop
+ * in JetBrainsMonoNerdFontMono-Medium.woff2 and add a weight:500 @font-face
+ * rule (the Italic asset is a candidate to swap out — no synced component
+ * renders italic mono).
+ *
  * JetBrains Mono is SIL OFL 1.1; the Nerd Font patch is MIT.
  */
 @font-face {

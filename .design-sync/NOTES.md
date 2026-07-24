@@ -247,7 +247,10 @@ ships no font files of its own, so the design system carries its own copy:
 `.design-sync/fonts/` holds Regular/Bold/Italic as **woff2** (3.0 MB total,
 down from 7.1 MB as TTF) plus `jetbrains-mono.css`, wired through
 `cfg.extraFonts`. Verified: `document.fonts` reports the face **loaded** in a
-rendered card and computed `font-family` resolves to it.
+rendered card and computed `font-family` resolves to it. Only weights 400/700
+(+400 italic) ship, while `Badge` requests `font-medium` (500) — the browser
+synthesises a faux-medium; swap the unused Italic asset for a Medium 500 face
+if exact fidelity there ever matters (see `fonts/jetbrains-mono.css`).
 
 Two non-obvious details:
 
@@ -353,44 +356,6 @@ so three `../` are needed to reach the repo root — not one.
   the older `direction` prop.
 - Radix `Select` anchors its open menu so the selected item lands on the
   trigger; without top padding the first group scrolls off the card.
-
-## Known validate warns (triaged — anything NOT on this list is new)
-
-The build settles at exactly **two** warnings. Both are understood; a third one
-appearing means something changed.
-
-- **`[TOKENS_MISSING]` — 45 undefined custom properties** (`--border`,
-  `--accent`, `--bg`, `--bg-card`, `--accent-glow`, …). These come from
-  `frontend/src/landing/**`, the marketing page, which has its own token
-  vocabulary and is bundled into the same compiled stylesheet. **Mostly** benign
-  — but not entirely: `sidebar.tsx` (SidebarRail) uses
-  `shadow-[0_0_0_1px_var(--sidebar-border)]` and `var(--sidebar-accent)`, and
-  those bare names are **not** defined — the theme defines
-  `--color-sidebar-border` / `--color-sidebar-accent`. So SidebarRail's focus
-  and hover ring silently resolve to nothing, in the app as well as here. That
-  is an app bug this sync surfaced, not a sync artifact; it is not fixed in this
-  PR (no app source is touched here).
-- **`[FONT_MISSING]` — the Nerd Font mono stack.** See the fonts section below.
-
-Related known limitation, not a warn: `cssEntry` is the app's **whole** compiled
-stylesheet (~175 KB), so designs also receive the landing page's CSS and xterm's
-terminal CSS. Scoping a Tailwind build to `components/ui` alone would trim it,
-but that is a separate pipeline and was judged not worth the complexity for a
-one-time size cost. This is why `[TOKENS_MISSING]` exists at all.
-
-## Fonts
-
-`--font-family-mono` lists JetBrainsMono / FiraCode / Meslo / CaskaydiaCove /
-Hack Nerd Fonts. **The repo ships no font files at all** (no `.woff2`/`.ttf`/
-`.otf`, no `@font-face` in `src/`) — the app itself relies on those fonts being
-installed on the developer's machine and otherwise falls through its own stack
-to `ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace`.
-
-So there is nothing to wire into `cfg.extraFonts`, and `runtimeFontPrefixes`
-does not apply either (no font service serves them). Mono text in the design
-system renders in the system monospace fallback — the same thing the app does
-on a machine without Nerd Fonts. `[FONT_MISSING]` is therefore expected and
-permanent unless the repo starts shipping webfonts.
 
 ## Source bug found during the sync (not a sync defect)
 

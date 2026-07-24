@@ -37,29 +37,33 @@ const selectorPresent = (cls) => {
 };
 
 // Split every backticked span on whitespace so multi-class snippets like
-// `flex gap-2 px-3 py-1.5` are checked token by token, not skipped because the
-// span as a whole does not look like one class.
+// `flex gap-2 px-3 py-2` are checked token by token, not skipped because the
+// span as a whole does not look like one class. Utility prefixes include the
+// hyphen-less singletons (flex, grid, block, …) — the earlier hyphen-required
+// form waved `flex` through unchecked.
 const UTILITY_TOKEN =
-	/^(?:[a-z-]+:)*(?:bg|text|border|ring|rounded|font|fill|stroke|gap|p|px|py|pt|pb|pl|pr|m|mx|my|mt|mb|w|h|max-w|min-w|max-h|size|flex|grid|items|justify|self|gap-x|gap-y|space-x|space-y|opacity|shadow|z|leading|tracking)-[A-Za-z0-9[\]./%-]+$/;
+	/^(?:[a-z-]+:)*(?:(?:bg|text|border|ring|rounded|font|fill|stroke|gap|gap-x|gap-y|p|px|py|pt|pb|pl|pr|m|mx|my|mt|mb|w|h|max-w|min-w|max-h|size|items|justify|self|space-x|space-y|opacity|shadow|z|leading|tracking|grid-cols|grid-rows)-[A-Za-z0-9[\]./%-]+|flex|grid|block|inline|inline-flex|hidden|relative|absolute|fixed|sticky|truncate)$/;
 const claimedUtilities = [
 	...new Set([...md.matchAll(/`([^`\n]+)`/g)].flatMap((m) => m[1].split(/\s+/)).filter((t) => UTILITY_TOKEN.test(t))),
 ].filter((c) => !COUNTEREXAMPLES.has(c));
 
-const componentDirs = new Set(
-	existsSync(join(OUT, "components"))
-		? readdirSync(join(OUT, "components")).flatMap((g) => readdirSync(join(OUT, "components", g)))
-		: [],
+// Authoritative component list: the bundle's own `@ds-bundle` header carries
+// {"name": …} for every export the converter emitted. A word-boundary
+// substring scan of the 570 KB bundle body passed non-components like `React`,
+// `Provider` and `Error` (any capitalised word that appears anywhere), so parse
+// the metadata instead.
+const bundleHeader = bundle.match(/@ds-bundle:\s*(\{.*?\})\s*\*\//s)?.[1];
+const bundleComponents = new Set(
+	bundleHeader ? [...bundleHeader.matchAll(/"name":"([A-Za-z][A-Za-z0-9]*)"/g)].map((m) => m[1]) : [],
 );
+if (!bundleComponents.size) {
+	console.error("✗ could not parse the @ds-bundle component list from _ds_bundle.js");
+	process.exit(1);
+}
 const claimedComponents = [...new Set([...md.matchAll(/`([A-Z][A-Za-z]+)`/g)].map((m) => m[1]))];
 
 const missingUtilities = claimedUtilities.filter((c) => !selectorPresent(c));
-// A component counts as real if it has an emitted card directory or is an
-// export in the bundle (providers ship in the bundle without a card). Match on
-// a word boundary: a bare substring test passes `Card` off the back of
-// `CardHeader`, and would wave through any capitalised word that happens to
-// appear anywhere in a 570 KB bundle.
-const exportedInBundle = (name) => new RegExp(`\\b${name}\\b`).test(bundle);
-const missingComponents = claimedComponents.filter((c) => !componentDirs.has(c) && !exportedInBundle(c));
+const missingComponents = claimedComponents.filter((c) => !bundleComponents.has(c));
 
 // A colour utility whose declaration disagrees with its family is a trap:
 // e.g. a `text-*` utility resolving to a *background* token.
