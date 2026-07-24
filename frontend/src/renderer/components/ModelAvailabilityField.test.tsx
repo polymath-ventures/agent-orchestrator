@@ -425,6 +425,27 @@ describe("ModelAvailabilityField", () => {
 		expect(onChange).toHaveBeenCalledWith({ harness: "codex-fugu", model: "", effort: "xhigh" });
 	});
 
+	it("swaps visible per-field labels for aria-labels when fieldLabelsVisible is false", () => {
+		render(
+			<ModelAvailabilityField
+				id="worker-model"
+				label="Worker model and effort"
+				value={{ harness: "codex-fugu", model: "fugu", effort: "xhigh" }}
+				onChange={vi.fn()}
+				availability={availability}
+				showHarness
+				fieldLabelsVisible={false}
+			/>,
+		);
+
+		expect(screen.queryAllByText("Harness")).toHaveLength(0);
+		expect(screen.queryAllByText("Model")).toHaveLength(0);
+		expect(screen.queryAllByText("Effort")).toHaveLength(0);
+		expect(screen.getByLabelText("Harness")).toHaveValue("codex-fugu");
+		expect(screen.getByLabelText("Model")).toHaveValue("fugu");
+		expect(screen.getByLabelText("Effort")).toHaveValue("xhigh");
+	});
+
 	it("keeps a zero-row harness usable through its configured synthetic pin", () => {
 		const zeroRowAvailability: AgentModelAvailabilityResponse = {
 			...availability,
