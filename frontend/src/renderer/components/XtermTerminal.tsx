@@ -167,6 +167,22 @@ function terminalHasFocus(host: HTMLElement): boolean {
 	return !!activeElement && host.contains(activeElement);
 }
 
+// Whether a freshly-mounted pane should pull keyboard focus into itself. Every
+// TerminalPane call site renders only the target the user is currently looking
+// at and keys the mount by terminal handle, so the mount *is* the moment the
+// terminal becomes the thing being typed into — no separate "is this pane
+// active?" signal has to be plumbed in. The exception is an overlay that
+// already owns keyboard input: a dialog, or any text field, keeps it.
+function canTakeFocusOnMount(host: HTMLElement): boolean {
+	const activeElement = document.activeElement as HTMLElement | null;
+	if (!activeElement || activeElement === document.body) return true;
+	if (terminalHasFocus(host)) return true;
+	if (activeElement.closest("[role='dialog'], [role='alertdialog']")) return false;
+	if (activeElement.isContentEditable) return false;
+	const tag = activeElement.tagName;
+	return tag !== "INPUT" && tag !== "TEXTAREA" && tag !== "SELECT";
+}
+
 type XtermInternal = Terminal & {
 	_core?: {
 		element?: HTMLElement;
@@ -395,6 +411,12 @@ export function XtermTerminal(props: XtermTerminalProps) {
 				// Terminal is being torn down or its hidden textarea is unavailable.
 			}
 		};
+		// Switching to the terminals screen (or to another shell tab, which remounts
+		// this component) must leave the user typing into the shell, not into the
+		// nav control they just clicked — xterm reads keys through a hidden helper
+		// textarea, so without this the pane renders attached but deaf until a
+		// second click lands inside it.
+		if (canTakeFocusOnMount(host)) focusTerminal();
 		contextMenuActionsRef.current = {
 			clear: () => {
 				term.clear();
