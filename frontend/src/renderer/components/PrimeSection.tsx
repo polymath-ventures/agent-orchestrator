@@ -5,7 +5,7 @@ import type { components } from "../../api/schema";
 import { agentsQueryOptions } from "../hooks/useAgentsQuery";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { useModelAvailabilityQuery, useRefreshModelAvailability } from "../hooks/useModelAvailabilityQuery";
-import { filterModelAvailabilityToSelectableAgents } from "../lib/agent-selection";
+import { filterModelAvailabilityToSelectableAgents, modelAvailabilityFromAgentInventory } from "../lib/agent-selection";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { ModelAvailabilityField, type ModelSelection } from "./ModelAvailabilityField";
 import { Button } from "./ui/button";
@@ -84,8 +84,14 @@ export function PrimeSection() {
 		model: form.agentConfig?.model ?? "",
 		effort: form.agentConfig?.effort ?? "",
 	};
-	const modelAvailability = filterModelAvailabilityToSelectableAgents(modelAvailabilityQuery.data, agentsQuery.data, {
+	const inventoryModelAvailability = modelAvailabilityFromAgentInventory(agentsQuery.data, {
 		current: modelSelection.harness,
+		requireAuthorized: true,
+	});
+	const effectiveModelAvailability = modelAvailabilityQuery.data ?? inventoryModelAvailability;
+	const modelAvailability = filterModelAvailabilityToSelectableAgents(effectiveModelAvailability, agentsQuery.data, {
+		current: modelSelection.harness,
+		requireAuthorized: true,
 	});
 	const updateModelSelection = (selection: ModelSelection) =>
 		setForm((f) => ({

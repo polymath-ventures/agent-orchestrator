@@ -132,6 +132,60 @@ describe("shared agent/model selection helpers", () => {
 		});
 	});
 
+	it("can require authorized inventory while preserving the current saved harness", () => {
+		const filtered = filterModelAvailabilityToSelectableAgents(
+			{
+				...availability,
+				harnesses: [
+					...availability.harnesses,
+					{
+						id: "cursor",
+						label: "Cursor",
+						reviewerCapable: false,
+						catalogSource: "none",
+						catalogVerified: false,
+						models: [],
+					},
+				],
+			},
+			{
+				supported: [
+					{ id: "claude-code", label: "Claude Code", reviewerCapable: true },
+					{ id: "cursor", label: "Cursor", reviewerCapable: false },
+					{ id: "opencode", label: "OpenCode", reviewerCapable: true },
+				],
+				installed: [
+					{ id: "claude-code", label: "Claude Code", authStatus: "authorized", reviewerCapable: true },
+					{ id: "cursor", label: "Cursor", authStatus: "unauthorized", reviewerCapable: false },
+				],
+				authorized: [{ id: "claude-code", label: "Claude Code", authStatus: "authorized", reviewerCapable: true }],
+			},
+			{ current: "opencode", requireAuthorized: true },
+		);
+
+		expect(filtered?.harnesses.map((harness) => harness.id)).toEqual(["claude-code", "opencode"]);
+		expect(filtered?.harnesses.some((harness) => harness.id === "cursor")).toBe(false);
+	});
+
+	it("can build model fallback rows from authorized inventory only", () => {
+		const fallback = modelAvailabilityFromAgentInventory(
+			{
+				supported: [
+					{ id: "codex", label: "Codex", reviewerCapable: true },
+					{ id: "cursor", label: "Cursor", reviewerCapable: false },
+				],
+				installed: [
+					{ id: "codex", label: "Codex", authStatus: "authorized", reviewerCapable: true },
+					{ id: "cursor", label: "Cursor", authStatus: "unauthorized", reviewerCapable: false },
+				],
+				authorized: [{ id: "codex", label: "Codex", authStatus: "authorized", reviewerCapable: true }],
+			},
+			{ requireAuthorized: true },
+		);
+
+		expect(fallback?.harnesses.map((harness) => harness.id)).toEqual(["codex"]);
+	});
+
 	it("keeps model availability unchanged while the agent inventory is still unknown", () => {
 		expect(filterModelAvailabilityToSelectableAgents(availability, undefined)).toBe(availability);
 	});

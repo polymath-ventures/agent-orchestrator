@@ -4,6 +4,7 @@ import type { components } from "../../api/schema";
 import { useAgentsQuery } from "../hooks/useAgentsQuery";
 import { useMetricsQuery } from "../hooks/useMetricsQuery";
 import { probeQuotaMutationKey, useProbeQuota } from "../hooks/useProbeQuota";
+import { agentDisplayLabel } from "../lib/agent-selection";
 import { formatTimeCompact } from "../lib/format-time";
 import { useUiStore } from "../stores/ui-store";
 import { cn } from "../lib/utils";
@@ -37,8 +38,7 @@ export function QuotaPanel() {
 	if (statuses.length === 0) return null;
 
 	const labelFor = (harness: string): string => {
-		const inventory = [...(agents.data?.installed ?? []), ...(agents.data?.supported ?? [])];
-		return inventory.find((agent) => agent.id === harness)?.label ?? harness;
+		return agentDisplayLabel(agents.data, undefined, harness);
 	};
 
 	// The spinner is a local best-effort hint on the clicked control; `busy` (above)

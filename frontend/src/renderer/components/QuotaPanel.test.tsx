@@ -119,6 +119,38 @@ describe("QuotaPanel", () => {
 		expect(screen.getByText("12%")).toBeInTheDocument();
 	});
 
+	it("uses the shared agent label lookup for quota harness names", async () => {
+		getMock.mockImplementation((url: string) => {
+			if (url === "/api/v1/agents") {
+				return Promise.resolve({
+					data: {
+						supported: [{ id: "codex", label: "Codex Supported" }],
+						installed: [{ id: "codex", label: "Codex Installed" }],
+						authorized: [{ id: "codex", label: "Codex Authorized" }],
+					},
+					error: undefined,
+				});
+			}
+			if (url === "/api/v1/metrics") {
+				return Promise.resolve({
+					data: {
+						history: [],
+						latest: { quotas: [] },
+						probeStatuses: [{ harness: "codex", state: "not_probed", hasData: false }],
+					},
+					error: undefined,
+					response: { status: 200 },
+				});
+			}
+			return Promise.resolve({ data: undefined, error: undefined, response: { status: 200 } });
+		});
+
+		renderWithClient(<QuotaPanel />);
+
+		expect(await screen.findByText("Codex Authorized")).toBeInTheDocument();
+		expect(screen.queryByText("Codex Installed")).not.toBeInTheDocument();
+	});
+
 	it("names the headline window and renders a dated reset (weekday, month, date, time) — not a bare clock time", async () => {
 		seed({
 			probeStatuses: [

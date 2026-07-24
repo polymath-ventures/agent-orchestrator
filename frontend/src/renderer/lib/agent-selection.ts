@@ -15,6 +15,7 @@ export type AgentSelectionOptions = {
 	current?: string;
 	currentLabel?: string;
 	includeDefault?: AgentInfo;
+	requireAuthorized?: boolean;
 	reviewerOnly?: boolean;
 };
 
@@ -32,6 +33,7 @@ export function selectableAgentCatalog(
 	const allows = (id: string) => {
 		if (options.includeDefault?.id === id) return true;
 		const info = installedByID.get(id) ?? authorizedByID.get(id) ?? supportedByID.get(id);
+		if (options.requireAuthorized && id !== options.current && !authorizedByID.has(id)) return false;
 		if (options.reviewerOnly && !info?.reviewerCapable && id !== options.current) return false;
 		return selectableIDs.has(id);
 	};
@@ -63,9 +65,10 @@ export function selectableAgentCatalog(
 
 export function modelAvailabilityFromAgentInventory(
 	catalog: AgentInventory | undefined,
+	options: AgentSelectionOptions = {},
 ): AgentModelAvailabilityResponse | undefined {
 	const agentsByID = new Map<string, AgentInfo>();
-	for (const agent of selectableAgentCatalog(catalog).supported ?? []) {
+	for (const agent of selectableAgentCatalog(catalog, options).supported ?? []) {
 		agentsByID.set(agent.id, agent);
 	}
 	if (agentsByID.size === 0) return undefined;
@@ -88,7 +91,7 @@ export function modelAvailabilityFromAgentInventory(
 export function filterModelAvailabilityToSelectableAgents(
 	availability: AgentModelAvailabilityResponse | undefined,
 	catalog: AgentInventory | undefined,
-	options: Pick<AgentSelectionOptions, "current" | "currentLabel" | "reviewerOnly"> = {},
+	options: Pick<AgentSelectionOptions, "current" | "currentLabel" | "requireAuthorized" | "reviewerOnly"> = {},
 ): AgentModelAvailabilityResponse | undefined {
 	if (!availability) return undefined;
 	if (!catalog) return availability;
