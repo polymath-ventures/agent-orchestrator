@@ -1399,7 +1399,24 @@ func (m *Manager) RetireForReplacement(ctx context.Context, id domain.SessionID)
 	if !ok || rec.IsTerminated {
 		return nil
 	}
-	if rec.Metadata.WorkspacePath == "" || rec.Metadata.Branch == "" {
+	// A workspace is destroyed only by the session that still owns it. A role
+	// row can share its canonical path/branch with a live replacement, and
+	// retiring the older row must not tear down the worktree the newer one is
+	// running in. Its own runtime is still reaped and the row still terminates —
+	// only the shared workspace is spared.
+	workspaceOwnedElsewhere := false
+	if rec.Metadata.WorkspacePath != "" || rec.Metadata.Branch != "" {
+		live, liveErr := m.liveSessions(ctx)
+		if liveErr != nil {
+			return fmt.Errorf("retire replacement %s: %w", id, liveErr)
+		}
+		if owner, inUse := workspaceOwnedByLiveSession(rec, live); inUse {
+			m.logger.Info("retire replacement: workspace still owned by a live session; preserving",
+				"sessionID", rec.ID, "path", rec.Metadata.WorkspacePath, "owner", owner)
+			workspaceOwnedElsewhere = true
+		}
+	}
+	if rec.Metadata.WorkspacePath == "" || rec.Metadata.Branch == "" || workspaceOwnedElsewhere {
 		if err := m.store.DeleteSessionWorktrees(ctx, rec.ID); err != nil {
 			return fmt.Errorf("retire replacement %s: clear restore markers: %w", id, err)
 		}
@@ -2504,6 +2521,14 @@ func (m *Manager) Cleanup(ctx context.Context, project domain.ProjectID) (Cleanu
 	if err != nil {
 		return CleanupResult{}, fmt.Errorf("cleanup %s: %w", project, err)
 	}
+	// Resolved once for the whole pass: a workspace is destroyed only by the
+	// session that still owns it. Role workspaces and role branches are
+	// canonical and therefore shared across successive role rows, so a
+	// terminated row routinely points at the live replacement's worktree.
+	live, err := m.liveSessions(ctx)
+	if err != nil {
+		return CleanupResult{}, fmt.Errorf("cleanup %s: %w", project, err)
+	}
 	result := CleanupResult{Cleaned: make([]domain.SessionID, 0, len(recs)), Skipped: []CleanupSkip{}}
 	for _, rec := range recs {
 		if !rec.IsTerminated {
@@ -2512,6 +2537,12 @@ func (m *Manager) Cleanup(ctx context.Context, project domain.ProjectID) (Cleanu
 		ws := workspaceInfo(rec)
 		if ws.Path == "" {
 			m.cleanupSystemPromptDir(rec.ID)
+			continue
+		}
+		if owner, inUse := workspaceOwnedByLiveSession(rec, live); inUse {
+			m.logger.Info("cleanup: workspace still owned by a live session; preserving",
+				"sessionID", rec.ID, "path", ws.Path, "owner", owner)
+			result.Skipped = append(result.Skipped, CleanupSkip{SessionID: rec.ID, Reason: skipReasonWorkspaceInUse})
 			continue
 		}
 		if h := runtimeHandle(rec.Metadata); h.ID != "" {
