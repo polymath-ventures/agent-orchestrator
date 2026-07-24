@@ -1347,6 +1347,15 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 	// error out here before the runtime is destroyed and the row terminated —
 	// leaving the old process alive, which is the opposite of what Kill promises.
 	if killWorkspaceOwnedElsewhere {
+		// Nothing is torn down here, and the restore markers are still cleared
+		// below: keeping them would let RestoreAll resurrect this killed session
+		// into the worktree the live replacement is using, which is worse than
+		// the residue. Log the preserved path so an operator can reclaim any
+		// multi-repo child that the live owner does not actually cover
+		// (tracked separately; it requires a stale child under a live root,
+		// which canonical role layouts make contrived).
+		m.logger.Warn("kill: workspace preserved for a live owner; restore markers cleared",
+			"sessionID", rec.ID, "path", ws.Path, "branch", rec.Metadata.Branch)
 		workspaceProject = false
 	} else if rows, ok, rowErr := m.workspaceProjectRows(ctx, rec); rowErr != nil {
 		return false, fmt.Errorf("kill %s: workspace rows: %w", id, rowErr)
