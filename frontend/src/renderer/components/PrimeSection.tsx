@@ -109,10 +109,10 @@ export function PrimeSection() {
 				<div className="flex items-center justify-between gap-3 rounded-md border border-border px-3 py-2">
 					<div className="min-w-0">
 						<label htmlFor="prime-enabled" className="block text-control text-foreground">
-							Enable fleet Prime
+							Enable Prime
 						</label>
 						<p className="mt-0.5 text-xs leading-row text-muted-foreground">
-							{form.enabled ? "Prime will be supervised globally." : "Prime is disabled globally."}
+							{form.enabled ? "Prime supervises the fleet globally." : "Prime is disabled globally."}
 						</p>
 					</div>
 					<Switch

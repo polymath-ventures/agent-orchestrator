@@ -114,7 +114,7 @@ describe("PrimeSection", () => {
 	it("loads global Prime settings with harness, model, minutes, and instructions fields", async () => {
 		renderPrimeSection();
 
-		expect(await screen.findByLabelText("Enable fleet Prime")).not.toBeChecked();
+		expect(await screen.findByLabelText("Enable Prime")).not.toBeChecked();
 		expect(screen.getByLabelText("Display name")).toHaveValue("AO Prime");
 		await waitFor(() => expect(screen.getByLabelText("Harness")).toHaveValue("codex"));
 		expect(screen.getByLabelText("Model")).toHaveValue("gpt-5-codex");
@@ -129,7 +129,7 @@ describe("PrimeSection", () => {
 	it("groups instruction fields after the model selector", async () => {
 		renderPrimeSection();
 
-		await screen.findByLabelText("Enable fleet Prime");
+		await screen.findByLabelText("Enable Prime");
 		const displayName = screen.getByText("Display name");
 		const wakeInterval = screen.getByText("Wake interval minutes");
 		const modelSection = screen.getByText("Prime model and effort");
@@ -254,7 +254,7 @@ describe("PrimeSection", () => {
 		const user = userEvent.setup();
 		renderPrimeSection();
 
-		await user.click(await screen.findByLabelText("Enable fleet Prime"));
+		await user.click(await screen.findByLabelText("Enable Prime"));
 		await user.clear(screen.getByLabelText("Display name"));
 		await user.type(screen.getByLabelText("Display name"), "Fleet Lead");
 		await user.clear(screen.getByLabelText("Wake interval minutes"));
