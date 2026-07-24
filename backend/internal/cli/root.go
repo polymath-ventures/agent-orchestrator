@@ -200,6 +200,7 @@ func NewRootCommand(deps Deps) *cobra.Command {
 	root.AddCommand(newResumeCommand(ctx))
 	root.AddCommand(newSessionCommand(ctx))
 	root.AddCommand(newOrchestratorCommand(ctx))
+	root.AddCommand(newPRCommand(ctx))
 	root.AddCommand(newReviewCommand(ctx))
 	root.AddCommand(newNotifyCommand(ctx))
 	root.AddCommand(newCompletionCommand())
@@ -277,6 +278,15 @@ func usageErrorCommand(args []string) (string, string) {
 		command = tokens[len(tokens)-1]
 	}
 	return command, commandPath
+}
+
+func usageArgs(validate cobra.PositionalArgs) cobra.PositionalArgs {
+	return func(cmd *cobra.Command, args []string) error {
+		if err := validate(cmd, args); err != nil {
+			return usageError{err}
+		}
+		return nil
+	}
 }
 
 func noArgs(cmd *cobra.Command, args []string) error {

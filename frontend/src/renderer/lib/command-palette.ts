@@ -56,10 +56,6 @@ export const commandGroupLabel: Record<CommandGroupId, string> = {
 	global: "Global",
 };
 
-function isSyntheticBranch(session: WorkspaceSession): boolean {
-	return session.branch === `session/${session.id}`;
-}
-
 type SessionCommandGroup = Extract<CommandGroupId, "attention" | "sessions">;
 
 const SESSION_ID_PREFIX: Record<SessionCommandGroup, string> = { attention: "attention", sessions: "session" };
@@ -74,7 +70,7 @@ function sessionCommand(
 		group,
 		title: session.title,
 		subtitle: workspace.name,
-		keywords: [workspace.name, session.branch, session.issueId ?? ""],
+		keywords: [workspace.name, session.branch ?? "", session.issueId ?? ""],
 		action: {
 			kind: "navigate",
 			target: {
@@ -143,14 +139,15 @@ export function buildCommands(ctx: CommandPaletteContext): CommandItem[] {
 		});
 	}
 
-	if (currentSession && currentSession.kind !== "orchestrator" && !isSyntheticBranch(currentSession)) {
+	const currentBranch = currentSession?.branch;
+	if (currentSession && currentBranch && currentSession.kind !== "orchestrator") {
 		items.push({
 			id: "current-copy-branch",
 			group: "current",
 			title: "Copy branch name",
-			subtitle: currentSession.branch,
-			keywords: ["branch", "git", currentSession.branch, currentSession.title],
-			action: { kind: "copy-branch", branch: currentSession.branch },
+			subtitle: currentBranch,
+			keywords: ["branch", "git", currentBranch, currentSession.title],
+			action: { kind: "copy-branch", branch: currentBranch },
 		});
 	}
 
@@ -202,7 +199,7 @@ export function buildCommands(ctx: CommandPaletteContext): CommandItem[] {
 						String(pr.number),
 						pr.url,
 						session.title,
-						session.branch,
+						session.branch ?? "",
 						workspace.name,
 						pr.state,
 					],

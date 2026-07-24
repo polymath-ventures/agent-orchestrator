@@ -127,6 +127,7 @@ type PRReview struct {
 	URL         string
 	IsBot       int64
 	SubmittedAt time.Time
+	Body        string
 }
 
 type PRReviewThread struct {
@@ -197,33 +198,45 @@ type ReviewRun struct {
 }
 
 type Session struct {
-	ID               domain.SessionID
-	ProjectID        domain.ProjectID
-	Num              int64
-	IssueID          domain.IssueID
-	Kind             domain.SessionKind
-	Harness          domain.AgentHarness
-	ActivityState    domain.ActivityState
-	ActivityLastAt   time.Time
-	IsTerminated     bool
-	Branch           string
-	WorkspacePath    string
-	RuntimeHandleID  string
-	AgentSessionID   string
-	Prompt           string
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
-	DisplayName      string
-	FirstSignalAt    sql.NullTime
-	PreviewURL       string
-	PreviewRevision  int64
-	Model            string
-	MixSelected      bool
-	RuntimeToken     string
-	LaunchCommand    string
-	Effort           string
-	PromptPolicyHash string
-	MixBucketModel   string
+	ID                domain.SessionID
+	ProjectID         domain.ProjectID
+	Num               int64
+	IssueID           domain.IssueID
+	Kind              domain.SessionKind
+	Harness           domain.AgentHarness
+	ActivityState     domain.ActivityState
+	ActivityLastAt    time.Time
+	IsTerminated      bool
+	Branch            string
+	WorkspacePath     string
+	RuntimeHandleID   string
+	AgentSessionID    string
+	Prompt            string
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
+	DisplayName       string
+	FirstSignalAt     sql.NullTime
+	PreviewURL        string
+	PreviewRevision   int64
+	Model             string
+	MixSelected       bool
+	RuntimeToken      string
+	LaunchCommand     string
+	Effort            string
+	PromptPolicyHash  string
+	MixBucketModel    string
+	CleanupGeneration int64
+}
+
+type SessionCleanupFact struct {
+	SessionID            domain.SessionID
+	SessionGeneration    int64
+	RuntimeReleasedAt    sql.NullTime
+	WorkspaceDisposition string
+	AttemptCount         int64
+	LastAttemptAt        sql.NullTime
+	NextAttemptAt        sql.NullTime
+	FailureCode          string
 }
 
 type SessionWorktree struct {
@@ -236,6 +249,15 @@ type SessionWorktree struct {
 	State        string
 }
 
+type ShellTerminal struct {
+	HandleID   string
+	ProjectID  *domain.ProjectID
+	WorkingDir string
+	Title      string
+	AppRunID   string
+	CreatedAt  time.Time
+}
+
 type TelemetryEvent struct {
 	ID          string
 	OccurredAt  time.Time
@@ -246,6 +268,16 @@ type TelemetryEvent struct {
 	SessionID   sql.NullString
 	RequestID   string
 	PayloadJson string
+}
+
+type WorkerIdleEvent struct {
+	ID            string
+	ProjectID     domain.ProjectID
+	WorkerID      domain.SessionID
+	TransitionAt  time.Time
+	DeliveryState string
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
 }
 
 type WorkspaceRepo struct {

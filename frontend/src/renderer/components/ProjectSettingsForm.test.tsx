@@ -142,6 +142,7 @@ function mockProject(project: Record<string, unknown>) {
 	getMock.mockImplementation(async (path: string) => {
 		if (path === "/api/v1/agents") return agentCatalogResponse;
 		if (path === "/api/v1/agents/models") return modelCatalogResponse;
+		if (path.includes("/roles/") && path.endsWith("/prompt")) return { data: { prompt: "" }, error: undefined };
 		return {
 			data: {
 				status: "ok",
@@ -165,10 +166,40 @@ beforeEach(() => {
 });
 
 describe("ProjectSettingsForm", () => {
+	it("atomically saves the project display name and config without changing its stable ID", async () => {
+		mockProject({
+			id: "tg_content_factory_5863f66be3",
+			name: "tg_content_factory_5863f66be3",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "",
+			defaultBranch: "main",
+			config: {
+				worker: { agent: "codex" },
+				orchestrator: { agent: "claude-code" },
+			},
+		});
+
+		renderSettings("tg_content_factory_5863f66be3");
+
+		const projectName = await screen.findByLabelText("Project name");
+		await userEvent.clear(projectName);
+		await userEvent.type(projectName, "TG Content Factory");
+		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
+		expect(putMock).toHaveBeenCalledWith("/api/v1/projects/{id}", {
+			params: { path: { id: "tg_content_factory_5863f66be3" } },
+			body: expect.objectContaining({ displayName: "TG Content Factory" }),
+		});
+		expect(screen.getByText("tg_content_factory_5863f66be3")).toBeInTheDocument();
+	});
+
 	it("loads the current project settings and saves the exposed fields without dropping hidden config", async () => {
 		mockProject({
 			id: "proj-1",
 			name: "Project One",
+			configETag: "etag-project-one",
 			kind: "single_repo",
 			path: "/repo/project-one",
 			repo: "git@github.com:acme/project-one.git",
@@ -244,9 +275,10 @@ describe("ProjectSettingsForm", () => {
 		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
 
 		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
-		expect(putMock).toHaveBeenCalledWith("/api/v1/projects/{id}/config", {
-			params: { path: { id: "proj-1" } },
+		expect(putMock).toHaveBeenCalledWith("/api/v1/projects/{id}", {
+			params: { path: { id: "proj-1" }, header: { "If-Match": "etag-project-one" } },
 			body: {
+				displayName: "Project One",
 				config: {
 					defaultBranch: "release",
 					sessionPrefix: "rel",
@@ -394,7 +426,7 @@ describe("ProjectSettingsForm", () => {
 		expect(await screen.findByText(/file is empty/)).toBeInTheDocument();
 	}, 20_000);
 
-	it("shows the daemon validation message when save fails", async () => {
+	it("shows the daemon validation message when the atomic settings save fails", async () => {
 		mockProject({
 			id: "proj-1",
 			name: "Project One",
@@ -414,11 +446,93 @@ describe("ProjectSettingsForm", () => {
 
 		renderSettings();
 
+		const projectName = await screen.findByLabelText("Project name");
+		await userEvent.clear(projectName);
+		await userEvent.type(projectName, "Updated Project");
 		await userEvent.click(await screen.findByRole("button", { name: "Save changes" }));
 
 		expect(await screen.findByText("invalid permissions")).toBeInTheDocument();
 		expect(screen.queryByText("Saved.")).not.toBeInTheDocument();
 		expect(postMock).not.toHaveBeenCalled();
+	});
+
+	it("rejects a blank project name before sending the settings update", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "",
+			defaultBranch: "main",
+			config: {
+				worker: { agent: "codex" },
+				orchestrator: { agent: "claude-code" },
+			},
+		});
+
+		renderSettings();
+
+		const projectName = await screen.findByLabelText("Project name");
+		await userEvent.clear(projectName);
+		await userEvent.type(projectName, "   ");
+		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+		expect(await screen.findByText("Project name is required.")).toBeInTheDocument();
+		expect(putMock).not.toHaveBeenCalled();
+	});
+
+	it("allows saving an unchanged legacy project name over the current display-name cap", async () => {
+		mockProject({
+			id: "tg_content_factory_5863f66be3",
+			name: "tg_content_factory_5863f66be3",
+			configETag: "etag-long-name",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "",
+			defaultBranch: "main",
+			config: {
+				worker: { agent: "codex" },
+				orchestrator: { agent: "claude-code" },
+			},
+		});
+
+		renderSettings("tg_content_factory_5863f66be3");
+
+		await userEvent.click(await screen.findByRole("button", { name: "Save changes" }));
+
+		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
+		expect(putMock).toHaveBeenCalledWith(
+			"/api/v1/projects/{id}",
+			expect.objectContaining({
+				params: { path: { id: "tg_content_factory_5863f66be3" }, header: { "If-Match": "etag-long-name" } },
+				body: expect.objectContaining({ displayName: "tg_content_factory_5863f66be3" }),
+			}),
+		);
+	});
+
+	it("rejects a changed project name over the current display-name cap before sending the settings update", async () => {
+		mockProject({
+			id: "tg_content_factory_5863f66be3",
+			name: "tg_content_factory_5863f66be3",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "",
+			defaultBranch: "main",
+			config: {
+				worker: { agent: "codex" },
+				orchestrator: { agent: "claude-code" },
+			},
+		});
+
+		renderSettings("tg_content_factory_5863f66be3");
+
+		const projectName = await screen.findByLabelText("Project name");
+		await userEvent.clear(projectName);
+		await userEvent.type(projectName, "changed_factory_5863f66be3");
+		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+		expect(await screen.findByText("Project name must be 20 characters or fewer.")).toBeInTheDocument();
+		expect(putMock).not.toHaveBeenCalled();
 	});
 
 	it("requires worker and orchestrator agents for existing projects missing role config", async () => {
@@ -446,6 +560,38 @@ describe("ProjectSettingsForm", () => {
 
 		expect(await screen.findAllByText("Worker and orchestrator agents are required.")).toHaveLength(2);
 		expect(putMock).not.toHaveBeenCalled();
+	});
+
+	it("disables agent selectors while the initial agent catalog is loading", async () => {
+		getMock.mockImplementation(async (path: string) => {
+			if (path === "/api/v1/agents") {
+				return new Promise(() => {});
+			}
+			return {
+				data: {
+					status: "ok",
+					project: {
+						id: "proj-1",
+						name: "Project One",
+						kind: "single_repo",
+						path: "/repo/project-one",
+						repo: "",
+						defaultBranch: "main",
+						config: {
+							worker: { agent: "codex" },
+							orchestrator: { agent: "claude-code" },
+						},
+					},
+				},
+				error: undefined,
+			};
+		});
+
+		renderSettings();
+
+		expect(await screen.findByRole("combobox", { name: "Default worker agent" })).toBeDisabled();
+		expect(screen.getByRole("combobox", { name: "Default orchestrator agent" })).toBeDisabled();
+		expect(screen.getByRole("combobox", { name: "Default reviewer agent" })).toBeDisabled();
 	});
 
 	it("shows unknown-auth agents as selectable with a warning in project settings", async () => {
@@ -477,6 +623,65 @@ describe("ProjectSettingsForm", () => {
 			"KiroAuth unknown",
 		]);
 		expect(options[5]).not.toHaveAttribute("aria-disabled", "true");
+	});
+
+	it("shows scratch identity and saves only scratch-supported settings", async () => {
+		mockProject({
+			id: "scratch",
+			name: "Scratch",
+			kind: "scratch",
+			path: "/home/me/.ao/scratch/default",
+			repo: "",
+			defaultBranch: "",
+			config: {
+				defaultBranch: "main",
+				sessionPrefix: "ao",
+				env: { FOO: "bar" },
+				symlinks: [".env"],
+				postCreate: ["npm install"],
+				agentRules: "keep work small",
+				worker: { agent: "codex" },
+				orchestrator: { agent: "claude-code" },
+				agentConfig: {
+					model: "gpt-5-codex",
+					permissions: "auto",
+				},
+				reviewers: [{ harness: "codex" }],
+				trackerIntake: { enabled: true, provider: "github", assignee: "octocat" },
+			},
+		});
+
+		renderSettings("scratch");
+
+		expect((await screen.findByText("kind")).closest("div")).toHaveTextContent("scratch");
+		expect(screen.queryByLabelText("Default branch")).not.toBeInTheDocument();
+		expect(screen.queryByLabelText("Session prefix")).not.toBeInTheDocument();
+		expect(screen.queryByText("Reviewers")).not.toBeInTheDocument();
+		expect(screen.queryByText("Tracker intake")).not.toBeInTheDocument();
+
+		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
+		expect(putMock).toHaveBeenCalledWith("/api/v1/projects/{id}", {
+			params: { path: { id: "scratch" } },
+			body: {
+				displayName: "Scratch",
+				config: {
+					env: { FOO: "bar" },
+					sessionPrefix: "ao",
+					symlinks: [".env"],
+					postCreate: ["npm install"],
+					agentRules: "keep work small",
+					worker: { agent: "codex" },
+					orchestrator: { agent: "claude-code" },
+					agentConfig: {
+						model: "gpt-5-codex",
+						permissions: "auto",
+					},
+				},
+			},
+		});
+		expect(postMock).not.toHaveBeenCalled();
 	});
 
 	it("saves GitHub tracker intake settings, deriving the repo from the project's git origin", async () => {
@@ -1050,9 +1255,11 @@ describe("ProjectSettingsForm", () => {
 		renderSettings();
 
 		expect(await screen.findByRole("combobox", { name: "Project model harness" })).toHaveTextContent("codex");
-		expect(document.getElementById("project-model-model")).toHaveValue("gpt-5-codex");
-		await userEvent.clear(document.getElementById("project-model-model")!);
-		await userEvent.type(document.getElementById("project-model-model")!, "gpt-5.1-codex");
+		const modelInput = document.getElementById("project-model-model")!;
+		expect(modelInput).toHaveValue("gpt-5-codex");
+		await waitFor(() => expect(modelInput).not.toBeDisabled());
+		await userEvent.clear(modelInput);
+		await userEvent.type(modelInput, "gpt-5.1-codex");
 
 		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
 
@@ -1090,8 +1297,10 @@ describe("ProjectSettingsForm", () => {
 		expect(await screen.findByRole("combobox", { name: "Project model harness" })).toHaveTextContent("claude-code");
 		const projectHarness = screen.getByRole("combobox", { name: "Project model harness" });
 		await chooseOption(projectHarness, "Codex");
-		expect(document.getElementById("project-model-model")).toHaveValue("gpt-5-codex");
-		await userEvent.clear(document.getElementById("project-model-model")!);
+		const modelInput = document.getElementById("project-model-model")!;
+		expect(modelInput).toHaveValue("gpt-5-codex");
+		await waitFor(() => expect(modelInput).not.toBeDisabled());
+		await userEvent.clear(modelInput);
 
 		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
 

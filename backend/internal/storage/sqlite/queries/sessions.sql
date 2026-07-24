@@ -7,8 +7,8 @@ INSERT INTO sessions (
     activity_state, activity_last_at, first_signal_at, is_terminated,
     branch, workspace_path, runtime_handle_id, agent_session_id, prompt,
     preview_url, preview_revision, model, effort, mix_selected, mix_bucket_model, runtime_token, launch_command,
-    prompt_policy_hash, created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+    prompt_policy_hash, cleanup_generation, created_at, updated_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 -- name: UpdateSession :exec
 UPDATE sessions SET
@@ -16,7 +16,7 @@ UPDATE sessions SET
     activity_state = ?, activity_last_at = ?, first_signal_at = ?, is_terminated = ?,
     branch = ?, workspace_path = ?, runtime_handle_id = ?, agent_session_id = ?, prompt = ?,
     preview_url = ?, preview_revision = ?, model = ?, effort = ?, mix_selected = ?, mix_bucket_model = ?, runtime_token = ?,
-    launch_command = ?, prompt_policy_hash = ?, updated_at = ?
+    launch_command = ?, prompt_policy_hash = ?, cleanup_generation = ?, updated_at = ?
 WHERE id = ?;
 
 -- name: GetSession :one
@@ -25,7 +25,7 @@ SELECT id, COALESCE(project_id, '') AS project_id, num, issue_id, kind, harness,
        runtime_handle_id, agent_session_id, prompt, created_at, updated_at,
        display_name, first_signal_at, preview_url, preview_revision, model,
        mix_selected, runtime_token, launch_command, effort, prompt_policy_hash,
-       mix_bucket_model
+       mix_bucket_model, cleanup_generation
 FROM sessions WHERE id = ?;
 
 -- name: ListSessionsByProject :many
@@ -34,7 +34,7 @@ SELECT id, COALESCE(project_id, '') AS project_id, num, issue_id, kind, harness,
        runtime_handle_id, agent_session_id, prompt, created_at, updated_at,
        display_name, first_signal_at, preview_url, preview_revision, model,
        mix_selected, runtime_token, launch_command, effort, prompt_policy_hash,
-       mix_bucket_model
+       mix_bucket_model, cleanup_generation
 FROM sessions WHERE project_id = ? ORDER BY num;
 
 -- name: ListAllSessions :many
@@ -43,7 +43,7 @@ SELECT id, COALESCE(project_id, '') AS project_id, num, issue_id, kind, harness,
        runtime_handle_id, agent_session_id, prompt, created_at, updated_at,
        display_name, first_signal_at, preview_url, preview_revision, model,
        mix_selected, runtime_token, launch_command, effort, prompt_policy_hash,
-       mix_bucket_model
+       mix_bucket_model, cleanup_generation
 FROM sessions ORDER BY COALESCE(project_id, ''), num;
 
 

@@ -26,13 +26,14 @@ const (
 // SessionMetadata is the typed, off-status metadata for a session: operational
 // handles and seed inputs used by Session Manager and reaper.
 type SessionMetadata struct {
-	Branch          string `json:"branch,omitempty"`
-	WorkspacePath   string `json:"workspacePath,omitempty"`
-	RuntimeHandleID string `json:"runtimeHandleId,omitempty"`
-	RuntimeToken    string `json:"runtimeToken,omitempty"`
-	LaunchCommand   string `json:"launchCommand,omitempty"`
-	AgentSessionID  string `json:"agentSessionId,omitempty"`
-	Prompt          string `json:"prompt,omitempty"`
+	Branch            string `json:"branch,omitempty"`
+	WorkspacePath     string `json:"workspacePath,omitempty"`
+	WorkspaceRepoPath string `json:"workspaceRepoPath,omitempty"`
+	RuntimeHandleID   string `json:"runtimeHandleId,omitempty"`
+	RuntimeToken      string `json:"runtimeToken,omitempty"`
+	LaunchCommand     string `json:"launchCommand,omitempty"`
+	AgentSessionID    string `json:"agentSessionId,omitempty"`
+	Prompt            string `json:"prompt,omitempty"`
 	// PromptPolicyHash is the stable identity of the assembled system prompt
 	// policy the session received at spawn/restore time.
 	PromptPolicyHash string `json:"promptPolicyHash,omitempty"`
@@ -81,8 +82,14 @@ type SessionRecord struct {
 	FirstSignalAt time.Time       `json:"-"`
 	IsTerminated  bool            `json:"isTerminated"`
 	Metadata      SessionMetadata `json:"-"`
-	CreatedAt     time.Time       `json:"createdAt"`
-	UpdatedAt     time.Time       `json:"updatedAt"`
+	// CleanupGeneration is a monotonic counter bumped each time the session is
+	// un-terminated (spawn/restore). The terminal-resource reconciler stamps its
+	// durable cleanup facts with the generation they were written for so a
+	// finalize started under an earlier terminal episode cannot satisfy a later
+	// one. Internal fact, not part of the API read model.
+	CleanupGeneration int64     `json:"-"`
+	CreatedAt         time.Time `json:"createdAt"`
+	UpdatedAt         time.Time `json:"updatedAt"`
 }
 
 // Session is the read-model returned across the API boundary: a SessionRecord

@@ -1,13 +1,16 @@
 import { aoBridge } from "./bridge";
-import { getApiBaseUrl, setApiBaseUrl } from "./api-client";
+import { getApiBaseUrl, setApiBaseUrl, setApiDaemonStatus } from "./api-client";
 import { hasElectronBridge } from "./runtime-environment";
 import { parseDaemonProbe } from "../../shared/daemon-attach";
 import type { DaemonStatus } from "../../shared/daemon-status";
 
 export type { DaemonStatus };
 
+const isBrowserMode = import.meta.env.VITE_NO_ELECTRON === "1";
+
 export function applyDaemonStatus(nextStatus: DaemonStatus): void {
-	if (!hasElectronBridge()) {
+	setApiDaemonStatus(nextStatus);
+	if (isBrowserMode || !hasElectronBridge()) {
 		setApiBaseUrl("");
 		return;
 	}

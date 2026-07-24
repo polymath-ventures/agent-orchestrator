@@ -1,11 +1,7 @@
 // Package notification exposes read-only notification DTOs for REST controllers.
 package notification
 
-import (
-	"time"
-
-	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
-)
+import "github.com/aoagents/agent-orchestrator/backend/internal/domain"
 
 // TargetKind describes what a dashboard should navigate to for a notification.
 type TargetKind string
@@ -32,9 +28,26 @@ type Notification struct {
 	Target Target
 }
 
-// ListFilter controls unread notification listing.
+// ListStatus selects which stored notifications are returned.
+type ListStatus = domain.NotificationListStatus
+
+const (
+	// ListUnread returns only notifications that still need acknowledgement.
+	ListUnread = domain.NotificationListUnread
+	// ListAll returns both read and unread notifications.
+	ListAll = domain.NotificationListAll
+)
+
+// ListFilter controls paginated notification history.
 type ListFilter struct {
-	Limit    int
-	Before   time.Time
-	BeforeID string
+	Status ListStatus
+	Limit  int
+	Cursor string
+}
+
+// ListPage is one newest-first page of notification history.
+type ListPage struct {
+	Notifications []Notification
+	NextCursor    string
+	UnreadCount   int
 }

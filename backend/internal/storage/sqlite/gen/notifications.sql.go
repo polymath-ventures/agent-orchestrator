@@ -12,6 +12,19 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
+const countUnreadNotifications = `-- name: CountUnreadNotifications :one
+SELECT COUNT(*)
+FROM notifications
+WHERE status = 'unread'
+`
+
+func (q *Queries) CountUnreadNotifications(ctx context.Context) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countUnreadNotifications)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createNotification = `-- name: CreateNotification :one
 INSERT INTO notifications (
     id, session_id, project_id, pr_url, dedupe_key, type, title, body, status, created_at
@@ -91,16 +104,26 @@ func (q *Queries) GetUnreadNotificationByDedupe(ctx context.Context, arg GetUnre
 	return i, err
 }
 
-const listUnreadNotifications = `-- name: ListUnreadNotifications :many
+const listNotificationsPage = `-- name: ListNotificationsPage :many
 SELECT id, session_id, project_id, pr_url, dedupe_key, type, title, body, status, created_at
 FROM notifications
-WHERE status = 'unread'
+WHERE (
+    CAST(?1 AS TEXT) = ''
+    OR created_at < ?2
+    OR (created_at = ?2 AND id < CAST(?1 AS TEXT))
+  )
 ORDER BY created_at DESC, id DESC
-LIMIT ?
+LIMIT ?3
 `
 
-func (q *Queries) ListUnreadNotifications(ctx context.Context, limit int64) ([]Notification, error) {
-	rows, err := q.db.QueryContext(ctx, listUnreadNotifications, limit)
+type ListNotificationsPageParams struct {
+	BeforeID        string
+	BeforeCreatedAt time.Time
+	PageLimit       int64
+}
+
+func (q *Queries) ListNotificationsPage(ctx context.Context, arg ListNotificationsPageParams) ([]Notification, error) {
+	rows, err := q.db.QueryContext(ctx, listNotificationsPage, arg.BeforeID, arg.BeforeCreatedAt, arg.PageLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -133,29 +156,27 @@ func (q *Queries) ListUnreadNotifications(ctx context.Context, limit int64) ([]N
 	return items, nil
 }
 
-const listUnreadNotificationsBefore = `-- name: ListUnreadNotificationsBefore :many
+const listUnreadNotificationsPage = `-- name: ListUnreadNotificationsPage :many
 SELECT id, session_id, project_id, pr_url, dedupe_key, type, title, body, status, created_at
 FROM notifications
 WHERE status = 'unread'
-  AND (created_at < ? OR (created_at = ? AND id < ?))
+  AND (
+    CAST(?1 AS TEXT) = ''
+    OR created_at < ?2
+    OR (created_at = ?2 AND id < CAST(?1 AS TEXT))
+  )
 ORDER BY created_at DESC, id DESC
-LIMIT ?
+LIMIT ?3
 `
 
-type ListUnreadNotificationsBeforeParams struct {
-	CreatedAt   time.Time
-	CreatedAt_2 time.Time
-	ID          string
-	Limit       int64
+type ListUnreadNotificationsPageParams struct {
+	BeforeID        string
+	BeforeCreatedAt time.Time
+	PageLimit       int64
 }
 
-func (q *Queries) ListUnreadNotificationsBefore(ctx context.Context, arg ListUnreadNotificationsBeforeParams) ([]Notification, error) {
-	rows, err := q.db.QueryContext(ctx, listUnreadNotificationsBefore,
-		arg.CreatedAt,
-		arg.CreatedAt_2,
-		arg.ID,
-		arg.Limit,
-	)
+func (q *Queries) ListUnreadNotificationsPage(ctx context.Context, arg ListUnreadNotificationsPageParams) ([]Notification, error) {
+	rows, err := q.db.QueryContext(ctx, listUnreadNotificationsPage, arg.BeforeID, arg.BeforeCreatedAt, arg.PageLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -188,45 +209,18 @@ func (q *Queries) ListUnreadNotificationsBefore(ctx context.Context, arg ListUnr
 	return items, nil
 }
 
-const markAllNotificationsRead = `-- name: MarkAllNotificationsRead :many
+const markAllNotificationsRead = `-- name: MarkAllNotificationsRead :execrows
 UPDATE notifications
 SET status = 'read'
 WHERE status = 'unread'
-RETURNING id, session_id, project_id, pr_url, dedupe_key, type, title, body, status, created_at
 `
 
-func (q *Queries) MarkAllNotificationsRead(ctx context.Context) ([]Notification, error) {
-	rows, err := q.db.QueryContext(ctx, markAllNotificationsRead)
+func (q *Queries) MarkAllNotificationsRead(ctx context.Context) (int64, error) {
+	result, err := q.db.ExecContext(ctx, markAllNotificationsRead)
 	if err != nil {
-		return nil, err
+		return 0, err
 	}
-	defer rows.Close()
-	items := []Notification{}
-	for rows.Next() {
-		var i Notification
-		if err := rows.Scan(
-			&i.ID,
-			&i.SessionID,
-			&i.ProjectID,
-			&i.PRURL,
-			&i.DedupeKey,
-			&i.Type,
-			&i.Title,
-			&i.Body,
-			&i.Status,
-			&i.CreatedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
+	return result.RowsAffected()
 }
 
 const markNotificationRead = `-- name: MarkNotificationRead :one

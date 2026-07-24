@@ -9,6 +9,7 @@ import {
 	type PullRequestFacts,
 	type SessionKind,
 	toAgentProvider,
+	toProjectKind,
 	toSessionActivity,
 	toSessionStatus,
 	type WorkspaceSession,
@@ -38,7 +39,21 @@ function toPullRequestFacts(pr: components["schemas"]["SessionPRFacts"]): PullRe
 
 export const workspaceQueryKey = ["workspaces"] as const;
 
+// e2e seam (dev:web only): the Playwright fake-agent harness injects
+// `window.__aoFakeAgent` (see e2e/support/fake-bridge.ts) to drive a
+// deterministic, mutable session timeline off the SSE refetch path. Compiled
+// out of the packaged build — the packaged renderer never sets VITE_NO_ELECTRON
+// and always hits the real daemon.
+type FakeAgentSeam = { snapshot: () => WorkspaceSummary[] };
+
 async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
+	if (import.meta.env.VITE_NO_ELECTRON === "1") {
+		const fake =
+			typeof window !== "undefined"
+				? (window as unknown as { __aoFakeAgent?: FakeAgentSeam }).__aoFakeAgent
+				: undefined;
+		if (fake) return fake.snapshot();
+	}
 	if (!hasTrustedApiBaseUrl()) {
 		return [];
 	}
@@ -52,7 +67,7 @@ async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
 	const workspaces: WorkspaceSummary[] = (projectsData?.projects ?? []).map((project) => ({
 		id: project.id,
 		name: project.name,
-		kind: (project.kind === "workspace" ? "workspace" : "single_repo") satisfies ProjectKind,
+		kind: toProjectKind(project.kind) ?? ("single_repo" satisfies ProjectKind),
 		path: project.path,
 		orchestratorAgent: project.orchestratorAgent ? toAgentProvider(project.orchestratorAgent) : undefined,
 		paused: project.paused,
@@ -90,7 +105,7 @@ function toWorkspaceSession(
 		issueId: session.issueId,
 		provider: toAgentProvider(session.harness),
 		kind: toSessionKind(session.kind),
-		branch: session.branch ?? `session/${session.id}`,
+		branch: session.branch || undefined,
 		status: toSessionStatus(session.status, session.isTerminated),
 		createdAt: session.createdAt,
 		updatedAt: session.updatedAt,

@@ -535,23 +535,23 @@ type fakeSpawner struct {
 	failErrByIssue map[domain.IssueID]error
 }
 
-func (f *fakeSpawner) Spawn(_ context.Context, cfg ports.SpawnConfig) (domain.Session, error) {
+func (f *fakeSpawner) Spawn(_ context.Context, cfg ports.SpawnConfig) (domain.Session, int, int, error) {
 	f.calls = append(f.calls, cfg)
 	if f.failErrByIssue != nil {
 		if err := f.failErrByIssue[cfg.IssueID]; err != nil {
-			return domain.Session{}, err
+			return domain.Session{}, 0, 0, err
 		}
 	}
 	if cfg.IssueID == f.failIssue {
-		return domain.Session{}, errors.New("spawn failed")
+		return domain.Session{}, 0, 0, errors.New("spawn failed")
 	}
 	if f.capActive && cfg.IssueID == f.capIssue {
-		return domain.Session{}, fmt.Errorf("spawn: %w", sessionmanager.ErrWorkerConcurrencyCap)
+		return domain.Session{}, 0, 0, fmt.Errorf("spawn: %w", sessionmanager.ErrWorkerConcurrencyCap)
 	}
 	if f.pausedActive && cfg.IssueID == f.pausedIssue {
-		return domain.Session{}, fmt.Errorf("spawn: %w", sessionmanager.ErrProjectPaused)
+		return domain.Session{}, 0, 0, fmt.Errorf("spawn: %w", sessionmanager.ErrProjectPaused)
 	}
-	return domain.Session{SessionRecord: domain.SessionRecord{ID: domain.SessionID(string(cfg.ProjectID) + "-1"), ProjectID: cfg.ProjectID, IssueID: cfg.IssueID, Kind: cfg.Kind}}, nil
+	return domain.Session{SessionRecord: domain.SessionRecord{ID: domain.SessionID(string(cfg.ProjectID) + "-1"), ProjectID: cfg.ProjectID, IssueID: cfg.IssueID, Kind: cfg.Kind}}, len(cfg.Prompt), 0, nil
 }
 
 func discardLogger() *slog.Logger {

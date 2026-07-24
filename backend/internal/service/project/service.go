@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/agentconfig"
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
@@ -37,6 +38,10 @@ type Manager interface {
 
 	// InitializeRepository prepares a selected folder for project registration.
 	InitializeRepository(ctx context.Context, in InitializeRepositoryInput) (InitializeRepositoryResult, error)
+
+	// UpdateSettings atomically replaces a project's user-facing display name
+	// and per-project config, returning the updated read-model.
+	UpdateSettings(ctx context.Context, id domain.ProjectID, in UpdateSettingsInput) (Project, error)
 
 	// SetConfig replaces a project's per-project config, returning the updated
 	// read-model.
@@ -100,6 +105,8 @@ type Service struct {
 	// and replacing it.
 	configMu sync.Mutex
 }
+
+const maxDisplayNameLen = 20
 
 var _ Manager = (*Service)(nil)
 
@@ -579,6 +586,105 @@ func (m *Service) emitProjectAdded(row domain.ProjectRecord, firstProject bool) 
 	})
 }
 
+// UpdateSettings atomically replaces the project's stored display name and
+// config. Both values are validated before a single database update.
+func (m *Service) UpdateSettings(ctx context.Context, id domain.ProjectID, in UpdateSettingsInput) (Project, error) {
+	if err := validateProjectID(id); err != nil {
+		return Project{}, err
+	}
+	displayName := strings.TrimSpace(in.DisplayName)
+	if displayName == "" {
+		return Project{}, apierr.Invalid("DISPLAY_NAME_REQUIRED", "Display name is required", nil)
+	}
+	if err := validateProjectConfigStatic(in.Config); err != nil {
+		return Project{}, err
+	}
+	m.configMu.Lock()
+	defer m.configMu.Unlock()
+
+	row, ok, err := m.store.GetProject(ctx, string(id))
+	if err != nil {
+		return Project{}, apierr.Internal("PROJECT_LOAD_FAILED", "Failed to load project")
+	}
+	if !ok || !row.ArchivedAt.IsZero() {
+		return Project{}, apierr.NotFound("PROJECT_NOT_FOUND", "Unknown project")
+	}
+	if utf8.RuneCountInString(displayName) > maxDisplayNameLen && displayName != strings.TrimSpace(row.DisplayName) {
+		return Project{}, apierr.Invalid("DISPLAY_NAME_TOO_LONG", "Display name must be 20 characters or fewer", nil)
+	}
+	if in.IfMatch != "" && !row.Config.ETagMatches(in.IfMatch) {
+		return Project{}, apierr.Conflict(
+			"PROJECT_CONFIG_STALE",
+			"The project config changed since it was read; reload and reapply the edit.",
+			map[string]any{"currentConfigETag": row.Config.ETag()},
+		)
+	}
+	if err := m.validateLoadedProjectConfig(ctx, row.Kind.WithDefault(), in.Config); err != nil {
+		return Project{}, err
+	}
+	updated, err := m.store.UpdateProjectSettings(ctx, string(id), displayName, in.Config)
+	if err != nil {
+		return Project{}, apierr.Internal("PROJECT_SETTINGS_UPDATE_FAILED", "Failed to update project settings")
+	}
+	if !updated {
+		return Project{}, apierr.NotFound("PROJECT_NOT_FOUND", "Unknown project")
+	}
+	row.DisplayName = displayName
+	row.Config = in.Config
+	return m.projectFromRow(row), nil
+}
+
+// EnsureDefaultScratchProject seeds the built-in first-run scratch project when
+// the registry has no active projects. Archived rows do not suppress reseeding:
+// otherwise deleting Scratch can leave first-run users with no non-git path
+// back into AO.
+func (m *Service) EnsureDefaultScratchProject(ctx context.Context, scratchPath string) (Project, error) {
+	scratchPath = strings.TrimSpace(scratchPath)
+	if scratchPath == "" {
+		return Project{}, apierr.Invalid("INVALID_SCRATCH_PATH", "Scratch project path is required", nil)
+	}
+	abs, err := filepath.Abs(scratchPath)
+	if err != nil {
+		return Project{}, apierr.Invalid("INVALID_SCRATCH_PATH", "Scratch project path is invalid", nil)
+	}
+	path := filepath.Clean(abs)
+
+	m.addMu.Lock()
+	defer m.addMu.Unlock()
+
+	projects, err := m.store.ListProjects(ctx)
+	if err != nil {
+		return Project{}, apierr.Internal("PROJECT_LOAD_FAILED", "Failed to load projects")
+	}
+	if len(projects) != 0 {
+		return Project{}, nil
+	}
+
+	if err := os.MkdirAll(path, 0o750); err != nil {
+		return Project{}, apierr.Internal("SCRATCH_PROJECT_SEED_FAILED", "Failed to create scratch project directory")
+	}
+
+	cfg := domain.ProjectConfig{
+		Worker:       domain.RoleOverride{Harness: m.defaultHarness},
+		Orchestrator: domain.RoleOverride{Harness: m.defaultHarness},
+	}
+	if err := cfg.Validate(); err != nil {
+		return Project{}, apierr.Internal("SCRATCH_PROJECT_SEED_FAILED", "Default scratch project config is invalid")
+	}
+	row := domain.ProjectRecord{
+		ID:           "scratch",
+		Path:         path,
+		DisplayName:  "Scratch",
+		RegisteredAt: m.clock().UTC(),
+		Kind:         domain.ProjectKindScratch,
+		Config:       cfg,
+	}
+	if err := m.store.UpsertProject(ctx, row); err != nil {
+		return Project{}, apierr.Internal("SCRATCH_PROJECT_SEED_FAILED", "Failed to create scratch project")
+	}
+	return m.projectFromRow(row), nil
+}
+
 // SetConfig replaces the project's stored config. The typed config is validated
 // here so a bad value is rejected when set rather than surfacing at spawn.
 func (m *Service) SetConfig(ctx context.Context, id domain.ProjectID, in SetConfigInput) (Project, error) {
@@ -608,7 +714,7 @@ func (m *Service) SetConfig(ctx context.Context, id domain.ProjectID, in SetConf
 			map[string]any{"currentConfigETag": row.Config.ETag()},
 		)
 	}
-	if err := m.validateConfiguredModels(ctx, in.Config); err != nil {
+	if err := m.validateLoadedProjectConfig(ctx, row.Kind.WithDefault(), in.Config); err != nil {
 		return Project{}, err
 	}
 	row.Config = in.Config
@@ -638,6 +744,18 @@ func (m *Service) validateProjectConfig(ctx context.Context, cfg domain.ProjectC
 	return m.validateConfiguredModels(ctx, cfg)
 }
 
+func (m *Service) validateLoadedProjectConfig(ctx context.Context, kind domain.ProjectKind, cfg domain.ProjectConfig) error {
+	if err := m.validateConfiguredModels(ctx, cfg); err != nil {
+		return err
+	}
+	if kind == domain.ProjectKindScratch {
+		if err := validateScratchProjectConfig(cfg); err != nil {
+			return apierr.Invalid("INVALID_PROJECT_CONFIG", err.Error(), nil)
+		}
+	}
+	return nil
+}
+
 func validateProjectConfigStatic(cfg domain.ProjectConfig) error {
 	if err := cfg.Validate(); err != nil {
 		return apierr.Invalid("INVALID_PROJECT_CONFIG", err.Error(), nil)
@@ -647,6 +765,19 @@ func validateProjectConfigStatic(cfg domain.ProjectConfig) error {
 	}
 	if err := validateResolvedWorkerMix(cfg); err != nil {
 		return apierr.Invalid("INVALID_PROJECT_CONFIG", err.Error(), nil)
+	}
+	return nil
+}
+
+func validateScratchProjectConfig(cfg domain.ProjectConfig) error {
+	if strings.TrimSpace(cfg.DefaultBranch) != "" {
+		return errors.New("scratch projects do not support defaultBranch")
+	}
+	if cfg.TrackerIntake.Enabled {
+		return errors.New("scratch projects do not support tracker intake")
+	}
+	if len(cfg.Reviewers) > 0 {
+		return errors.New("scratch projects do not support reviewers")
 	}
 	return nil
 }
@@ -896,13 +1027,18 @@ func (m *Service) suggestID(ctx context.Context, base domain.ProjectID) domain.P
 }
 
 func (m *Service) projectFromRow(row domain.ProjectRecord) Project {
+	kind := row.Kind.WithDefault()
+	defaultBranch := row.Config.WithDefaults().DefaultBranch
+	if kind == domain.ProjectKindScratch {
+		defaultBranch = ""
+	}
 	p := Project{
 		ID:            domain.ProjectID(row.ID),
 		Name:          displayName(row),
-		Kind:          row.Kind.WithDefault(),
+		Kind:          kind,
 		Path:          row.Path,
 		Repo:          row.RepoOriginURL,
-		DefaultBranch: row.Config.WithDefaults().DefaultBranch,
+		DefaultBranch: defaultBranch,
 		Agent:         string(m.defaultHarness),
 		Paused:        row.Paused,
 	}

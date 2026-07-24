@@ -2,8 +2,28 @@ import type { Page, Route } from "@playwright/test";
 
 const now = "2026-07-20T18:00:00.000Z";
 
+type ShellTerminalFixture = {
+	handleId: string;
+	projectId?: string;
+	workingDir: string;
+	title: string;
+	createdAt: string;
+};
+
 export async function installBrowserModeApiFixtures(page: Page) {
-	const state = { muxConnections: 0 };
+	const state = {
+		muxConnections: 0,
+		shellSeq: 1,
+		shellTerminals: [
+			{
+				handleId: "shellterm-fixture-1",
+				projectId: "api-gateway",
+				workingDir: "/Users/me/api-gateway",
+				title: "api-gateway",
+				createdAt: now,
+			},
+		] as ShellTerminalFixture[],
+	};
 	await page.routeWebSocket(/\/mux$/, (ws) => {
 		state.muxConnections += 1;
 		ws.onMessage((message) => {
@@ -51,6 +71,29 @@ export async function installBrowserModeApiFixtures(page: Page) {
 	await page.route("**/api/v1/notifications", (route) => route.fulfill({ json: { notifications: [] } }));
 	await page.route("**/api/v1/attention/operator", (route) => route.fulfill({ json: { items: [] } }));
 	await page.route("**/api/v1/behavior/convergence", (route) => route.fulfill({ json: { items: [] } }));
+	await page.route("**/api/v1/shell-terminals", async (route) => {
+		if (route.request().method() === "GET") {
+			return route.fulfill({ json: { shellTerminals: state.shellTerminals } });
+		}
+		if (route.request().method() !== "POST") return route.fallback();
+		const body = (route.request().postDataJSON() ?? {}) as { projectId?: string };
+		state.shellSeq += 1;
+		const shellTerminal = {
+			handleId: `shellterm-fixture-${state.shellSeq}`,
+			projectId: body.projectId,
+			workingDir: `/Users/me/${body.projectId ?? ".ao"}`,
+			title: body.projectId ?? "shell",
+			createdAt: new Date().toISOString(),
+		};
+		state.shellTerminals = [...state.shellTerminals, shellTerminal];
+		return route.fulfill({ status: 201, json: { shellTerminal } });
+	});
+	await page.route("**/api/v1/shell-terminals/*", (route) => {
+		if (route.request().method() !== "DELETE") return route.fallback();
+		const handleId = decodeURIComponent(route.request().url().split("/").pop() ?? "");
+		state.shellTerminals = state.shellTerminals.filter((terminal) => terminal.handleId !== handleId);
+		return route.fulfill({ status: 204, body: "" });
+	});
 	await page.route("**/api/v1/projects", (route) => {
 		if (route.request().method() !== "GET") return route.fallback();
 		return route.fulfill({
@@ -238,7 +281,11 @@ function prSummary(number: number, state: "open" | "draft" | "merged", title: st
 }
 
 function handleSessionPRs(route: Route) {
-	const sessionId = route.request().url().match(/\/sessions\/([^/]+)\/pr/)?.[1] ?? "";
+	const sessionId =
+		route
+			.request()
+			.url()
+			.match(/\/sessions\/([^/]+)\/pr/)?.[1] ?? "";
 	const prs =
 		sessionId === "stacked-auth"
 			? [
@@ -251,7 +298,11 @@ function handleSessionPRs(route: Route) {
 }
 
 function handleSessionReviews(route: Route) {
-	const sessionId = route.request().url().match(/\/sessions\/([^/]+)\/reviews/)?.[1] ?? "";
+	const sessionId =
+		route
+			.request()
+			.url()
+			.match(/\/sessions\/([^/]+)\/reviews/)?.[1] ?? "";
 	return route.fulfill({
 		json: {
 			reviewerHandleId: sessionId === "stacked-auth" ? "reviewer-pane" : "",

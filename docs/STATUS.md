@@ -47,7 +47,8 @@ surface (`npm run sqlc`, `npm run api`).
 - Durable dashboard notifications for `needs_input`, `ready_to_merge`,
   `pr_merged`, `pr_closed_unmerged`, `low_quota`, `model_unreachable`,
   `model_recovered`, and `prime_restart_capped`: backend
-  enrichment/persistence, unread list, live notification stream, and read
+  enrichment/persistence, cursor-paginated read/unread history, live
+  notification stream, and read
   acknowledgement API.
 - SCM observer (`internal/observe/scm`) wired into the daemon: GitHub provider,
   lazy/non-blocking auth, per-PR polling with ETag guards and semantic diffing,
@@ -83,9 +84,10 @@ surface (`npm run sqlc`, `npm run api`).
   intentionally not part of the desktop V1 API/UI.
 - Terminal pane (xterm) over the mux WebSocket, with a live SSE events
   connection and port-rebind on daemon restart.
-- In-app notification center with unread catch-up over REST, live notification
-  stream updates, explicit open-target actions, mark-read controls, and
-  Electron app toasts while the app is running.
+- In-app notification center with click access, Unread/All filters, paginated
+  REST catch-up, live notification stream updates, separate PR/session target
+  actions, persistent read history, mark-read controls, and Electron app toasts
+  while the app is running.
 
 ## In flight / not yet a runtime feature
 
@@ -98,8 +100,6 @@ surface (`npm run sqlc`, `npm run api`).
   ([#110](https://github.com/aoagents/agent-orchestrator/issues/110)) and in
   `ao session get` ([#111](https://github.com/aoagents/agent-orchestrator/issues/111))
   is still open.
-- **CLI parity for PR/review actions**: merge, resolve-comments, and review are
-  HTTP-only (frontend-driven); there are no `ao pr` / `ao review` commands.
 
 Tracking milestone:
 [`rewrite`](https://github.com/aoagents/agent-orchestrator/milestone/1).

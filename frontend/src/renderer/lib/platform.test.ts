@@ -1,10 +1,11 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
 	isLinuxPlatform,
 	isMacPlatform,
 	isWindowsPlatform,
-	usesBoardActionsInFramedTopbar,
 	usesFramedAppTopbar,
+	hidesShellTopbar,
+	usesBoardActionsInPanel,
 } from "./platform";
 
 const originalPlatform = Object.getOwnPropertyDescriptor(window.navigator, "platform");
@@ -38,25 +39,28 @@ afterEach(() => {
 	restoreProperty("platform", originalPlatform);
 	restoreProperty("userAgent", originalUserAgent);
 	restoreProperty("userAgentData", originalUserAgentData);
+	vi.unstubAllEnvs();
 });
 
 describe("renderer platform behavior", () => {
-	it("uses the framed app topbar on macOS while leaving OS chrome native", () => {
+	it("hides the shell topbar on macOS and keeps board actions in the panel", () => {
 		spoofPlatform("MacIntel", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)");
 
 		expect(isMacPlatform()).toBe(true);
 		expect(isWindowsPlatform()).toBe(false);
 		expect(usesFramedAppTopbar()).toBe(true);
-		expect(usesBoardActionsInFramedTopbar()).toBe(true);
+		expect(hidesShellTopbar()).toBe(true);
+		expect(usesBoardActionsInPanel()).toBe(true);
 	});
 
-	it("keeps Windows-specific board controls in the inset panel topbar", () => {
+	it("keeps Windows board controls in the inset panel topbar", () => {
 		spoofPlatform("Win32");
 
 		expect(isWindowsPlatform()).toBe(true);
 		expect(isMacPlatform()).toBe(false);
 		expect(usesFramedAppTopbar()).toBe(true);
-		expect(usesBoardActionsInFramedTopbar()).toBe(true);
+		expect(hidesShellTopbar()).toBe(false);
+		expect(usesBoardActionsInPanel()).toBe(false);
 	});
 
 	it("uses the framed app topbar on Linux", () => {
@@ -65,6 +69,19 @@ describe("renderer platform behavior", () => {
 		expect(isLinuxPlatform()).toBe(true);
 		expect(isWindowsPlatform()).toBe(false);
 		expect(usesFramedAppTopbar()).toBe(true);
-		expect(usesBoardActionsInFramedTopbar()).toBe(true);
+		expect(hidesShellTopbar()).toBe(false);
+		expect(usesBoardActionsInPanel()).toBe(false);
+	});
+
+	it("keeps browser-mode shell topbar visible on Apple mobile browser UAs", () => {
+		vi.stubEnv("VITE_NO_ELECTRON", "1");
+		spoofPlatform(
+			"iPhone",
+			"Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Version/17.0 Mobile/15E148 Safari/604.1",
+		);
+
+		expect(isMacPlatform()).toBe(true);
+		expect(hidesShellTopbar()).toBe(false);
+		expect(usesBoardActionsInPanel()).toBe(false);
 	});
 });

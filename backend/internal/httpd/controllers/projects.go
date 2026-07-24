@@ -30,6 +30,7 @@ func (c *ProjectsController) Register(r chi.Router) {
 	r.Post("/projects", c.add)
 	r.Post("/projects/initialize", c.initialize)
 	r.Get("/projects/{id}", c.get)
+	r.Put("/projects/{id}", c.updateSettings)
 	r.Put("/projects/{id}/config", c.setConfig)
 	r.Delete("/projects/{id}", c.remove)
 	r.Post("/projects/{id}/pause", c.pause)
@@ -108,14 +109,31 @@ func (c *ProjectsController) get(w http.ResponseWriter, r *http.Request) {
 	envelope.WriteJSON(w, http.StatusOK, resp)
 }
 
+func (c *ProjectsController) updateSettings(w http.ResponseWriter, r *http.Request) {
+	if c.Mgr == nil {
+		apispec.NotImplemented(w, r, "PUT", "/api/v1/projects/{id}")
+		return
+	}
+	var in projectsvc.UpdateSettingsInput
+	if !decodeProjectJSON(w, r, &in) {
+		return
+	}
+	in.IfMatch = strings.TrimSpace(r.Header.Get("If-Match"))
+	p, err := c.Mgr.UpdateSettings(r.Context(), projectID(r), in)
+	if err != nil {
+		envelope.WriteError(w, r, err)
+		return
+	}
+	writeProjectResponse(w, p)
+}
+
 func (c *ProjectsController) setConfig(w http.ResponseWriter, r *http.Request) {
 	if c.Mgr == nil {
 		apispec.NotImplemented(w, r, "PUT", "/api/v1/projects/{id}/config")
 		return
 	}
 	var in projectsvc.SetConfigInput
-	if err := decodeJSONStrict(r, &in); err != nil {
-		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
+	if !decodeProjectJSON(w, r, &in) {
 		return
 	}
 	in.IfMatch = strings.TrimSpace(r.Header.Get("If-Match"))
@@ -124,6 +142,18 @@ func (c *ProjectsController) setConfig(w http.ResponseWriter, r *http.Request) {
 		envelope.WriteError(w, r, err)
 		return
 	}
+	writeProjectResponse(w, p)
+}
+
+func decodeProjectJSON(w http.ResponseWriter, r *http.Request, dst any) bool {
+	if err := decodeJSONStrict(r, dst); err != nil {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
+		return false
+	}
+	return true
+}
+
+func writeProjectResponse(w http.ResponseWriter, p projectsvc.Project) {
 	if p.ConfigETag != "" {
 		w.Header().Set("ETag", strconv.Quote(p.ConfigETag))
 	}
