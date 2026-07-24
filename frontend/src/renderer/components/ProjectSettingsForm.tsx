@@ -713,6 +713,12 @@ function HarnessModelRow({
 				disabled={disabled}
 				invalid={invalidHarness}
 				onChange={changeHarness}
+				// ModelAvailabilityField's header row is exactly h-control-form tall (the
+				// refresh button's height token), so pin this label to the same token —
+				// not a hand-matched pixel value — to keep the two columns' controls on
+				// the same row regardless of future header changes.
+				labelClassName="flex h-control-form items-center"
+				fieldGapClassName="gap-2"
 			/>
 			<ModelAvailabilityField
 				id={id}

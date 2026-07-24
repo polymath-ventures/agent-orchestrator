@@ -1240,6 +1240,14 @@ describe("ProjectSettingsForm", () => {
 		// ...but must still be reachable with an accessible name for a11y.
 		expect(document.getElementById("project-model-model")).toHaveAccessibleName("Model");
 		expect(document.getElementById("project-model-effort")).toHaveAccessibleName("Effort");
+
+		// The Model/Effort header row's height is set by its refresh button
+		// (h-control-form). The harness label must be pinned to that same
+		// token — not a hand-matched pixel value — so the two columns' controls
+		// land on the same row.
+		const harnessLabel = document.querySelector('label[for="project-model-harness"]');
+		expect(harnessLabel).toHaveClass("h-control-form");
+		expect(harnessLabel?.parentElement).toHaveClass("gap-2");
 	}, 20_000);
 
 	it("keeps a synthetic configured project pin visible when no catalog row exists", async () => {

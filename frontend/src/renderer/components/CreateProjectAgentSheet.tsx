@@ -430,6 +430,7 @@ export const RequiredAgentField = memo(function RequiredAgentField({
 	triggerClassName,
 	labelClassName,
 	contentClassName,
+	fieldGapClassName = "gap-1.5",
 	value,
 }: {
 	authorized?: AgentInfo[];
@@ -444,6 +445,7 @@ export const RequiredAgentField = memo(function RequiredAgentField({
 	triggerClassName?: string;
 	labelClassName?: string;
 	contentClassName?: string;
+	fieldGapClassName?: string;
 	value: string;
 }) {
 	const catalog = selectableAgentCatalog({ authorized, installed, supported }, { current: value });
@@ -472,7 +474,7 @@ export const RequiredAgentField = memo(function RequiredAgentField({
 		.sort((a, b) => a.rank - b.rank || a.priorityRank - b.priorityRank || agentLabelCompare(a, b));
 
 	return (
-		<div className="flex flex-col gap-1.5">
+		<div className={cn("flex flex-col", fieldGapClassName)}>
 			<Label htmlFor={id} className={cn("text-xs font-medium text-muted-foreground", labelClassName)}>
 				{label}
 			</Label>
