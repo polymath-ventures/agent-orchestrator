@@ -2,6 +2,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { render, screen } from "@testing-library/react";
+import type * as React from "react";
 import { describe, expect, it } from "vitest";
 import { SidebarMenuButton, SidebarProvider } from "./sidebar";
 
@@ -56,7 +57,7 @@ function declaredCustomProperties(css: string): Set<string> {
 /** `var(--x)` plus Tailwind's `w-(--x)` shorthand, which compiles to the same thing. */
 function referencedCustomProperties(source: string): Set<string> {
 	const names = new Set<string>();
-	for (const [, name] of source.matchAll(/var\((--[\w-]+)/g)) {
+	for (const [, name] of source.matchAll(/var\(\s*(--[\w-]+)/g)) {
 		names.add(name);
 	}
 	for (const [, name] of source.matchAll(/-\((--[\w-]+)\)/g)) {
@@ -81,7 +82,20 @@ describe("ui primitive custom properties", () => {
 	// These primitives are vendored from shadcn, so every one of them is a place
 	// the remapping can be half-applied. Check the whole directory rather than
 	// the one file that happened to be reported.
+	//
+	// Deliberately a text scan, not a parse: it reads declarations without
+	// tracking which selector they sit under, and does not strip comments. That
+	// costs precision the fork does not currently need — every token here is
+	// declared for all themes — and buys a guard small enough to keep honest.
+	// If it ever needs selector awareness, it wants a real CSS parser instead.
 	const declared = new Set(stylesheets.flatMap((css) => Array.from(declaredCustomProperties(css))));
+
+	// `it.each([])` registers nothing and reports success, so an empty listing
+	// would look exactly like a clean sweep.
+	it("scans every vendored primitive", () => {
+		expect(primitives.length).toBeGreaterThan(0);
+		expect(primitives).toContain("sidebar.tsx");
+	});
 
 	it.each(primitives)("%s only names custom properties that resolve at runtime", (file) => {
 		const source = readFileSync(path.join(here, file), "utf8");
