@@ -9,7 +9,13 @@ import {
 	useModelAvailabilityQuery,
 	useRefreshModelAvailability,
 } from "../hooks/useModelAvailabilityQuery";
-import { AGENT_OPTIONS } from "../lib/agent-options";
+import {
+	agentDisplayLabel,
+	type AgentInfo,
+	type AgentInventory,
+	modelAvailabilityFromAgentInventory,
+	selectableAgentCatalog,
+} from "../lib/agent-selection";
 import { cn } from "../lib/utils";
 import { buildIntake, type IntakeForm, IntakeFields, intakeNeedsRule } from "./IntakeFields";
 import type { ProjectKind } from "../types/workspace";
@@ -19,13 +25,6 @@ import { Label } from "./ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 
 type TrackerIntakeConfig = components["schemas"]["TrackerIntakeConfig"];
-
-type AgentInfo = components["schemas"]["AgentInfo"];
-type AgentInventory = {
-	authorized?: AgentInfo[];
-	installed?: AgentInfo[];
-	supported?: AgentInfo[];
-};
 
 export type CreateProjectAgentSelection = {
 	workerAgent: string;
@@ -447,14 +446,10 @@ export const RequiredAgentField = memo(function RequiredAgentField({
 	contentClassName?: string;
 	value: string;
 }) {
-	const fallbackAgents: AgentInfo[] = AGENT_OPTIONS.map((agent) => ({
-		id: agent,
-		label: agent,
-		reviewerCapable: false,
-	}));
-	const supportedAgents = supported ?? fallbackAgents;
-	const installedAgents = installed ?? supportedAgents;
-	const authorizedAgents = authorized ?? supportedAgents;
+	const catalog = selectableAgentCatalog({ authorized, installed, supported }, { current: value });
+	const supportedAgents = catalog.supported ?? [];
+	const installedAgents = catalog.installed ?? [];
+	const authorizedAgents = catalog.authorized ?? [];
 	const authorizedIds = new Set(authorizedAgents.map((agent) => agent.id));
 	const installedById = new Map(installedAgents.map((agent) => [agent.id, agent]));
 	const options = supportedAgents
@@ -528,37 +523,6 @@ export function defaultAuthorizedAgent(authorizedAgents: AgentInfo[]): string {
 	return [...authorizedAgents].sort(agentLabelCompare)[0]?.id ?? "";
 }
 
-export function modelAvailabilityFromAgentInventory(
-	catalog: AgentInventory | undefined,
-): AgentModelAvailabilityResponse | undefined {
-	const agentsByID = new Map<string, AgentInfo>();
-	for (const agents of [catalog?.supported, catalog?.installed, catalog?.authorized]) {
-		for (const agent of agents ?? []) {
-			const current = agentsByID.get(agent.id);
-			agentsByID.set(agent.id, {
-				...current,
-				...agent,
-				reviewerCapable: agent.reviewerCapable,
-			});
-		}
-	}
-	if (agentsByID.size === 0) return undefined;
-	return {
-		checkedAt: "",
-		harnesses: [...agentsByID.values()]
-			.map((agent) => ({
-				id: agent.id,
-				label: agent.label,
-				reviewerCapable: agent.reviewerCapable,
-				catalogSource: "none" as const,
-				catalogVerified: false,
-				catalogReason: "Model catalogs are unavailable; this harness comes from the agent inventory.",
-				models: [],
-			}))
-			.sort((a, b) => a.label.localeCompare(b.label) || a.id.localeCompare(b.id)),
-	};
-}
-
 function uniqueSelectedHarnesses(harnesses: string[]): string[] {
 	const seen = new Set<string>();
 	const out: string[] = [];
@@ -587,13 +551,7 @@ function harnessDisplayLabel(
 	availability: AgentModelAvailabilityResponse | undefined,
 	harness: string,
 ): string {
-	const available = availability?.harnesses?.find((option) => option.id === harness);
-	if (available?.label) return available.label;
-	for (const agents of [catalog?.authorized, catalog?.installed, catalog?.supported]) {
-		const agent = agents?.find((option) => option.id === harness);
-		if (agent?.label) return agent.label;
-	}
-	return harness;
+	return agentDisplayLabel(catalog, availability, harness);
 }
 
 function reviewerAgentCatalog(
@@ -617,13 +575,14 @@ function reviewerAgentCatalog(
 		authStatus: "authorized",
 		reviewerCapable: true,
 	};
-	const filter = (agents: AgentInfo[] | undefined) => [
-		automatic,
-		...(agents ?? []).filter((agent) => reviewerIDs.has(agent.id)),
-	];
-	return {
-		supported: filter(catalog?.supported),
-		installed: filter(catalog?.installed),
-		authorized: filter(catalog?.authorized),
+	const filteredCatalog = {
+		supported: catalog?.supported?.filter((agent) => reviewerIDs.has(agent.id)),
+		installed: catalog?.installed?.filter((agent) => reviewerIDs.has(agent.id)),
+		authorized: catalog?.authorized?.filter((agent) => reviewerIDs.has(agent.id)),
 	};
+	return selectableAgentCatalog(filteredCatalog, {
+		current: currentHarness,
+		includeDefault: automatic,
+		reviewerOnly: true,
+	});
 }

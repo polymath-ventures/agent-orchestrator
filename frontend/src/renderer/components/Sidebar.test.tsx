@@ -682,7 +682,7 @@ describe("Sidebar", () => {
 		expect(await screen.findByRole("menuitem", { name: /settings/i })).toBeInTheDocument();
 	});
 
-	it("shows needs-auth agents as unavailable while keeping authorized agents selectable", async () => {
+	it("shows installed needs-auth agents as unavailable and hides supported-only harnesses", async () => {
 		const user = userEvent.setup();
 		const onCreateProject = vi.fn().mockResolvedValue(undefined) as CreateProjectHandler;
 		window.ao!.app.chooseDirectory = vi.fn().mockResolvedValue("/repo/new-project");
@@ -709,13 +709,8 @@ describe("Sidebar", () => {
 
 		await user.click(screen.getByRole("combobox", { name: "Orchestrator harness" }));
 		const options = await screen.findAllByRole("option");
-		expect(options.map((option) => option.textContent)).toEqual([
-			"Claude Code",
-			"CursorNeeds auth",
-			"AiderNeeds install",
-		]);
+		expect(options.map((option) => option.textContent)).toEqual(["Claude Code", "CursorNeeds auth"]);
 		expect(options[1]).toHaveAttribute("aria-disabled", "true");
-		expect(options[2]).toHaveAttribute("aria-disabled", "true");
 		await user.keyboard("{Escape}");
 
 		await user.click(screen.getByRole("button", { name: "Create and start" }));

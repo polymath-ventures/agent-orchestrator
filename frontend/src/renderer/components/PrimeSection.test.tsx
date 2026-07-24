@@ -47,6 +47,14 @@ const modelAvailability: AgentModelAvailabilityResponse = {
 				},
 			],
 		},
+		{
+			id: "kiro",
+			label: "Kiro",
+			reviewerCapable: false,
+			catalogSource: "none",
+			catalogVerified: false,
+			models: [],
+		},
 	],
 };
 
@@ -72,6 +80,19 @@ beforeEach(() => {
 		if (path === "/api/v1/agents/models") {
 			return Promise.resolve({ data: modelAvailability, error: undefined });
 		}
+		if (path === "/api/v1/agents") {
+			return Promise.resolve({
+				data: {
+					supported: [
+						{ id: "codex", label: "Codex", reviewerCapable: true },
+						{ id: "kiro", label: "Kiro", reviewerCapable: false },
+					],
+					installed: [{ id: "codex", label: "Codex", authStatus: "authorized", reviewerCapable: true }],
+					authorized: [{ id: "codex", label: "Codex", authStatus: "authorized", reviewerCapable: true }],
+				},
+				error: undefined,
+			});
+		}
 		return Promise.resolve({ data: undefined, error: { message: `unexpected GET ${path}` } });
 	});
 	putMock.mockReset().mockResolvedValue({
@@ -95,6 +116,23 @@ describe("PrimeSection", () => {
 		expect(screen.getByLabelText("Instructions file path")).toHaveValue("/etc/ao/prime.md");
 		expect(screen.getByText(/Inline instructions are loaded first/i)).toBeInTheDocument();
 		expect(screen.queryByText(/Legacy Prime environment/i)).not.toBeInTheDocument();
+	});
+
+	it("limits Prime harness choices to installed inventory plus the saved harness", async () => {
+		renderPrimeSection();
+
+		const harness = await screen.findByLabelText("Harness");
+		await waitFor(() =>
+			expect(
+				Array.from(harness.querySelectorAll("option")).map((option) => ({
+					value: option.value,
+					label: option.textContent,
+				})),
+			).toEqual([
+				{ value: "", label: "Select harness" },
+				{ value: "codex", label: "Codex" },
+			]),
+		);
 	});
 
 	it("saves edited global Prime settings", async () => {

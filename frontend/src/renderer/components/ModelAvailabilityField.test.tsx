@@ -7,6 +7,7 @@ import {
 	ModelAvailabilityField,
 	type ModelSelection,
 } from "./ModelAvailabilityField";
+import { filterModelAvailabilityToSelectableAgents, modelAvailabilityFromAgentInventory } from "../lib/agent-selection";
 
 const availability: AgentModelAvailabilityResponse = {
 	checkedAt: "2026-07-22T01:02:03Z",
@@ -68,6 +69,39 @@ describe("buildModelCatalogView", () => {
 		expect(openCode?.catalogSource).toBe("configured-pins");
 		expect(openCode?.models[0]).toMatchObject({ model: "custom/provider-model", synthetic: true });
 		expect(openCode?.models[0].efforts).toContain("turbo");
+	});
+});
+
+describe("shared agent/model selection helpers", () => {
+	it("builds model fallback rows from installed inventory instead of the theoretical supported set", () => {
+		const fallback = modelAvailabilityFromAgentInventory({
+			supported: [
+				{ id: "codex", label: "Codex", reviewerCapable: true },
+				{ id: "kiro", label: "Kiro", reviewerCapable: false },
+			],
+			installed: [{ id: "codex", label: "Codex", authStatus: "authorized", reviewerCapable: true }],
+			authorized: [{ id: "codex", label: "Codex", authStatus: "authorized", reviewerCapable: true }],
+		});
+
+		expect(fallback?.harnesses.map((harness) => harness.id)).toEqual(["codex"]);
+	});
+
+	it("filters model availability to selectable installed harnesses while preserving the current saved harness", () => {
+		const filtered = filterModelAvailabilityToSelectableAgents(
+			availability,
+			{
+				supported: [
+					{ id: "claude-code", label: "Claude Code", reviewerCapable: true },
+					{ id: "codex-fugu", label: "Codex Fugu", reviewerCapable: false },
+					{ id: "kiro", label: "Kiro", reviewerCapable: false },
+				],
+				installed: [{ id: "claude-code", label: "Claude Code", authStatus: "authorized", reviewerCapable: true }],
+				authorized: [{ id: "claude-code", label: "Claude Code", authStatus: "authorized", reviewerCapable: true }],
+			},
+			{ current: "codex-fugu" },
+		);
+
+		expect(filtered?.harnesses.map((harness) => harness.id)).toEqual(["claude-code", "codex-fugu"]);
 	});
 });
 
