@@ -59,6 +59,10 @@ const shellMocks = vi.hoisted(() => {
 
 vi.mock("@tanstack/react-query", () => ({
 	useQueryClient: () => shellMocks.queryClient,
+	// The shell reads Prime enablement from persisted settings so the Prime nav
+	// entry survives a dead Prime. This suite is about the new-session shortcut,
+	// so a quiet default is enough.
+	useQuery: () => ({ data: undefined, isLoading: false, isSuccess: false, isError: false }),
 }));
 
 vi.mock("@tanstack/react-router", async (importOriginal) => ({

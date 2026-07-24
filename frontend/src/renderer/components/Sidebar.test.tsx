@@ -110,6 +110,7 @@ function renderSidebar({
 	onInitializeProject = vi.fn().mockResolvedValue(undefined) as InitializeProjectHandler,
 	onRemoveProject = vi.fn().mockResolvedValue(undefined) as RemoveProjectHandler,
 	primeSession,
+	primeEnabled = false,
 	seedAgents = true,
 	workspaces = [workspace],
 }: {
@@ -117,6 +118,7 @@ function renderSidebar({
 	onInitializeProject?: InitializeProjectHandler;
 	onRemoveProject?: RemoveProjectHandler;
 	primeSession?: WorkspaceSession;
+	primeEnabled?: boolean;
 	seedAgents?: boolean;
 	workspaces?: WorkspaceSummary[];
 } = {}) {
@@ -151,6 +153,7 @@ function renderSidebar({
 					onInitializeProject={onInitializeProject}
 					onRemoveProject={onRemoveProject}
 					primeSession={primeSession}
+					primeEnabled={primeEnabled}
 					workspaces={workspaces}
 				/>
 			</SidebarProvider>
@@ -239,6 +242,25 @@ afterEach(() => {
 });
 
 describe("Sidebar", () => {
+	// The regression: Prime used to disappear from the nav the moment its session
+	// row went terminated — exactly when the operator needed it to recover.
+	// Presence now follows persisted settings.
+	it("keeps a Prime entry when Prime is enabled but no live session exists", async () => {
+		const user = userEvent.setup();
+		renderSidebar({ primeEnabled: true });
+
+		const entry = screen.getByRole("button", { name: "Open Prime" });
+		await user.click(entry);
+
+		expect(navigateMock).toHaveBeenCalledWith({ to: "/prime" });
+	});
+
+	it("renders no Prime entry when Prime is disabled and no session exists", () => {
+		renderSidebar({ primeEnabled: false });
+
+		expect(screen.queryByRole("button", { name: "Open Prime" })).not.toBeInTheDocument();
+	});
+
 	it("renders prime as a top-level global session and not a project child", async () => {
 		const user = userEvent.setup();
 		renderSidebar({ primeSession, workspaces: [{ ...workspace, sessions: [session, primeSession] }] });

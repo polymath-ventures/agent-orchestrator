@@ -32,6 +32,7 @@ import { isLinuxPlatform, isWindowsPlatform, usesFramedAppTopbar, hidesShellTopb
 import { hasElectronBridge, isMacDesktopChrome } from "../lib/runtime-environment";
 import { useUiStore } from "../stores/ui-store";
 import { findFleetPrime, isFleetWorkspace, toProjectKind, type WorkspaceSummary } from "../types/workspace";
+import { usePrimeEnabledQuery } from "../hooks/usePrimeSettingsQuery";
 import type { components } from "../../api/schema";
 
 export const Route = createFileRoute("/_shell")({
@@ -136,6 +137,7 @@ function ShellLayout() {
 	const workspaces = workspaceQuery.data ?? [];
 	const projectWorkspaces = useMemo(() => workspaces.filter((workspace) => !isFleetWorkspace(workspace)), [workspaces]);
 	const primeSession = findFleetPrime(workspaces);
+	const primeEnabled = usePrimeEnabledQuery().data === true;
 	const daemonStatus = useDaemonStatus(queryClient);
 	const agentCatalogPortRef = useRef<number | undefined>(undefined);
 	const { themePreference, resolvedTheme, isSidebarOpen, toggleSidebar } = useUiStore();
@@ -534,6 +536,7 @@ function ShellLayout() {
 					<Sidebar
 						hideEdgeBorder={isWelcomeBoard}
 						primeSession={primeSession}
+						primeEnabled={primeEnabled}
 						historyLocked={isWelcomeBoard}
 						isFullScreen={isFullScreen}
 						underTopbar={

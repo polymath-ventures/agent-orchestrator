@@ -3,6 +3,8 @@ import {
 	attentionZone,
 	canonicalTrackerIssueId,
 	findFleetPrime,
+	findLatestFleetPrime,
+	primeSurfaceState,
 	findProjectOrchestrator,
 	newestActiveOrchestrator,
 	orchestratorHealth,
@@ -251,6 +253,44 @@ describe("findFleetPrime", () => {
 	it("ignores terminated prime sessions", () => {
 		const dead = sessionWith({ id: "ao-prime", kind: "prime", status: "terminated" });
 		expect(findFleetPrime([workspaceWith("ao", [dead])])).toBeUndefined();
+	});
+});
+
+describe("findLatestFleetPrime", () => {
+	function workspaceWith(id: string, sessions: WorkspaceSession[]): WorkspaceSummary {
+		return { id, name: id, path: `/tmp/${id}`, sessions };
+	}
+
+	// findFleetPrime deliberately hides terminated primes so nothing navigates
+	// to a dead terminal. Recovery still needs to FIND that dead prime, to show
+	// its terminal with a relaunch affordance.
+	it("returns a terminated prime that findFleetPrime hides", () => {
+		const dead = sessionWith({ id: "ao-prime", kind: "prime", status: "terminated" });
+		expect(findFleetPrime([workspaceWith("ao", [dead])])).toBeUndefined();
+		expect(findLatestFleetPrime([workspaceWith("ao", [dead])])).toBe(dead);
+	});
+
+	it("returns nothing when no prime row exists at all", () => {
+		const worker = sessionWith({ id: "ao-1", kind: "worker", status: "working" });
+		expect(findLatestFleetPrime([workspaceWith("ao", [worker])])).toBeUndefined();
+	});
+});
+
+describe("primeSurfaceState", () => {
+	const live = sessionWith({ id: "ao-prime", kind: "prime", status: "working" });
+
+	it("is disabled when settings say Prime is off, even if a row lingers", () => {
+		expect(primeSurfaceState(false, live)).toBe("disabled");
+	});
+
+	// The whole point: enablement comes from settings, so Prime stays reachable
+	// when its session row is gone.
+	it("is not_running when enabled with no live prime", () => {
+		expect(primeSurfaceState(true, undefined)).toBe("not_running");
+	});
+
+	it("is running when enabled with a live prime", () => {
+		expect(primeSurfaceState(true, live)).toBe("running");
 	});
 });
 

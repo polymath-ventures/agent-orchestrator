@@ -5,8 +5,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkspaceSession } from "../types/workspace";
 import { TerminalPane, providerScrollsByKeyboard } from "./TerminalPane";
 
-const { postMock, terminalError, terminalState, terminalProps } = vi.hoisted(() => ({
+const { postMock, relaunchPrimeMock, terminalError, terminalState, terminalProps } = vi.hoisted(() => ({
 	postMock: vi.fn(),
+	relaunchPrimeMock: vi.fn(),
 	terminalError: { value: undefined as string | undefined },
 	terminalState: { value: "idle" },
 	terminalProps: { value: {} as { autoFocus?: boolean } },
@@ -24,6 +25,10 @@ vi.mock("./XtermTerminal", () => ({
 		terminalProps.value = props;
 		return <div data-testid="xterm" />;
 	},
+}));
+
+vi.mock("../lib/relaunch-prime", () => ({
+	relaunchPrime: (...args: unknown[]) => relaunchPrimeMock(...args),
 }));
 
 vi.mock("../hooks/useTerminalSession", () => ({
@@ -56,6 +61,8 @@ const orchestrator = {
 
 beforeEach(() => {
 	postMock.mockReset();
+	relaunchPrimeMock.mockReset();
+	relaunchPrimeMock.mockResolvedValue("ao-prime-2");
 	postMock.mockResolvedValue({ data: {} });
 	terminalError.value = undefined;
 	terminalState.value = "idle";
@@ -294,5 +301,55 @@ describe("terminal link preview", () => {
 			warning.mockRestore();
 			view.restore();
 		}
+	});
+});
+
+const deadPrime = {
+	...worker,
+	id: "ao-prime",
+	title: "Prime",
+	kind: "prime",
+	status: "terminated",
+} satisfies WorkspaceSession;
+
+describe("TerminalPane dead Prime recovery", () => {
+	// The daemon forbids generic restore for Prime, so the old restore control
+	// could only ever produce a 403. Prime recovers through relaunch.
+	it("offers Relaunch Prime and not Restore session for a terminated prime", async () => {
+		const { restore } = renderPane(deadPrime);
+
+		expect(await screen.findByRole("button", { name: "Relaunch Prime" })).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Restore session" })).not.toBeInTheDocument();
+		restore();
+	});
+
+	it("relaunches Prime when the control is pressed", async () => {
+		const user = userEvent.setup();
+		const { restore } = renderPane(deadPrime);
+
+		await user.click(await screen.findByRole("button", { name: "Relaunch Prime" }));
+
+		await waitFor(() => expect(relaunchPrimeMock).toHaveBeenCalledTimes(1));
+		restore();
+	});
+
+	it("surfaces a relaunch failure", async () => {
+		relaunchPrimeMock.mockRejectedValue(new Error("Prime is disabled"));
+		const user = userEvent.setup();
+		const { restore } = renderPane(deadPrime);
+
+		await user.click(await screen.findByRole("button", { name: "Relaunch Prime" }));
+
+		expect(await screen.findByText("Prime is disabled")).toBeInTheDocument();
+		restore();
+	});
+
+	// A terminated worker keeps the ordinary restore affordance.
+	it("still offers Restore session for a terminated worker", async () => {
+		const { restore } = renderPane({ ...worker, status: "terminated" });
+
+		expect(await screen.findByRole("button", { name: "Restore session" })).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Relaunch Prime" })).not.toBeInTheDocument();
+		restore();
 	});
 });

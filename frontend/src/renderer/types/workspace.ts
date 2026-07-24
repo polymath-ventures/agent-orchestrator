@@ -291,6 +291,34 @@ export function findFleetPrime(workspaces: WorkspaceSummary[]): WorkspaceSession
 	);
 }
 
+/**
+ * The newest Prime row regardless of liveness.
+ *
+ * findFleetPrime deliberately ignores terminated Primes so nothing navigates to
+ * a dead terminal. But the recovery UI still needs to *find* that dead Prime —
+ * to show its terminal with a relaunch affordance instead of the generic
+ * restore strip the daemon rejects for Prime.
+ */
+export function findLatestFleetPrime(workspaces: WorkspaceSummary[]): WorkspaceSession | undefined {
+	const primes = workspaces.flatMap((workspace) => workspace.sessions).filter(isPrimeSession);
+	return primes.reduce<WorkspaceSession | undefined>(
+		(newest, session) => (!newest || sessionNewer(session, newest) ? session : newest),
+		undefined,
+	);
+}
+
+/** What the Prime surface should present. */
+export type PrimeSurfaceState = "disabled" | "running" | "not_running";
+
+/**
+ * Prime state for the nav and the Prime route. Enablement comes from persisted
+ * settings; the live session row only chooses *which* enabled state to show.
+ */
+export function primeSurfaceState(enabled: boolean, activePrime: WorkspaceSession | undefined): PrimeSurfaceState {
+	if (!enabled) return "disabled";
+	return activePrime ? "running" : "not_running";
+}
+
 function sessionNewer(a: WorkspaceSession, b: WorkspaceSession): boolean {
 	const aCreated = timestamp(a.createdAt);
 	const bCreated = timestamp(b.createdAt);
