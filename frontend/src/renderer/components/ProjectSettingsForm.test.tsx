@@ -1088,6 +1088,7 @@ describe("ProjectSettingsForm", () => {
 		expect(document.getElementById("orchestrator-model-model")).toHaveValue("opus");
 		expect(document.getElementById("prime-model-model")).toBeNull();
 		expect(document.getElementById("reviewer-model-model")).toHaveValue("gpt-5-codex");
+		expect(screen.getAllByText(/Manual model IDs are allowed/i).length).toBeGreaterThanOrEqual(4);
 
 		const projectHarness = screen.getByRole("combobox", { name: "Project model harness" });
 		await userEvent.click(projectHarness);

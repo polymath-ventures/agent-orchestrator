@@ -734,6 +734,7 @@ function HarnessModelRow({
 				fieldLabelsVisible={false}
 				statusVisibility="actionable"
 				emptyLabel="Inherit default"
+				showManualModelNotice
 			/>
 		</div>
 	);

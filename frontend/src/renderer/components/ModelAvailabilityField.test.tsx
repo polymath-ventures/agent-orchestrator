@@ -527,6 +527,7 @@ describe("ModelAvailabilityField", () => {
 		expect(effortControl.tagName).toBe("INPUT");
 		expect(datalistValues(effortControl)).toEqual(["low", "high", "max"]);
 		expect(datalistValues(effortControl)).not.toContain("minimal");
+		expect(screen.getByText(/Manual effort values are allowed/i)).toBeInTheDocument();
 		expect(screen.queryByText(/Effort choices use AO's supported effort values/i)).not.toBeInTheDocument();
 	});
 
@@ -586,6 +587,23 @@ describe("ModelAvailabilityField", () => {
 
 		fireEvent.change(screen.getByLabelText("Harness"), { target: { value: "codex-fugu" } });
 		expect(onChange).toHaveBeenCalledWith({ harness: "codex-fugu", model: "fugu", effort: "xhigh" });
+	});
+
+	it("restores a synthetic model pin's own effort when selecting that model", () => {
+		const onChange = vi.fn<(selection: ModelSelection) => void>();
+		render(
+			<ModelAvailabilityField
+				id="worker-model"
+				label="Worker model"
+				value={{ harness: "claude-code", model: "opus", effort: "high" }}
+				onChange={onChange}
+				availability={availability}
+				configuredPins={[{ harness: "claude-code", model: "claude-version-pin", effort: "low" }]}
+			/>,
+		);
+
+		fireEvent.change(screen.getByLabelText("Model"), { target: { value: "claude-version-pin" } });
+		expect(onChange).toHaveBeenCalledWith({ harness: "claude-code", model: "claude-version-pin", effort: "low" });
 	});
 
 	it("clears stale model and effort when switching to a harness without a configured pin", () => {

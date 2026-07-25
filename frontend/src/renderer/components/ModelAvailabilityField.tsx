@@ -77,7 +77,6 @@ export function ModelAvailabilityField({
 	);
 	const harness = harnesses.find((option) => option.id === value.harness);
 	const model = harness?.models.find((option) => option.model === value.model);
-	const hasSelectedHarness = value.harness.trim() !== "";
 	const manualEffort = shouldUseManualEffort(model);
 	const efforts = buildEffortOptions(
 		model?.synthetic
@@ -105,7 +104,7 @@ export function ModelAvailabilityField({
 		const nextModel = harness?.models.find((option) => option.model === nextModelID);
 		const nextUsesManualEffort = shouldUseManualEffort(nextModel);
 		const keepEffort = nextModel?.efforts?.includes(value.effort);
-		const keepManualEffort = nextUsesManualEffort && value.effort.trim() !== "";
+		const keepManualEffort = nextUsesManualEffort && !nextModel?.synthetic && value.effort.trim() !== "";
 		onChange({
 			...value,
 			model: nextModelID,
@@ -241,7 +240,7 @@ export function ModelAvailabilityField({
 					<TriangleAlert className="mt-0.5 size-3.5 shrink-0 text-warning" aria-hidden="true" />
 					<span>
 						Manual model IDs are allowed; launch may fail if the harness rejects the model.
-						{hasSelectedHarness && manualEffort
+						{showEffort && manualEffort
 							? " Manual effort values are allowed; AO may reject the effort when saving."
 							: ""}
 					</span>
