@@ -35,7 +35,9 @@ const (
 	// paneProcessStaleAfter is how long a non-agent foreground process may sit
 	// in a pane AO owns before doctor calls it stale. The reported leak was an
 	// 8-hour curl; an hour is well clear of the short-lived helpers (git, rg,
-	// npm) an agent legitimately runs in the foreground.
+	// npm) an agent legitimately runs in the foreground. It is thresholded
+	// against that process's own age, never the pane's — a pane that has been up
+	// all day is normal, and says nothing about what is running in it now.
 	paneProcessStaleAfter = time.Hour
 
 	// daemonRestartChurnThreshold is the NRestarts count above which the unit is
@@ -54,7 +56,17 @@ var systemdServiceUnitRE = regexp.MustCompile(`[A-Za-z0-9_.@-]+\.service`)
 // The population is derived from AO's data, not a maintained list: the daemon
 // says which sessions exist, tmux.SessionName says what their tmux sessions are
 // called, and doctorHarnesses says which binary each session's harness runs.
-// Panes of tmux sessions AO does not own are ignored outright.
+// Panes of tmux sessions AO does not own are ignored outright — their ttys are
+// never even passed to the ps probe.
+//
+// Identity comes from a walk down the pane's process tree, not from
+// `#{pane_pid}` or `#{pane_current_command}`. tmux.buildLaunchCommand launches
+// every pane as `sh -c '<setup>; <agent argv>; exec "${SHELL:-/bin/sh}" -i'`,
+// which makes those two fields describe different processes: `#{pane_pid}` is
+// the wrapping shell and the agent (plus anything the agent spawns) is a
+// descendant of it. Thresholding the pane's own age would flag a pane that has
+// simply been open a long time, and reporting `#{pane_pid}` would hand the
+// operator a pid whose kill destroys the pane rather than the squatter.
 func (c *commandContext) checkAgentProcesses(ctx context.Context) doctorCheck {
 	const name = "agent-processes"
 	pass := func(msg string) doctorCheck {
@@ -83,58 +95,60 @@ func (c *commandContext) checkAgentProcesses(ctx context.Context) doctorCheck {
 		return pass(fmt.Sprintf("unavailable: `tmux list-panes` failed (%v)", err))
 	}
 
-	type candidate struct {
-		pid     int
-		command string
-		session string
-	}
-	candidates := []candidate{}
-	ownedPanes := 0
+	owned := []doctorPaneRow{}
+	ttys := []string{}
+	seenTTY := map[string]bool{}
 	for _, pane := range panes {
-		agent, owned := agentByTmuxSession[pane.tmuxSession]
-		if !owned {
+		if _, isOwned := agentByTmuxSession[pane.tmuxSession]; !isOwned {
 			continue
 		}
-		ownedPanes++
-		if pane.command == agent {
-			continue
+		owned = append(owned, pane)
+		if pane.tty != "" && !seenTTY[pane.tty] {
+			seenTTY[pane.tty] = true
+			ttys = append(ttys, pane.tty)
 		}
-		candidates = append(candidates, candidate{pid: pane.pid, command: pane.command, session: pane.tmuxSession})
 	}
-	if len(candidates) == 0 {
-		return pass(fmt.Sprintf("no stale non-agent processes in %d AO pane(s)", ownedPanes))
+	if len(owned) == 0 || len(ttys) == 0 {
+		return pass("no AO panes to inspect")
 	}
 
-	pids := make([]int, 0, len(candidates))
-	for _, cand := range candidates {
-		pids = append(pids, cand.pid)
-	}
-	elapsed, err := c.processElapsed(ctx, psPath, pids)
+	tree, err := c.paneProcessTable(ctx, psPath, ttys)
 	if err != nil {
-		return pass(fmt.Sprintf("unavailable: `ps` elapsed-time probe failed (%v)", err))
+		return pass(fmt.Sprintf("unavailable: `ps` pane process probe failed (%v)", err))
 	}
 
 	stale := []string{}
-	for _, cand := range candidates {
-		age, ok := elapsed[cand.pid]
-		if !ok || age <= paneProcessStaleAfter {
+	for _, pane := range owned {
+		fg, running := tree.foreground(pane.panePID)
+		switch {
+		case !running:
+			// Nothing below the pane's own process: the launch command's trailing
+			// `exec` has replaced the wrapper with the interactive shell it is
+			// designed to rest at. An idle pane is not a squatter.
+			continue
+		case fg.comm == agentByTmuxSession[pane.tmuxSession]:
+			// The agent AO launched for this session, doing its job.
+			continue
+		case fg.elapsed <= paneProcessStaleAfter:
+			// A helper the agent is legitimately running right now.
 			continue
 		}
-		stale = append(stale, fmt.Sprintf("pid %d (%s) in session %s for %s", cand.pid, cand.command, cand.session, formatUptime(age)))
+		stale = append(stale, fmt.Sprintf("pid %d (%s) in session %s for %s", fg.pid, fg.comm, pane.tmuxSession, formatUptime(fg.elapsed)))
 	}
 	if len(stale) == 0 {
-		return pass(fmt.Sprintf("no non-agent pane process older than %s", formatUptime(paneProcessStaleAfter)))
+		return pass(fmt.Sprintf("%d AO pane(s), no foreground process older than %s that is not the session's agent", len(owned), formatUptime(paneProcessStaleAfter)))
 	}
 	return doctorCheck{
 		Level: doctorWarn, Section: doctorSectionAgents, Name: name,
-		Message: fmt.Sprintf("%d stale process(es) in AO panes, none of them the session's agent: %s — the pane is occupied, so the agent cannot be driven until it exits", len(stale), strings.Join(stale, "; ")),
+		Message: fmt.Sprintf("%d stale process(es) holding the foreground in AO panes: %s — none is that session's agent, so the agent cannot be driven until it exits", len(stale), strings.Join(stale, "; ")),
 	}
 }
 
 // paneAgentBinaries maps each live session's tmux session name to the agent
 // binary AO launched in it. Sessions whose harness has no entry in
 // doctorHarnesses are left out: without the expected binary there is nothing to
-// compare a pane command against, and guessing would manufacture findings.
+// compare the pane's foreground process against, and guessing would manufacture
+// findings.
 //
 // The listing goes over the daemon's ordinary loopback HTTP API — never the
 // supervisor stream socket — and getJSON already turns a stopped daemon into a
@@ -169,16 +183,18 @@ func (c *commandContext) paneAgentBinaries(ctx context.Context) (map[string]stri
 }
 
 // doctorPaneRow is one row of the read-only `tmux list-panes` inventory.
+// panePID is `#{pane_pid}`: the shell tmux launched, which is the root of the
+// pane's process tree rather than whatever is currently in the foreground.
 type doctorPaneRow struct {
 	tmuxSession string
-	pid         int
-	command     string
+	panePID     int
+	tty         string
 }
 
 func (c *commandContext) listTmuxPanes(ctx context.Context, tmuxPath string) ([]doctorPaneRow, error) {
 	reqCtx, cancel := context.WithTimeout(ctx, probeTimeout)
 	defer cancel()
-	out, err := c.deps.CommandOutput(reqCtx, tmuxPath, "list-panes", "-a", "-F", "#{session_name} #{pane_pid} #{pane_current_command}")
+	out, err := c.deps.CommandOutput(reqCtx, tmuxPath, "list-panes", "-a", "-F", "#{session_name} #{pane_pid} #{pane_tty}")
 	if err != nil {
 		return nil, err
 	}
@@ -188,46 +204,109 @@ func (c *commandContext) listTmuxPanes(ctx context.Context, tmuxPath string) ([]
 		if len(fields) < 3 {
 			continue
 		}
-		pid, err := strconv.Atoi(fields[1])
+		panePID, err := strconv.Atoi(fields[1])
 		if err != nil {
 			continue
 		}
-		rows = append(rows, doctorPaneRow{tmuxSession: fields[0], pid: pid, command: fields[2]})
+		// ps -t wants the tty without the /dev/ prefix tmux reports.
+		rows = append(rows, doctorPaneRow{
+			tmuxSession: fields[0],
+			panePID:     panePID,
+			tty:         strings.TrimPrefix(fields[2], "/dev/"),
+		})
 	}
 	return rows, nil
 }
 
-// processElapsed reads how long each pid has been running from `ps etimes`.
-// Elapsed time comes from the kernel's own accounting rather than a wall-clock
-// comparison, so the answer does not depend on doctor's notion of "now".
-func (c *commandContext) processElapsed(ctx context.Context, psPath string, pids []int) (map[int]time.Duration, error) {
-	list := make([]string, 0, len(pids))
-	for _, pid := range pids {
-		list = append(list, strconv.Itoa(pid))
-	}
+// paneProcess is one process living on an AO pane's tty.
+type paneProcess struct {
+	pid     int
+	comm    string
+	elapsed time.Duration
+}
+
+// paneProcessTree is the process table of AO's pane ttys, indexed so a pane's
+// own pid can be walked down to whatever is actually in its foreground.
+type paneProcessTree struct {
+	byPID    map[int]paneProcess
+	children map[int][]int
+}
+
+// paneProcessTable reads the processes on the given ttys. Elapsed time comes
+// from the kernel's own accounting (`etimes`), so the answer never depends on
+// doctor's notion of "now". Restricting the probe to AO's pane ttys is what
+// keeps foreign panes out of the picture entirely.
+func (c *commandContext) paneProcessTable(ctx context.Context, psPath string, ttys []string) (paneProcessTree, error) {
 	reqCtx, cancel := context.WithTimeout(ctx, probeTimeout)
 	defer cancel()
-	out, err := c.deps.CommandOutput(reqCtx, psPath, "-o", "pid=,etimes=", "-p", strings.Join(list, ","))
+	out, err := c.deps.CommandOutput(reqCtx, psPath, "-o", "pid=,ppid=,etimes=,comm=", "-t", strings.Join(ttys, ","))
 	if err != nil {
-		return nil, err
+		return paneProcessTree{}, err
 	}
-	elapsed := make(map[int]time.Duration, len(pids))
+	tree := paneProcessTree{byPID: map[int]paneProcess{}, children: map[int][]int{}}
 	for line := range strings.SplitSeq(string(out), "\n") {
 		fields := strings.Fields(line)
-		if len(fields) < 2 {
+		if len(fields) < 4 {
 			continue
 		}
 		pid, err := strconv.Atoi(fields[0])
 		if err != nil {
 			continue
 		}
-		secs, err := strconv.Atoi(fields[1])
+		ppid, err := strconv.Atoi(fields[1])
 		if err != nil {
 			continue
 		}
-		elapsed[pid] = time.Duration(secs) * time.Second
+		secs, err := strconv.Atoi(fields[2])
+		if err != nil {
+			continue
+		}
+		tree.byPID[pid] = paneProcess{pid: pid, comm: strings.Join(fields[3:], " "), elapsed: time.Duration(secs) * time.Second}
+		tree.children[ppid] = append(tree.children[ppid], pid)
 	}
-	return elapsed, nil
+	return tree, nil
+}
+
+// foreground returns the deepest descendant of panePID — what is actually
+// running in the pane. tmux resolves #{pane_current_command} the same way, and
+// the walk has to reach the deepest node rather than stopping at the first
+// child because the leak's real shape is a grandchild: the agent AO launched is
+// the child, and the process it left behind hangs off that.
+//
+// A pane with no descendants reports nothing running. That is the pane sitting
+// at the interactive shell tmux.buildLaunchCommand execs into once the agent
+// exits — the designed resting state, which this makes unflaggable by
+// construction, with no shell-name allowlist to maintain.
+func (t paneProcessTree) foreground(panePID int) (paneProcess, bool) {
+	type node struct{ pid, depth int }
+	var (
+		best      paneProcess
+		bestDepth int
+		found     bool
+	)
+	// visited guards against a malformed ppid cycle in external command output;
+	// doctor must not spin on it.
+	visited := map[int]bool{panePID: true}
+	stack := []node{{pid: panePID, depth: 0}}
+	for len(stack) > 0 {
+		cur := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		if proc, ok := t.byPID[cur.pid]; ok && cur.depth > 0 {
+			// Deepest wins; equal depth resolves to the lowest pid so the report
+			// is stable rather than dependent on ps ordering.
+			if !found || cur.depth > bestDepth || (cur.depth == bestDepth && proc.pid < best.pid) {
+				best, bestDepth, found = proc, cur.depth, true
+			}
+		}
+		for _, child := range t.children[cur.pid] {
+			if visited[child] {
+				continue
+			}
+			visited[child] = true
+			stack = append(stack, node{pid: child, depth: cur.depth + 1})
+		}
+	}
+	return best, found
 }
 
 // checkDaemonRestarts surfaces systemd restart churn for the unit that actually

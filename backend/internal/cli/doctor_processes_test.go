@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -93,28 +94,65 @@ func (r *doctorRequestRecorder) assertReadOnly(t *testing.T) {
 	}
 }
 
-// doctorPane is one row of the read-only `tmux list-panes` probe.
-type doctorPane struct {
-	tmuxSession string
-	pid         int
-	command     string
-	etimes      int
+// doctorProc is one process on a pane's tty, as `ps -o pid=,ppid=,etimes=,comm=`
+// reports it. ppid is what makes a pane's real foreground process findable:
+// tmux.buildLaunchCommand wraps every pane in `sh -c '... <agent>; exec $SHELL
+// -i'`, so the agent and anything it spawns hang off the pane's own pid.
+type doctorProc struct {
+	pid    int
+	ppid   int
+	etimes int
+	comm   string
 }
 
+// doctorPane is one pane of the read-only `tmux list-panes` probe together with
+// the process tree on its tty. panePID is `#{pane_pid}` — the wrapping shell,
+// which is NOT necessarily what is running in the pane.
+type doctorPane struct {
+	tmuxSession string
+	panePID     int
+	tty         string
+	procs       []doctorProc
+}
+
+// doctorPaneOutput mimics `tmux list-panes -a -F '#{session_name} #{pane_pid}
+// #{pane_tty}'`, including the /dev/ prefix tmux really emits.
 func doctorPaneOutput(panes []doctorPane) string {
 	var b strings.Builder
 	for _, p := range panes {
-		fmt.Fprintf(&b, "%s %d %s\n", p.tmuxSession, p.pid, p.command)
+		fmt.Fprintf(&b, "%s %d /dev/%s\n", p.tmuxSession, p.panePID, p.tty)
 	}
 	return b.String()
 }
 
-// doctorPSOutput mimics `ps -o pid=,etimes= -p <csv>`: right-aligned pid and
-// elapsed seconds, no header.
-func doctorPSOutput(panes []doctorPane) string {
+// doctorPSOutput mimics `ps -o pid=,ppid=,etimes=,comm= -t <csv>`: right-aligned
+// columns, no header, and only the ttys actually asked for. Honouring -t is what
+// lets a test prove foreign panes never even reach the probe.
+func doctorPSOutput(t *testing.T, panes []doctorPane, args []string) string {
+	t.Helper()
+	wanted := map[string]bool{}
+	for i, arg := range args {
+		if arg == "-t" && i+1 < len(args) {
+			for _, tty := range strings.Split(args[i+1], ",") {
+				wanted[tty] = true
+			}
+		}
+	}
+	if len(wanted) == 0 {
+		t.Errorf("ps probe did not scope to any tty: ps %s", strings.Join(args, " "))
+	}
 	var b strings.Builder
 	for _, p := range panes {
-		fmt.Fprintf(&b, "%7d %6d\n", p.pid, p.etimes)
+		if !wanted[p.tty] {
+			continue
+		}
+		delete(wanted, p.tty)
+		for _, proc := range p.procs {
+			fmt.Fprintf(&b, "%7d %7d %6d %s\n", proc.pid, proc.ppid, proc.etimes, proc.comm)
+		}
+	}
+	for tty := range wanted {
+		t.Errorf("ps probe asked about tty %q, which belongs to no AO-owned pane", tty)
 	}
 	return b.String()
 }
@@ -134,7 +172,7 @@ func doctorPaneProbeFake(t *testing.T, rec *doctorProbeRecorder, panes []doctorP
 		case base == "tmux" && len(args) > 0 && args[0] == "list-panes":
 			return []byte(doctorPaneOutput(panes)), nil
 		case base == "ps":
-			return []byte(doctorPSOutput(panes)), nil
+			return []byte(doctorPSOutput(t, panes, args)), nil
 		default:
 			t.Errorf("doctor ran a non read-only probe: %s %v", name, args)
 			return nil, fmt.Errorf("unexpected command %s", name)
@@ -194,19 +232,28 @@ func doctorLiveDaemonContext(t *testing.T, cfg testConfig, srv *httptest.Server,
 
 // -- agent-processes (AC 3) ---------------------------------------------------
 
-// TestDoctorAgentProcessesWarnsOnStaleNonAgentPaneProcess models the reported
-// bug: an 8-hour `curl` squatting in a pane AO owns. "Not the agent AO launched
-// for this session, running longer than an hour, inside a pane AO owns" is the
-// whole rule.
-func TestDoctorAgentProcessesWarnsOnStaleNonAgentPaneProcess(t *testing.T) {
+// TestDoctorAgentProcessesWarnsOnStaleGrandchildSquatter models the reported
+// bug in its real shape: the agent AO launched is a child of the pane's shell,
+// and the 8-hour `curl` it left behind is a GRANDCHILD. The finding must name
+// that grandchild — its pid, its command, its own elapsed time — and must not
+// name the pane shell (whose pid an operator would kill, destroying the pane) or
+// the pane's age (which is just how long the session has been open).
+func TestDoctorAgentProcessesWarnsOnStaleGrandchildSquatter(t *testing.T) {
 	cfg := setConfigEnv(t)
 	sessions := []sessionDTO{
 		{ID: "sess-stale", ProjectID: "demo", Kind: "worker", Harness: "claude-code", Status: "running"},
 		{ID: "sess-ok", ProjectID: "demo", Kind: "worker", Harness: "codex", Status: "running"},
 	}
 	panes := []doctorPane{
-		{tmuxSession: "sess-stale", pid: 4711, command: "curl", etimes: 28800},
-		{tmuxSession: "sess-ok", pid: 4712, command: "codex", etimes: 28800},
+		{tmuxSession: "sess-stale", panePID: 5000, tty: "pts/1", procs: []doctorProc{
+			{pid: 5000, ppid: 900, etimes: 57600, comm: "sh"},      // pane shell, up 16h
+			{pid: 5100, ppid: 5000, etimes: 54000, comm: "claude"}, // the agent
+			{pid: 5200, ppid: 5100, etimes: 28800, comm: "curl"},   // the 8h squatter
+		}},
+		{tmuxSession: "sess-ok", panePID: 6000, tty: "pts/2", procs: []doctorProc{
+			{pid: 6000, ppid: 900, etimes: 57600, comm: "sh"},
+			{pid: 6100, ppid: 6000, etimes: 54000, comm: "codex"},
+		}},
 	}
 	srv := doctorDaemonServer(t, sessions)
 	rec := &doctorProbeRecorder{}
@@ -218,42 +265,96 @@ func TestDoctorAgentProcessesWarnsOnStaleNonAgentPaneProcess(t *testing.T) {
 
 	check := findDoctorCheck(t, c.runDoctor(context.Background()), "agent-processes")
 	if check.Level != doctorWarn {
-		t.Fatalf("agent-processes = %+v, want WARN for an 8h non-agent pane process", check)
+		t.Fatalf("agent-processes = %+v, want WARN for an 8h grandchild squatter", check)
 	}
-	for _, want := range []string{"4711", "curl"} {
+	for _, want := range []string{"5200", "curl"} {
 		if !strings.Contains(check.Message, want) {
-			t.Fatalf("agent-processes message %q missing %q (must name the pid and the command)", check.Message, want)
+			t.Fatalf("agent-processes message %q missing %q (must name the squatter's pid and command)", check.Message, want)
 		}
 	}
 	if !strings.Contains(check.Message, "8h") && !strings.Contains(check.Message, "28800") {
-		t.Fatalf("agent-processes message %q does not name the elapsed time (8h/28800s)", check.Message)
+		t.Fatalf("agent-processes message %q does not name the squatter's own elapsed time (8h/28800s)", check.Message)
 	}
-	if strings.Contains(check.Message, "4712") {
-		t.Fatalf("agent-processes message %q flagged the session's own agent process", check.Message)
+	// Reporting the pane shell's pid or the pane's 16h age is the bug, not the fix.
+	if strings.Contains(check.Message, "5000") {
+		t.Fatalf("agent-processes message %q named the pane shell's pid; killing it destroys the pane", check.Message)
+	}
+	if strings.Contains(check.Message, "16h") {
+		t.Fatalf("agent-processes message %q reported the pane's age instead of the squatter's", check.Message)
+	}
+	// The healthy pane's agent and its own shell must not be flagged.
+	for _, unwanted := range []string{"6000", "6100", "codex"} {
+		if strings.Contains(check.Message, unwanted) {
+			t.Fatalf("agent-processes message %q flagged the healthy session (%s)", check.Message, unwanted)
+		}
 	}
 	rec.assertNoSupervisorSocketProbe(t)
 	httpRec.assertReadOnly(t)
 }
 
-// TestDoctorAgentProcessesPassesOnAgentAndShortLivedPanes covers the three
-// non-findings: the session's own agent binary (including claude-code, whose
-// binary name differs from the harness id), a short-lived helper under the
-// staleness threshold, and a tmux session AO does not own.
-func TestDoctorAgentProcessesPassesOnAgentAndShortLivedPanes(t *testing.T) {
+// TestDoctorAgentProcessesPassesOnRestingPaneShell covers the pane's designed
+// resting state. tmux.buildLaunchCommand ends in `exec "${SHELL:-/bin/sh}" -i`,
+// so once the agent exits the shell REPLACES the wrapper in place: #{pane_pid}
+// is itself an interactive shell with no descendants, and #{pane_current_command}
+// is `bash`. Every idle AO pane looks like this, and none of them is a finding —
+// modelled on the real long-lived `prime-1` pane on the dev host.
+func TestDoctorAgentProcessesPassesOnRestingPaneShell(t *testing.T) {
+	cfg := setConfigEnv(t)
+	sessions := []sessionDTO{
+		{ID: "sess-idle", ProjectID: "demo", Kind: "worker", Harness: "codex", Status: "running"},
+	}
+	panes := []doctorPane{
+		{tmuxSession: "sess-idle", panePID: 3194093, tty: "pts/9", procs: []doctorProc{
+			// Up 16h, command `bash`, and crucially NO descendants.
+			{pid: 3194093, ppid: 900, etimes: 57600, comm: "bash"},
+		}},
+	}
+	srv := doctorDaemonServer(t, sessions)
+	rec := &doctorProbeRecorder{}
+	c, httpRec := doctorLiveDaemonContext(t, cfg,
+		srv,
+		map[string]string{"git": "/bin/git", "tmux": "/bin/tmux", "ps": "/bin/ps"},
+		doctorPaneProbeFake(t, rec, panes),
+	)
+
+	check := findDoctorCheck(t, c.runDoctor(context.Background()), "agent-processes")
+	if check.Level != doctorPass {
+		t.Fatalf("agent-processes = %+v, want PASS for a pane resting at its own shell", check)
+	}
+	rec.assertNoSupervisorSocketProbe(t)
+	httpRec.assertReadOnly(t)
+}
+
+// TestDoctorAgentProcessesPassesOnAgentAndShortLivedHelpers covers the
+// remaining non-findings: the agent running as a direct child for many hours
+// (including claude-code, whose binary name differs from the harness id), a
+// short-lived helper the agent spawned as a grandchild, and a tmux session AO
+// does not own. The short-lived grandchild is the false positive a pane-age
+// threshold produces: the pane is 16h old, the helper is 2 minutes old.
+func TestDoctorAgentProcessesPassesOnAgentAndShortLivedHelpers(t *testing.T) {
 	cfg := setConfigEnv(t)
 	sessions := []sessionDTO{
 		{ID: "sess-claude", ProjectID: "demo", Kind: "worker", Harness: "claude-code", Status: "running"},
 		{ID: "sess-codex", ProjectID: "demo", Kind: "worker", Harness: "codex", Status: "running"},
-		{ID: "sess-fresh", ProjectID: "demo", Kind: "worker", Harness: "codex", Status: "running"},
 	}
 	panes := []doctorPane{
-		// The agent AO launched, long-running: expected, not a finding.
-		{tmuxSession: "sess-claude", pid: 1001, command: "claude", etimes: 36000},
-		{tmuxSession: "sess-codex", pid: 1002, command: "codex", etimes: 36000},
-		// A non-agent command well under the 1h staleness threshold.
-		{tmuxSession: "sess-fresh", pid: 1003, command: "rg", etimes: 900},
-		// A tmux session AO knows nothing about: out of population entirely.
-		{tmuxSession: "someones-shell", pid: 1004, command: "vim", etimes: 999999},
+		// The agent AO launched, as a direct child, running for 15h: expected.
+		{tmuxSession: "sess-claude", panePID: 1000, tty: "pts/3", procs: []doctorProc{
+			{pid: 1000, ppid: 900, etimes: 57600, comm: "sh"},
+			{pid: 1100, ppid: 1000, etimes: 54000, comm: "claude"},
+		}},
+		// The agent plus a 2-minute helper grandchild, inside a 16h-old pane.
+		{tmuxSession: "sess-codex", panePID: 2000, tty: "pts/4", procs: []doctorProc{
+			{pid: 2000, ppid: 900, etimes: 57600, comm: "sh"},
+			{pid: 2100, ppid: 2000, etimes: 54000, comm: "codex"},
+			{pid: 2200, ppid: 2100, etimes: 120, comm: "rg"},
+		}},
+		// A tmux session AO knows nothing about: out of population entirely. Its
+		// tty must never reach the ps probe (doctorPSOutput asserts that).
+		{tmuxSession: "someones-shell", panePID: 4000, tty: "pts/5", procs: []doctorProc{
+			{pid: 4000, ppid: 900, etimes: 999999, comm: "bash"},
+			{pid: 4100, ppid: 4000, etimes: 999999, comm: "vim"},
+		}},
 	}
 	srv := doctorDaemonServer(t, sessions)
 	rec := &doctorProbeRecorder{}
@@ -466,4 +567,80 @@ func assertDoctorUnavailable(t *testing.T, name string, check doctorCheck) {
 	if !strings.Contains(msg, "unavailable") && !strings.Contains(msg, "skipped") {
 		t.Fatalf("%s message %q does not report the probe as unavailable/skipped", name, check.Message)
 	}
+}
+
+// scopedSystemctlFake asserts the --user flag is present exactly when the unit
+// is owned by a per-user manager. Querying the wrong manager is not a loud
+// failure: `systemctl show` answers 0 for a unit it does not know, so asking
+// the system manager about a user unit reports a healthy zero forever and the
+// restart-churn check silently never fires.
+func scopedSystemctlFake(t *testing.T, rec *doctorProbeRecorder, wantUnit, nrestarts string, wantUserScope bool) func(context.Context, string, ...string) ([]byte, error) {
+	t.Helper()
+	return func(_ context.Context, name string, args ...string) ([]byte, error) {
+		rec.record(name, args)
+		joined := strings.Join(args, " ")
+		switch filepath.Base(name) {
+		case "git":
+			return []byte("git version 2.43.0\n"), nil
+		case "systemctl":
+			if got := slices.Contains(args, "--user"); got != wantUserScope {
+				t.Errorf("systemctl --user = %v, want %v (args: %s)", got, wantUserScope, joined)
+			}
+			if !strings.Contains(joined, wantUnit) {
+				t.Errorf("systemctl probed %q, want the derived unit %q", joined, wantUnit)
+			}
+			return []byte(nrestarts + "\n"), nil
+		default:
+			t.Errorf("doctor ran a non read-only probe: %s %v", name, args)
+			return nil, fmt.Errorf("unexpected command %s", name)
+		}
+	}
+}
+
+// TestDoctorDaemonRestartsQueriesUserManagerForUserScopedUnit covers a daemon
+// running as a systemd *user* unit: the enclosing user@<uid>.service on the
+// cgroup path is systemd's own marker for that, and the probe must be routed to
+// the user manager rather than the system one.
+func TestDoctorDaemonRestartsQueriesUserManagerForUserScopedUnit(t *testing.T) {
+	cfg := setConfigEnv(t)
+	srv := doctorDaemonServer(t, nil)
+	rec := &doctorProbeRecorder{}
+	c, httpRec := doctorLiveDaemonContext(t, cfg, srv,
+		map[string]string{"git": "/bin/git", "systemctl": "/bin/systemctl"},
+		scopedSystemctlFake(t, rec, "ao-dev.service", "7", true),
+	)
+	c.deps.ProcRoot = writeProcCgroup(t, doctorFakeDaemonPID,
+		"0::/user.slice/user-1002.slice/user@1002.service/app.slice/ao-dev.service\n")
+
+	check := findDoctorCheck(t, c.runDoctor(context.Background()), "daemon-restarts")
+	if check.Level != doctorWarn {
+		t.Fatalf("daemon-restarts = %+v, want WARN on restart churn", check)
+	}
+	for _, want := range []string{"ao-dev.service", "7", "--user"} {
+		if !strings.Contains(check.Message, want) {
+			t.Fatalf("daemon-restarts message %q missing %q (must name the unit, the count, and a user-scoped journal hint)", check.Message, want)
+		}
+	}
+	rec.assertNoSupervisorSocketProbe(t)
+	httpRec.assertReadOnly(t)
+}
+
+// TestDoctorDaemonRestartsUsesSystemManagerForSystemUnit is the other half of
+// the scope pair: a system-slice unit must NOT be queried with --user.
+func TestDoctorDaemonRestartsUsesSystemManagerForSystemUnit(t *testing.T) {
+	cfg := setConfigEnv(t)
+	srv := doctorDaemonServer(t, nil)
+	rec := &doctorProbeRecorder{}
+	c, httpRec := doctorLiveDaemonContext(t, cfg, srv,
+		map[string]string{"git": "/bin/git", "systemctl": "/bin/systemctl"},
+		scopedSystemctlFake(t, rec, "ao-dev.service", "0", false),
+	)
+	c.deps.ProcRoot = writeProcCgroup(t, doctorFakeDaemonPID, "0::/system.slice/ao-dev.service\n")
+
+	check := findDoctorCheck(t, c.runDoctor(context.Background()), "daemon-restarts")
+	if check.Level != doctorPass {
+		t.Fatalf("daemon-restarts = %+v, want PASS without churn", check)
+	}
+	rec.assertNoSupervisorSocketProbe(t)
+	httpRec.assertReadOnly(t)
 }

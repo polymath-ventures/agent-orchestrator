@@ -381,3 +381,121 @@ func TestHandshakedReconnectWithinGraceCancels(t *testing.T) {
 	_ = ln.Close()
 	<-done
 }
+
+// --- #147 follow-up: countdown accounting under concurrent arrivals ----------
+
+// stormGrace is long enough that no countdown armed during the storm below can
+// legitimately elapse while the storm is still running, so a fire that lands
+// early is evidence of a leaked countdown rather than normal operation.
+const stormGrace = 500 * time.Millisecond
+
+// stormDuration is how long the arrive/depart storm runs. It is deliberately a
+// fraction of stormGrace: a countdown leaked near the start of the storm becomes
+// visible as a fire roughly stormGrace after the storm BEGAN, which is about
+// stormDuration too early relative to the last departure.
+const stormDuration = 250 * time.Millisecond
+
+// stormWorkers is the number of goroutines cycling handshaked connections. The
+// bug needs an arrival to acquire the supervisor's mutex in the gap a departure
+// leaves between deciding "that was the last client" and installing the
+// countdown. Go hands a contended mutex to a waiter on Unlock, so heavy
+// contention makes that interleaving common instead of vanishingly rare.
+const stormWorkers = 64
+
+// TestConcurrentArriveDepartDoesNotShortenGrace pins countdown accounting under
+// the concurrency that per-connection goroutines introduce.
+//
+// Many handshaked clients arrive and depart at once, then all of them go away.
+// From that moment a correct supervisor waits a full grace period before firing,
+// because the only legitimate countdown is the one armed by the final departure.
+// A countdown armed while a client was still live, or an orphan a later install
+// failed to stop, elapses sooner than that and cuts the grace short — which in
+// production means the daemon self-stopping while a frontend is reconnecting.
+func TestConcurrentArriveDepartDoesNotShortenGrace(t *testing.T) {
+	t.Parallel()
+
+	var mu sync.Mutex
+	fireCount := 0
+	var fireAt time.Time
+	fired := make(chan struct{}, 1)
+	cb := func() {
+		mu.Lock()
+		fireCount++
+		if fireCount == 1 {
+			fireAt = time.Now()
+		}
+		mu.Unlock()
+		select {
+		case fired <- struct{}{}:
+		default:
+		}
+	}
+
+	s := supervisor.New(stormGrace, cb, noopLogger())
+	ln := newFakeListener()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- s.Serve(ctx, ln) }()
+
+	var wg sync.WaitGroup
+	deadline := time.Now().Add(stormDuration)
+	for i := 0; i < stormWorkers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for time.Now().Before(deadline) {
+				serverConn, clientConn := makePipe()
+				ln.enqueue(serverConn)
+				// Deliberately not writeHandshake: that calls t.Fatalf, which is
+				// illegal off the test goroutine. A write error here means the
+				// server hung up on a valid token, which the assertions below
+				// surface as a missing or mistimed fire.
+				if _, err := clientConn.Write([]byte(supervisor.HandshakeToken)); err != nil {
+					_ = clientConn.Close()
+					return
+				}
+				_ = clientConn.Close()
+			}
+		}()
+	}
+	wg.Wait()
+
+	// Every client is gone from here on. The server may still be observing the
+	// last few EOFs, which can only push the legitimate fire later, never
+	// earlier, so this is a safe lower bound to measure from.
+	tEnd := time.Now()
+
+	select {
+	case <-fired:
+	case <-time.After(stormGrace * 4):
+		t.Fatal("callback never fired after every handshaked client went away")
+	}
+
+	mu.Lock()
+	gotAt := fireAt
+	mu.Unlock()
+
+	// 80% of grace absorbs scheduling noise while staying well above what a
+	// leaked countdown produces (roughly stormGrace - stormDuration, i.e. ~50%).
+	elapsed := gotAt.Sub(tEnd)
+	wantMin := stormGrace * 4 / 5
+	if elapsed < wantMin {
+		t.Fatalf("callback fired %s after the last client left, want at least %s (grace %s): a countdown was armed while a client was still live, or an orphaned countdown fired",
+			elapsed, wantMin, stormGrace)
+	}
+
+	// A leaked countdown can also surface as a second fire; fireOnce must hold.
+	time.Sleep(stormGrace)
+	mu.Lock()
+	count := fireCount
+	mu.Unlock()
+	if count != 1 {
+		t.Fatalf("expected exactly one callback fire, got %d", count)
+	}
+
+	cancel()
+	_ = ln.Close()
+	<-done
+}

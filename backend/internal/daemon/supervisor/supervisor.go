@@ -49,15 +49,26 @@ var errHandshakeMismatch = errors.New("supervisor: handshake token mismatch")
 // stays zero for the grace period.
 //
 // Concurrency model:
-//   - mu guards liveCount, armed, and pendingTimer.
+//   - mu guards liveCount, armed, pendingTimer, and graceGen.
 //   - armed flips to true on the first connection that completes the handshake
 //     and never resets; it is the "headless-safety" gate that prevents a
 //     pre-connect fire.
 //   - pendingTimer holds the *time.Timer from time.AfterFunc so it can be
 //     stopped on reconnect. A non-nil pendingTimer means a grace countdown is
 //     running.
+//   - graceGen identifies the current countdown. Every install or cancel bumps
+//     it, so a timer whose func had already started when it was stopped sees
+//     that it is no longer current and declines to fire. Stop() alone cannot
+//     provide this: it does not wait for a func that is already running.
+//   - Connections are handled by one goroutine each, so arrivals and departures
+//     contend on mu concurrently. Every transition of liveCount is therefore
+//     paired with its countdown decision inside a single critical section; a
+//     countdown must never be installed from a section that has already
+//     released mu, because an arrival can interleave and the timer would then
+//     be armed while a client is live.
 //   - fireOnce ensures onLastClientGone is called at most once for the entire
 //     process lifetime, even if the timer fires concurrently with a reconnect.
+//   - onLastClientGone is never invoked while holding mu.
 type Supervisor struct {
 	grace            time.Duration
 	onLastClientGone func()
@@ -67,6 +78,7 @@ type Supervisor struct {
 	liveCount    int
 	armed        bool        // true once a connection has completed the handshake
 	pendingTimer *time.Timer // non-nil while grace countdown is running
+	graceGen     uint64      // generation of the current countdown
 
 	fireOnce sync.Once
 }
@@ -187,6 +199,12 @@ func readHandshake(conn net.Conn) error {
 
 // drainToEOF reads and discards from conn purely to detect close. When read
 // returns io.EOF or any error, the connection is gone.
+//
+// A half-close counts as gone: a client that calls shutdown(SHUT_WR) while
+// keeping its fd open reads as EOF here, so the daemon treats it as departed
+// even though the process is alive. That is correct for the only client that
+// exists — Node's default allowHalfOpen: false never half-closes — but a future
+// client must hold the write side open for as long as it wants to count as live.
 func drainToEOF(conn net.Conn) {
 	// ponytail: 32-byte scratch buffer; we never process the payload.
 	scratch := make([]byte, 32)
@@ -203,47 +221,77 @@ func (s *Supervisor) clientArrived() {
 	s.mu.Lock()
 	s.armed = true
 	s.liveCount++
-	// If a grace timer was pending (reconnect before grace elapsed), cancel it.
-	if s.pendingTimer != nil {
-		s.pendingTimer.Stop()
-		s.pendingTimer = nil
-	}
+	// A client is live again, so any countdown is void. Raising the count and
+	// cancelling must be atomic together: a countdown installed by a departure
+	// that had already released mu would be armed while this client is live.
+	s.cancelGraceLocked()
 	live := s.liveCount
 	s.mu.Unlock()
 
 	s.log.Debug("supervisor: client connected", "liveCount", live)
 }
 
-// clientGone records the departure of a handshaked client. Only handleConn
-// calls it, and only after a matching clientArrived.
+// clientGone records the departure of a handshaked client and starts the grace
+// countdown when it was the last one. Only handleConn calls it, and only after a
+// matching clientArrived.
+//
+// The decrement, the was-that-the-last-one test, and the countdown install all
+// happen under one uninterrupted hold of mu. Splitting them (the shape this
+// replaced) let a clientArrived interleave between the test and the install, so
+// the countdown could be armed while a client was live and would then be
+// orphaned by the next install and fire early against a transient zero.
 func (s *Supervisor) clientGone() {
 	s.mu.Lock()
 	s.liveCount--
 	live := s.liveCount
-	armed := s.armed
+	if s.armed && live == 0 {
+		s.startGraceLocked()
+	}
 	s.mu.Unlock()
 
 	s.log.Debug("supervisor: client disconnected", "liveCount", live)
-
-	if armed && live == 0 {
-		s.armGrace()
-	}
 }
 
-// armGrace starts the grace countdown. If another client handshakes before it
-// elapses, clientArrived will Stop() the timer via pendingTimer.
-func (s *Supervisor) armGrace() {
-	s.mu.Lock()
-	s.pendingTimer = time.AfterFunc(s.grace, func() {
-		s.mu.Lock()
-		live := s.liveCount
-		s.pendingTimer = nil
-		s.mu.Unlock()
+// startGraceLocked replaces any pending countdown with a fresh one. mu must be
+// held. time.AfterFunc runs the callback on its own goroutine, so creating the
+// timer under mu cannot deadlock.
+func (s *Supervisor) startGraceLocked() {
+	s.cancelGraceLocked()
+	gen := s.graceGen
+	s.pendingTimer = time.AfterFunc(s.grace, func() { s.graceElapsed(gen) })
+}
 
-		if live == 0 {
-			s.log.Info("supervisor: last client gone; grace elapsed, firing callback")
-			s.fireOnce.Do(s.onLastClientGone)
-		}
-	})
+// cancelGraceLocked voids the pending countdown, if any. mu must be held.
+//
+// The generation bump is unconditional and is the load-bearing half: Stop()
+// returns false and has no effect once the timer's func has started running, so
+// stopping alone cannot guarantee a superseded countdown stays quiet. Bumping
+// makes "only the current countdown may fire" a property of the state rather
+// than a race that Stop() has to win.
+func (s *Supervisor) cancelGraceLocked() {
+	if s.pendingTimer != nil {
+		s.pendingTimer.Stop()
+		s.pendingTimer = nil
+	}
+	s.graceGen++
+}
+
+// graceElapsed runs on the timer's own goroutine when a countdown completes. It
+// fires the callback only if its countdown is still the current one and no
+// client has come back.
+func (s *Supervisor) graceElapsed(gen uint64) {
+	s.mu.Lock()
+	current := gen == s.graceGen
+	live := s.liveCount
+	if current {
+		s.pendingTimer = nil
+	}
 	s.mu.Unlock()
+
+	if !current || live != 0 {
+		return
+	}
+
+	s.log.Info("supervisor: last client gone; grace elapsed, firing callback")
+	s.fireOnce.Do(s.onLastClientGone)
 }
