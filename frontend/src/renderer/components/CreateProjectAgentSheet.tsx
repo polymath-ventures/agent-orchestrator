@@ -295,11 +295,8 @@ export function CreateProjectAgentSheet({
 											showHarness={false}
 											statusVisibility="actionable"
 											emptyLabel="Harness default"
+											showManualModelNotice
 										/>
-										<p className="mt-2 flex items-start gap-1.5 text-[12px] text-muted-foreground">
-											<TriangleAlert className="mt-0.5 size-3.5 shrink-0 text-warning" aria-hidden="true" />
-											<span>Manual model IDs are allowed; launch may fail if the harness rejects the model.</span>
-										</p>
 									</div>
 								);
 							})}

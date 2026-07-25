@@ -255,6 +255,7 @@ describe("CreateProjectAgentSheet", () => {
 		await chooseOption(screen.getByRole("combobox", { name: "Reviewer harness" }), "codex");
 		expect(screen.getByText("Claude Code default model")).toBeInTheDocument();
 		expect(screen.getByText("codex default model")).toBeInTheDocument();
+		expect(screen.getAllByText(/Manual model IDs are allowed/i)).toHaveLength(2);
 		expect(screen.getAllByText(/launch may fail if the harness rejects/i)).toHaveLength(2);
 
 		await userEvent.clear(document.getElementById("newProjectModel-claude-code-model")!);

@@ -224,6 +224,7 @@ export function WorkerMixFields({
 								showHarness={false}
 								statusVisibility="actionable"
 								emptyLabel="Default / inherit"
+								showManualModelNotice
 							/>
 							<p className="text-[11px] text-passive">
 								Blank model uses the agent default; blank effort inherits worker configuration.

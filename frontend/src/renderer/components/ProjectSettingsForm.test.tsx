@@ -1088,6 +1088,7 @@ describe("ProjectSettingsForm", () => {
 		expect(document.getElementById("orchestrator-model-model")).toHaveValue("opus");
 		expect(document.getElementById("prime-model-model")).toBeNull();
 		expect(document.getElementById("reviewer-model-model")).toHaveValue("gpt-5-codex");
+		expect(screen.getAllByText(/Manual model IDs are allowed/i).length).toBeGreaterThanOrEqual(4);
 
 		const projectHarness = screen.getByRole("combobox", { name: "Project model harness" });
 		await userEvent.click(projectHarness);
@@ -1197,20 +1198,20 @@ describe("ProjectSettingsForm", () => {
 
 		renderSettings();
 		const workerHarness = await screen.findByRole("combobox", { name: "Default worker agent" });
-		const model = document.getElementById("worker-model-model");
-		const effort = document.getElementById("worker-model-effort");
-		expect(model).toHaveValue("gpt-5-codex");
-		expect(effort).toHaveValue("high");
+		const model = () => document.getElementById("worker-model-model");
+		const effort = () => document.getElementById("worker-model-effort");
+		expect(model()).toHaveValue("gpt-5-codex");
+		expect(effort()).toHaveValue("high");
 
 		await chooseOption(workerHarness, "OpenCode");
-		expect(model).toHaveValue("openai/gpt-5.4");
-		expect(effort).toHaveValue("turbo");
+		expect(model()).toHaveValue("openai/gpt-5.4");
+		expect(effort()).toHaveValue("turbo");
 		await chooseOption(workerHarness, "Codex Fugu");
-		expect(model).toHaveValue("");
-		expect(effort).toHaveValue("");
+		expect(model()).toHaveValue("");
+		expect(effort()).toHaveValue("");
 		await chooseOption(workerHarness, "Codex");
-		expect(model).toHaveValue("gpt-5-codex");
-		expect(effort).toHaveValue("high");
+		expect(model()).toHaveValue("gpt-5-codex");
+		expect(effort()).toHaveValue("high");
 	}, 20_000);
 
 	it("aligns the harness dropdown with the Model/Effort controls in each harness/model row", async () => {

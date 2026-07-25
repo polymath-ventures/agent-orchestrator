@@ -197,6 +197,7 @@ describe("WorkerMixFields model selection", () => {
 	it("keeps long OpenCode model IDs intact and applies the catalog effort", () => {
 		render(<ControlledMix initial={[bucket({ agent: "opencode" })]} />);
 
+		expect(screen.getByText(/Manual model IDs are allowed/i)).toBeInTheDocument();
 		const model = screen.getByLabelText("Model");
 		const list = document.getElementById(model.getAttribute("list") ?? "");
 		expect(list?.querySelector(`option[value="${longOpenCodeModel}"]`)).not.toBeNull();
