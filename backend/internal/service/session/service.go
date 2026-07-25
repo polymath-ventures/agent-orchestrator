@@ -392,7 +392,12 @@ func (s *Service) ReconcileRole(ctx context.Context, target domain.RoleTarget, o
 	if err := plan.verify(sess); err != nil {
 		// The unverified session is already live; without retiring it the next
 		// ensure pass would see an active role session and silently adopt it.
-		if retireErr := s.manager.RetireForReplacement(ctx, sess.ID); retireErr != nil {
+		// The retire is detached from the caller's cancellation (but bounded):
+		// a disconnected caller is a common reason verification fails, and a
+		// skipped retire leaves exactly the session this branch exists to remove.
+		cleanupCtx, cancelCleanup := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		defer cancelCleanup()
+		if retireErr := s.manager.RetireForReplacement(cleanupCtx, sess.ID); retireErr != nil {
 			return domain.Session{}, errors.Join(err, fmt.Errorf("retiring the unverified %s failed: %w", roleVerificationLabel(target), retireErr))
 		}
 		return domain.Session{}, err

@@ -621,10 +621,14 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	}
 
 	if err := m.verifyLaunchCommandRunning(ctx, handle, launchProcessCommand(argv)); err != nil {
-		_ = m.runtime.Destroy(ctx, handle)
+		// Mark down before rollback: attribution is decided at failure time, and
+		// MarkDownForAttempt reads the caller context. Rollback runs detached, so
+		// it legitimately outlives a caller that has gone away — marking down
+		// afterwards would let that departure erase the evidence.
+		m.markMixCandidateDown(ctx, target.mixSelected, cfg, agentConfig.Effort, err)
+		m.destroyFailedLaunchRuntime(ctx, handle)
 		m.rollbackPreparedSpawnWorkspace(ctx, rec, ws, workspaceProject)
 		m.rollbackSpawnSeedRow(ctx, id)
-		m.markMixCandidateDown(ctx, target.mixSelected, cfg, agentConfig.Effort, err)
 		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: launch process: %w", id, err)
 	}
 	metadata := domain.SessionMetadata{
@@ -638,7 +642,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		PromptPolicyHash:  promptPolicyHash(systemPrompt),
 	}
 	if err := m.lcm.MarkSpawned(ctx, id, metadata); err != nil {
-		_ = m.runtime.Destroy(ctx, handle)
+		m.destroyFailedLaunchRuntime(ctx, handle)
 		m.rollbackPreparedSpawnWorkspace(ctx, rec, ws, workspaceProject)
 		m.markSpawnFailedTerminated(ctx, id)
 		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: completed: %w", id, err)
@@ -646,17 +650,18 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	if delivery == ports.PromptDeliveryAfterStart && prompt != "" {
 		if err := m.deliverAfterStartPrompt(ctx, agent, launchCfg, handle, id, prompt); err != nil {
 			m.markMixCandidateDown(ctx, target.mixSelected, cfg, agentConfig.Effort, err)
-			_ = m.runtime.Destroy(ctx, handle)
+			m.destroyFailedLaunchRuntime(ctx, handle)
 			m.rollbackPreparedSpawnWorkspace(ctx, rec, ws, workspaceProject)
 			m.markSpawnFailedTerminatedWithoutWorkspace(ctx, id)
 			return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: deliver prompt: %w", id, err)
 		}
 	}
 	if err := m.verifyLaunchCommandRunning(ctx, handle, launchProcessCommand(argv)); err != nil {
-		_ = m.runtime.Destroy(ctx, handle)
+		// Mark down before rollback, for the reason on the probe branch above.
+		m.markMixCandidateDown(ctx, target.mixSelected, cfg, agentConfig.Effort, err)
+		m.destroyFailedLaunchRuntime(ctx, handle)
 		m.rollbackPreparedSpawnWorkspace(ctx, rec, ws, workspaceProject)
 		m.markSpawnFailedTerminatedWithoutWorkspace(ctx, id)
-		m.markMixCandidateDown(ctx, target.mixSelected, cfg, agentConfig.Effort, err)
 		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: launch process: %w", id, err)
 	}
 	m.recoverMixCandidate(project.Config, cfg, requestedHarness, requestedModel, agentConfig.Effort, target.mixSelected)
@@ -779,29 +784,75 @@ func (m *Manager) createSessionWorkspace(ctx context.Context, project domain.Pro
 			WorktreePath: wt.Path,
 			State:        "active",
 		}); err != nil {
-			_ = workspaceProject.DestroyWorkspaceProject(ctx, info)
+			m.destroyPartialWorkspaceProject(ctx, workspaceProject, info, id)
 			return ports.WorkspaceInfo{}, nil, fmt.Errorf("record workspace worktree %q: %w", wt.RepoName, err)
 		}
 	}
 	return info.Root, &info, nil
 }
 
+// spawnCleanupTimeout bounds compensating teardown after a failed spawn or
+// relaunch. Long enough for a tmux destroy and a git worktree removal, short
+// enough that a wedged teardown cannot pin a request goroutine open.
+const spawnCleanupTimeout = 30 * time.Second
+
+// cleanupContext derives the context that compensating teardown runs on.
+//
+// Rollback must outlive the caller's cancellation. An HTTP client that
+// disconnects mid-spawn cancels the request context, the in-flight step then
+// fails with that same ctx.Err(), and teardown performed on the dead context
+// would skip the very runtime session, worktree, and terminal-state write the
+// rollback exists to perform — leaving exactly the orphan it was meant to
+// prevent. Detached from cancellation, but bounded, so teardown still cannot
+// run forever.
+func cleanupContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), spawnCleanupTimeout)
+}
+
+// destroyPartialWorkspaceProject compensates a workspace project whose worktree
+// bookkeeping failed partway through. The on-disk project goes away together
+// with the session_worktree rows already recorded for earlier repos: those rows
+// are the boot-restore marker, so leaving them behind lets RestoreAll try to
+// resurrect a workspace project that no longer exists.
+func (m *Manager) destroyPartialWorkspaceProject(ctx context.Context, adapter ports.WorkspaceProject, info ports.WorkspaceProjectInfo, id domain.SessionID) {
+	cleanupCtx, cancel := cleanupContext(ctx)
+	defer cancel()
+	_ = adapter.DestroyWorkspaceProject(cleanupCtx, info)
+	_ = m.store.DeleteSessionWorktrees(cleanupCtx, id)
+}
+
+// destroyFailedLaunchRuntime tears down the runtime session a failed spawn or
+// relaunch already created. Detached from the caller's cancellation for the
+// reason in cleanupContext: the common trigger for these rollbacks is that the
+// caller went away, and a skipped destroy leaks a live agent session.
+func (m *Manager) destroyFailedLaunchRuntime(ctx context.Context, handle ports.RuntimeHandle) {
+	cleanupCtx, cancel := cleanupContext(ctx)
+	defer cancel()
+	if err := m.runtime.Destroy(cleanupCtx, handle); err != nil {
+		m.logger.Warn("rollback: destroy runtime session", "handle", handle.ID, "error", err)
+	}
+}
+
 func (m *Manager) destroySpawnWorkspace(ctx context.Context, ws ports.WorkspaceInfo, workspaceProject *ports.WorkspaceProjectInfo) bool {
+	cleanupCtx, cancel := cleanupContext(ctx)
+	defer cancel()
 	if workspaceProject != nil {
 		if adapter, ok := m.workspace.(ports.WorkspaceProject); ok {
-			err := adapter.DestroyWorkspaceProject(ctx, *workspaceProject)
-			_ = m.store.DeleteSessionWorktrees(ctx, ws.SessionID)
+			err := adapter.DestroyWorkspaceProject(cleanupCtx, *workspaceProject)
+			_ = m.store.DeleteSessionWorktrees(cleanupCtx, ws.SessionID)
 			return err == nil
 		}
 	}
-	err := m.workspace.Destroy(ctx, ws)
-	_ = m.store.DeleteSessionWorktrees(ctx, ws.SessionID)
+	err := m.workspace.Destroy(cleanupCtx, ws)
+	_ = m.store.DeleteSessionWorktrees(cleanupCtx, ws.SessionID)
 	return err == nil
 }
 
 func (m *Manager) rollbackPreparedSpawnWorkspace(ctx context.Context, rec domain.SessionRecord, ws ports.WorkspaceInfo, workspaceProject *ports.WorkspaceProjectInfo) {
-	if m.destroySpawnWorkspace(ctx, ws, workspaceProject) {
-		m.cleanupAgentWorkspace(ctx, rec, ws.Path)
+	cleanupCtx, cancel := cleanupContext(ctx)
+	defer cancel()
+	if m.destroySpawnWorkspace(cleanupCtx, ws, workspaceProject) {
+		m.cleanupAgentWorkspace(cleanupCtx, rec, ws.Path)
 	}
 }
 
@@ -1235,7 +1286,9 @@ func sessionPrefix(project domain.ProjectRecord) string {
 // row when nothing observable has landed yet (seed state) via rollbackSpawn or
 // rollbackSpawnSeedRow.
 func (m *Manager) markSpawnFailedTerminated(ctx context.Context, id domain.SessionID) {
-	_ = m.lcm.MarkTerminated(ctx, id)
+	cleanupCtx, cancel := cleanupContext(ctx)
+	defer cancel()
+	_ = m.lcm.MarkTerminated(cleanupCtx, id)
 	m.cleanupSystemPromptDir(id)
 }
 
@@ -1244,8 +1297,10 @@ func (m *Manager) markSpawnFailedTerminated(ctx context.Context, id domain.Sessi
 // that were destroyed during rollback. This keeps later restore/cleanup paths
 // from treating a removed worktree as reusable state.
 func (m *Manager) markSpawnFailedTerminatedWithoutWorkspace(ctx context.Context, id domain.SessionID) {
-	m.markSpawnFailedTerminated(ctx, id)
-	rec, ok, err := m.store.GetSession(ctx, id)
+	cleanupCtx, cancel := cleanupContext(ctx)
+	defer cancel()
+	m.markSpawnFailedTerminated(cleanupCtx, id)
+	rec, ok, err := m.store.GetSession(cleanupCtx, id)
 	if err != nil || !ok {
 		return
 	}
@@ -1253,7 +1308,7 @@ func (m *Manager) markSpawnFailedTerminatedWithoutWorkspace(ctx context.Context,
 	rec.Metadata.WorkspacePath = ""
 	rec.Metadata.RuntimeHandleID = ""
 	rec.Metadata.AgentSessionID = ""
-	_ = m.store.UpdateSession(ctx, rec)
+	_ = m.store.UpdateSession(cleanupCtx, rec)
 }
 
 // rollbackSpawnSeedRow best-effort removes the row of a spawn that failed
@@ -1262,11 +1317,13 @@ func (m *Manager) markSpawnFailedTerminatedWithoutWorkspace(ctx context.Context,
 // rows still in seed state; if the row has progressed or the delete itself
 // fails, fall back to parking it terminated so a phantom row never looks live.
 func (m *Manager) rollbackSpawnSeedRow(ctx context.Context, id domain.SessionID) {
-	if deleted, err := m.store.DeleteSession(ctx, id); err == nil && deleted {
+	cleanupCtx, cancel := cleanupContext(ctx)
+	defer cancel()
+	if deleted, err := m.store.DeleteSession(cleanupCtx, id); err == nil && deleted {
 		m.cleanupSystemPromptDir(id)
 		return
 	}
-	m.markSpawnFailedTerminated(ctx, id)
+	m.markSpawnFailedTerminated(cleanupCtx, id)
 }
 
 // rollbackSpawn deletes a session row when it is still in seed state — used
@@ -1639,7 +1696,7 @@ func (m *Manager) relaunchRestoredSession(ctx context.Context, rec domain.Sessio
 		return RestoreResult{}, fmt.Errorf("restore %s: runtime: %w", rec.ID, err)
 	}
 	if err := m.verifyLaunchCommandRunning(ctx, handle, launchProcessCommand(argv)); err != nil {
-		_ = m.runtime.Destroy(ctx, handle)
+		m.destroyFailedLaunchRuntime(ctx, handle)
 		m.cleanupSystemPromptDir(rec.ID)
 		return RestoreResult{}, fmt.Errorf("restore %s: launch process: %w", rec.ID, err)
 	}
@@ -1655,7 +1712,7 @@ func (m *Manager) relaunchRestoredSession(ctx context.Context, rec domain.Sessio
 		PromptPolicyHash:  promptPolicyHash(systemPrompt),
 	}
 	if err := m.lcm.MarkSpawned(ctx, rec.ID, metadata); err != nil {
-		_ = m.runtime.Destroy(ctx, handle)
+		m.destroyFailedLaunchRuntime(ctx, handle)
 		m.cleanupSystemPromptDir(rec.ID)
 		return RestoreResult{}, fmt.Errorf("restore %s: completed: %w", rec.ID, err)
 	}
@@ -1672,14 +1729,13 @@ func (m *Manager) relaunchRestoredSession(ctx context.Context, rec domain.Sessio
 			Permissions:      agentConfig.Permissions,
 		}
 		if err := m.deliverAfterStartPrompt(ctx, agent, launchCfg, handle, rec.ID, rec.Metadata.Prompt); err != nil {
-			_ = m.runtime.Destroy(ctx, handle)
-			_ = m.lcm.MarkTerminated(ctx, rec.ID)
-			m.cleanupSystemPromptDir(rec.ID)
+			m.destroyFailedLaunchRuntime(ctx, handle)
+			m.markSpawnFailedTerminated(ctx, rec.ID)
 			return RestoreResult{}, fmt.Errorf("restore %s: deliver prompt: %w", rec.ID, err)
 		}
 	}
 	if err := m.verifyLaunchCommandRunning(ctx, handle, launchProcessCommand(argv)); err != nil {
-		_ = m.runtime.Destroy(ctx, handle)
+		m.destroyFailedLaunchRuntime(ctx, handle)
 		m.cleanupSystemPromptDir(rec.ID)
 		return RestoreResult{}, fmt.Errorf("restore %s: launch process: %w", rec.ID, err)
 	}
@@ -3354,7 +3410,9 @@ func (m *Manager) cleanupPreparedAgentWorkspace(ctx context.Context, agent ports
 	if !ok {
 		return
 	}
-	if err := cleaner.CleanupWorkspace(ctx, ports.WorkspaceHookConfig{
+	cleanupCtx, cancel := cleanupContext(ctx)
+	defer cancel()
+	if err := cleaner.CleanupWorkspace(cleanupCtx, ports.WorkspaceHookConfig{
 		SessionID:     string(id),
 		WorkspacePath: workspacePath,
 		DataDir:       m.dataDir,
@@ -3377,14 +3435,16 @@ func (m *Manager) cleanupAgentWorkspace(ctx context.Context, rec domain.SessionR
 	if !ok {
 		return
 	}
+	cleanupCtx, cancel := cleanupContext(ctx)
+	defer cancel()
 	env := spawnEnv(rec.ID, rec.ProjectID, rec.IssueID, m.dataDir, rec.Metadata.RuntimeToken, nil)
-	if project, err := m.loadProject(ctx, rec.ProjectID); err == nil {
+	if project, err := m.loadProject(cleanupCtx, rec.ProjectID); err == nil {
 		env = m.runtimeEnv(rec.ID, rec.ProjectID, rec.IssueID, rec.Metadata.RuntimeToken, project.Config.Env)
 	} else {
 		m.logger.Warn("workspace cleanup: project env unavailable; agent cleanup using AO env only",
 			"sessionID", rec.ID, "projectID", rec.ProjectID, "error", err)
 	}
-	if err := cleaner.CleanupWorkspace(ctx, ports.WorkspaceHookConfig{
+	if err := cleaner.CleanupWorkspace(cleanupCtx, ports.WorkspaceHookConfig{
 		DataDir:       m.dataDir,
 		Env:           env,
 		SessionID:     string(rec.ID),
