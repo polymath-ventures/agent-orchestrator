@@ -68,3 +68,17 @@ func TestPrimeSettingsValidateRejectsBadValues(t *testing.T) {
 		})
 	}
 }
+
+// Prime's name is delivered into its harness like any other, so settings must
+// not persist one delivery would refuse — Prime would spawn with no name at all.
+func TestPrimeSettingsRejectAnUnsafeDisplayName(t *testing.T) {
+	s := DefaultPrimeSettings()
+	s.DisplayName = "x; touch /tmp/pwn"
+	if err := s.Validate(); err == nil {
+		t.Fatal("Validate accepted a display name carrying shell syntax")
+	}
+	s.DisplayName = "AO Prime"
+	if err := s.Validate(); err != nil {
+		t.Fatalf("Validate rejected a normal name: %v", err)
+	}
+}

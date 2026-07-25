@@ -600,3 +600,32 @@ func TestDeliverNameRefusesWhenTheRuntimeCannotConfirmTheAgent(t *testing.T) {
 		t.Fatalf("writes = %v, want none from a runtime that cannot confirm the agent", msg.msgs)
 	}
 }
+
+// A restore relaunches the harness, so its name resets to whatever it derives
+// for itself. Without re-delivery, a session renamed before teardown comes back
+// with the old harness name — a divergence reintroduced by the lifecycle event
+// meant to preserve the session.
+func TestRestoreRedeliversThePersistedName(t *testing.T) {
+	m, st, _, msg := newNamingManager(renameOnlyAgent{})
+	rec := liveNamedSession("ao #7 renamed", domain.ActivityIdle)
+	rec.IsTerminated = true
+	rec.Activity = domain.Activity{State: domain.ActivityExited}
+	rec.Metadata.WorkspacePath = "/ws/mer-1"
+	rec.Metadata.Branch = "ao/mer-1/root"
+	rec.Metadata.AgentSessionID = "native-1"
+	st.sessions["mer-1"] = rec
+
+	if _, err := m.RestoreWithMode(ctx, "mer-1"); err != nil {
+		t.Fatal(err)
+	}
+	want := "/rename ao #7 renamed"
+	found := false
+	for _, sent := range msg.msgs {
+		if sent == want {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("writes = %v, want the persisted name %q re-delivered on restore", msg.msgs, want)
+	}
+}

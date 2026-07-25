@@ -151,10 +151,11 @@ the keystrokes that deliver a name would answer a pending decision.
 
 A runtime may keep a session's terminal alive after its agent exits, so a naming
 write can reach whatever replaced the agent. The system SHALL constrain a session
-name to characters that are inert as a command — no control characters, shell
-operators, quotes, expansions, or globs — so that a misdirected naming write
-cannot be executed, and SHALL reject rather than truncate a supplied name that
-falls outside that set. The system SHALL additionally require positive
+name to characters that cannot cause a command to run — no control characters and
+none of the shell grammar that starts, substitutes, quotes, escapes, or redirects
+a command — so that a misdirected naming write cannot be executed. It SHALL
+reject rather than truncate a supplied name that falls outside that set, on every
+path that accepts one, so no path can persist a name that delivery would refuse. The system SHALL additionally require positive
 confirmation that a session's runtime is still running its agent before writing a
 name into it, and SHALL skip the write when it cannot confirm this.
 
@@ -178,6 +179,11 @@ name into it, and SHALL skip the write when it cannot confirm this.
 
 - **WHEN** a session's runtime is no longer running its agent
 - **THEN** no naming input is written to that runtime
+
+#### Scenario: A restored session keeps the name AO owns
+
+- **WHEN** a session that was renamed is torn down and later restored
+- **THEN** the restored harness carries the persisted display name
 
 #### Scenario: A name cannot carry executable syntax
 

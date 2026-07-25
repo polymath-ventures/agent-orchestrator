@@ -59,7 +59,8 @@ var ErrDisplayNameTooLong = fmt.Errorf("display name must be at most %d characte
 var ErrDisplayNameEmpty = errors.New("display name is required")
 
 // ErrDisplayNameUnsafe reports a session name carrying a character AO will not
-// type into a terminal. See NameRuneAllowed.
+// type into a terminal — shell grammar, a control character, or an invisible
+// format character. See NameRuneAllowed.
 var ErrDisplayNameUnsafe = errors.New("display name may not contain control characters or shell syntax")
 
 // ValidateSessionDisplayName checks an operator-supplied name against the one
@@ -158,8 +159,15 @@ const nameShellActive = "\"$&'()*;<>?[\\]^`{|}~!"
 // ASCII: to a shell, every non-ASCII rune is an ordinary word character. An
 // allow list would have to enumerate the world's punctuation to avoid mangling
 // legitimate titles — curly apostrophes, en dashes, emoji — for no security
-// gain. Invisible runes are still refused: a format character can hide content
-// from the operator reading the name.
+// gain.
+//
+// Two limits, stated rather than implied. The bar is "cannot cause execution",
+// not "cannot expand": a couple of permitted characters do expand under
+// non-default zsh options (`=` under EQUALS, `#` under EXTENDED_GLOB), but they
+// follow a command word, so they stay arguments. And format characters are
+// refused because a bidi override can make a name display differently from its
+// bytes; that also costs zero-width joiners, so a joined emoji sequence is
+// broken into its parts — an acceptable price in a 20-rune label.
 func NameRuneAllowed(r rune) bool {
 	if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
 		return false

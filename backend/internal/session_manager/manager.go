@@ -1676,18 +1676,30 @@ func (m *Manager) relaunchRestoredSession(ctx context.Context, rec domain.Sessio
 		m.cleanupSystemPromptDir(rec.ID)
 		return RestoreResult{}, fmt.Errorf("restore %s: completed: %w", rec.ID, err)
 	}
+	restoreLaunchCfg := ports.LaunchConfig{
+		DataDir:          m.dataDir,
+		DisplayName:      rec.DisplayName,
+		SessionID:        string(rec.ID),
+		WorkspacePath:    ws.Path,
+		Kind:             rec.Kind,
+		Prompt:           rec.Metadata.Prompt,
+		SystemPrompt:     systemPrompt,
+		SystemPromptFile: systemPromptFile,
+		Config:           agentConfig,
+		Permissions:      agentConfig.Permissions,
+	}
+	// A restore relaunches the harness, so the harness's name resets to whatever
+	// it derives for itself while AO keeps the name it owns. Without this, a
+	// session renamed before it was torn down comes back with the old harness
+	// name — a divergence reintroduced by the very lifecycle event meant to
+	// preserve the session. The resume command carries no launch-time name flag,
+	// so this always takes the in-harness path.
+	if err := m.deliverSpawnName(ctx, agent, restoreLaunchCfg, handle, rec.ID, rec.DisplayName); err != nil {
+		m.logger.Warn("restore: session name not delivered to the harness; AO's name stands",
+			"sessionID", rec.ID, "error", err)
+	}
 	if delivery == ports.PromptDeliveryAfterStart && rec.Metadata.Prompt != "" {
-		launchCfg := ports.LaunchConfig{
-			DataDir:          m.dataDir,
-			SessionID:        string(rec.ID),
-			WorkspacePath:    ws.Path,
-			Kind:             rec.Kind,
-			Prompt:           rec.Metadata.Prompt,
-			SystemPrompt:     systemPrompt,
-			SystemPromptFile: systemPromptFile,
-			Config:           agentConfig,
-			Permissions:      agentConfig.Permissions,
-		}
+		launchCfg := restoreLaunchCfg
 		if err := m.deliverAfterStartPrompt(ctx, agent, launchCfg, handle, rec.ID, rec.Metadata.Prompt); err != nil {
 			_ = m.runtime.Destroy(ctx, handle)
 			_ = m.lcm.MarkTerminated(ctx, rec.ID)
