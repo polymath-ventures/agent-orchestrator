@@ -50,24 +50,30 @@ func (m *Manager) resolveDisplayName(cfg ports.SpawnConfig, project domain.Proje
 	}
 }
 
-// deliverSpawnName pushes a freshly spawned session's name into its harness,
-// unless the launch command already carried it.
+// launchArgvCarriedName reports whether the command that just started this
+// process already named the session.
 //
-// Preferring the launch-argument form is not a micro-optimization: a name
-// delivered in argv lands atomically with process start, so for those harnesses
-// the pane-readiness race is absent rather than mitigated. Only a harness with
-// no launch-time flag needs the post-start write, and that write waits for the
-// harness to be ready first — runtime creation returns as soon as the pane
-// exists, which is before the TUI has drawn an input box to receive keystrokes.
-func (m *Manager) deliverSpawnName(ctx context.Context, agent ports.Agent, cfg ports.LaunchConfig, handle ports.RuntimeHandle, id domain.SessionID, name string) error {
+// Only a fresh spawn can name in argv: a resume command carries no launch-time
+// name flag, so a restored session always needs the in-harness path even on a
+// harness that has one. Asking the adapter "can you name at launch?" instead of
+// "did this launch name it?" is what silently skipped redelivery on restore.
+func launchArgvCarriedName(agent ports.Agent, name string) bool {
+	namer, ok := agent.(ports.AgentNamer)
+	return ok && len(namer.LaunchNameArgs(name)) > 0
+}
+
+// deliverNameAfterStart pushes a session's name into an already-running harness.
+//
+// The write waits for the harness to be ready first: runtime creation returns as
+// soon as the pane exists, which is before the TUI has drawn an input box to
+// receive keystrokes. Callers that named the session in argv skip this entirely —
+// a name delivered in argv lands atomically with process start, so for those
+// spawns the pane-readiness race is absent rather than mitigated.
+func (m *Manager) deliverNameAfterStart(ctx context.Context, agent ports.Agent, cfg ports.LaunchConfig, handle ports.RuntimeHandle, id domain.SessionID, name string) error {
 	if strings.TrimSpace(name) == "" {
 		return nil
 	}
-	namer, ok := agent.(ports.AgentNamer)
-	if !ok {
-		return nil
-	}
-	if len(namer.LaunchNameArgs(name)) > 0 {
+	if _, ok := agent.(ports.AgentNamer); !ok {
 		return nil
 	}
 	if err := m.waitForPromptReadiness(ctx, agent, cfg, handle); err != nil {
@@ -209,4 +215,13 @@ func (m *Manager) forgiveSpawnNameFailure(ctx context.Context, handle ports.Runt
 	m.logger.Warn("spawn: session name not delivered to the harness; keeping the live session",
 		"sessionID", id, "error", nameErr)
 	return true
+}
+
+// deliverNameForSpawn names a freshly spawned session, skipping the post-start
+// write when this launch's argv already carried the name.
+func (m *Manager) deliverNameForSpawn(ctx context.Context, agent ports.Agent, cfg ports.LaunchConfig, handle ports.RuntimeHandle, id domain.SessionID, name string) error {
+	if launchArgvCarriedName(agent, name) {
+		return nil
+	}
+	return m.deliverNameAfterStart(ctx, agent, cfg, handle, id, name)
 }

@@ -652,7 +652,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	// Name before prompt: the rename is instant, and leaving the prompt as the
 	// last thing written means the session ends up working on its task rather
 	// than with a rename typed into a turn already in flight.
-	if err := m.deliverSpawnName(ctx, agent, launchCfg, handle, id, cfg.DisplayName); err != nil {
+	if err := m.deliverNameForSpawn(ctx, agent, launchCfg, handle, id, cfg.DisplayName); err != nil {
 		if !m.forgiveSpawnNameFailure(ctx, handle, id, err) {
 			_ = m.runtime.Destroy(ctx, handle)
 			m.rollbackPreparedSpawnWorkspace(ctx, rec, ws, workspaceProject)
@@ -1694,7 +1694,7 @@ func (m *Manager) relaunchRestoredSession(ctx context.Context, rec domain.Sessio
 	// name — a divergence reintroduced by the very lifecycle event meant to
 	// preserve the session. The resume command carries no launch-time name flag,
 	// so this always takes the in-harness path.
-	if err := m.deliverSpawnName(ctx, agent, restoreLaunchCfg, handle, rec.ID, rec.DisplayName); err != nil {
+	if err := m.deliverNameAfterStart(ctx, agent, restoreLaunchCfg, handle, rec.ID, rec.DisplayName); err != nil {
 		m.logger.Warn("restore: session name not delivered to the harness; AO's name stands",
 			"sessionID", rec.ID, "error", err)
 	}

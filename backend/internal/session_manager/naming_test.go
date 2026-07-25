@@ -605,8 +605,11 @@ func TestDeliverNameRefusesWhenTheRuntimeCannotConfirmTheAgent(t *testing.T) {
 // for itself. Without re-delivery, a session renamed before teardown comes back
 // with the old harness name — a divergence reintroduced by the lifecycle event
 // meant to preserve the session.
+// Deliberately a launch-named adapter: a resume command carries no launch-time
+// name flag, so the harness that CAN be named in argv is exactly the one whose
+// restore would be skipped by an adapter-capability check.
 func TestRestoreRedeliversThePersistedName(t *testing.T) {
-	m, st, _, msg := newNamingManager(renameOnlyAgent{})
+	m, st, _, msg := newNamingManager(launchNamedAgent{})
 	rec := liveNamedSession("ao #7 renamed", domain.ActivityIdle)
 	rec.IsTerminated = true
 	rec.Activity = domain.Activity{State: domain.ActivityExited}

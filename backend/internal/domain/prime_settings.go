@@ -46,6 +46,24 @@ func (s PrimeSettings) WithDefaults() PrimeSettings {
 	return s
 }
 
+// ValidateDisplayNameForWrite holds a NEW Prime name to the same character rule
+// every other session name obeys, so settings cannot persist a name that
+// delivery would refuse.
+//
+// It is separate from Validate because Validate also runs when stored settings
+// are READ: folding the rule in there would make a name that was legal when it
+// was saved — an apostrophe is the obvious case — fail every subsequent read and
+// take the Prime supervisor down with it. New writes are held to the rule; an
+// older stored name degrades at spawn instead.
+func (s PrimeSettings) ValidateDisplayNameForWrite() error {
+	for _, r := range s.DisplayName {
+		if !NameRuneAllowed(r) {
+			return fmt.Errorf("displayName: %w", ErrDisplayNameUnsafe)
+		}
+	}
+	return nil
+}
+
 // Validate rejects invalid Prime settings at the write boundary.
 func (s PrimeSettings) Validate() error {
 	if strings.TrimSpace(s.DisplayName) == "" {

@@ -196,6 +196,13 @@ this change alters who computes it and where else it is delivered. Existing
 sessions keep their current names until something renames them; nothing
 retroactively renames live sessions.
 
+The name character rule is enforced on writes only, never on reads, so stored
+values that predate it stay readable. A Prime name saved before the rule — an
+apostrophe is the obvious case — would otherwise fail every settings read and
+take the Prime supervisor with it. Such a name degrades to the default when Prime
+spawns, and a stored session name outside the rule simply is not delivered to its
+harness; both keep working, and the next write brings them into line.
+
 Rollback is per-layer and safe in either direction. Reverting the adapter
 capability leaves AO's own names intact and simply stops harness delivery, which
 is today's behavior. Reverting the CLI change restores a required flag.

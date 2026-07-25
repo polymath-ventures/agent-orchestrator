@@ -418,8 +418,15 @@ func (s *Service) planRole(ctx context.Context, target domain.RoleTarget) (roleP
 		if !settings.Enabled {
 			return rolePlan{}, apierr.Conflict("PRIME_DISABLED", "Fleet Prime is disabled. Enable it in Prime settings first.", nil)
 		}
-		displayName := strings.TrimSpace(settings.DisplayName)
-		if displayName == "" {
+		// Settings saved before the name character rule existed are still readable
+		// on purpose, so a stored name that delivery would refuse degrades here to
+		// the default rather than leaving Prime nameless.
+		displayName, nameErr := domain.ValidateSessionDisplayName(settings.DisplayName)
+		if nameErr != nil {
+			if !errors.Is(nameErr, domain.ErrDisplayNameEmpty) {
+				slog.Default().Warn("prime: stored display name cannot be delivered to a harness; using the default",
+					"error", nameErr)
+			}
 			displayName = domain.DefaultPrimeSettings().DisplayName
 		}
 		return rolePlan{

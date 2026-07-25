@@ -153,9 +153,9 @@ func TestComposedNamesAlwaysPassValidation(t *testing.T) {
 }
 
 // A session name is the one string AO types into a terminal it does not fully
-// control, so it must not be able to carry a shell operator, quote, expansion,
-// or glob. This is what makes a misdirected naming write inert rather than a
-// command — a property no timing change can reopen.
+// control, so it must not carry anything that can start, substitute, quote,
+// escape, or redirect a command. That is what makes a misdirected naming write
+// unable to cause execution — a property no timing change can reopen.
 func TestNameRuneAllowedRejectsShellActiveCharacters(t *testing.T) {
 	// Everything that can start, substitute, expand, quote, escape, or glob a
 	// command — plus invisible runes, which can hide content from the operator.

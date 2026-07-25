@@ -214,8 +214,9 @@ type AgentNamer interface {
 // persists is the divergence this whole capability exists to remove. The
 // accepted character set is domain.NameRuneAllowed — no control characters (a
 // newline would submit a rename mid-name and strand the remainder as a prompt)
-// and no shell operators, quotes, expansions, or globs, so a naming write that
-// lands somewhere other than the intended TUI cannot be a command. Daemon-
+// and none of the shell grammar that starts, substitutes, quotes, escapes, or
+// redirects a command, so a naming write that lands somewhere other than the
+// intended TUI cannot cause one to run. Daemon-
 // computed names are already within that set by construction; this is the gate
 // for an operator-supplied override.
 func DeliverableName(name string) (string, bool) {
