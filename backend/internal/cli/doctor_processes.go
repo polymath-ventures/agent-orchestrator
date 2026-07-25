@@ -45,9 +45,11 @@ const (
 	daemonRestartChurnThreshold = 3
 )
 
-// systemdServiceUnitRE matches a systemd service unit name inside a cgroup path
-// (v1 `1:name=systemd:/system.slice/ao.service` and v2 `0::/system.slice/ao.service`).
-var systemdServiceUnitRE = regexp.MustCompile(`[A-Za-z0-9_.@-]+\.service`)
+// systemdServiceUnitRE matches a systemd service unit name as a WHOLE cgroup
+// path component (v1 `1:name=systemd:/system.slice/ao.service` and v2
+// `0::/system.slice/ao.service`). Anchored so a directory that merely contains
+// the text — say `not-a.service.d` — cannot pose as a unit.
+var systemdServiceUnitRE = regexp.MustCompile(`^[A-Za-z0-9_.@-]+\.service$`)
 
 // checkAgentProcesses warns about long-lived processes in AO's own panes that
 // are not the agent AO launched there — the class the reporter hit, an 8-hour
@@ -378,14 +380,41 @@ func (c *commandContext) daemonSystemdUnit(pid int) (unit string, userScope bool
 	if err != nil {
 		return "", false, err
 	}
+	// Only the line systemd itself owns may name the unit. A cgroup file is
+	// `hierarchy-ID:controller-list:path` per line; v2 uses the single `0::`
+	// line, and v1 hosts add one line per controller. Scanning every line and
+	// letting the last `.service` win lets an unrelated controller hierarchy
+	// choose the unit — or silently reset the user/system scope — so the
+	// restart count would be read from the wrong unit or the wrong manager.
 	for line := range strings.SplitSeq(string(data), "\n") {
-		matches := systemdServiceUnitRE.FindAllString(line, -1)
-		if len(matches) == 0 {
+		_, rest, ok := strings.Cut(strings.TrimSpace(line), ":")
+		if !ok {
 			continue
 		}
-		unit = matches[len(matches)-1]
+		controllers, cgroupPath, ok := strings.Cut(rest, ":")
+		if !ok {
+			continue
+		}
+		// v2: empty controller list. v1: only the systemd-owned hierarchy.
+		if controllers != "" && controllers != "name=systemd" {
+			continue
+		}
+		// Match whole path components so a directory that merely contains the
+		// text cannot pose as a unit.
+		var components []string
+		for _, component := range strings.Split(cgroupPath, "/") {
+			if systemdServiceUnitRE.MatchString(component) {
+				components = append(components, component)
+			}
+		}
+		if len(components) == 0 {
+			continue
+		}
+		// The deepest component is the unit the pid actually belongs to; an
+		// enclosing user@<uid>.service is systemd's marker for a user manager.
+		unit = components[len(components)-1]
 		userScope = false
-		for _, enclosing := range matches[:len(matches)-1] {
+		for _, enclosing := range components[:len(components)-1] {
 			if strings.HasPrefix(enclosing, "user@") {
 				userScope = true
 			}

@@ -209,9 +209,23 @@ func drainToEOF(conn net.Conn) {
 	// ponytail: 32-byte scratch buffer; we never process the payload.
 	scratch := make([]byte, 32)
 	for {
-		if _, err := conn.Read(scratch); err != nil {
-			return
+		_, err := conn.Read(scratch)
+		if err == nil {
+			continue
 		}
+		// A timeout is NOT a disconnect. If clearing the handshake deadline
+		// failed above, it is still armed, and treating its expiry as EOF would
+		// report a live client as gone and self-stop the daemon 5s later —
+		// exactly the bug the handshake exists to prevent. Retry after clearing
+		// again; if the deadline cannot be cleared, the connection is unusable
+		// and the client really is gone.
+		var netErr net.Error
+		if errors.As(err, &netErr) && netErr.Timeout() {
+			if clearErr := conn.SetReadDeadline(time.Time{}); clearErr == nil {
+				continue
+			}
+		}
+		return
 	}
 }
 

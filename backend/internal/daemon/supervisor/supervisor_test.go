@@ -129,9 +129,11 @@ func makePipe() (net.Conn, net.Conn) {
 const httpProbe = "GET / HTTP/1.1\r\nHost: local\r\n\r\n"
 
 // closeWindow bounds how long the server may take to hang up on a client that
-// is not speaking the supervisor protocol. It is deliberately generous: the
-// assertion is that the close *terminates*, not that it is fast.
-const closeWindow = 2 * time.Second
+// is not speaking the supervisor protocol. It must stay strictly LARGER than
+// the production handshakeTimeout the server is waiting out, or the two race
+// and the test flakes under load or -race for no real reason. The assertion is
+// that the close *terminates*, not that it is fast.
+const closeWindow = 4 * time.Second
 
 // reconnectGrace is used where a test has to complete a full accept +
 // handshake round trip inside the grace period. testGrace (30ms) is too tight
@@ -493,6 +495,109 @@ func TestConcurrentArriveDepartDoesNotShortenGrace(t *testing.T) {
 	mu.Unlock()
 	if count != 1 {
 		t.Fatalf("expected exactly one callback fire, got %d", count)
+	}
+
+	cancel()
+	_ = ln.Close()
+	<-done
+}
+
+// timeoutErr is a net.Error that reports itself as a timeout, so a test can
+// make a Read expire the way an un-cleared deadline would.
+type timeoutErr struct{}
+
+func (timeoutErr) Error() string   { return "i/o timeout" }
+func (timeoutErr) Timeout() bool   { return true }
+func (timeoutErr) Temporary() bool { return true }
+
+// deadlineFlakeConn is a handshaked client whose SetReadDeadline fails exactly
+// once — on the clear that follows a successful handshake — and whose next Read
+// then expires because the handshake deadline is still armed. It stays open the
+// whole time: the client is alive and must keep counting as live.
+type deadlineFlakeConn struct {
+	net.Conn
+	mu        sync.Mutex
+	reads     int
+	setCalls  int
+	blockRead chan struct{}
+}
+
+func (c *deadlineFlakeConn) SetReadDeadline(t time.Time) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.setCalls++
+	// 1: readHandshake arms it. 2: handleConn's clear — the failure under test.
+	// 3+: the drain's retry, which must succeed so the client is kept.
+	if c.setCalls == 2 {
+		return errors.New("simulated SetReadDeadline failure")
+	}
+	return nil
+}
+
+func (c *deadlineFlakeConn) Read(b []byte) (int, error) {
+	c.mu.Lock()
+	c.reads++
+	n := c.reads
+	c.mu.Unlock()
+
+	switch n {
+	case 1:
+		return copy(b, supervisor.HandshakeToken), nil
+	case 2:
+		// The un-cleared handshake deadline expiring. NOT a disconnect.
+		return 0, timeoutErr{}
+	default:
+		<-c.blockRead
+		return 0, io.EOF
+	}
+}
+
+func (c *deadlineFlakeConn) Close() error { return nil }
+
+// TestDrainTimeoutIsNotADisconnect: if clearing the handshake deadline fails,
+// the drain's read expires. Treating that timeout as EOF would report a live
+// client as gone and self-stop the daemon after grace — #147's exact symptom,
+// reintroduced through the one path meant to prevent it.
+func TestDrainTimeoutIsNotADisconnect(t *testing.T) {
+	t.Parallel()
+
+	fired := make(chan struct{}, 1)
+	cb := func() {
+		select {
+		case fired <- struct{}{}:
+		default:
+		}
+	}
+
+	s := supervisor.New(testGrace, cb, noopLogger())
+	ln := newFakeListener()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- s.Serve(ctx, ln) }()
+
+	serverSide, clientSide := makePipe()
+	defer func() { _ = clientSide.Close() }()
+	conn := &deadlineFlakeConn{Conn: serverSide, blockRead: make(chan struct{})}
+	ln.enqueue(conn)
+
+	// Well past grace: a timeout misread as EOF would have fired by now.
+	time.Sleep(comfortWait * 3)
+
+	select {
+	case <-fired:
+		t.Fatal("callback fired for a live client whose read merely timed out; a timeout is not a disconnect")
+	default:
+	}
+
+	// The client really leaving must still fire, so the fix cannot pass by
+	// making the watchdog unreachable.
+	close(conn.blockRead)
+	select {
+	case <-fired:
+	case <-time.After(comfortWait * 4):
+		t.Fatal("callback did not fire after the client actually disconnected")
 	}
 
 	cancel()

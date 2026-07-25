@@ -644,3 +644,64 @@ func TestDoctorDaemonRestartsUsesSystemManagerForSystemUnit(t *testing.T) {
 	rec.assertNoSupervisorSocketProbe(t)
 	httpRec.assertReadOnly(t)
 }
+
+// TestDoctorDaemonRestartsIgnoresNonSystemdCgroupHierarchies covers a cgroup v1
+// host, where /proc/<pid>/cgroup carries one line per controller. Only the
+// systemd-owned hierarchy may name the unit: scanning every line and letting
+// the last `.service` win would pick a unit from an unrelated controller and
+// silently reset the user/system scope, so the restart count would be read from
+// the wrong unit or asked of the wrong manager.
+func TestDoctorDaemonRestartsIgnoresNonSystemdCgroupHierarchies(t *testing.T) {
+	cfg := setConfigEnv(t)
+	srv := doctorDaemonServer(t, nil)
+	rec := &doctorProbeRecorder{}
+	c, httpRec := doctorLiveDaemonContext(t, cfg, srv,
+		map[string]string{"git": "/bin/git", "systemctl": "/bin/systemctl"},
+		scopedSystemctlFake(t, rec, "ao-dev.service", "9", true),
+	)
+	// The systemd line is FIRST and says user scope; the later controller lines
+	// name a different unit in the system slice. The systemd line must win.
+	c.deps.ProcRoot = writeProcCgroup(t, doctorFakeDaemonPID, strings.Join([]string{
+		"1:name=systemd:/user.slice/user-1002.slice/user@1002.service/app.slice/ao-dev.service",
+		"4:cpu,cpuacct:/system.slice/unrelated.service",
+		"9:devices:/system.slice/another-decoy.service",
+		"",
+	}, "\n"))
+
+	check := findDoctorCheck(t, c.runDoctor(context.Background()), "daemon-restarts")
+	if check.Level != doctorWarn {
+		t.Fatalf("daemon-restarts = %+v, want WARN on restart churn", check)
+	}
+	for _, want := range []string{"ao-dev.service", "9"} {
+		if !strings.Contains(check.Message, want) {
+			t.Fatalf("daemon-restarts message %q missing %q", check.Message, want)
+		}
+	}
+	for _, unwanted := range []string{"unrelated.service", "another-decoy.service"} {
+		if strings.Contains(check.Message, unwanted) {
+			t.Fatalf("daemon-restarts message %q named a unit from a non-systemd hierarchy (%q)", check.Message, unwanted)
+		}
+	}
+	rec.assertNoSupervisorSocketProbe(t)
+	httpRec.assertReadOnly(t)
+}
+
+// TestDoctorDaemonRestartsRequiresWholePathComponent guards the anchored unit
+// match: a directory that merely contains ".service" in its name is not a unit.
+func TestDoctorDaemonRestartsRequiresWholePathComponent(t *testing.T) {
+	cfg := setConfigEnv(t)
+	srv := doctorDaemonServer(t, nil)
+	c, _ := doctorLiveDaemonContext(t, cfg, srv,
+		map[string]string{"git": "/bin/git", "systemctl": "/bin/systemctl"},
+		func(_ context.Context, name string, args ...string) ([]byte, error) {
+			if filepath.Base(name) == "git" {
+				return []byte("git version 2.43.0\n"), nil
+			}
+			t.Errorf("systemctl was probed for a path with no real unit: %s %v", name, args)
+			return nil, fmt.Errorf("unexpected command %s", name)
+		},
+	)
+	c.deps.ProcRoot = writeProcCgroup(t, doctorFakeDaemonPID, "0::/system.slice/ao.service.d\n")
+
+	assertDoctorUnavailable(t, "daemon-restarts", findDoctorCheck(t, c.runDoctor(context.Background()), "daemon-restarts"))
+}
