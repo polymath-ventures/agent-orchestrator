@@ -80,3 +80,22 @@ func assertPromptOwnsPositional(t *testing.T, cmd []string, prompt string) {
 		}
 	}
 }
+
+// A codex session is named after start, so it must declare readiness hints —
+// without them the write races the TUI and is dropped or, worse, queued and
+// delivered to the model as a prompt.
+func TestCodexDeclaresPromptReadinessHints(t *testing.T) {
+	for _, p := range []*Plugin{New(), NewFugu()} {
+		var provider ports.AgentPromptReadinessProvider = p
+		hints, err := provider.PromptReadinessHints(context.Background(), ports.LaunchConfig{})
+		if err != nil {
+			t.Fatalf("%s: PromptReadinessHints: %v", p.adapterID(), err)
+		}
+		if len(hints.Patterns) == 0 {
+			t.Fatalf("%s: no readiness patterns; a post-start write would race the TUI", p.adapterID())
+		}
+		if hints.Timeout <= 0 {
+			t.Fatalf("%s: readiness timeout = %v, want a bounded deadline", p.adapterID(), hints.Timeout)
+		}
+	}
+}

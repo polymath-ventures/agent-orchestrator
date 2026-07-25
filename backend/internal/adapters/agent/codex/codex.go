@@ -137,6 +137,32 @@ func (p *Plugin) InHarnessRenameCommand(name string) (string, bool) {
 // session is named after the TUI is ready. See ports.AgentNamer.
 func (p *Plugin) LaunchNameArgs(string) []string { return nil }
 
+// PromptReadinessHints waits for the codex TUI to finish starting before AO
+// writes into its pane. Codex takes its prompt in argv, so before session naming
+// nothing was written after start and no hints were needed.
+//
+// Waiting is not optional here. Measured against codex 0.145.0 driving a real
+// tmux pane: a write issued as soon as the pane exists is dropped outright,
+// and one issued after the banner is drawn but before startup settles is
+// swallowed into "Queued follow-up inputs" — where a rename is delivered to the
+// model as a prompt rather than run as a command. Startup ran from ~1s warm to
+// ~9.4s cold across runs, so a fixed delay would be a guess that every spawn
+// pays; the tip line below was present in every ready pane observed and in no
+// unready one. A copy change costs the bounded wait and then the write goes out
+// anyway, which is exactly today's behavior.
+func (p *Plugin) PromptReadinessHints(ctx context.Context, _ ports.LaunchConfig) (ports.PromptReadinessHints, error) {
+	if err := ctx.Err(); err != nil {
+		return ports.PromptReadinessHints{}, err
+	}
+	return ports.PromptReadinessHints{
+		InitialDelay: 500 * time.Millisecond,
+		Patterns:     []string{"Tip:"},
+		PollInterval: 200 * time.Millisecond,
+		Timeout:      20 * time.Second,
+		Lines:        80,
+	}, nil
+}
+
 var _ adapters.Adapter = (*Plugin)(nil)
 var _ ports.Agent = (*Plugin)(nil)
 var _ ports.ActiveTurnSteerer = (*Plugin)(nil)

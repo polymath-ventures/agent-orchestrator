@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
@@ -267,4 +268,121 @@ func TestDeliverNameSkipsSessionsWithNoLiveRuntime(t *testing.T) {
 			}
 		})
 	}
+}
+
+// readyGatedAgent names after start and gates that write on a terminal marker,
+// the way codex does.
+type readyGatedAgent struct {
+	renameOnlyAgent
+	hints ports.PromptReadinessHints
+}
+
+func (a readyGatedAgent) PromptReadinessHints(context.Context, ports.LaunchConfig) (ports.PromptReadinessHints, error) {
+	return a.hints, nil
+}
+
+// Runtime creation returns as soon as the pane exists, which is before the
+// harness has drawn an input box. Keystrokes sent into that gap are not queued
+// by a box that does not exist yet.
+func TestSpawnWaitsForHarnessReadinessBeforeTheNameWrite(t *testing.T) {
+	m, _, rt, msg := newNamingManager(readyGatedAgent{hints: ports.PromptReadinessHints{
+		Patterns:     []string{"READY"},
+		PollInterval: time.Millisecond,
+		Timeout:      5 * time.Second,
+		Lines:        80,
+	}})
+	rt.outputs = []string{"", "", "READY"}
+
+	if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, IssueID: "150", IssueTitle: "Unified session naming"}); err != nil {
+		t.Fatal(err)
+	}
+	if rt.outputCalls < 3 {
+		t.Fatalf("pane reads before the name write = %d, want the write to wait for the readiness marker", rt.outputCalls)
+	}
+	if len(msg.msgs) != 1 || !strings.HasPrefix(msg.msgs[0], "/rename ") {
+		t.Fatalf("writes = %v, want the rename delivered after readiness", msg.msgs)
+	}
+}
+
+// A harness that prints nothing recognizable must never hold a spawn open. The
+// write goes out anyway and the degraded path is observable.
+func TestSpawnProceedsWhenAHarnessNeverReportsReadiness(t *testing.T) {
+	m, _, rt, msg := newNamingManager(readyGatedAgent{hints: ports.PromptReadinessHints{
+		Patterns:     []string{"NEVER-PRINTED"},
+		PollInterval: time.Millisecond,
+		Timeout:      50 * time.Millisecond,
+		Lines:        80,
+	}})
+	rt.outputs = []string{"still starting"}
+
+	if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, IssueID: "150", IssueTitle: "Unified session naming"}); err != nil {
+		t.Fatalf("spawn failed waiting on a silent harness: %v", err)
+	}
+	if len(msg.msgs) != 1 || !strings.HasPrefix(msg.msgs[0], "/rename ") {
+		t.Fatalf("writes = %v, want the rename issued anyway after the deadline", msg.msgs)
+	}
+}
+
+// The readiness deadline runs on a real timer, so a test clock frozen elsewhere
+// cannot spin the wait until the context dies.
+func TestReadinessWaitIsBoundedByWallClock(t *testing.T) {
+	m, _, rt, _ := newNamingManager(readyGatedAgent{hints: ports.PromptReadinessHints{
+		Patterns:     []string{"NEVER-PRINTED"},
+		PollInterval: time.Millisecond,
+		Timeout:      50 * time.Millisecond,
+		Lines:        80,
+	}})
+	// A clock stopped at a fixed instant: if the wait consulted it, the deadline
+	// would never arrive.
+	frozen := time.Now()
+	m.clock = func() time.Time { return frozen }
+	rt.outputs = []string{"still starting"}
+
+	done := make(chan error, 1)
+	go func() {
+		_, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, IssueID: "150"})
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("spawn did not return; the readiness wait is not bounded by wall-clock time")
+	}
+}
+
+// Naming must never displace, delay, or concatenate with the initial prompt: a
+// named session with a prompt still runs its task rather than coming up idle.
+func TestSpawnDeliversBothTheNameAndTheAfterStartPrompt(t *testing.T) {
+	m, _, _, msg := newNamingManager(afterStartPromptAgent{})
+
+	rec, _, _, err := m.Spawn(ctx, ports.SpawnConfig{
+		ProjectID:  "mer",
+		Kind:       domain.KindWorker,
+		IssueID:    "150",
+		IssueTitle: "Unified session naming",
+		Prompt:     "/address-issue 150",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.msgs) != 2 {
+		t.Fatalf("writes = %v, want the rename then the prompt", msg.msgs)
+	}
+	if msg.msgs[0] != "/rename "+rec.DisplayName {
+		t.Fatalf("first write = %q, want the rename", msg.msgs[0])
+	}
+	if msg.msgs[1] != "/address-issue 150" {
+		t.Fatalf("second write = %q, want the initial prompt intact", msg.msgs[1])
+	}
+}
+
+// afterStartPromptAgent takes its prompt through the pane rather than argv, so
+// both a name and a prompt have to be written after start.
+type afterStartPromptAgent struct{ renameOnlyAgent }
+
+func (afterStartPromptAgent) GetPromptDeliveryStrategy(context.Context, ports.LaunchConfig) (ports.PromptDeliveryStrategy, error) {
+	return ports.PromptDeliveryAfterStart, nil
 }
