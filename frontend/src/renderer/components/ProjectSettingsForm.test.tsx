@@ -1187,7 +1187,7 @@ describe("ProjectSettingsForm", () => {
 					agentConfig: {
 						modelByHarness: {
 							codex: { model: "gpt-5-codex", effort: "high" },
-							opencode: { model: "openai/gpt-5.4", effort: "xhigh" },
+							opencode: { model: "openai/gpt-5.4", effort: "turbo" },
 						},
 					},
 				},
@@ -1204,7 +1204,7 @@ describe("ProjectSettingsForm", () => {
 
 		await chooseOption(workerHarness, "OpenCode");
 		expect(model()).toHaveValue("openai/gpt-5.4");
-		expect(effort()).toHaveValue("xhigh");
+		expect(effort()).toHaveValue("turbo");
 		await chooseOption(workerHarness, "Codex Fugu");
 		expect(model()).toHaveValue("");
 		expect(effort()).toHaveValue("");

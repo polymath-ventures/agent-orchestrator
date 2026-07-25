@@ -242,7 +242,7 @@ export function ModelAvailabilityField({
 					<span>
 						Manual model IDs are allowed; launch may fail if the harness rejects the model.
 						{hasSelectedHarness && manualEffort
-							? " Manual effort values are allowed; launch may fail if the harness rejects the effort."
+							? " Manual effort values are allowed; AO may reject the effort when saving."
 							: ""}
 					</span>
 				</p>
