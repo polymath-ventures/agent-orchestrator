@@ -54,9 +54,8 @@
 
 - [ ] 7.1 Regenerate the API contract and commit generated OpenAPI/TypeScript together if any DTO changed
 - [ ] 7.2 Confirm the sidebar rename flow works in web mode against a live daemon
-- [ ] 7.3 Drive a real worker, a project Orc, and Prime on claude-code and confirm the identical name in the AO sidebar, `ao session ls`, the TUI, and `~/.claude/sessions/<pid>.json`
+- [ ] 7.3 Drive a real worker, a project Orc, and Prime on claude-code and confirm the identical name in the AO sidebar, `ao session ls`, the TUI, and `~/.claude/sessions/<pid>.json` — that store is the data the desktop/mobile surface renders, so no separate app check is needed
 - [ ] 7.4 Drive the same three roles on codex and codex-fugu and confirm the identical name in the AO sidebar, `ao session ls`, the TUI, and `~/.codex/session_index.jsonl`
-- [ ] 7.5 Confirm on the operator's phone that a spawned worker shows the AO name rather than a summary-style title
-- [ ] 7.6 Confirm a live sidebar rename changes the name inside the running harness for each harness
-- [ ] 7.7 Confirm the universal path alone is sufficient: with claude-code's launch-argument form disabled, a claude session still ends up correctly named via the in-harness command
-- [ ] 7.8 Run the full local CI gate; in the PR, record the harness versions exercised and name the simpler alternative rejected, per repo rules
+- [ ] 7.5 Confirm a live sidebar rename changes the name inside the running harness for each harness
+- [ ] 7.6 Confirm the universal path alone is sufficient: with claude-code's launch-argument form disabled, a claude session still ends up correctly named via the in-harness command
+- [ ] 7.7 Run the full local CI gate; in the PR, record the harness versions exercised and name the simpler alternative rejected, per repo rules
