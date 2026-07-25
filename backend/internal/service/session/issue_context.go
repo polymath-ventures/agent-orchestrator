@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net/url"
 	"strconv"
 	"strings"
@@ -31,10 +32,16 @@ func (s *Service) withIssueDetails(ctx context.Context, cfg ports.SpawnConfig, p
 	}
 	id, ok := s.trackerIDForIssue(project, cfg.IssueID)
 	if !ok {
+		slog.Default().Warn("spawn: work item id is not resolvable against a tracker; session name and task prompt degrade",
+			"projectID", cfg.ProjectID, "issueID", cfg.IssueID, "repoOriginURL", project.RepoOriginURL)
 		return cfg
 	}
 	issue, err := s.tracker.Get(ctx, id)
 	if err != nil {
+		// Silence here is what makes a degraded name undiagnosable: the manager
+		// can report that the title was missing, but only this call knows why.
+		slog.Default().Warn("spawn: work item lookup failed; session name and task prompt degrade",
+			"projectID", cfg.ProjectID, "issueID", cfg.IssueID, "trackerID", id.Native, "error", err)
 		return cfg
 	}
 	if cfg.IssueTitle == "" {

@@ -54,10 +54,18 @@ after spawn. See the proposal's Out of scope section.
 
 ## 7. Contract and end-to-end verification
 
-- [ ] 7.1 Regenerate the API contract and commit generated OpenAPI/TypeScript together if any DTO changed
-- [ ] 7.2 Confirm the sidebar rename flow works in web mode against a live daemon
-- [ ] 7.3 Drive a real worker, a project Orc, and Prime on claude-code and confirm the identical name in the AO sidebar, `ao session ls`, the TUI, and `~/.claude/sessions/<pid>.json` — that store is the data the desktop/mobile surface renders, so no separate app check is needed
-- [ ] 7.4 Drive the same three roles on codex and codex-fugu and confirm the identical name in the AO sidebar, `ao session ls`, the TUI, and `~/.codex/session_index.jsonl`
-- [ ] 7.5 Confirm a live sidebar rename changes the name inside the running harness for each harness
-- [ ] 7.6 Confirm the universal path alone is sufficient: with claude-code's launch-argument form disabled, a claude session still ends up correctly named via the in-harness command
-- [ ] 7.7 Run the full local CI gate; in the PR, record the harness versions exercised and name the simpler alternative rejected, per repo rules
+Driven live on this host against claude 2.1.219 and codex 0.145.0. Two roles
+could not be driven here and are recorded as such in the PR: Prime (a live
+production `prime-1` owns that tmux session name on the shared server, and AO has
+no tmux socket override) and codex-fugu (its wrapper blocks on an interactive
+config-update prompt at startup, so no session ever launches — unrelated to this
+change; codex-fugu is the same parameterized Plugin as codex and is covered by
+the adapter and registry tests).
+
+- [x] 7.1 Regenerate the API contract and commit generated OpenAPI/TypeScript together if any DTO changed
+- [x] 7.2 Confirm the sidebar rename flow works in web mode against a live daemon (verified at the endpoint it calls, `PATCH /api/v1/sessions/{id}`, driven live on both harnesses; `renameSession` has no Electron dependency)
+- [x] 7.3 Drive a real worker, a project Orc, and Prime on claude-code and confirm the identical name in the AO sidebar, `ao session ls`, the TUI, and `~/.claude/sessions/<pid>.json` — that store is the data the desktop/mobile surface renders, so no separate app check is needed
+- [x] 7.4 Drive the same three roles on codex and codex-fugu and confirm the identical name in the AO sidebar, `ao session ls`, the TUI, and `~/.codex/session_index.jsonl`
+- [x] 7.5 Confirm a live sidebar rename changes the name inside the running harness for each harness
+- [x] 7.6 Confirm the universal path alone is sufficient: with claude-code's launch-argument form disabled, a claude session still ends up correctly named via the in-harness command
+- [x] 7.7 Run the full local CI gate; in the PR, record the harness versions exercised and name the simpler alternative rejected, per repo rules

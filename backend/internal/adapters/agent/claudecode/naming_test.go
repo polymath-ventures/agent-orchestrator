@@ -112,3 +112,21 @@ func TestClaudeLaunchCommandOmitsNameFlagWhenUnnamed(t *testing.T) {
 		}
 	}
 }
+
+// The launch flag must stay an optimization, not the mechanism. Readiness hints
+// are what let the universal in-harness path stand on its own: with `-n`
+// disabled and no hints, the rename lands in a bare shell before Claude Code has
+// drawn anything and is lost.
+func TestClaudeDeclaresPromptReadinessHints(t *testing.T) {
+	var provider ports.AgentPromptReadinessProvider = New()
+	hints, err := provider.PromptReadinessHints(context.Background(), ports.LaunchConfig{})
+	if err != nil {
+		t.Fatalf("PromptReadinessHints: %v", err)
+	}
+	if len(hints.Patterns) == 0 {
+		t.Fatal("no readiness patterns; a post-start write would race the TUI")
+	}
+	if hints.Timeout <= 0 {
+		t.Fatalf("readiness timeout = %v, want a bounded deadline", hints.Timeout)
+	}
+}
