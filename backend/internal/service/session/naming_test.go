@@ -181,3 +181,23 @@ func TestRenameRejectsANameCarryingShellSyntax(t *testing.T) {
 		t.Fatalf("harness name deliveries = %d, want 0", fc.deliveredNames)
 	}
 }
+
+// A Prime name saved before the character rule existed stays readable, so it
+// reaches spawn. It must degrade to the default there rather than leaving Prime
+// nameless — the operator can then still reach settings to correct it.
+func TestPrimeSpawnDegradesALegacyUnsafeName(t *testing.T) {
+	st := newFakeStore()
+	st.prime = domain.DefaultPrimeSettings()
+	st.prime.Enabled = true
+	st.prime.Harness = domain.HarnessClaudeCode
+	st.prime.DisplayName = "Nick's Prime"
+	fc := &fakeCommander{}
+	svc := NewWithDeps(Deps{Manager: fc, Store: st})
+
+	if _, err := svc.ReconcileRole(context.Background(), domain.PrimeTarget(), ReconcileOptions{}); err != nil {
+		t.Fatalf("ReconcileRole: %v", err)
+	}
+	if got := fc.spawnedCfg.DisplayName; got != domain.DefaultPrimeSettings().DisplayName {
+		t.Fatalf("prime display name = %q, want the default after degrading a legacy name", got)
+	}
+}

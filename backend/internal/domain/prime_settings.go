@@ -75,14 +75,6 @@ func (s PrimeSettings) Validate() error {
 	if len([]rune(s.DisplayName)) > MaxSessionDisplayNameRunes {
 		return fmt.Errorf("displayName: must be at most %d characters", MaxSessionDisplayNameRunes)
 	}
-	// Prime's name is delivered into its harness like any other, so it is held to
-	// the same character rule. Without this, settings could persist a name that
-	// delivery refuses and Prime would spawn with no name at all.
-	for _, r := range s.DisplayName {
-		if !NameRuneAllowed(r) {
-			return fmt.Errorf("displayName: %w", ErrDisplayNameUnsafe)
-		}
-	}
 	if s.Harness != "" && !s.Harness.IsKnown() {
 		return fmt.Errorf("agent: unknown harness %q", s.Harness)
 	}
