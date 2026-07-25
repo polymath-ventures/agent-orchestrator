@@ -604,3 +604,70 @@ func TestDrainTimeoutIsNotADisconnect(t *testing.T) {
 	_ = ln.Close()
 	<-done
 }
+
+// alwaysTimeoutConn handshakes, then times out on every subsequent read while
+// happily reporting that each deadline clear succeeded. A drain that retries
+// timeouts without a bound never escapes this.
+type alwaysTimeoutConn struct {
+	net.Conn
+	mu    sync.Mutex
+	reads int
+}
+
+func (c *alwaysTimeoutConn) SetReadDeadline(time.Time) error { return nil }
+
+func (c *alwaysTimeoutConn) Read(b []byte) (int, error) {
+	c.mu.Lock()
+	c.reads++
+	n := c.reads
+	c.mu.Unlock()
+
+	if n == 1 {
+		return copy(b, supervisor.HandshakeToken), nil
+	}
+	return 0, timeoutErr{}
+}
+
+func (c *alwaysTimeoutConn) Close() error { return nil }
+
+// TestDrainStopsRetryingRepeatedTimeouts pins the BOUND on the timeout retry.
+// Surviving one stale-deadline timeout is the point; surviving them forever
+// would hot-spin and leave a dead client counted as live indefinitely. The
+// unbounded version of this loop never returns here, so the callback never
+// fires and this test fails — which is what makes it a real guard rather than
+// one that passes either way.
+func TestDrainStopsRetryingRepeatedTimeouts(t *testing.T) {
+	t.Parallel()
+
+	fired := make(chan struct{}, 1)
+	cb := func() {
+		select {
+		case fired <- struct{}{}:
+		default:
+		}
+	}
+
+	s := supervisor.New(testGrace, cb, noopLogger())
+	ln := newFakeListener()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- s.Serve(ctx, ln) }()
+
+	serverSide, clientSide := makePipe()
+	defer func() { _ = clientSide.Close() }()
+	conn := &alwaysTimeoutConn{Conn: serverSide}
+	ln.enqueue(conn)
+
+	select {
+	case <-fired:
+		// The drain gave up on the second timeout and reported the client gone.
+	case <-time.After(comfortWait * 6):
+		t.Fatal("drain kept retrying timeouts instead of giving up; a malfunctioning conn can mask a dead client forever")
+	}
+
+	cancel()
+	_ = ln.Close()
+	<-done
+}
