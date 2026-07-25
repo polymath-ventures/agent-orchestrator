@@ -151,9 +151,15 @@ func (c *commandContext) runDoctor(ctx context.Context) []doctorCheck {
 	checks = append(checks, checkStore(cfg.DataDir), checkHooksLog(cfg.DataDir, time.Now()))
 
 	st, err := c.inspectDaemon(ctx)
+	daemonPID := 0
 	if err != nil {
 		checks = append(checks, doctorCheck{Level: doctorFail, Section: doctorSectionCore, Name: "daemon", Message: err.Error()})
 	} else {
+		// Only a state backed by a live process yields a pid worth asking
+		// systemd about; a stale run-file names a process that is already gone.
+		if st.State != stateStopped && st.State != stateStale {
+			daemonPID = st.PID
+		}
 		level := doctorPass
 		switch st.State {
 		case stateStale, stateNotReady:
@@ -170,8 +176,10 @@ func (c *commandContext) runDoctor(ctx context.Context) []doctorCheck {
 		}
 		checks = append(checks, doctorCheck{Level: level, Section: doctorSectionCore, Name: "daemon", Message: msg})
 	}
-
 	checks = append(checks,
+		// daemon-restarts belongs to the Core section beside the daemon check,
+		// and needs the pid inspectDaemon just resolved.
+		c.checkDaemonRestarts(ctx, daemonPID),
 		c.checkGit(ctx),
 		c.checkTerminalRuntime(ctx),
 		c.checkAOBinary(),
@@ -179,7 +187,7 @@ func (c *commandContext) runDoctor(ctx context.Context) []doctorCheck {
 	for _, harness := range doctorHarnesses {
 		checks = append(checks, c.checkHarness(ctx, harness))
 	}
-	checks = append(checks, c.checkCodexLaunchFlags(ctx), c.checkGitHubToken(ctx))
+	checks = append(checks, c.checkCodexLaunchFlags(ctx), c.checkAgentProcesses(ctx), c.checkGitHubToken(ctx))
 	return checks
 }
 

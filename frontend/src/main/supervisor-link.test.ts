@@ -3,7 +3,7 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { describe, it, expect, afterEach } from "vitest";
-import { connectSupervisor, type SupervisorLinkHandle } from "./supervisor-link";
+import { connectSupervisor, HANDSHAKE_TOKEN, type SupervisorLinkHandle } from "./supervisor-link";
 
 // Bounded wait: resolves when the promise resolves, rejects after timeoutMs.
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
@@ -30,6 +30,15 @@ function tmpSocketPath(): string {
 function nextConnection(server: net.Server): Promise<net.Socket> {
 	return new Promise((resolve) => {
 		server.once("connection", resolve);
+	});
+}
+
+// Resolves with the first chunk of bytes an accepted socket receives, decoded
+// as UTF-8. Accepted sockets start paused, so attaching the handler after the
+// client has already written does not lose the data.
+function firstChunk(sock: net.Socket): Promise<string> {
+	return new Promise((resolve) => {
+		sock.once("data", (buf: Buffer) => resolve(buf.toString("utf8")));
 	});
 }
 
@@ -197,5 +206,67 @@ describe("supervisor-link", () => {
 		await new Promise<void>((r) => setTimeout(r, 600));
 
 		expect(receivedConnection).toBe(false);
+	});
+
+	// #147: the connection alone is not the credential. The daemon only counts a
+	// client once it has read the handshake token, so a link that fails to write
+	// it is invisible to the watchdog and a frontend death goes undetected.
+	it("handshake: writes the token on connect", async () => {
+		const addr = tmpSocketPath();
+
+		const server = net.createServer();
+		servers.push(server);
+		const connectionPromise = nextConnection(server);
+		await new Promise<void>((resolve, reject) => {
+			server.listen(addr, () => resolve());
+			server.once("error", reject);
+		});
+
+		const link = connectSupervisor(addr, { log: () => undefined });
+		handles.push(link);
+
+		const conn = await withTimeout(connectionPromise, 3_000, "handshake: server did not receive connection");
+		const received = await withTimeout(firstChunk(conn), 3_000, "handshake: no bytes arrived on the accepted socket");
+
+		expect(received).toBe(HANDSHAKE_TOKEN);
+		conn.destroy();
+	});
+
+	it("handshake: re-sends the token on reconnect", async () => {
+		const addr = tmpSocketPath();
+
+		const server = net.createServer();
+		servers.push(server);
+
+		// Collect the first chunk of every accepted connection, and drop the first
+		// one so the link has to reconnect and prove itself again.
+		const tokens: string[] = [];
+		const twoHandshakes = new Promise<void>((resolve) => {
+			let first = true;
+			server.on("connection", (sock) => {
+				sock.once("data", (buf: Buffer) => {
+					tokens.push(buf.toString("utf8"));
+					if (tokens.length >= 2) resolve();
+				});
+				if (first) {
+					first = false;
+					setTimeout(() => sock.destroy(), 50);
+				}
+			});
+		});
+
+		await new Promise<void>((resolve, reject) => {
+			server.listen(addr, () => resolve());
+			server.once("error", reject);
+		});
+
+		const link = connectSupervisor(addr, { log: () => undefined });
+		handles.push(link);
+
+		await withTimeout(twoHandshakes, 6_000, "handshake-on-reconnect: fewer than two handshakes arrived");
+
+		// slice(0, 2): a further reconnect may land before the assertion runs, and
+		// the claim under test is about the first two connections.
+		expect(tokens.slice(0, 2)).toEqual([HANDSHAKE_TOKEN, HANDSHAKE_TOKEN]);
 	});
 });

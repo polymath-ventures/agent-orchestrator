@@ -313,6 +313,9 @@ func Run() error {
 	go lcStack.LCM.DispatchAllPendingWorkerIdleEvents(ctx)
 
 	// ponytail: 5s tolerates a brief frontend restart; tune if dev hot-reload trips it.
+	// Keep this comfortably above the supervisor's handshake timeout: a client
+	// that never speaks the protocol must be hung up on well before the grace
+	// window matters. See handshakeTimeout in the supervisor package.
 	const supervisorGrace = 5 * time.Second
 
 	if ln, addr, err := supervisor.Listen(cfg.RunFilePath); err != nil {
