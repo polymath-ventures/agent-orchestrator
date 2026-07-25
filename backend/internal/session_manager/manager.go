@@ -815,9 +815,9 @@ type cleanupContextKey struct{}
 // Re-deriving from a context that is already a cleanup context returns it
 // unchanged. Teardown helpers call each other, and context.WithoutCancel drops
 // the parent's deadline along with its cancellation — so a fresh derive per
-// nesting level would restart the clock and make the real bound a multiple of
-// spawnCleanupTimeout. Sharing the outermost budget keeps the timeout per
-// rollback, which is what the constant claims to be.
+// nesting level would restart the clock and multiply the bound by the nesting
+// depth. Sharing the outermost budget keeps spawnCleanupTimeout meaning what it
+// says: one bound for the chain rooted at whichever helper derived it.
 func cleanupContext(ctx context.Context) (context.Context, context.CancelFunc) {
 	if ctx.Value(cleanupContextKey{}) != nil {
 		return ctx, func() {}
@@ -828,19 +828,28 @@ func cleanupContext(ctx context.Context) (context.Context, context.CancelFunc) {
 
 // destroyPartialWorkspaceProject compensates a workspace project whose worktree
 // bookkeeping failed partway through: the on-disk project goes away together
-// with the session_worktree rows already recorded for earlier repos, mirroring
-// destroySpawnWorkspace, which pairs the same two.
+// with the session_worktree rows already recorded for earlier repos.
 //
 // The rows usually cascade off the seed row (session_worktrees.session_id is
-// ON DELETE CASCADE), so the explicit delete matters in the one case where the
-// cascade never fires: when rollbackSpawnSeedRow finds the row past seed state
-// and parks it terminated instead of deleting it. Those rows are 'active', so
-// they are not restorable and no boot restore resurrects them — the cost of
-// leaving them is a store that disagrees with the disk, not a failed restore.
+// ON DELETE CASCADE), so the explicit delete is what covers any path where the
+// seed row is not deleted — rollbackSpawnSeedRow parks the row terminated when
+// the delete fails or the row has already progressed past seed state, and the
+// cascade then never fires. Those rows are 'active', so they are not restorable
+// and no boot restore resurrects them; the cost of leaving them is a store that
+// disagrees with the disk, not a failed restore.
+//
+// The rows are dropped only once the disk teardown has actually succeeded. If
+// DestroyWorkspaceProject failed, the worktrees are still there and these rows
+// are the only record of where — deleting them would strand directories that
+// nothing can later find.
 func (m *Manager) destroyPartialWorkspaceProject(ctx context.Context, adapter ports.WorkspaceProject, info ports.WorkspaceProjectInfo, id domain.SessionID) {
 	cleanupCtx, cancel := cleanupContext(ctx)
 	defer cancel()
-	_ = adapter.DestroyWorkspaceProject(cleanupCtx, info)
+	if err := adapter.DestroyWorkspaceProject(cleanupCtx, info); err != nil {
+		m.logger.Warn("rollback: destroy partial workspace project; keeping worktree rows so cleanup can still find it",
+			"sessionID", id, "error", err)
+		return
+	}
 	_ = m.store.DeleteSessionWorktrees(cleanupCtx, id)
 }
 

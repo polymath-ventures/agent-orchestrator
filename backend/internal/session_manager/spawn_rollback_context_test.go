@@ -493,3 +493,49 @@ func TestSpawnRollbackStillRunsAgentWorkspaceCleanupAfterCallerCancellation(t *t
 			agent.ranLive, agent.skipped)
 	}
 }
+
+// failingDestroyWorkspaceProject reports that the on-disk teardown failed, so
+// the worktrees named by the recorded rows are still there.
+type failingDestroyWorkspaceProject struct {
+	*fakeWorkspace
+	err error
+}
+
+func (w *failingDestroyWorkspaceProject) DestroyWorkspaceProject(context.Context, ports.WorkspaceProjectInfo) error {
+	return w.err
+}
+
+// The bookkeeping rows are the only record of where a workspace project's
+// worktrees live. When the disk teardown fails they must survive the rollback:
+// deleting them would strand directories that no later cleanup pass can find.
+func TestPartialWorkspaceProjectRollbackKeepsRowsWhenDestroyFails(t *testing.T) {
+	base := newFakeStore()
+	base.projects["mer"] = domain.ProjectRecord{
+		ID: "mer", Path: "/repo/mer", Kind: domain.ProjectKindWorkspace, Config: testRoleAgents(),
+	}
+	base.workspaceRepo["mer"] = []domain.WorkspaceRepoRecord{{Name: "api", RelativePath: "services/api"}}
+	cctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	st := &partialWorktreeStore{fakeStore: base, failRepo: "api", cancel: cancel}
+	ws := &failingDestroyWorkspaceProject{fakeWorkspace: &fakeWorkspace{}, err: errors.New("worktree still checked out")}
+	m := New(Deps{
+		Runtime: &fakeRuntime{}, Agents: fakeAgents{}, Workspace: ws, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: base},
+		LookPath: func(string) (string, error) { return "/bin/true", nil },
+	})
+
+	_, _, _, err := m.Spawn(cctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Harness: domain.HarnessClaudeCode})
+	if err == nil || !strings.Contains(err.Error(), `record workspace worktree "api"`) {
+		t.Fatalf("spawn err = %v, want the later repo's bookkeeping write to fail", err)
+	}
+	if st.deletedLive != 0 {
+		t.Errorf("worktree rows were deleted %d times despite the disk teardown failing; the leftover project is now unfindable", st.deletedLive)
+	}
+	rows, listErr := base.ListSessionWorktrees(context.Background(), "mer-1")
+	if listErr != nil {
+		t.Fatal(listErr)
+	}
+	if len(rows) == 0 {
+		t.Error("no session_worktrees rows survived; nothing records the worktrees still on disk")
+	}
+}
