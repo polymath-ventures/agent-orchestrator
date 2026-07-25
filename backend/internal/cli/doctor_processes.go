@@ -49,7 +49,13 @@ const (
 // path component (v1 `1:name=systemd:/system.slice/ao.service` and v2
 // `0::/system.slice/ao.service`). Anchored so a directory that merely contains
 // the text — say `not-a.service.d` — cannot pose as a unit.
-var systemdServiceUnitRE = regexp.MustCompile(`^[A-Za-z0-9_.@-]+\.service$`)
+//
+// The class covers systemd's own unit-name alphabet, including `:` and the
+// backslash of `\xNN` escapes; leaving those out would silently miss a real
+// unit and report the check unavailable. A `:` inside the name is safe here
+// because the cgroup line is split on its first two colons before this runs,
+// so the path — colons and all — survives intact.
+var systemdServiceUnitRE = regexp.MustCompile(`^[A-Za-z0-9_.@:\\-]+\.service$`)
 
 // checkAgentProcesses warns about long-lived processes in AO's own panes that
 // are not the agent AO launched there — the class the reporter hit, an 8-hour

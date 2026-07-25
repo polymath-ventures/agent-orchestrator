@@ -705,3 +705,28 @@ func TestDoctorDaemonRestartsRequiresWholePathComponent(t *testing.T) {
 
 	assertDoctorUnavailable(t, "daemon-restarts", findDoctorCheck(t, c.runDoctor(context.Background()), "daemon-restarts"))
 }
+
+// TestDoctorDaemonRestartsAcceptsEscapedUnitNames covers systemd's real
+// unit-name alphabet: `:` and `\xNN` escapes are legal, and rejecting them
+// would silently report the check unavailable for a unit that exists.
+func TestDoctorDaemonRestartsAcceptsEscapedUnitNames(t *testing.T) {
+	cfg := setConfigEnv(t)
+	srv := doctorDaemonServer(t, nil)
+	rec := &doctorProbeRecorder{}
+	const unit = `ao\x2dworker:main.service`
+	c, httpRec := doctorLiveDaemonContext(t, cfg, srv,
+		map[string]string{"git": "/bin/git", "systemctl": "/bin/systemctl"},
+		scopedSystemctlFake(t, rec, unit, "0", false),
+	)
+	c.deps.ProcRoot = writeProcCgroup(t, doctorFakeDaemonPID, "0::/system.slice/"+unit+"\n")
+
+	check := findDoctorCheck(t, c.runDoctor(context.Background()), "daemon-restarts")
+	if check.Level != doctorPass {
+		t.Fatalf("daemon-restarts = %+v, want PASS naming the escaped unit", check)
+	}
+	if !strings.Contains(check.Message, unit) {
+		t.Fatalf("daemon-restarts message %q does not name the derived unit %q", check.Message, unit)
+	}
+	rec.assertNoSupervisorSocketProbe(t)
+	httpRec.assertReadOnly(t)
+}

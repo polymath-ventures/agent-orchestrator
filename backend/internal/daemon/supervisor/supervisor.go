@@ -208,19 +208,25 @@ func readHandshake(conn net.Conn) error {
 func drainToEOF(conn net.Conn) {
 	// ponytail: 32-byte scratch buffer; we never process the payload.
 	scratch := make([]byte, 32)
+	// There is exactly one timeout worth surviving: the handshake deadline that
+	// handleConn failed to clear. Allowing a single retry makes that recoverable
+	// while keeping termination a property of the loop rather than a promise
+	// about the transport — a conn that reported a successful clear and then
+	// timed out again is malfunctioning, and retrying it forever would hot-spin
+	// and mask a dead client.
+	retriedTimeout := false
 	for {
 		_, err := conn.Read(scratch)
 		if err == nil {
 			continue
 		}
-		// A timeout is NOT a disconnect. If clearing the handshake deadline
-		// failed above, it is still armed, and treating its expiry as EOF would
-		// report a live client as gone and self-stop the daemon 5s later —
-		// exactly the bug the handshake exists to prevent. Retry after clearing
-		// again; if the deadline cannot be cleared, the connection is unusable
-		// and the client really is gone.
+		// A timeout is NOT a disconnect. With the handshake deadline still
+		// armed, treating its expiry as EOF would report a live client as gone
+		// and self-stop the daemon after grace — exactly the bug the handshake
+		// exists to prevent.
 		var netErr net.Error
-		if errors.As(err, &netErr) && netErr.Timeout() {
+		if !retriedTimeout && errors.As(err, &netErr) && netErr.Timeout() {
+			retriedTimeout = true
 			if clearErr := conn.SetReadDeadline(time.Time{}); clearErr == nil {
 				continue
 			}
