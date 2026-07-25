@@ -75,9 +75,11 @@ never hardcoded in skills:
 - Skills assume `bd` is attached to whatever the repo configured and never
   select or name a host themselves. Put the host specifics in a repo fragment,
   not in a skill.
-- Similarly, skills derive the target GitHub repo from the git remote; an
-  orchestrator may pin it instead via `POLYPOWERS_REPO=owner/repo`
-  (`AO_PROJECT_REPO` honored as a legacy alias).
+- Similarly, skills derive the operational GitHub repo from the checkout's
+  `origin` remote. Do not use `upstream` or bare `gh repo view` heuristics to
+  choose the issue/PR target. If `origin` is a fork and `upstream` is the public
+  project, operational GitHub issue/PR commands target `origin`; `upstream` is
+  only for explicitly upstream-scoped workflows such as syncs.
 
 ## Development Rules
 
