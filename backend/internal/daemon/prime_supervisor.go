@@ -27,6 +27,9 @@ type primeSessionService interface {
 	SpawnPrime(ctx context.Context, projectID domain.ProjectID, clean bool) (domain.Session, error)
 	ActivePrime(ctx context.Context) (domain.Session, bool, error)
 	RetirePrime(ctx context.Context, id domain.SessionID) error
+	// RetireActivePrime is the disable pass: it resolves the active Prime and
+	// retires it as one operation, serialized against role reconciliation.
+	RetireActivePrime(ctx context.Context) (bool, error)
 	Send(ctx context.Context, id domain.SessionID, message string) error
 }
 
@@ -219,10 +222,12 @@ func ensurePrime(ctx context.Context, cfg primeSupervisorConfig, state *primeSup
 		return
 	}
 	if !settings.Enabled {
-		if ok {
-			if err := sessions.RetirePrime(ctx, active.ID); err != nil {
-				cfg.Logger.Warn("prime supervisor: disable retire failed", "session", active.ID, "err", err)
-			}
+		// The active lookup above is a snapshot taken before the settings read,
+		// and a reconcile can spawn a Prime in between. RetireActivePrime
+		// re-resolves and retires under the role lock, so the disable pass cannot
+		// miss a Prime that a concurrent reconcile is in the middle of creating.
+		if _, err := sessions.RetireActivePrime(ctx); err != nil {
+			cfg.Logger.Warn("prime supervisor: disable retire failed", "err", err)
 		}
 		state.resetRestart()
 		state.resetIdleWake()

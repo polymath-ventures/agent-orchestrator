@@ -354,3 +354,189 @@ func TestKillSkipsWorkspaceOwnedByLiveSession(t *testing.T) {
 		t.Fatalf("runtime destroyed = %d ids=%v, want old-handle", rt.destroyed, rt.destroyedIDs)
 	}
 }
+
+// #144 P3 — child worktree orphaned on Kill.
+//
+// When the ROOT workspace is owned by a live replacement, Kill skips every
+// teardown but still runs DeleteSessionWorktrees for the WHOLE session.
+// session_worktrees rows are the only per-repo record there is (SessionMetadata
+// records the root path only) and no HTTP, CLI, or read-model surface exposes
+// them, so a multi-repo child the live owner does NOT occupy is orphaned the
+// moment its marker is cleared. Cleanup then skips the same session for the
+// same root-only ownership reason, so nothing ever reclaims that directory.
+//
+// The fix is to reclaim the uncovered child right there, while its row still
+// names it: the root is shared, but a child nobody live occupies is held by
+// nobody. Markers are still cleared wholesale — keeping a partial subset breaks
+// every consumer of these rows, which assume they describe a whole project.
+func TestKillDestroysChildWorktreeNotCoveredByLiveOwner(t *testing.T) {
+	m, st, _, ws := newLifecycleManager()
+
+	const canonical = "/ws/mer/orchestrator/mer-orchestrator"
+	st.projects["mer"] = domain.ProjectRecord{
+		ID: "mer", Path: "/repos/mer", Kind: domain.ProjectKindWorkspace, Config: testRoleAgents(),
+	}
+	st.workspaceRepo["mer"] = []domain.WorkspaceRepoRecord{
+		{ProjectID: "mer", Name: "api", RelativePath: "api"},
+		{ProjectID: "mer", Name: "web", RelativePath: "web"},
+	}
+
+	st.sessions["mer-orch-1"] = domain.SessionRecord{
+		ID: "mer-orch-1", ProjectID: "mer", Kind: domain.KindOrchestrator,
+		Metadata: domain.SessionMetadata{WorkspacePath: canonical, Branch: "ao/mer-orchestrator", RuntimeHandleID: "old-handle"},
+		Activity: domain.Activity{State: domain.ActivityActive},
+	}
+	st.worktrees["mer-orch-1"] = []domain.SessionWorktreeRecord{
+		{SessionID: "mer-orch-1", RepoName: domain.RootWorkspaceRepoName, Branch: "ao/mer-orchestrator", WorktreePath: canonical, State: "active"},
+		{SessionID: "mer-orch-1", RepoName: "api", Branch: "ao/mer-orchestrator", WorktreePath: canonical + "/api", State: "active"},
+		{SessionID: "mer-orch-1", RepoName: "web", Branch: "ao/mer-orchestrator", WorktreePath: canonical + "/web", State: "active"},
+	}
+
+	// The live replacement on the same canonical root. It covers the root and
+	// "api"; nothing it holds points at .../web.
+	st.sessions["mer-orch-2"] = domain.SessionRecord{
+		ID: "mer-orch-2", ProjectID: "mer", Kind: domain.KindOrchestrator,
+		Metadata: domain.SessionMetadata{WorkspacePath: canonical, Branch: "ao/mer-orchestrator", RuntimeHandleID: "new-handle"},
+		Activity: domain.Activity{State: domain.ActivityActive},
+	}
+	st.worktrees["mer-orch-2"] = []domain.SessionWorktreeRecord{
+		{SessionID: "mer-orch-2", RepoName: domain.RootWorkspaceRepoName, Branch: "ao/mer-orchestrator", WorktreePath: canonical, State: "active"},
+		{SessionID: "mer-orch-2", RepoName: "api", Branch: "ao/mer-orchestrator", WorktreePath: canonical + "/api", State: "active"},
+	}
+
+	if _, err := m.Kill(ctx, "mer-orch-1"); err != nil {
+		t.Fatalf("Kill err = %v", err)
+	}
+
+	// The uncovered child is reclaimed — and nothing else is.
+	if ws.destroyed != 1 {
+		t.Fatalf("Destroy calls = %d, want exactly 1 (the uncovered child); calls = %v", ws.destroyed, ws.calls)
+	}
+	if got := ws.lastDestroyInfo.Path; got != canonical+"/web" {
+		t.Fatalf("destroyed %q, want the uncovered child %q; the live owner holds only %v",
+			got, canonical+"/web", st.worktrees["mer-orch-2"])
+	}
+	if got := ws.lastDestroyInfo.RepoPath; got != "/repos/mer/web" {
+		t.Fatalf("destroy repo path = %q, want the child repo /repos/mer/web; removing a child worktree against the wrong repo skips the dirty check and deletes uncommitted work",
+			got)
+	}
+	// The shared root and the covered child are never touched.
+	for _, call := range ws.calls {
+		if call == "Destroy:mer-orchestrator" || call == "Destroy:api" || strings.HasPrefix(call, "ForceDestroy:") {
+			t.Fatalf("call %q ran; the live replacement's worktrees must be preserved (calls: %v)", call, ws.calls)
+		}
+	}
+	if !st.sessions["mer-orch-1"].IsTerminated {
+		t.Fatal("the killed row must still be marked terminated")
+	}
+	// Markers are cleared wholesale: a surviving partial subset breaks the
+	// consumers of these rows and lets RestoreAll resurrect the killed session.
+	if rows := st.worktrees["mer-orch-1"]; len(rows) != 0 {
+		t.Fatalf("worktree rows survived: %#v, want none", rows)
+	}
+}
+
+// The uncovered child's repo can be DEREGISTERED, and then its canonical repo
+// path is unrecoverable. Kill must not guess: ports.Workspace.Destroy resolves
+// the repo from RepoPath and silently falls back to the PROJECT repo when it is
+// empty, which makes `git worktree remove` fail against the wrong repo, skips
+// the dirty check entirely, and os.RemoveAll's the directory anyway — verified
+// against the real gitworktree adapter, which returned nil while deleting
+// staged work. Leaving the directory for an operator is the only safe move.
+func TestKillLeavesUncoveredChildOfDeregisteredRepoAlone(t *testing.T) {
+	m, st, _, ws := newLifecycleManager()
+
+	const canonical = "/ws/mer/orchestrator/mer-orchestrator"
+	st.projects["mer"] = domain.ProjectRecord{
+		ID: "mer", Path: "/repos/mer", Kind: domain.ProjectKindWorkspace, Config: testRoleAgents(),
+	}
+	// "web" was deregistered after mer-orch-1 spawned; only "api" remains.
+	st.workspaceRepo["mer"] = []domain.WorkspaceRepoRecord{
+		{ProjectID: "mer", Name: "api", RelativePath: "api"},
+	}
+
+	st.sessions["mer-orch-1"] = domain.SessionRecord{
+		ID: "mer-orch-1", ProjectID: "mer", Kind: domain.KindOrchestrator,
+		Metadata: domain.SessionMetadata{WorkspacePath: canonical, Branch: "ao/mer-orchestrator", RuntimeHandleID: "old-handle"},
+		Activity: domain.Activity{State: domain.ActivityActive},
+	}
+	st.worktrees["mer-orch-1"] = []domain.SessionWorktreeRecord{
+		{SessionID: "mer-orch-1", RepoName: domain.RootWorkspaceRepoName, Branch: "ao/mer-orchestrator", WorktreePath: canonical, State: "active"},
+		{SessionID: "mer-orch-1", RepoName: "web", Branch: "ao/mer-orchestrator", WorktreePath: canonical + "/web", State: "active"},
+	}
+	st.sessions["mer-orch-2"] = domain.SessionRecord{
+		ID: "mer-orch-2", ProjectID: "mer", Kind: domain.KindOrchestrator,
+		Metadata: domain.SessionMetadata{WorkspacePath: canonical, Branch: "ao/mer-orchestrator", RuntimeHandleID: "new-handle"},
+		Activity: domain.Activity{State: domain.ActivityActive},
+	}
+
+	if _, err := m.Kill(ctx, "mer-orch-1"); err != nil {
+		t.Fatalf("Kill err = %v", err)
+	}
+	if ws.destroyed != 0 {
+		t.Fatalf("Destroy ran %d times (%v); a worktree whose repo is deregistered cannot be removed safely and must be left for an operator",
+			ws.destroyed, ws.calls)
+	}
+	if !st.sessions["mer-orch-1"].IsTerminated {
+		t.Fatal("the killed row must still be marked terminated")
+	}
+}
+
+// The half of #144 P3 that must NOT regress: when the live owner covers every
+// one of the killed session's worktrees, all markers are still cleared, so
+// RestoreAll cannot resurrect the killed session into the live replacement's
+// worktree (#2319). These are shutdown-saved rows (State "removed"), the kind
+// RestoreAll actually replays, so the guard is exercised end to end.
+func TestKillClearsChildWorktreeMarkersCoveredByLiveOwner(t *testing.T) {
+	m, st, _, ws := newLifecycleManager()
+
+	const canonical = "/ws/mer/orchestrator/mer-orchestrator"
+	st.projects["mer"] = domain.ProjectRecord{
+		ID: "mer", Path: "/repos/mer", Kind: domain.ProjectKindWorkspace, Config: testRoleAgents(),
+	}
+	st.workspaceRepo["mer"] = []domain.WorkspaceRepoRecord{
+		{ProjectID: "mer", Name: "api", RelativePath: "api"},
+	}
+
+	// Shutdown-saved orchestrator: terminated, restore markers written.
+	st.sessions["mer-orch-1"] = domain.SessionRecord{
+		ID: "mer-orch-1", ProjectID: "mer", Kind: domain.KindOrchestrator,
+		Metadata:     domain.SessionMetadata{WorkspacePath: canonical, Branch: "ao/mer-orchestrator", RuntimeHandleID: "old-handle"},
+		IsTerminated: true, Activity: domain.Activity{State: domain.ActivityExited},
+	}
+	st.worktrees["mer-orch-1"] = []domain.SessionWorktreeRecord{
+		{SessionID: "mer-orch-1", RepoName: domain.RootWorkspaceRepoName, Branch: "ao/mer-orchestrator", WorktreePath: canonical, PreservedRef: "refs/ao/preserved/root", State: "removed"},
+		{SessionID: "mer-orch-1", RepoName: "api", Branch: "ao/mer-orchestrator", WorktreePath: canonical + "/api", PreservedRef: "refs/ao/preserved/api", State: "removed"},
+	}
+
+	// A replacement is already live on the canonical root and covers every one
+	// of those paths.
+	st.sessions["mer-orch-2"] = domain.SessionRecord{
+		ID: "mer-orch-2", ProjectID: "mer", Kind: domain.KindOrchestrator,
+		Metadata: domain.SessionMetadata{WorkspacePath: canonical, Branch: "ao/mer-orchestrator", RuntimeHandleID: "new-handle"},
+		Activity: domain.Activity{State: domain.ActivityActive},
+	}
+	st.worktrees["mer-orch-2"] = []domain.SessionWorktreeRecord{
+		{SessionID: "mer-orch-2", RepoName: domain.RootWorkspaceRepoName, Branch: "ao/mer-orchestrator", WorktreePath: canonical, State: "active"},
+		{SessionID: "mer-orch-2", RepoName: "api", Branch: "ao/mer-orchestrator", WorktreePath: canonical + "/api", State: "active"},
+	}
+
+	if _, err := m.Kill(ctx, "mer-orch-1"); err != nil {
+		t.Fatalf("Kill err = %v", err)
+	}
+	if rows := st.worktrees["mer-orch-1"]; len(rows) != 0 {
+		t.Fatalf("restore markers survived for worktrees the live owner covers: %#v; RestoreAll would resurrect the killed session into the live replacement's worktree", rows)
+	}
+
+	if err := m.RestoreAll(ctx); err != nil {
+		t.Fatalf("RestoreAll err = %v", err)
+	}
+	for _, call := range ws.calls {
+		if strings.HasPrefix(call, "Restore:") {
+			t.Fatalf("RestoreAll ran %q; a killed session must not be restored into the live replacement's worktree (calls: %v)", call, ws.calls)
+		}
+	}
+	if !st.sessions["mer-orch-1"].IsTerminated {
+		t.Fatal("the killed session must stay terminated across RestoreAll")
+	}
+}

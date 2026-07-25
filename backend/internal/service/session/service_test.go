@@ -528,6 +528,14 @@ func (f *fakeCommander) Spawn(_ context.Context, cfg ports.SpawnConfig) (domain.
 	}
 	return domain.SessionRecord{ID: "mer-9", ProjectID: cfg.ProjectID, Kind: cfg.Kind, Harness: cfg.Harness}, len(cfg.Prompt), 0, nil
 }
+
+// Preflight answers with the same verdict Spawn will: the real manager runs one
+// shared precondition pass for both, so a fake that could disagree would let a
+// test pass on a property the production code does not have.
+func (f *fakeCommander) Preflight(_ context.Context, _ ports.SpawnConfig) error {
+	return f.spawnErr
+}
+
 func (f *fakeCommander) RestoreWithMode(context.Context, domain.SessionID) (sessionmanager.RestoreResult, error) {
 	f.restoreCalls++
 	if f.restoreErr != nil {

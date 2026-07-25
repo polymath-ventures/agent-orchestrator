@@ -370,18 +370,51 @@ func New(d Deps) *Manager {
 	return m
 }
 
-// Spawn creates the session row (which assigns the "{project}-{n}" id), then the
-// workspace and runtime, then reports completion to the LCM. If workspace
-// materialization fails the still-seed row is deleted outright; a later failure
-// parks the row as terminated and rolls back what was built.
-func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.SessionRecord, int, int, error) {
+// spawnPlan is what preflightSpawn resolves: the checked, normalized spawn
+// config plus every derived value the durable half of Spawn needs. Returning
+// them keeps the checks and the launch reading one resolution instead of two.
+type spawnPlan struct {
+	cfg              ports.SpawnConfig
+	project          domain.ProjectRecord
+	projectKind      domain.ProjectKind
+	projectlessPrime bool
+	agentConfig      domain.AgentConfig
+	target           resolvedSpawnTarget
+	prompt           string
+	systemPrompt     string
+	requestedHarness domain.AgentHarness
+	requestedModel   string
+}
+
+// preflightSpawn runs every spawn precondition that can be decided before any
+// durable state exists, and resolves the values the rest of Spawn launches
+// with. It is the ONLY place those checks live: Spawn calls it, and Preflight
+// calls it, so a caller asking "could this spawn succeed?" is asking the exact
+// code that will run the spawn. Duplicating the checklist is what let a
+// reconciler retire a live role session for a replacement that could never be
+// created.
+//
+// Nothing here writes durable state, and for the role kinds (prime,
+// orchestrator) nothing here mutates in-memory state either: the two mutating
+// steps on the spawn path — the per-project admission lock and the worker-mix
+// candidate-health skip debit inside selectMixBucket — are both reached only
+// under `cfg.Kind == domain.KindWorker`. The admission lock is therefore left
+// to Spawn (see below), and mix selection simply does not run for a role
+// preflight. Preflight is not safe to call speculatively for a worker.
+//
+// Residual gap: preconditions that only become reachable after the seed row
+// exists are still not covered — ErrProjectNotResolvable, the
+// ports.ErrWorkspaceBranch* sentinels raised inside createSessionWorkspace, and
+// ports.ErrAgentBinaryNotFound from the adapter's launch command. A caller that
+// retires before spawning can still be caught by those.
+func (m *Manager) preflightSpawn(ctx context.Context, cfg ports.SpawnConfig) (spawnPlan, error) {
 	projectlessPrime := cfg.Kind == domain.KindPrime && cfg.ProjectID == ""
 	project := domain.ProjectRecord{}
 	var err error
 	if !projectlessPrime {
 		project, err = m.loadProject(ctx, cfg.ProjectID)
 		if err != nil {
-			return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn: %w", err)
+			return spawnPlan{}, fmt.Errorf("spawn: %w", err)
 		}
 	}
 	// Refuse new work when the project or the fleet is paused, before any durable
@@ -389,20 +422,11 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	// direct HTTP/CLI spawns bypassing tracker intake. Orchestrators and forced
 	// spawns are exempt.
 	if err := m.guardPaused(ctx, project, cfg); err != nil {
-		return domain.SessionRecord{}, 0, 0, err
+		return spawnPlan{}, err
 	}
 	requestedHarness := cfg.Harness
 	requestedModel := strings.TrimSpace(cfg.Model)
 	explicitSpawnModel := requestedModel != ""
-	var unlockSpawnAdmission func()
-	if cfg.Kind == domain.KindWorker {
-		unlockSpawnAdmission = m.lockSpawnAdmission(cfg.ProjectID)
-		defer func() {
-			if unlockSpawnAdmission != nil {
-				unlockSpawnAdmission()
-			}
-		}()
-	}
 	// Enforce the per-project live-worker cap before anything else: no durable
 	// row, no workspace, no mix or candidate-health consultation. Placed ahead
 	// of resolveSpawnTarget so a refusal at capacity leaves nothing to roll back
@@ -413,10 +437,10 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	if cfg.Kind == domain.KindWorker && project.Config.MaxLiveWorkers > 0 {
 		live, err := m.liveWorkerCount(ctx, cfg.ProjectID)
 		if err != nil {
-			return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn: %w", err)
+			return spawnPlan{}, fmt.Errorf("spawn: %w", err)
 		}
 		if live >= project.Config.MaxLiveWorkers {
-			return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn: %w: project %s at %d of %d live worker(s)", ErrWorkerConcurrencyCap, cfg.ProjectID, live, project.Config.MaxLiveWorkers)
+			return spawnPlan{}, fmt.Errorf("spawn: %w: project %s at %d of %d live worker(s)", ErrWorkerConcurrencyCap, cfg.ProjectID, live, project.Config.MaxLiveWorkers)
 		}
 	}
 	// Harness, model, and any worker-mix effort are resolved together up front so
@@ -425,11 +449,11 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	// tuple stored on live sessions.
 	target, err := m.resolveSpawnTarget(ctx, cfg, project)
 	if err != nil {
-		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn: %w", err)
+		return spawnPlan{}, fmt.Errorf("spawn: %w", err)
 	}
 	projectKind := project.Kind.WithDefault()
 	if projectKind == domain.ProjectKindScratch && strings.TrimSpace(cfg.Branch) != "" {
-		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn: %w", ErrScratchBranchUnsupported)
+		return spawnPlan{}, fmt.Errorf("spawn: %w", ErrScratchBranchUnsupported)
 	}
 	cfg.Harness = target.harness
 	cfg.Model = target.model
@@ -438,7 +462,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	// after CreateSession would leave a terminated orphan row and waste a
 	// worktree on a spawn that can never launch.
 	if _, ok := m.agents.Agent(cfg.Harness); !ok {
-		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn: %w: %q", ErrUnknownHarness, cfg.Harness)
+		return spawnPlan{}, fmt.Errorf("spawn: %w: %q", ErrUnknownHarness, cfg.Harness)
 	}
 	// Resolve the remaining launch config before the model gate so effort is
 	// validated as part of the exact native selection. This is the same resolver
@@ -448,7 +472,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	if projectlessPrime {
 		settings, err := m.store.GetPrimeSettings(ctx)
 		if err != nil {
-			return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn: prime settings: %w", err)
+			return spawnPlan{}, fmt.Errorf("spawn: prime settings: %w", err)
 		}
 		agentConfig = settings.WithDefaults().AgentConfig
 		if agentConfig.Effort == "" {
@@ -457,31 +481,94 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	} else {
 		agentConfig, err = agentconfig.Effective(cfg.Kind, project.Config, "", cfg.Harness)
 		if err != nil {
-			return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn: agent config: %w", err)
+			return spawnPlan{}, fmt.Errorf("spawn: agent config: %w", err)
 		}
 	}
 	if target.mixSelected {
 		agentConfig.Effort = target.effort
 	}
 	if err := m.validateSpawnSelection(ctx, cfg.Harness, cfg.Model, agentConfig.Effort, spawnModelSource(explicitSpawnModel, target.mixSelected)); err != nil {
-		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn: %w", err)
+		return spawnPlan{}, fmt.Errorf("spawn: %w", err)
 	}
 
 	if err := m.validateRuntimePrerequisites(); err != nil {
-		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn: %w", err)
+		return spawnPlan{}, fmt.Errorf("spawn: %w", err)
 	}
 
 	prompt, systemPrompt, err := m.buildSpawnTexts(ctx, cfg)
 	if err != nil {
-		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn: prompt: %w", err)
+		return spawnPlan{}, fmt.Errorf("spawn: prompt: %w", err)
 	}
-	promptBytes := len(prompt)
-	systemPromptBytes := len(systemPrompt)
 
 	// The daemon owns the name, and it is settled here — before the row exists —
 	// so the persisted name, the launch command, and any harness write all read
 	// the same single value.
 	cfg.DisplayName = m.resolveDisplayName(cfg, project)
+
+	return spawnPlan{
+		cfg:              cfg,
+		project:          project,
+		projectKind:      projectKind,
+		projectlessPrime: projectlessPrime,
+		agentConfig:      agentConfig,
+		target:           target,
+		prompt:           prompt,
+		systemPrompt:     systemPrompt,
+		requestedHarness: requestedHarness,
+		requestedModel:   requestedModel,
+	}, nil
+}
+
+// Preflight reports whether a spawn's preconditions hold right now, creating
+// nothing. It runs preflightSpawn and discards the resolved plan, so it can
+// never drift from what Spawn actually enforces.
+//
+// This exists for callers that must tear something down to make room for the
+// spawn — role reconciliation retiring the live orchestrator or Prime — and so
+// must learn about a deterministic refusal before, not after, the teardown.
+// Per preflightSpawn's contract, do not call it for cfg.Kind == KindWorker:
+// resolving a worker's mix bucket debits the candidate-health skip ledger.
+func (m *Manager) Preflight(ctx context.Context, cfg ports.SpawnConfig) error {
+	_, err := m.preflightSpawn(ctx, cfg)
+	return err
+}
+
+// Spawn creates the session row (which assigns the "{project}-{n}" id), then the
+// workspace and runtime, then reports completion to the LCM. If workspace
+// materialization fails the still-seed row is deleted outright; a later failure
+// parks the row as terminated and rolls back what was built.
+func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.SessionRecord, int, int, error) {
+	// Worker admission is serialized across the whole preflight-and-create
+	// window: the live-worker cap and the worker-mix census both read state that
+	// CreateSession then changes, so a competing spawn for the same project must
+	// not land between the check and the row. Held here rather than inside
+	// preflightSpawn so the preflight itself stays free of side effects.
+	var unlockSpawnAdmission func()
+	if cfg.Kind == domain.KindWorker {
+		unlockSpawnAdmission = m.lockSpawnAdmission(cfg.ProjectID)
+		defer func() {
+			if unlockSpawnAdmission != nil {
+				unlockSpawnAdmission()
+			}
+		}()
+	}
+
+	plan, err := m.preflightSpawn(ctx, cfg)
+	if err != nil {
+		return domain.SessionRecord{}, 0, 0, err
+	}
+	cfg = plan.cfg
+	project := plan.project
+	projectKind := plan.projectKind
+	projectlessPrime := plan.projectlessPrime
+	agentConfig := plan.agentConfig
+	target := plan.target
+	requestedHarness := plan.requestedHarness
+	requestedModel := plan.requestedModel
+	prompt := plan.prompt
+	systemPrompt := plan.systemPrompt
+	promptBytes := len(prompt)
+	systemPromptBytes := len(systemPrompt)
 
 	rec, err := m.store.CreateSession(ctx, seedRecord(cfg, agentConfig.Effort, target.mixSelected, target.mixBucketModel, m.clock()))
 	if err != nil {
@@ -1445,6 +1532,12 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 			m.logger.Info("kill: workspace still owned by a live session; preserving",
 				"sessionID", rec.ID, "path", ws.Path, "owner", owner)
 			killWorkspaceOwnedElsewhere = true
+			// The root is owned, but a multi-repo CHILD the live owner does not
+			// occupy is held by nobody. Reclaim it here, while its row still
+			// names it: every marker is cleared below, and nothing else in the
+			// system records a per-repo path, so a child left behind now is
+			// orphaned for good (#144).
+			m.destroyUncoveredChildWorktrees(ctx, rec, live)
 		}
 	}
 
@@ -1455,13 +1548,11 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 	// error out here before the runtime is destroyed and the row terminated —
 	// leaving the old process alive, which is the opposite of what Kill promises.
 	if killWorkspaceOwnedElsewhere {
-		// Nothing is torn down here, and the restore markers are still cleared
-		// below: keeping them would let RestoreAll resurrect this killed session
-		// into the worktree the live replacement is using, which is worse than
-		// the residue. Log the preserved path so an operator can reclaim any
-		// multi-repo child that the live owner does not actually cover
-		// (tracked separately; it requires a stale child under a live root,
-		// which canonical role layouts make contrived).
+		// The shared root and every child the live owner occupies are left
+		// alone; uncovered children were already reclaimed above. All restore
+		// markers are still cleared below, because keeping any would let
+		// RestoreAll resurrect this killed session into the worktree the live
+		// replacement is using (#2319).
 		m.logger.Warn("kill: workspace preserved for a live owner; restore markers cleared",
 			"sessionID", rec.ID, "path", ws.Path, "branch", rec.Metadata.Branch)
 		workspaceProject = false
