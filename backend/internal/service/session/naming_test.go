@@ -161,3 +161,23 @@ func TestRenameAcceptsANameAtTheCap(t *testing.T) {
 		t.Fatalf("display name = %q, want %q", st.sessions["mer-1"].DisplayName, name)
 	}
 }
+
+// Accepting a name the harness would refuse is the one outcome worth avoiding:
+// AO would display a name the session never received.
+func TestRenameRejectsANameCarryingShellSyntax(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer"}
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", DisplayName: "ao #7"}
+	fc := &fakeCommander{}
+	svc := NewWithDeps(Deps{Manager: fc, Store: st})
+
+	if err := svc.Rename(context.Background(), "mer-1", "x; touch /tmp/pwn"); err == nil {
+		t.Fatal("Rename accepted a name carrying shell syntax")
+	}
+	if got := st.sessions["mer-1"].DisplayName; got != "ao #7" {
+		t.Fatalf("display name = %q, want the previous name kept", got)
+	}
+	if fc.deliveredNames != 0 {
+		t.Fatalf("harness name deliveries = %d, want 0", fc.deliveredNames)
+	}
+}

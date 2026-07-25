@@ -704,6 +704,8 @@ func (s *Service) Rename(ctx context.Context, id domain.SessionID, displayName s
 		return apierr.Invalid("DISPLAY_NAME_REQUIRED", "Display name is required", nil)
 	case errors.Is(err, domain.ErrDisplayNameTooLong):
 		return apierr.Invalid("DISPLAY_NAME_TOO_LONG", err.Error(), nil)
+	case errors.Is(err, domain.ErrDisplayNameUnsafe):
+		return apierr.Invalid("DISPLAY_NAME_UNSAFE", err.Error(), nil)
 	case err != nil:
 		return apierr.Invalid("DISPLAY_NAME_INVALID", err.Error(), nil)
 	}

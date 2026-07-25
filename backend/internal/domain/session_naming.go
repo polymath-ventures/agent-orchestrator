@@ -58,6 +58,10 @@ var ErrDisplayNameTooLong = fmt.Errorf("display name must be at most %d characte
 // ErrDisplayNameEmpty reports a session name that is blank once trimmed.
 var ErrDisplayNameEmpty = errors.New("display name is required")
 
+// ErrDisplayNameUnsafe reports a session name carrying a character AO will not
+// type into a terminal. See NameRuneAllowed.
+var ErrDisplayNameUnsafe = errors.New("display name may not contain control characters or shell syntax")
+
 // ValidateSessionDisplayName checks an operator-supplied name against the one
 // cap every session name obeys, and returns the trimmed value.
 //
@@ -65,8 +69,13 @@ var ErrDisplayNameEmpty = errors.New("display name is required")
 // point on purpose: a caller that silently shortened a name would persist a
 // string the operator did not choose, and a caller that skipped the check
 // entirely — as the rename endpoint did — would persist a name that exceeds the
-// cap the spawn path enforces. Composed names are already within the cap by
+// cap the spawn path enforces. Composed names satisfy all of this by
 // construction, so this guards the override paths.
+//
+// It holds a supplied name to the same character set delivery does. Accepting a
+// name here that delivery would later refuse is the one outcome worth avoiding:
+// AO would display a name the harness never received, which is precisely the
+// divergence this change exists to remove.
 func ValidateSessionDisplayName(name string) (string, error) {
 	trimmed := strings.TrimSpace(name)
 	if trimmed == "" {
@@ -74,6 +83,11 @@ func ValidateSessionDisplayName(name string) (string, error) {
 	}
 	if utf8.RuneCountInString(trimmed) > MaxSessionDisplayNameRunes {
 		return "", ErrDisplayNameTooLong
+	}
+	for _, r := range trimmed {
+		if !NameRuneAllowed(r) {
+			return "", ErrDisplayNameUnsafe
+		}
 	}
 	return trimmed, nil
 }
@@ -87,7 +101,10 @@ func workerIssueSuffix(issueID string) string {
 	if hash := strings.LastIndexByte(id, '#'); hash >= 0 {
 		id = id[hash+1:]
 	}
-	id = strings.TrimSpace(id)
+	// Sanitized like every other tracker-supplied part: a work item id reaches AO
+	// from a CLI flag, an HTTP body, or tracker intake, so it is no more trusted
+	// than the title beside it.
+	id = sanitizeNamePart(id)
 	if id == "" {
 		return ""
 	}
@@ -112,9 +129,15 @@ func sanitizeNamePart(s string) string {
 	return strings.Join(strings.Fields(stripped), " ")
 }
 
-// nameSafePunctuation is the punctuation a session name may carry. Everything
-// omitted is either a shell operator, a quote, an expansion sigil, or a glob.
-const nameSafePunctuation = " #-_.,:+/@="
+// nameShellActive is the ASCII shell grammar: everything that can start a
+// command, substitute one, expand, quote, escape, or glob in sh/bash/zsh. `!`
+// is here because the terminal a stray name could reach is an interactive
+// shell, where it is history expansion.
+//
+// `#` is deliberately absent — the naming grammar is built on it, and in command
+// position it opens a comment, which is inert. `=`, `%`, `+`, `@`, `:` and `/`
+// are likewise ordinary once a command word precedes them.
+const nameShellActive = "\"$&'()*;<>?[\\]^`{|}~!"
 
 // NameRuneAllowed reports whether a rune may appear in a session name.
 //
@@ -126,18 +149,25 @@ const nameSafePunctuation = " #-_.,:+/@="
 // cannot be atomic with the keystroke.
 //
 // Rather than narrow the race, this removes what the race could cost: a name
-// with no shell operators, quotes, expansions, or globs cannot become a command
-// no matter when it lands. `/rename my-session` at a shell prompt is a
-// command-not-found; `/rename x; curl …` would not have been. The property holds
-// by construction, so no future timing change can reopen it.
+// that cannot start, substitute, or expand a command cannot become one no matter
+// when it lands. `/rename my-session` at a shell prompt is a command-not-found;
+// `/rename x; curl …` would not have been. The property holds by construction,
+// so no future timing change can reopen it.
+//
+// It is a deny list rather than an allow list because shell grammar is entirely
+// ASCII: to a shell, every non-ASCII rune is an ordinary word character. An
+// allow list would have to enumerate the world's punctuation to avoid mangling
+// legitimate titles — curly apostrophes, en dashes, emoji — for no security
+// gain. Invisible runes are still refused: a format character can hide content
+// from the operator reading the name.
 func NameRuneAllowed(r rune) bool {
-	if unicode.IsControl(r) {
+	if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
 		return false
 	}
-	if unicode.IsLetter(r) || unicode.IsDigit(r) || unicode.IsMark(r) {
-		return true
+	if r < utf8.RuneSelf {
+		return !strings.ContainsRune(nameShellActive, r)
 	}
-	return strings.ContainsRune(nameSafePunctuation, r)
+	return true
 }
 
 // fitWords returns the longest whole-word prefix of s that fits in limit runes,

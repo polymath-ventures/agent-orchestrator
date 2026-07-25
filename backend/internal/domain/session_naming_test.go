@@ -111,6 +111,14 @@ func TestValidateSessionDisplayName(t *testing.T) {
 		{"empty is rejected", "", "", ErrDisplayNameEmpty},
 		{"at the cap is accepted", strings.Repeat("x", MaxSessionDisplayNameRunes), strings.Repeat("x", MaxSessionDisplayNameRunes), nil},
 		{"over the cap is rejected, not shortened", strings.Repeat("x", MaxSessionDisplayNameRunes+1), "", ErrDisplayNameTooLong},
+		// Accepting a name here that delivery would refuse would leave AO showing
+		// a name the harness never received.
+		{"shell syntax is rejected", "x; touch /tmp/pwn", "", ErrDisplayNameUnsafe},
+		{"command substitution is rejected", "x`id`", "", ErrDisplayNameUnsafe},
+		{"an invisible rune is rejected", "ao\u200b Orc", "", ErrDisplayNameUnsafe},
+		{"realistic punctuation is accepted", "Don’t regress", "Don’t regress", nil},
+		{"a percentage is accepted", "100% rollout", "100% rollout", nil},
+		{"an emoji is accepted", "🚀 release", "🚀 release", nil},
 		// The cap counts runes, so a multi-byte name is not penalized for its
 		// encoding: 20 emoji are 20 characters to the operator.
 		{"counts runes not bytes", strings.Repeat("é", MaxSessionDisplayNameRunes), strings.Repeat("é", MaxSessionDisplayNameRunes), nil},
@@ -149,12 +157,16 @@ func TestComposedNamesAlwaysPassValidation(t *testing.T) {
 // or glob. This is what makes a misdirected naming write inert rather than a
 // command — a property no timing change can reopen.
 func TestNameRuneAllowedRejectsShellActiveCharacters(t *testing.T) {
-	for _, r := range ";&|$`()<>\\'\"*?[]{}~!\n\r\t\x00" {
+	// Everything that can start, substitute, expand, quote, escape, or glob a
+	// command — plus invisible runes, which can hide content from the operator.
+	for _, r := range ";&|$`()<>\\'\"*?[]{}~!^\n\r\t\x00\u200b\u2066" {
 		if NameRuneAllowed(r) {
 			t.Errorf("NameRuneAllowed(%q) = true, want false", r)
 		}
 	}
-	for _, r := range "abcXYZ019 #-_.,:+/@=éü漢" {
+	// Shell grammar is entirely ASCII, so non-ASCII text is ordinary to a shell
+	// and must survive: mangling real titles buys no safety.
+	for _, r := range "abcXYZ019 #-_.,:+/@=%éü漢’–—🚀" {
 		if !NameRuneAllowed(r) {
 			t.Errorf("NameRuneAllowed(%q) = false, want true", r)
 		}
@@ -172,5 +184,27 @@ func TestComposedNamesNeverCarryShellSyntax(t *testing.T) {
 	}
 	if got == "" {
 		t.Fatal("ComposeWorkerDisplayName = empty; a hostile title must degrade, not erase the name")
+	}
+}
+
+// A work item id arrives from a CLI flag, an HTTP body, or tracker intake, so it
+// is no more trusted than the title beside it.
+func TestComposeWorkerDisplayNameSanitizesTheWorkItemID(t *testing.T) {
+	got := ComposeWorkerDisplayName("ao", "7;touch", "")
+	if strings.ContainsAny(got, ";`$&|") {
+		t.Fatalf("ComposeWorkerDisplayName = %q, still carries shell syntax from the work item id", got)
+	}
+	if _, err := ValidateSessionDisplayName(got); err != nil {
+		t.Fatalf("composed name %q failed validation: %v", got, err)
+	}
+}
+
+// Real-world titles must survive the restriction, or it costs more than it buys.
+func TestComposedNamesKeepRealisticTitleText(t *testing.T) {
+	if got := ComposeWorkerDisplayName("ao", "7", "Don’t regress"); got != "ao #7 Don’t regress" {
+		t.Fatalf("ComposeWorkerDisplayName = %q, want the curly apostrophe preserved", got)
+	}
+	if got := ComposeWorkerDisplayName("ao", "7", "100% rollout"); got != "ao #7 100% rollout" {
+		t.Fatalf("ComposeWorkerDisplayName = %q, want the percent sign preserved", got)
 	}
 }
