@@ -15,6 +15,7 @@ type CenterPaneProps = {
 	theme: Theme;
 	daemonReady: boolean;
 	terminalTarget?: TerminalTarget;
+	focusRequest?: number;
 	onSelectWorkerTerminal?: () => void;
 	/** Standalone shells to render as tabs beside the session's own pane. */
 	shellTerminals?: ShellTerminal[];
@@ -52,6 +53,7 @@ export function CenterPane({
 	onSelectShellTerminal,
 	onCloseShellTerminal,
 	onNewShellTerminal,
+	focusRequest,
 }: CenterPaneProps) {
 	const paneRef = useRef<HTMLDivElement | null>(null);
 	const wheelZoomRemainderRef = useRef(0);
@@ -61,6 +63,9 @@ export function CenterPane({
 	const tabOverflowWatch = `session|${shellTerminals.map((t) => t.handleId).join("|")}`;
 	const tabsOverflow = useOverflowScroll<HTMLDivElement>(tabOverflowWatch);
 	const target = terminalTarget ?? { kind: "worker" };
+	const focusActiveTerminalTab = useCallback(() => {
+		paneRef.current?.querySelector<HTMLButtonElement>('[data-terminal-tab="true"][aria-current="true"]')?.focus();
+	}, []);
 
 	useEffect(() => {
 		const handleFullscreenChange = () => setIsFullscreen(document.fullscreenElement === paneRef.current);
@@ -156,6 +161,7 @@ export function CenterPane({
 											? "Orchestrator"
 											: session.title
 							}
+							isTerminalTab
 							onSelect={onSelectSessionTerminal}
 						/>
 						{shellTerminals.map((shell) => (
@@ -221,9 +227,11 @@ export function CenterPane({
 					// they focus the same way. The worker/reviewer pane does not: it also
 					// mounts on arrival and re-keys in the background when a starting
 					// session is finally assigned its terminal handle.
-					autoFocus={target.kind === "shell"}
+					autoFocus={focusRequest !== undefined}
+					focusRequest={focusRequest}
 					daemonReady={daemonReady}
 					fontSize={fontSize}
+					onExitFocus={focusActiveTerminalTab}
 					session={session}
 					terminalTarget={target}
 					theme={theme}
@@ -277,6 +285,7 @@ export function CenterPane({
 type SessionPaneTabProps = {
 	label: string;
 	isActive: boolean;
+	isTerminalTab?: boolean;
 	onSelect?: () => void;
 };
 
@@ -284,7 +293,7 @@ type SessionPaneTabProps = {
 // background as the inspector rail tabs (Summary · Reviews · Browser), and
 // the full label only becomes the hover tooltip when the tab strip is
 // crowded enough to truncate it.
-function SessionPaneTab({ label, isActive, onSelect }: SessionPaneTabProps) {
+function SessionPaneTab({ label, isActive, isTerminalTab = false, onSelect }: SessionPaneTabProps) {
 	const { ref, isTruncated } = useTruncatedText<HTMLButtonElement>(label);
 	return (
 		<span
@@ -300,6 +309,7 @@ function SessionPaneTab({ label, isActive, onSelect }: SessionPaneTabProps) {
 					"min-w-flex-min max-w-shell-tab-max truncate font-mono text-control font-semibold transition-colors",
 					isActive ? "text-foreground" : "text-passive/60 hover:text-passive",
 				)}
+				data-terminal-tab={isTerminalTab ? "true" : undefined}
 				onClick={onSelect}
 				title={isTruncated ? label : "Session terminal"}
 				type="button"
@@ -337,6 +347,7 @@ function ShellTerminalTab({ shell, isActive, onSelect, onClose }: ShellTerminalT
 					"min-w-flex-min max-w-shell-tab-max truncate font-mono text-control font-semibold transition-colors",
 					isActive ? "text-foreground" : "text-passive hover:text-foreground",
 				)}
+				data-terminal-tab="true"
 				onClick={onSelect}
 				title={isTruncated ? shell.title : shell.workingDir}
 				type="button"

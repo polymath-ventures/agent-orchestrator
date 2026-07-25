@@ -19,6 +19,14 @@ export type ShellTerminal = {
 
 export const shellTerminalsQueryKey = ["shell-terminals"] as const;
 
+export function upsertShellTerminal(current: ShellTerminal[] | undefined, shell: ShellTerminal): ShellTerminal[] {
+	const shells = current ?? [];
+	if (shells.some((item) => item.handleId === shell.handleId)) {
+		return shells.map((item) => (item.handleId === shell.handleId ? shell : item));
+	}
+	return [...shells, shell];
+}
+
 function shouldUsePreviewData(): boolean {
 	return import.meta.env.VITE_NO_ELECTRON === "1" && !hasTrustedApiBaseUrl();
 }
@@ -89,7 +97,10 @@ export function useOpenShellTerminal() {
 			if (!data) throw new Error("Daemon returned no shell terminal");
 			return toShellTerminal(data.shellTerminal);
 		},
-		onSuccess: () => {
+		onSuccess: (shell) => {
+			queryClient.setQueryData<ShellTerminal[]>(shellTerminalsQueryKey, (current) =>
+				upsertShellTerminal(current, shell),
+			);
 			void queryClient.invalidateQueries({ queryKey: shellTerminalsQueryKey });
 		},
 	});

@@ -52,12 +52,30 @@ const { workspaces, workspaceQueryState, panels } = vi.hoisted(() => {
 	};
 	return { workspaces, workspaceQueryState, panels: new Map<string, PanelEntry>() };
 });
+const centerPaneProps = vi.hoisted(() => ({
+	value: {} as {
+		focusRequest?: number;
+		onSelectSessionTerminal?: () => void;
+		onSelectWorkerTerminal?: () => void;
+		terminalTarget?: { kind: string; handleId?: string };
+	},
+}));
 
 // The terminal and inspector body pull in xterm/SSE machinery irrelevant to
 // the split under test. (ShellTopbar is shell-owned on Win/Linux; when the
 // platform hides the shell topbar, SessionView mounts it in-panel.)
 vi.mock("./ShellTopbar", () => ({ ShellTopbar: () => null }));
-vi.mock("./CenterPane", () => ({ CenterPane: () => <div>terminal center</div> }));
+vi.mock("./CenterPane", () => ({
+	CenterPane: (props: {
+		focusRequest?: number;
+		onSelectSessionTerminal?: () => void;
+		onSelectWorkerTerminal?: () => void;
+		terminalTarget?: { kind: string; handleId?: string };
+	}) => {
+		centerPaneProps.value = props;
+		return <div>terminal center</div>;
+	},
+}));
 vi.mock("./BrowserPanel", () => ({
 	BrowserPanelView: ({
 		poppedOut,
@@ -119,11 +137,13 @@ vi.mock("./SessionInspector", () => ({
 	SessionInspector: ({
 		filesView,
 		onOpenFiles,
+		onOpenReviewerTerminal,
 		onToggleBrowserPopOut,
 		view,
 	}: {
 		filesView?: ReactNode;
 		onOpenFiles?: () => void;
+		onOpenReviewerTerminal?: (terminal: { handleId: string; harness: string }) => void;
 		onToggleBrowserPopOut?: () => void;
 		view?: string;
 	}) => (
@@ -133,6 +153,9 @@ vi.mock("./SessionInspector", () => ({
 			</button>
 			<button type="button" onClick={onOpenFiles}>
 				open files
+			</button>
+			<button type="button" onClick={() => onOpenReviewerTerminal?.({ handleId: "reviewer-1", harness: "codex" })}>
+				open reviewer terminal
 			</button>
 			{view === "files" ? filesView : null}
 		</div>
@@ -253,6 +276,7 @@ describe("SessionView", () => {
 		useUiStore.setState({ inspectorSessions: {} });
 		panels.clear();
 		browserDestroy.mockReset();
+		centerPaneProps.value = {};
 	});
 
 	// Regression: react-resizable-panels v4 treats bare numeric sizes as PIXELS
@@ -420,6 +444,46 @@ describe("SessionView", () => {
 		// The shortcut is inactive without an inspector.
 		fireEvent.keyDown(window, { key: "B", metaKey: true, shiftKey: true });
 		expect(inspectorOpen("sess-orch")).toBe(false);
+	});
+
+	it("requests terminal focus when reselecting the already-active session terminal", () => {
+		render(<SessionView sessionId="sess-1" />);
+
+		act(() => centerPaneProps.value.onSelectSessionTerminal?.());
+
+		expect(centerPaneProps.value.terminalTarget?.kind).toBe("worker");
+		expect(centerPaneProps.value.focusRequest).toBe(1);
+	});
+
+	it("does not reset focus request nonces across session navigation", () => {
+		const { rerender } = render(<SessionView sessionId="sess-1" />);
+		act(() => centerPaneProps.value.onSelectSessionTerminal?.());
+		expect(centerPaneProps.value.focusRequest).toBe(1);
+
+		rerender(<SessionView sessionId="sess-2" />);
+		act(() => centerPaneProps.value.onSelectSessionTerminal?.());
+
+		expect(centerPaneProps.value.terminalTarget?.kind).toBe("worker");
+		expect(centerPaneProps.value.focusRequest).toBe(2);
+	});
+
+	it("requests terminal focus when opening a reviewer terminal and returning to agent", () => {
+		act(() => useUiStore.getState().setInspectorOpen("sess-1", true));
+		render(<SessionView sessionId="sess-1" />);
+
+		fireEvent.click(screen.getByRole("button", { name: "open reviewer terminal" }));
+
+		expect(centerPaneProps.value.terminalTarget).toEqual({
+			kind: "reviewer",
+			handleId: "reviewer-1",
+			harness: "codex",
+		});
+		expect(centerPaneProps.value.focusRequest).toBe(1);
+
+		act(() => centerPaneProps.value.onSelectWorkerTerminal?.());
+
+		expect(centerPaneProps.value.terminalTarget?.kind).toBe("worker");
+		expect(centerPaneProps.value.focusRequest).toBe(2);
 	});
 
 	it("maximizes the browser over the whole app window and returns to the rail", () => {

@@ -16,7 +16,7 @@ export type ShortcutChord = {
 
 // prettier-ignore
 export type AppShortcutId =
-	"new-session" | "new-shell-terminal" | "keyboard-shortcuts" | "toggle-sidebar" | "open-project" | "toggle-inspector" | "command-palette" | "open-settings" | "previous-session" | "next-session" | "focus-terminal";
+	"new-session" | "new-shell-terminal" | "keyboard-shortcuts" | "toggle-sidebar" | "open-project" | "toggle-inspector" | "command-palette" | "open-settings" | "previous-session" | "next-session" | "focus-terminal" | "terminal-exit-focus";
 
 export type ShortcutCategory = "General" | "Navigation" | "Session";
 
@@ -110,6 +110,13 @@ export const APP_SHORTCUTS: readonly ShortcutDefinition[] = [
 		mac: ["⌘", "Shift", "T"],
 		windowsLinux: ["Ctrl", "Shift", "T"],
 	},
+	{
+		id: "terminal-exit-focus",
+		label: "Move focus out of terminal",
+		category: "Session",
+		mac: ["Ctrl", "F6"],
+		windowsLinux: ["Ctrl", "F6"],
+	},
 ];
 
 export function shortcutKeys(shortcut: ShortcutDefinition, isMac: boolean): readonly string[] {
@@ -198,4 +205,8 @@ export function matchesFocusTerminalShortcut(chord: ShortcutChord, isMac: boolea
 	return isMac
 		? chord.meta && chord.shift && !chord.ctrl && !chord.alt
 		: chord.ctrl && chord.shift && !chord.meta && !chord.alt;
+}
+
+export function matchesTerminalExitFocusShortcut(chord: ShortcutChord, _isMac: boolean): boolean {
+	return chord.key === "F6" && chord.ctrl && !chord.meta && !chord.alt && !chord.shift;
 }

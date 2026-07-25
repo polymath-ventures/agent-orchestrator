@@ -31,7 +31,9 @@ import type { AttachableTerminal, TerminalUserInputSource } from "../hooks/useTe
 import { aoBridge } from "../lib/bridge";
 import { TERMINAL_FONT_SIZE_DEFAULT } from "../lib/design-tokens";
 import { OPEN_DIALOG_OR_MENU_SELECTOR } from "../lib/dom-selectors";
+import { isMacPlatform } from "../lib/platform";
 import { buildTerminalThemes } from "../lib/terminal-themes";
+import { APP_SHORTCUTS, matchesTerminalExitFocusShortcut, shortcutKeys } from "../../shared/shortcuts";
 import type { Theme } from "../stores/ui-store";
 import {
 	DropdownMenu,
@@ -61,8 +63,12 @@ export type XtermTerminalProps = {
 	 * per call site rather than decided here.
 	 */
 	autoFocus?: boolean;
+	/** Bump when a user activation should focus an already-mounted terminal. */
+	focusRequest?: number;
 	/** Terminal construction failed; the owner decides how to surface it. */
 	onError?: (error: unknown) => void;
+	/** Called by the terminal focus-exit chord so the owner can focus nearby chrome. */
+	onExitFocus?: () => void;
 	/** Called after a terminal hyperlink is opened in the OS browser. */
 	onLinkOpen?: (uri: string) => void;
 	/**
@@ -232,9 +238,15 @@ function sgrWheelReport(button: number, count: number): string {
 // already scrolls a full screen, so scaling by line count would over-scroll.
 const PAGE_UP = "\x1b[5~";
 const PAGE_DOWN = "\x1b[6~";
+const TERMINAL_EXIT_FOCUS_SHORTCUT = APP_SHORTCUTS.find((shortcut) => shortcut.id === "terminal-exit-focus");
 
 function pageKeyReport(lines: number): string {
 	return lines < 0 ? PAGE_UP : PAGE_DOWN;
+}
+
+function terminalExitFocusShortcutLabel(): string {
+	if (!TERMINAL_EXIT_FOCUS_SHORTCUT) return "";
+	return shortcutKeys(TERMINAL_EXIT_FOCUS_SHORTCUT, isMacPlatform()).join("+");
 }
 
 function forceSelectionMode(term: Terminal): void {
@@ -252,6 +264,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 	const termRef = useRef<Terminal | null>(null);
 	const fitRef = useRef<(() => void) | null>(null);
 	const contextMenuActionsRef = useRef<TerminalContextMenuActions | null>(null);
+	const lastFocusRequestRef = useRef(props.focusRequest);
 	const [contextMenu, setContextMenu] = useState<TerminalContextMenuState>({
 		canCopy: false,
 		open: false,
@@ -262,6 +275,12 @@ export function XtermTerminal(props: XtermTerminalProps) {
 	// never tear down and recreate the terminal because a handler identity
 	// changed between renders.
 	const callbacksRef = useRef(props);
+	const baseAccessibleLabel = props.ariaLabel ?? "Terminal";
+	const exitFocusShortcutLabel = terminalExitFocusShortcutLabel();
+	const accessibleLabel =
+		props.onExitFocus && exitFocusShortcutLabel
+			? `${baseAccessibleLabel}; press ${exitFocusShortcutLabel} to move focus out`
+			: baseAccessibleLabel;
 
 	const setContextMenuOpen = useCallback((open: boolean) => {
 		setContextMenu((current) => ({ ...current, open }));
@@ -280,11 +299,30 @@ export function XtermTerminal(props: XtermTerminalProps) {
 	});
 
 	useEffect(() => {
+		if (props.focusRequest === undefined || props.focusRequest === lastFocusRequestRef.current) return;
+		lastFocusRequestRef.current = props.focusRequest;
+		const host = hostRef.current;
+		const term = termRef.current;
+		if (!host || !term || !canTakeFocusOnMount(host)) return;
+		try {
+			term.focus();
+		} catch {
+			// Terminal is being torn down or its hidden textarea is unavailable.
+		}
+	}, [props.focusRequest]);
+
+	useEffect(() => {
 		const term = termRef.current;
 		if (!term) return;
 		const { dark, light } = buildTerminalThemes();
 		term.options.theme = props.theme === "dark" ? dark : light;
 	}, [props.theme]);
+
+	useEffect(() => {
+		const term = termRef.current;
+		if (!term) return;
+		term.textarea?.setAttribute("aria-label", accessibleLabel);
+	}, [accessibleLabel]);
 
 	useEffect(() => {
 		const term = termRef.current;
@@ -360,6 +398,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		term.loadAddon(new SearchAddon());
 
 		term.open(host);
+		term.textarea?.setAttribute("aria-label", accessibleLabel);
 		loadRenderer(term);
 		term.options.macOptionClickForcesSelection = true;
 		forceSelectionMode(term);
@@ -481,6 +520,22 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			if (event.key === "Enter" && event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey) {
 				consumeTerminalShortcut(event);
 				emitUserInput("\x1b\r", "keyboard");
+				return false;
+			}
+			const exitFocusRequested = matchesTerminalExitFocusShortcut(
+				{
+					key: event.key,
+					code: event.code,
+					ctrl: event.ctrlKey,
+					meta: event.metaKey,
+					shift: event.shiftKey,
+					alt: event.altKey,
+				},
+				false,
+			);
+			if (exitFocusRequested && callbacksRef.current.onExitFocus) {
+				consumeTerminalShortcut(event);
+				callbacksRef.current.onExitFocus();
 				return false;
 			}
 			if (isTerminalCopyShortcut(event)) {
@@ -769,7 +824,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		<>
 			<div
 				ref={hostRef}
-				aria-label={props.ariaLabel}
+				aria-label={accessibleLabel}
 				className={props.className}
 				style={{ height: "100%", overflow: "hidden", width: "100%" }}
 			/>

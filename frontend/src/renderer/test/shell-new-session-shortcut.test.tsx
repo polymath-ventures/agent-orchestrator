@@ -148,6 +148,14 @@ vi.mock("../components/Sidebar", async () => {
 
 import { Route } from "../routes/_shell";
 
+type TestShellTerminal = {
+	handleId: string;
+	title: string;
+	workingDir: string;
+	createdAt: string;
+	projectId?: string;
+};
+
 const workspaces = [
 	{
 		id: "proj-1",
@@ -233,6 +241,24 @@ describe("shell new-shell-terminal shortcut subscription", () => {
 		pressNewShellTerminal();
 
 		expect(shellMocks.openShellTerminal).toHaveBeenCalledWith("proj-1", expect.anything());
+	});
+
+	it("marks the opened shell active", async () => {
+		await renderShell();
+		const shell = {
+			handleId: "shell-new",
+			title: "agent-orchestrator",
+			workingDir: "/tmp/agent-orchestrator",
+			createdAt: "2026-07-25T00:00:00Z",
+		};
+
+		pressNewShellTerminal();
+		const options = shellMocks.openShellTerminal.mock.calls[0][1] as {
+			onSuccess?: (shell: TestShellTerminal) => void;
+		};
+		act(() => options.onSuccess?.(shell));
+
+		expect(useUiStore.getState().activeShellTerminalHandleId).toBe("shell-new");
 	});
 
 	it("re-fires on a repeat press so a second terminal can be opened", async () => {

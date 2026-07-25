@@ -68,6 +68,9 @@ vi.mock("@xterm/xterm", () => ({
 		open(host: HTMLElement) {
 			this.helperTextarea = host.appendChild(document.createElement("textarea"));
 		}
+		get textarea() {
+			return this.helperTextarea ?? undefined;
+		}
 		write() {}
 		writeln() {}
 		dispose() {}
@@ -192,6 +195,17 @@ describe("XtermTerminal", () => {
 		tab.remove();
 	});
 
+	it("focuses an already-mounted terminal when the owner sends a focus request", () => {
+		const tab = document.body.appendChild(document.createElement("button"));
+		const { container, rerender } = render(<XtermTerminal focusRequest={0} theme="dark" />);
+		tab.focus();
+
+		rerender(<XtermTerminal focusRequest={1} theme="dark" />);
+
+		expect(document.activeElement).toBe(container.querySelector("textarea"));
+		tab.remove();
+	});
+
 	it("keeps focus on a text field that is not inside an overlay", () => {
 		const filter = document.body.appendChild(document.createElement("input"));
 		filter.focus();
@@ -253,6 +267,66 @@ describe("XtermTerminal", () => {
 		expect(allowed).toBe(false);
 		expect(event.preventDefault).toHaveBeenCalled();
 		expect(window.ao!.clipboard.writeText).toHaveBeenCalledWith("copied selection");
+	});
+
+	it("leaves bare Escape for the terminal but exits focus on Ctrl+F6", () => {
+		const onExitFocus = vi.fn();
+		render(<XtermTerminal onExitFocus={onExitFocus} theme="dark" />);
+		const escape = {
+			key: "Escape",
+			ctrlKey: false,
+			metaKey: false,
+			altKey: false,
+			shiftKey: false,
+			preventDefault: vi.fn(),
+			stopPropagation: vi.fn(),
+		} as unknown as KeyboardEvent;
+		const exit = {
+			key: "F6",
+			ctrlKey: true,
+			metaKey: false,
+			altKey: false,
+			shiftKey: false,
+			preventDefault: vi.fn(),
+			stopPropagation: vi.fn(),
+		} as unknown as KeyboardEvent;
+
+		expect(state.lastTerminal!.keyHandler!(escape)).toBe(true);
+		expect(onExitFocus).not.toHaveBeenCalled();
+		expect(state.lastTerminal!.keyHandler!(exit)).toBe(false);
+		expect(onExitFocus).toHaveBeenCalledTimes(1);
+		expect(exit.preventDefault).toHaveBeenCalled();
+	});
+
+	it("leaves Ctrl+F6 for the terminal when there is no focus exit target", () => {
+		render(<XtermTerminal theme="dark" />);
+		const exit = {
+			key: "F6",
+			ctrlKey: true,
+			metaKey: false,
+			altKey: false,
+			shiftKey: false,
+			preventDefault: vi.fn(),
+			stopPropagation: vi.fn(),
+		} as unknown as KeyboardEvent;
+
+		expect(state.lastTerminal!.keyHandler!(exit)).toBe(true);
+		expect(exit.preventDefault).not.toHaveBeenCalled();
+	});
+
+	it("only advertises the focus-exit shortcut when a focus exit target exists", () => {
+		const { container, rerender } = render(<XtermTerminal ariaLabel="Agent terminal" theme="dark" />);
+		const host = container.firstElementChild;
+		const textarea = () => container.querySelector("textarea");
+
+		expect(host).toHaveAttribute("aria-label", "Agent terminal");
+		expect(textarea()).toHaveAttribute("aria-label", "Agent terminal");
+		expect(screen.queryByLabelText(/press Ctrl\+F6/)).not.toBeInTheDocument();
+
+		rerender(<XtermTerminal ariaLabel="Agent terminal" onExitFocus={() => undefined} theme="dark" />);
+
+		expect(host).toHaveAttribute("aria-label", "Agent terminal; press Ctrl+F6 to move focus out");
+		expect(textarea()).toHaveAttribute("aria-label", "Agent terminal; press Ctrl+F6 to move focus out");
 	});
 
 	it("handles native copy events from inside the terminal", () => {
