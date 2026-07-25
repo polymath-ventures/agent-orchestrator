@@ -791,10 +791,16 @@ func (m *Manager) createSessionWorkspace(ctx context.Context, project domain.Pro
 	return info.Root, &info, nil
 }
 
-// spawnCleanupTimeout bounds compensating teardown after a failed spawn or
-// relaunch. Long enough for a tmux destroy and a git worktree removal, short
-// enough that a wedged teardown cannot pin a request goroutine open.
+// spawnCleanupTimeout bounds one compensating teardown step — a runtime
+// destroy, a workspace teardown, a terminal-state write. Long enough for a tmux
+// destroy and a git worktree removal, short enough that a wedged step cannot
+// pin a request goroutine open indefinitely. A rollback branch runs a few steps
+// in sequence, so its total is a small multiple of this; the guarantee is that
+// no single step hangs forever, not that a branch finishes within 30s.
 const spawnCleanupTimeout = 30 * time.Second
+
+// cleanupContextKey marks a context already produced by cleanupContext.
+type cleanupContextKey struct{}
 
 // cleanupContext derives the context that compensating teardown runs on.
 //
@@ -805,8 +811,19 @@ const spawnCleanupTimeout = 30 * time.Second
 // rollback exists to perform — leaving exactly the orphan it was meant to
 // prevent. Detached from cancellation, but bounded, so teardown still cannot
 // run forever.
+//
+// Re-deriving from a context that is already a cleanup context returns it
+// unchanged. Teardown helpers call each other, and context.WithoutCancel drops
+// the parent's deadline along with its cancellation — so a fresh derive per
+// nesting level would restart the clock and make the real bound a multiple of
+// spawnCleanupTimeout. Sharing the outermost budget keeps the timeout per
+// rollback, which is what the constant claims to be.
 func cleanupContext(ctx context.Context) (context.Context, context.CancelFunc) {
-	return context.WithTimeout(context.WithoutCancel(ctx), spawnCleanupTimeout)
+	if ctx.Value(cleanupContextKey{}) != nil {
+		return ctx, func() {}
+	}
+	detached := context.WithValue(context.WithoutCancel(ctx), cleanupContextKey{}, struct{}{})
+	return context.WithTimeout(detached, spawnCleanupTimeout)
 }
 
 // destroyPartialWorkspaceProject compensates a workspace project whose worktree
@@ -849,6 +866,8 @@ func (m *Manager) destroySpawnWorkspace(ctx context.Context, ws ports.WorkspaceI
 }
 
 func (m *Manager) rollbackPreparedSpawnWorkspace(ctx context.Context, rec domain.SessionRecord, ws ports.WorkspaceInfo, workspaceProject *ports.WorkspaceProjectInfo) {
+	// Derived here rather than left to the two callees: it makes this pair of
+	// teardowns share one cleanup budget instead of restarting the clock each.
 	cleanupCtx, cancel := cleanupContext(ctx)
 	defer cancel()
 	if m.destroySpawnWorkspace(cleanupCtx, ws, workspaceProject) {
@@ -1735,8 +1754,11 @@ func (m *Manager) relaunchRestoredSession(ctx context.Context, rec domain.Sessio
 		}
 	}
 	if err := m.verifyLaunchCommandRunning(ctx, handle, launchProcessCommand(argv)); err != nil {
+		// MarkSpawned above already flipped the restored row live, so parking it
+		// terminated is what keeps a destroyed runtime from leaving a live-looking
+		// row behind. The pre-MarkSpawned branch has nothing to undo.
 		m.destroyFailedLaunchRuntime(ctx, handle)
-		m.cleanupSystemPromptDir(rec.ID)
+		m.markSpawnFailedTerminated(ctx, rec.ID)
 		return RestoreResult{}, fmt.Errorf("restore %s: launch process: %w", rec.ID, err)
 	}
 	updated, err := m.getRecord(ctx, rec.ID)
