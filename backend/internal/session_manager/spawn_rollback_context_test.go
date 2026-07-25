@@ -221,11 +221,15 @@ func (w *ctxHonoringWorkspaceProject) DestroyWorkspaceProject(ctx context.Contex
 
 // A workspace project whose worktree bookkeeping fails partway through must be
 // compensated on both halves: the on-disk project is destroyed AND the
-// session_worktree rows already recorded for earlier repos are deleted. Those
-// rows are the boot-restore marker, so a surviving row points RestoreAll at a
-// workspace project that no longer exists. Both halves run on the compensating
-// context, so piping the caller's cancelled context back in leaks the project
-// directory and leaves the marker rows claiming it is still there.
+// session_worktree rows already recorded for earlier repos are deleted, so the
+// store does not go on describing worktrees that are no longer there. Both
+// halves run on the compensating context, so piping the caller's cancelled
+// context back in leaks the project directory and leaves the rows behind.
+//
+// The fake store has no ON DELETE CASCADE, so this pins the explicit delete
+// directly. In production the cascade off the seed row usually does this job;
+// the explicit delete is what covers the case where the seed row is parked
+// terminated rather than deleted and the cascade never fires.
 func TestPartialWorkspaceProjectRollbackSurvivesCallerCancellation(t *testing.T) {
 	base := newFakeStore()
 	base.projects["mer"] = domain.ProjectRecord{
@@ -260,7 +264,7 @@ func TestPartialWorkspaceProjectRollbackSurvivesCallerCancellation(t *testing.T)
 		t.Fatal(listErr)
 	}
 	if len(rows) != 0 {
-		t.Errorf("surviving session_worktrees rows = %v (row deletes that took effect = %d, skipped on cancelled ctx = %d); RestoreAll would try to resurrect the destroyed project",
+		t.Errorf("surviving session_worktrees rows = %v (row deletes that took effect = %d, skipped on cancelled ctx = %d); the store still describes worktrees of a destroyed project",
 			rows, st.deletedLive, st.deleteSkipped)
 	}
 }
@@ -409,5 +413,83 @@ func TestRestoreLaunchProbeFailureParksTheRelaunchedRowTerminated(t *testing.T) 
 		if !row.IsTerminated {
 			t.Errorf("session %s is live after its relaunch was rejected and its runtime destroyed", row.ID)
 		}
+	}
+}
+
+// ctxHonoringCleaningAgent records whether the agent workspace-cleanup hook
+// actually ran, or was skipped because the context it received was already dead.
+type ctxHonoringCleaningAgent struct {
+	fakeAgent
+	ranLive int
+	skipped int
+}
+
+func (a *ctxHonoringCleaningAgent) CleanupWorkspace(ctx context.Context, _ ports.WorkspaceHookConfig) error {
+	if err := ctx.Err(); err != nil {
+		a.skipped++
+		return err
+	}
+	a.ranLive++
+	return nil
+}
+
+// cleanupAgentWorkspace is shared between compensation and requested teardown,
+// so it is the one teardown helper that must NOT detach on its own. On a Kill —
+// where tearing the session down IS the request — a caller that gives up is
+// entitled to abandon the agent cleanup hook with it.
+func TestKillLetsTheCallerAbandonAgentWorkspaceCleanup(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+	st.sessions["mer-1"] = mkLive("mer-1")
+	agent := &ctxHonoringCleaningAgent{}
+	m := New(Deps{
+		Runtime: &fakeRuntime{}, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st},
+		LookPath: func(string) (string, error) { return "/bin/true", nil },
+	})
+
+	cctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := m.Kill(cctx, "mer-1"); err != nil {
+		t.Logf("kill returned %v (the fakes ignore ctx for the destroy steps)", err)
+	}
+	// skipped == 1 proves the hook was reached and declined the dead context. A
+	// bare ranLive == 0 would also hold if the hook were never called at all,
+	// which would make this test vacuous.
+	if agent.skipped != 1 || agent.ranLive != 0 {
+		t.Errorf("agent cleanup ran=%d skipped=%d, want ran=0 skipped=1; a requested teardown must stay cancellable",
+			agent.ranLive, agent.skipped)
+	}
+}
+
+// The complementary half: on the ROLLBACK path the same hook must still run,
+// because rollbackPreparedSpawnWorkspace hands it a detached cleanup context.
+// Together with the Kill test above this pins the split — compensation detaches,
+// requested teardown does not — so neither side can be "fixed" into the other.
+func TestSpawnRollbackStillRunsAgentWorkspaceCleanupAfterCallerCancellation(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+	agent := &ctxHonoringCleaningAgent{}
+	cctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	m := New(Deps{
+		Runtime:   &fakeRuntime{processAliveByHandle: map[string]bool{"h1": false}},
+		Agents:    singleAgent{agent: agent},
+		Workspace: &cancelOnDestroyWorkspace{fakeWorkspace: &fakeWorkspace{}, cancel: cancel},
+		Store:     st,
+		Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st},
+		LookPath: func(string) (string, error) { return "/bin/true", nil },
+	})
+	m.launchProbe = launchProbeConfig{retryDelay: time.Millisecond, attempts: 1}
+
+	if _, _, _, err := m.Spawn(cctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Harness: domain.HarnessClaudeCode}); err == nil {
+		t.Fatal("expected the launch-process probe to reject the spawn")
+	}
+	if cctx.Err() == nil {
+		t.Fatal("setup: rollback must have cancelled the caller context")
+	}
+	if agent.ranLive != 1 {
+		t.Errorf("agent cleanup runs that took effect = %d (skipped on cancelled ctx = %d); the spawn's agent-side workspace state was left behind",
+			agent.ranLive, agent.skipped)
 	}
 }

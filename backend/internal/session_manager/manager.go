@@ -827,10 +827,16 @@ func cleanupContext(ctx context.Context) (context.Context, context.CancelFunc) {
 }
 
 // destroyPartialWorkspaceProject compensates a workspace project whose worktree
-// bookkeeping failed partway through. The on-disk project goes away together
-// with the session_worktree rows already recorded for earlier repos: those rows
-// are the boot-restore marker, so leaving them behind lets RestoreAll try to
-// resurrect a workspace project that no longer exists.
+// bookkeeping failed partway through: the on-disk project goes away together
+// with the session_worktree rows already recorded for earlier repos, mirroring
+// destroySpawnWorkspace, which pairs the same two.
+//
+// The rows usually cascade off the seed row (session_worktrees.session_id is
+// ON DELETE CASCADE), so the explicit delete matters in the one case where the
+// cascade never fires: when rollbackSpawnSeedRow finds the row past seed state
+// and parks it terminated instead of deleting it. Those rows are 'active', so
+// they are not restorable and no boot restore resurrects them — the cost of
+// leaving them is a store that disagrees with the disk, not a failed restore.
 func (m *Manager) destroyPartialWorkspaceProject(ctx context.Context, adapter ports.WorkspaceProject, info ports.WorkspaceProjectInfo, id domain.SessionID) {
 	cleanupCtx, cancel := cleanupContext(ctx)
 	defer cancel()
@@ -3457,16 +3463,21 @@ func (m *Manager) cleanupAgentWorkspace(ctx context.Context, rec domain.SessionR
 	if !ok {
 		return
 	}
-	cleanupCtx, cancel := cleanupContext(ctx)
-	defer cancel()
+	// Deliberately runs on the context it is given rather than deriving its own
+	// cleanup context. Unlike the other teardown helpers this one is not
+	// compensation-only: Kill, Cleanup, RetireForReplacement and stale-role
+	// release all call it as part of the teardown the caller actually asked for,
+	// and those callers are entitled to abandon it. On the rollback path it is
+	// already detached, because rollbackPreparedSpawnWorkspace hands it that
+	// cleanup context — which also keeps the pair on one budget instead of two.
 	env := spawnEnv(rec.ID, rec.ProjectID, rec.IssueID, m.dataDir, rec.Metadata.RuntimeToken, nil)
-	if project, err := m.loadProject(cleanupCtx, rec.ProjectID); err == nil {
+	if project, err := m.loadProject(ctx, rec.ProjectID); err == nil {
 		env = m.runtimeEnv(rec.ID, rec.ProjectID, rec.IssueID, rec.Metadata.RuntimeToken, project.Config.Env)
 	} else {
 		m.logger.Warn("workspace cleanup: project env unavailable; agent cleanup using AO env only",
 			"sessionID", rec.ID, "projectID", rec.ProjectID, "error", err)
 	}
-	if err := cleaner.CleanupWorkspace(cleanupCtx, ports.WorkspaceHookConfig{
+	if err := cleaner.CleanupWorkspace(ctx, ports.WorkspaceHookConfig{
 		DataDir:       m.dataDir,
 		Env:           env,
 		SessionID:     string(rec.ID),
