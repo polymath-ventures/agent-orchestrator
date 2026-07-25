@@ -928,3 +928,27 @@ func TestDoctorDaemonRestartsAcceptsEscapedUnitNames(t *testing.T) {
 	rec.assertNoSupervisorSocketProbe(t)
 	httpRec.assertReadOnly(t)
 }
+
+// TestDoctorDaemonRestartsQuotesUnitInJournalHint: systemd unit names may carry
+// \xNN escapes, and an unquoted backslash is eaten by the shell the operator
+// pastes the suggested command into, so the hint would query a unit that does
+// not exist.
+func TestDoctorDaemonRestartsQuotesUnitInJournalHint(t *testing.T) {
+	cfg := setConfigEnv(t)
+	srv := doctorDaemonServer(t, nil)
+	rec := &doctorProbeRecorder{}
+	const unit = `ao\x2dworker:main.service`
+	c, _ := doctorLiveDaemonContext(t, cfg, srv,
+		map[string]string{"git": "/bin/git", "systemctl": "/bin/systemctl"},
+		scopedSystemctlFake(t, rec, unit, "42", false),
+	)
+	c.deps.ProcRoot = writeProcCgroup(t, doctorFakeDaemonPID, "0::/system.slice/"+unit+"\n")
+
+	check := findDoctorCheck(t, c.runDoctor(context.Background()), "daemon-restarts")
+	if check.Level != doctorWarn {
+		t.Fatalf("daemon-restarts = %+v, want WARN on churn", check)
+	}
+	if !strings.Contains(check.Message, "-u '"+unit+"'") {
+		t.Fatalf("journal hint in %q does not quote the unit; a shell would eat the escape", check.Message)
+	}
+}

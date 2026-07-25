@@ -428,9 +428,12 @@ func (c *commandContext) checkDaemonRestarts(ctx context.Context, daemonPID int)
 		return pass(fmt.Sprintf("unavailable: %s reported an unparseable NRestarts value (%q)", unit, raw))
 	}
 	if restarts > daemonRestartChurnThreshold {
-		journal := "journalctl -u " + unit
+		// Single-quote the unit: systemd names may contain `\xNN` escapes, and an
+		// unquoted backslash is eaten by the shell the operator pastes this into,
+		// so the suggested command would query a unit that does not exist.
+		journal := "journalctl -u '" + unit + "'"
 		if userScope {
-			journal = "journalctl --user -u " + unit
+			journal = "journalctl --user -u '" + unit + "'"
 		}
 		return doctorCheck{
 			Level: doctorWarn, Section: doctorSectionCore, Name: name,
