@@ -313,9 +313,17 @@ func (s *Store) GetPrimeSettings(ctx context.Context) (domain.PrimeSettings, err
 }
 
 // SetPrimeSettings validates and writes the daemon-owned fleet Prime settings.
+//
+// The display-name character rule is applied here, at the durable boundary,
+// rather than only in the service above it: Validate deliberately stays tolerant
+// so settings saved before the rule remain readable, which means this is the
+// only place that can keep a new unsafe name out of storage on every write path.
 func (s *Store) SetPrimeSettings(ctx context.Context, settings domain.PrimeSettings) error {
 	settings = settings.WithDefaults()
 	if err := settings.Validate(); err != nil {
+		return err
+	}
+	if err := settings.ValidateDisplayNameForWrite(); err != nil {
 		return err
 	}
 	raw, err := json.Marshal(settings)
