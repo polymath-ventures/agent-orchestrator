@@ -95,18 +95,49 @@ func workerIssueSuffix(issueID string) string {
 }
 
 // sanitizeNamePart makes a tracker-supplied string safe to both display and
-// type into a harness: control characters become spaces (a newline typed into a
-// rename command would submit it mid-name, and dropping the character outright
-// would weld the surrounding words together) and whitespace runs collapse to
-// single spaces.
+// type into a harness: anything outside NameRuneAllowed becomes a space (a
+// newline typed into a rename command would submit it mid-name, and dropping a
+// character outright would weld the surrounding words together) and whitespace
+// runs collapse to single spaces.
+//
+// Issue titles are arbitrary user-authored text and they flow into names, so
+// this is where that text stops being arbitrary.
 func sanitizeNamePart(s string) string {
 	stripped := strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) {
+		if !NameRuneAllowed(r) {
 			return ' '
 		}
 		return r
 	}, s)
 	return strings.Join(strings.Fields(stripped), " ")
+}
+
+// nameSafePunctuation is the punctuation a session name may carry. Everything
+// omitted is either a shell operator, a quote, an expansion sigil, or a glob.
+const nameSafePunctuation = " #-_.,:+/@="
+
+// NameRuneAllowed reports whether a rune may appear in a session name.
+//
+// The restriction exists because a name is the one string AO types into a
+// terminal it does not fully control. A session's pane outlives its agent — the
+// runtime execs an interactive shell to keep the terminal inspectable — so a
+// naming write can, in a narrow window, land at a shell prompt instead of in a
+// TUI. Callers check that the agent is still running first, but that check
+// cannot be atomic with the keystroke.
+//
+// Rather than narrow the race, this removes what the race could cost: a name
+// with no shell operators, quotes, expansions, or globs cannot become a command
+// no matter when it lands. `/rename my-session` at a shell prompt is a
+// command-not-found; `/rename x; curl …` would not have been. The property holds
+// by construction, so no future timing change can reopen it.
+func NameRuneAllowed(r rune) bool {
+	if unicode.IsControl(r) {
+		return false
+	}
+	if unicode.IsLetter(r) || unicode.IsDigit(r) || unicode.IsMark(r) {
+		return true
+	}
+	return strings.ContainsRune(nameSafePunctuation, r)
 }
 
 // fitWords returns the longest whole-word prefix of s that fits in limit runes,

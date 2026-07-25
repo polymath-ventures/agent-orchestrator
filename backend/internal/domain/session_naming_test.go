@@ -143,3 +143,34 @@ func TestComposedNamesAlwaysPassValidation(t *testing.T) {
 		}
 	}
 }
+
+// A session name is the one string AO types into a terminal it does not fully
+// control, so it must not be able to carry a shell operator, quote, expansion,
+// or glob. This is what makes a misdirected naming write inert rather than a
+// command — a property no timing change can reopen.
+func TestNameRuneAllowedRejectsShellActiveCharacters(t *testing.T) {
+	for _, r := range ";&|$`()<>\\'\"*?[]{}~!\n\r\t\x00" {
+		if NameRuneAllowed(r) {
+			t.Errorf("NameRuneAllowed(%q) = true, want false", r)
+		}
+	}
+	for _, r := range "abcXYZ019 #-_.,:+/@=éü漢" {
+		if !NameRuneAllowed(r) {
+			t.Errorf("NameRuneAllowed(%q) = false, want true", r)
+		}
+	}
+}
+
+// Issue titles are arbitrary user-authored text and they flow into names, so a
+// title carrying shell syntax must not produce a name that carries it too.
+func TestComposedNamesNeverCarryShellSyntax(t *testing.T) {
+	got := ComposeWorkerDisplayName("ao", "7", "fix; rm -rf $HOME && echo `id`")
+	for _, bad := range []string{";", "$", "&", "`"} {
+		if strings.Contains(got, bad) {
+			t.Fatalf("ComposeWorkerDisplayName = %q, still carries %q", got, bad)
+		}
+	}
+	if got == "" {
+		t.Fatal("ComposeWorkerDisplayName = empty; a hostile title must degrade, not erase the name")
+	}
+}

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"strings"
 	"time"
-	"unicode"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
@@ -210,18 +209,24 @@ type AgentNamer interface {
 }
 
 // DeliverableName reports whether a name can be handed to a harness verbatim.
+//
 // It rejects rather than repairs: a delivered name that differs from the name AO
-// persists is the divergence this whole capability exists to remove, and a
-// control character — a newline above all — would submit a rename command
-// mid-name and leave the remainder sitting in the harness as a prompt. Daemon-
-// computed names are already safe; this guards the operator-supplied override.
+// persists is the divergence this whole capability exists to remove. The
+// accepted character set is domain.NameRuneAllowed — no control characters (a
+// newline would submit a rename mid-name and strand the remainder as a prompt)
+// and no shell operators, quotes, expansions, or globs, so a naming write that
+// lands somewhere other than the intended TUI cannot be a command. Daemon-
+// computed names are already within that set by construction; this is the gate
+// for an operator-supplied override.
 func DeliverableName(name string) (string, bool) {
 	trimmed := strings.TrimSpace(name)
 	if trimmed == "" {
 		return "", false
 	}
-	if strings.IndexFunc(trimmed, unicode.IsControl) >= 0 {
-		return "", false
+	for _, r := range trimmed {
+		if !domain.NameRuneAllowed(r) {
+			return "", false
+		}
 	}
 	return trimmed, true
 }

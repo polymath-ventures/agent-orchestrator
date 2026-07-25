@@ -492,3 +492,111 @@ func TestSpawnDeliversTheNameEvenWhenTheAgentIsAlreadyWorking(t *testing.T) {
 		t.Fatalf("writes = %v, want the spawn-time name %q delivered despite the active turn", msg.msgs, want)
 	}
 }
+
+// The remaining fail-closed branches: a runtime that cannot answer, and a probe
+// that errors. Without proof the agent is there, nothing is typed.
+func TestDeliverNameRefusesWhenTheProbeErrors(t *testing.T) {
+	m, st, rt, msg := newNamingManager(renameOnlyAgent{})
+	st.sessions["mer-1"] = liveNamedSession("ao #7 renamed", domain.ActivityIdle)
+	rt.processAliveErr = errors.New("tmux unreachable")
+
+	if err := m.DeliverName(ctx, "mer-1"); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.msgs) != 0 {
+		t.Fatalf("writes = %v, want none when the probe cannot answer", msg.msgs)
+	}
+}
+
+// awaitsUserWhileWaitingAgent models a worker that hits a permission dialog
+// while AO is still waiting for its harness to report ready.
+type awaitsUserWhileWaitingAgent struct {
+	renameOnlyAgent
+	store *fakeStore
+	id    domain.SessionID
+	state domain.ActivityState
+}
+
+func (a awaitsUserWhileWaitingAgent) PromptReadinessHints(context.Context, ports.LaunchConfig) (ports.PromptReadinessHints, error) {
+	a.store.mu.Lock()
+	rec := a.store.sessions[a.id]
+	rec.Activity = domain.Activity{State: a.state}
+	a.store.sessions[a.id] = rec
+	a.store.mu.Unlock()
+	return ports.PromptReadinessHints{}, nil
+}
+
+// A spawn tolerates an active session but must still refuse one awaiting the
+// human: the paste plus Enter that delivers a name would answer the dialog.
+func TestSpawnDoesNotWriteANameIntoAPendingDecision(t *testing.T) {
+	for _, state := range []domain.ActivityState{domain.ActivityBlocked, domain.ActivityWaitingInput} {
+		t.Run(string(state), func(t *testing.T) {
+			st := newFakeStore()
+			st.projects["mer"] = domain.ProjectRecord{
+				ID:     "mer",
+				Config: domain.ProjectConfig{SessionPrefix: "ao", Worker: domain.RoleOverride{Harness: domain.HarnessClaudeCode}},
+			}
+			rt := &fakeRuntime{aliveByHandle: map[string]bool{"h1": true}}
+			msg := &fakeMessenger{}
+			m := New(Deps{
+				Runtime:   rt,
+				Agents:    agentsFor{agent: awaitsUserWhileWaitingAgent{store: st, id: "mer-1", state: state}},
+				Workspace: &fakeWorkspace{},
+				Store:     st,
+				Messenger: msg,
+				Lifecycle: &fakeLCM{store: st},
+				LookPath:  func(string) (string, error) { return "/bin/true", nil },
+			})
+
+			if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, IssueID: "150"}); err != nil {
+				t.Fatal(err)
+			}
+			if len(msg.msgs) != 0 {
+				t.Fatalf("writes = %v, want none while the session is %s", msg.msgs, state)
+			}
+		})
+	}
+}
+
+// proberlessRuntime satisfies ports.Runtime but not launchProcessProber, so the
+// manager cannot confirm the agent is still running.
+type proberlessRuntime struct{ inner *fakeRuntime }
+
+func (r proberlessRuntime) Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.RuntimeHandle, error) {
+	return r.inner.Create(ctx, cfg)
+}
+func (r proberlessRuntime) Destroy(ctx context.Context, h ports.RuntimeHandle) error {
+	return r.inner.Destroy(ctx, h)
+}
+func (r proberlessRuntime) GetOutput(ctx context.Context, h ports.RuntimeHandle, n int) (string, error) {
+	return r.inner.GetOutput(ctx, h, n)
+}
+func (r proberlessRuntime) IsAlive(ctx context.Context, h ports.RuntimeHandle) (bool, error) {
+	return r.inner.IsAlive(ctx, h)
+}
+
+// A runtime that cannot answer "is the agent still running?" loses harness
+// naming rather than gaining a blind write. That is the pre-change behavior:
+// AO keeps its own name and nothing is typed anywhere.
+func TestDeliverNameRefusesWhenTheRuntimeCannotConfirmTheAgent(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer"}
+	st.sessions["mer-1"] = liveNamedSession("ao #7 renamed", domain.ActivityIdle)
+	msg := &fakeMessenger{}
+	m := New(Deps{
+		Runtime:   proberlessRuntime{inner: &fakeRuntime{aliveByHandle: map[string]bool{"h1": true}}},
+		Agents:    agentsFor{agent: renameOnlyAgent{}},
+		Workspace: &fakeWorkspace{},
+		Store:     st,
+		Messenger: msg,
+		Lifecycle: &fakeLCM{store: st},
+		LookPath:  func(string) (string, error) { return "/bin/true", nil },
+	})
+
+	if err := m.DeliverName(ctx, "mer-1"); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.msgs) != 0 {
+		t.Fatalf("writes = %v, want none from a runtime that cannot confirm the agent", msg.msgs)
+	}
+}

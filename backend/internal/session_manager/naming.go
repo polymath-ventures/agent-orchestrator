@@ -77,11 +77,12 @@ func (m *Manager) deliverSpawnName(ctx context.Context, agent ports.Agent, cfg p
 	if err != nil {
 		return err
 	}
-	// Solicited: this write is part of creating the session, into a TUI that was
-	// just drawn for it, so it uses the plain delivery policy. A worker whose
-	// prompt rides argv may already be mid-turn by the time the harness reports
-	// ready, and refusing there would leave that session permanently unnamed.
-	return m.deliverName(ctx, rec, m.messenger.Deliver)
+	// A worker whose prompt rides argv may already be mid-turn by the time its
+	// harness reports ready, so the spawn write must tolerate an active session
+	// or exactly the sessions this change exists for would go unnamed. It must
+	// still refuse when the session awaits the human: a paste plus Enter into a
+	// permission dialog answers the dialog. Nudge is that policy.
+	return m.deliverName(ctx, rec, m.messenger.Nudge)
 }
 
 // DeliverName pushes a session's persisted display name into its running
