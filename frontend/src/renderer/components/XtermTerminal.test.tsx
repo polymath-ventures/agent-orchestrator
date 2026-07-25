@@ -68,6 +68,9 @@ vi.mock("@xterm/xterm", () => ({
 		open(host: HTMLElement) {
 			this.helperTextarea = host.appendChild(document.createElement("textarea"));
 		}
+		get textarea() {
+			return this.helperTextarea ?? undefined;
+		}
 		write() {}
 		writeln() {}
 		dispose() {}
@@ -293,6 +296,37 @@ describe("XtermTerminal", () => {
 		expect(state.lastTerminal!.keyHandler!(exit)).toBe(false);
 		expect(onExitFocus).toHaveBeenCalledTimes(1);
 		expect(exit.preventDefault).toHaveBeenCalled();
+	});
+
+	it("leaves Ctrl+F6 for the terminal when there is no focus exit target", () => {
+		render(<XtermTerminal theme="dark" />);
+		const exit = {
+			key: "F6",
+			ctrlKey: true,
+			metaKey: false,
+			altKey: false,
+			shiftKey: false,
+			preventDefault: vi.fn(),
+			stopPropagation: vi.fn(),
+		} as unknown as KeyboardEvent;
+
+		expect(state.lastTerminal!.keyHandler!(exit)).toBe(true);
+		expect(exit.preventDefault).not.toHaveBeenCalled();
+	});
+
+	it("only advertises the focus-exit shortcut when a focus exit target exists", () => {
+		const { container, rerender } = render(<XtermTerminal ariaLabel="Agent terminal" theme="dark" />);
+		const host = container.firstElementChild;
+		const textarea = () => container.querySelector("textarea");
+
+		expect(host).toHaveAttribute("aria-label", "Agent terminal");
+		expect(textarea()).toHaveAttribute("aria-label", "Agent terminal");
+		expect(screen.queryByLabelText(/press Ctrl\+F6/)).not.toBeInTheDocument();
+
+		rerender(<XtermTerminal ariaLabel="Agent terminal" onExitFocus={() => undefined} theme="dark" />);
+
+		expect(host).toHaveAttribute("aria-label", "Agent terminal; press Ctrl+F6 to move focus out");
+		expect(textarea()).toHaveAttribute("aria-label", "Agent terminal; press Ctrl+F6 to move focus out");
 	});
 
 	it("handles native copy events from inside the terminal", () => {

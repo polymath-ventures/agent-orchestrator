@@ -31,8 +31,9 @@ import type { AttachableTerminal, TerminalUserInputSource } from "../hooks/useTe
 import { aoBridge } from "../lib/bridge";
 import { TERMINAL_FONT_SIZE_DEFAULT } from "../lib/design-tokens";
 import { OPEN_DIALOG_OR_MENU_SELECTOR } from "../lib/dom-selectors";
+import { isMacPlatform } from "../lib/platform";
 import { buildTerminalThemes } from "../lib/terminal-themes";
-import { matchesTerminalExitFocusShortcut } from "../../shared/shortcuts";
+import { APP_SHORTCUTS, matchesTerminalExitFocusShortcut, shortcutKeys } from "../../shared/shortcuts";
 import type { Theme } from "../stores/ui-store";
 import {
 	DropdownMenu,
@@ -237,9 +238,15 @@ function sgrWheelReport(button: number, count: number): string {
 // already scrolls a full screen, so scaling by line count would over-scroll.
 const PAGE_UP = "\x1b[5~";
 const PAGE_DOWN = "\x1b[6~";
+const TERMINAL_EXIT_FOCUS_SHORTCUT = APP_SHORTCUTS.find((shortcut) => shortcut.id === "terminal-exit-focus");
 
 function pageKeyReport(lines: number): string {
 	return lines < 0 ? PAGE_UP : PAGE_DOWN;
+}
+
+function terminalExitFocusShortcutLabel(): string {
+	if (!TERMINAL_EXIT_FOCUS_SHORTCUT) return "";
+	return shortcutKeys(TERMINAL_EXIT_FOCUS_SHORTCUT, isMacPlatform()).join("+");
 }
 
 function forceSelectionMode(term: Terminal): void {
@@ -268,6 +275,12 @@ export function XtermTerminal(props: XtermTerminalProps) {
 	// never tear down and recreate the terminal because a handler identity
 	// changed between renders.
 	const callbacksRef = useRef(props);
+	const baseAccessibleLabel = props.ariaLabel ?? "Terminal";
+	const exitFocusShortcutLabel = terminalExitFocusShortcutLabel();
+	const accessibleLabel =
+		props.onExitFocus && exitFocusShortcutLabel
+			? `${baseAccessibleLabel}; press ${exitFocusShortcutLabel} to move focus out`
+			: baseAccessibleLabel;
 
 	const setContextMenuOpen = useCallback((open: boolean) => {
 		setContextMenu((current) => ({ ...current, open }));
@@ -304,6 +317,12 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		const { dark, light } = buildTerminalThemes();
 		term.options.theme = props.theme === "dark" ? dark : light;
 	}, [props.theme]);
+
+	useEffect(() => {
+		const term = termRef.current;
+		if (!term) return;
+		term.textarea?.setAttribute("aria-label", accessibleLabel);
+	}, [accessibleLabel]);
 
 	useEffect(() => {
 		const term = termRef.current;
@@ -379,6 +398,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		term.loadAddon(new SearchAddon());
 
 		term.open(host);
+		term.textarea?.setAttribute("aria-label", accessibleLabel);
 		loadRenderer(term);
 		term.options.macOptionClickForcesSelection = true;
 		forceSelectionMode(term);
@@ -502,21 +522,20 @@ export function XtermTerminal(props: XtermTerminalProps) {
 				emitUserInput("\x1b\r", "keyboard");
 				return false;
 			}
-			if (
-				matchesTerminalExitFocusShortcut(
-					{
-						key: event.key,
-						code: event.code,
-						ctrl: event.ctrlKey,
-						meta: event.metaKey,
-						shift: event.shiftKey,
-						alt: event.altKey,
-					},
-					false,
-				)
-			) {
+			const exitFocusRequested = matchesTerminalExitFocusShortcut(
+				{
+					key: event.key,
+					code: event.code,
+					ctrl: event.ctrlKey,
+					meta: event.metaKey,
+					shift: event.shiftKey,
+					alt: event.altKey,
+				},
+				false,
+			);
+			if (exitFocusRequested && callbacksRef.current.onExitFocus) {
 				consumeTerminalShortcut(event);
-				callbacksRef.current.onExitFocus?.();
+				callbacksRef.current.onExitFocus();
 				return false;
 			}
 			if (isTerminalCopyShortcut(event)) {
@@ -805,7 +824,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		<>
 			<div
 				ref={hostRef}
-				aria-label={`${props.ariaLabel ?? "Terminal"}; press Ctrl+F6 to move focus out`}
+				aria-label={accessibleLabel}
 				className={props.className}
 				style={{ height: "100%", overflow: "hidden", width: "100%" }}
 			/>
