@@ -27,8 +27,15 @@ would rediscover the hard way:
 GH #150 additionally records harness naming mechanics verified empirically against
 `claude` 2.1.219 and `codex` 0.145.0, including two dead ends (`-rc` is not
 `--remote-control`; `--remote-control`'s optional name is not the session name).
-Treat that as the starting point rather than re-deriving it — but re-verify
-against the installed CLI versions, because both move fast.
+Treat that as settled input rather than re-deriving it.
+
+The two mechanisms differ in how established they are, and the design leans on
+that difference deliberately. The **in-harness `/rename <name>`** has been stable
+across many releases of both CLIs — per the operator, as far back as they can
+remember — so it is treated as a durable contract and is the universal path.
+`claude`'s **`-n` launch flag** and the `nameSource` registry marker are newer
+surfaces, so nothing is built to depend on them: `-n` is a droppable optimization
+and `nameSource` is a verification aid, never a requirement.
 
 Constraints: the daemon's API contract is generated, so DTO changes must go
 through the spec generator. The fork is web-first, so nothing may depend on
@@ -148,11 +155,17 @@ skipped unreadable files and would have passed vacuously after a rename.
 
 ## Risks / Trade-offs
 
-- **Harness CLI drift.** `claude` and `codex` can change flags or slash commands
-  at any time, and naming would regress silently → keep the mechanics in the
-  adapters behind the capability so a change is one localized edit; record the
-  verified versions; treat naming as non-fatal so drift degrades the name rather
-  than breaking spawns.
+- **Harness CLI drift.** Low for the mechanism this design rests on: the
+  in-harness `/rename <name>` has held stable across many releases of both CLIs.
+  The residual risk sits on the newer surfaces → `-n` is an optimization the
+  claude adapter can stop offering with no behavior change beyond reintroducing
+  the spawn-time race that the universal path already tolerates, and no
+  requirement depends on `nameSource`. Mechanics stay inside the adapters behind
+  the capability, so any future change is one localized edit, and naming is
+  non-fatal by contract so drift degrades a name rather than breaking spawns.
+  Deliberately **not** mitigated with a startup probe or version check: that
+  would add a gate running on every spawn forever to guard a contract that does
+  not move, and the non-fatal contract already bounds the damage.
 - **Keystroke delivery is inherently best-effort for codex.** A dropped write
   costs a name → accepted deliberately, and it is the whole point of putting the
   prompt in argv: the failure mode is inverted from "worker never ran its task"

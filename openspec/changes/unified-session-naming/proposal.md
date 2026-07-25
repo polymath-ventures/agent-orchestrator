@@ -69,7 +69,8 @@ change.
   instruction/policy text stop teaching `ao spawn --name`.
 - **No storage migration expected.** The display name is already persisted;
   the work is in who computes it and where it is delivered.
-- **External dependency to re-verify, not assume:** the naming mechanics of the
-  `claude` and `codex` CLIs. Both move fast, and the delivery mechanism is
-  version-sensitive. GH #150 records the verified behavior and the versions it
-  was verified against.
+- **External dependency:** the naming mechanics of the `claude` and `codex` CLIs.
+  The in-harness rename command this change rests on has been stable across many
+  releases of both, so it is treated as a durable contract rather than something
+  probed at runtime. The newer surfaces are deliberately kept non-load-bearing.
+  GH #150 records the verified behavior and the versions it was verified against.
