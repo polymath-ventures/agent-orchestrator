@@ -449,6 +449,50 @@ describe("ModelAvailabilityField", () => {
 		expect(onChange).toHaveBeenCalledWith({ harness: "opencode", model: "private/provider-model", effort: "turbo" });
 	});
 
+	it("keeps verified adapter catalog model efforts constrained to the catalog", () => {
+		const openCodeAvailability: AgentModelAvailabilityResponse = {
+			...availability,
+			harnesses: [
+				...availability.harnesses,
+				{
+					id: "opencode",
+					label: "OpenCode",
+					reviewerCapable: true,
+					catalogSource: "adapter",
+					catalogVerified: true,
+					models: [
+						{
+							model: "openai/gpt-5.4",
+							label: "OpenAI GPT-5.4",
+							efforts: ["medium", "high", "turbo"],
+							defaultEffort: "medium",
+							verified: true,
+							status: "reachable",
+						},
+					],
+				},
+			],
+		};
+		const onChange = vi.fn<(selection: ModelSelection) => void>();
+		render(
+			<ModelAvailabilityField
+				id="worker-model"
+				label="Worker model"
+				value={{ harness: "opencode", model: "openai/gpt-5.4", effort: "turbo" }}
+				onChange={onChange}
+				availability={openCodeAvailability}
+				showManualModelNotice
+			/>,
+		);
+
+		const effortControl = screen.getByLabelText("Effort");
+		expect(effortControl.tagName).toBe("SELECT");
+		expect(effortControl.querySelector('option[value="medium"]')).toBeInTheDocument();
+		expect(effortControl.querySelector('option[value="high"]')).toBeInTheDocument();
+		expect(effortControl.querySelector('option[value="turbo"]')).toBeInTheDocument();
+		expect(screen.queryByText(/Manual effort values are allowed/i)).not.toBeInTheDocument();
+	});
+
 	it("keeps zero-effort catalog models editable after pinning a manual effort", () => {
 		const openCodeAvailability: AgentModelAvailabilityResponse = {
 			...availability,
@@ -464,7 +508,6 @@ describe("ModelAvailabilityField", () => {
 						{
 							model: "openai/gpt-no-variants",
 							label: "GPT No Variants",
-							efforts: [],
 							verified: true,
 							status: "reachable",
 						},
@@ -492,6 +535,52 @@ describe("ModelAvailabilityField", () => {
 
 		fireEvent.change(effortControl, { target: { value: "turbo" } });
 		expect(onChange).toHaveBeenCalledWith({ harness: "opencode", model: "openai/gpt-no-variants", effort: "turbo" });
+	});
+
+	it("does not use sibling effort suggestions for a known model with omitted efforts", () => {
+		const openCodeAvailability: AgentModelAvailabilityResponse = {
+			...availability,
+			harnesses: [
+				...availability.harnesses,
+				{
+					id: "opencode",
+					label: "OpenCode",
+					reviewerCapable: true,
+					catalogSource: "adapter",
+					catalogVerified: true,
+					models: [
+						{
+							model: "openai/gpt-no-variants",
+							label: "GPT No Variants",
+							verified: true,
+							status: "reachable",
+						},
+						{
+							model: "openai/gpt-5.4",
+							label: "OpenAI GPT-5.4",
+							efforts: ["medium", "high"],
+							defaultEffort: "medium",
+							verified: true,
+							status: "reachable",
+						},
+					],
+				},
+			],
+		};
+		render(
+			<ModelAvailabilityField
+				id="worker-model"
+				label="Worker model"
+				value={{ harness: "opencode", model: "openai/gpt-no-variants", effort: "" }}
+				onChange={vi.fn()}
+				availability={openCodeAvailability}
+				showManualModelNotice
+			/>,
+		);
+
+		const effortControl = screen.getByLabelText("Effort");
+		expect(effortControl.tagName).toBe("INPUT");
+		expect(datalistValues(effortControl)).toEqual([]);
 	});
 
 	it("keeps authoritative harness efforts constrained to the catalog", () => {

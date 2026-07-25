@@ -81,7 +81,9 @@ export function ModelAvailabilityField({
 	const efforts = buildEffortOptions(
 		model?.synthetic
 			? [...(model.efforts ?? []), ...harnessEfforts(harness)]
-			: (model?.efforts ?? harnessEfforts(harness)),
+			: model
+				? (model.efforts ?? [])
+				: harnessEfforts(harness),
 	);
 	const provenance = harness ? catalogProvenanceLabel(harness) : "";
 	const showModelStatus = model && (statusVisibility === "all" || model.status === "unreachable");
