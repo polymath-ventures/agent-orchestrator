@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/candidatehealth"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -421,5 +422,83 @@ func TestSpawn_PinnedFailureDoesNotMarkDown(t *testing.T) {
 	}
 	if tr.IsDown(workerMixCandidate(domain.HarnessClaudeCode, "", "")) {
 		t.Fatal("a pinned spawn failure must not mark any candidate down")
+	}
+}
+
+// cancelOnDestroyWorkspace cancels the caller's context from inside workspace
+// teardown, modelling the ordinary case where the caller goes away (or its
+// deadline lapses) while rollback is still in flight. Deterministic on purpose:
+// the invariant under test is about ordering, not about how long teardown takes.
+type cancelOnDestroyWorkspace struct {
+	*fakeWorkspace
+	cancel context.CancelFunc
+}
+
+func (w *cancelOnDestroyWorkspace) Destroy(ctx context.Context, info ports.WorkspaceInfo) error {
+	w.cancel()
+	return w.fakeWorkspace.Destroy(ctx, info)
+}
+
+// probeFailureMixManager builds a mix-configured manager whose launch-process
+// probe reports the given sequence of liveness answers, and whose workspace
+// teardown cancels cancelCtx. processAliveSeq drives which of Spawn's two probe
+// branches rejects the spawn.
+func probeFailureMixManager(t *testing.T, tr *candidatehealth.Tracker, seq []bool, cancel context.CancelFunc) *Manager {
+	t.Helper()
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{WorkerMix: singleBucketMix()}}
+	m := New(Deps{
+		Runtime:   &fakeRuntime{processAliveSeq: seq},
+		Agents:    fakeAgents{},
+		Workspace: &cancelOnDestroyWorkspace{fakeWorkspace: &fakeWorkspace{}, cancel: cancel},
+		Store:     st,
+		Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st},
+		LookPath: func(string) (string, error) { return "/bin/true", nil }, Health: tr,
+	})
+	m.launchProbe = launchProbeConfig{retryDelay: time.Millisecond, attempts: 1}
+	return m
+}
+
+// A launch-process probe failure is attributable to the candidate, and
+// attribution is decided at FAILURE time. Rollback runs on a context detached
+// from the caller's, so teardown legitimately outlives a caller that has gone
+// away — but that must not retroactively suppress the mark-down. Marking down
+// after cleanup would let the caller's departure erase evidence the bucket
+// cannot launch, and a broken bucket that stays healthy is reselected forever.
+func TestSpawn_MixSelectedFirstLaunchProbeFailureMarksDownWhenCallerDiesDuringRollback(t *testing.T) {
+	tr := candidatehealth.New(candidatehealth.Config{Source: "session_manager"})
+	cctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	m := probeFailureMixManager(t, tr, []bool{false}, cancel)
+
+	_, _, _, err := m.Spawn(cctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	if err == nil {
+		t.Fatal("expected the launch-process probe to reject the spawn")
+	}
+	if cctx.Err() == nil {
+		t.Fatal("setup: rollback must have cancelled the caller context")
+	}
+	if !tr.IsDown(workerMixCandidate(domain.HarnessClaudeCode, "", "")) {
+		t.Fatal("a launch-probe failure must mark the bucket down even when the caller context dies during rollback")
+	}
+}
+
+// Same invariant for the post-MarkSpawned probe: the first probe passes, the
+// second rejects the spawn, and its rollback outlives the caller.
+func TestSpawn_MixSelectedSecondLaunchProbeFailureMarksDownWhenCallerDiesDuringRollback(t *testing.T) {
+	tr := candidatehealth.New(candidatehealth.Config{Source: "session_manager"})
+	cctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	m := probeFailureMixManager(t, tr, []bool{true, false}, cancel)
+
+	_, _, _, err := m.Spawn(cctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	if err == nil {
+		t.Fatal("expected the post-MarkSpawned launch-process probe to reject the spawn")
+	}
+	if cctx.Err() == nil {
+		t.Fatal("setup: rollback must have cancelled the caller context")
+	}
+	if !tr.IsDown(workerMixCandidate(domain.HarnessClaudeCode, "", "")) {
+		t.Fatal("a launch-probe failure must mark the bucket down even when the caller context dies during rollback")
 	}
 }

@@ -257,3 +257,68 @@ func (f *concurrentCommander) spawnCount() int {
 	defer f.mu.Unlock()
 	return f.spawns
 }
+
+// disconnectingCommander models the caller going away during the role spawn:
+// the replacement is created and is live, and only then does the request context
+// die. RetireForReplacement honors the context it is handed — the real one kills
+// a tmux session and writes terminal state, both of which fail immediately on a
+// cancelled context — so a retire routed through the caller's context records
+// "skipped" instead of taking effect.
+type disconnectingCommander struct {
+	*fakeCommander
+	cancel        context.CancelFunc
+	retiredLive   int
+	retireSkipped int
+}
+
+func (f *disconnectingCommander) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.SessionRecord, int, int, error) {
+	f.cancel()
+	return f.fakeCommander.Spawn(ctx, cfg)
+}
+
+func (f *disconnectingCommander) RetireForReplacement(ctx context.Context, id domain.SessionID) error {
+	if err := ctx.Err(); err != nil {
+		f.retireSkipped++
+		return err
+	}
+	f.retiredLive++
+	return f.fakeCommander.RetireForReplacement(ctx, id)
+}
+
+// The unverified replacement is already LIVE when verification fails, and a
+// disconnected caller is one of the ordinary reasons verification fails at all.
+// The retire must therefore outlive the caller's cancellation: skipping it
+// leaves an unverified singleton running, which the next ensure pass sees as an
+// active role session and silently adopts — the exact outcome this branch exists
+// to prevent, now with a session on the wrong harness pinned as fleet Prime.
+func TestReconcileRoleRetiresUnverifiedReplacementWhenCallerDisconnects(t *testing.T) {
+	st := newFakeStore()
+	st.prime = domain.PrimeSettings{Enabled: true, Harness: domain.HarnessCodex}.WithDefaults()
+	cctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	fc := &disconnectingCommander{
+		fakeCommander: &fakeCommander{spawnRecord: domain.SessionRecord{
+			ID:       "prime-1",
+			Kind:     domain.KindPrime,
+			Harness:  domain.HarnessClaudeCode, // mismatch → verification failure
+			Metadata: domain.SessionMetadata{Branch: "ao/prime"},
+		}},
+		cancel: cancel,
+	}
+	svc := &Service{manager: fc, store: st}
+
+	_, err := svc.ReconcileRole(cctx, domain.PrimeTarget(), ReconcileOptions{})
+	if err == nil {
+		t.Fatal("ReconcileRole() = nil error, want the replacement verification failure")
+	}
+	if cctx.Err() == nil {
+		t.Fatal("setup: the spawn must have cancelled the caller context")
+	}
+	if fc.retiredLive != 1 {
+		t.Fatalf("retires that took effect = %d (skipped on cancelled ctx = %d, err = %v); the unverified live prime was left for the next ensure pass to adopt",
+			fc.retiredLive, fc.retireSkipped, err)
+	}
+	if len(fc.retired) != 1 || fc.retired[0] != "prime-1" {
+		t.Fatalf("retired = %v, want the unverified prime-1 retired", fc.retired)
+	}
+}
