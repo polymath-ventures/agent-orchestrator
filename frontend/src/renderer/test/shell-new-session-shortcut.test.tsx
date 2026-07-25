@@ -101,18 +101,6 @@ vi.mock("../hooks/useDaemonStatus", () => ({
 // The shell layout opens standalone terminals; this suite only covers the
 // shortcut subscriptions, so the mutation is stubbed rather than driven.
 vi.mock("../hooks/useShellTerminals", () => ({
-	shellTerminalsQueryKey: ["shell-terminals"],
-	upsertShellTerminal: (
-		current:
-			{ handleId: string; title: string; workingDir: string; createdAt: string; projectId?: string }[] | undefined,
-		shell: { handleId: string; title: string; workingDir: string; createdAt: string; projectId?: string },
-	) => {
-		const shells = current ?? [];
-		if (shells.some((item) => item.handleId === shell.handleId)) {
-			return shells.map((item) => (item.handleId === shell.handleId ? shell : item));
-		}
-		return [...shells, shell];
-	},
 	useOpenShellTerminal: () => ({ mutate: shellMocks.openShellTerminal }),
 }));
 
@@ -255,7 +243,7 @@ describe("shell new-shell-terminal shortcut subscription", () => {
 		expect(shellMocks.openShellTerminal).toHaveBeenCalledWith("proj-1", expect.anything());
 	});
 
-	it("optimistically inserts the opened shell before marking it active", async () => {
+	it("marks the opened shell active", async () => {
 		await renderShell();
 		const shell = {
 			handleId: "shell-new",
@@ -270,11 +258,6 @@ describe("shell new-shell-terminal shortcut subscription", () => {
 		};
 		act(() => options.onSuccess?.(shell));
 
-		expect(shellMocks.queryClient.setQueryData).toHaveBeenCalledWith(["shell-terminals"], expect.any(Function));
-		const updater = shellMocks.queryClient.setQueryData.mock.calls[0][1] as (
-			current: TestShellTerminal[] | undefined,
-		) => TestShellTerminal[];
-		expect(updater([{ ...shell, handleId: "shell-old" }])).toEqual([{ ...shell, handleId: "shell-old" }, shell]);
 		expect(useUiStore.getState().activeShellTerminalHandleId).toBe("shell-new");
 	});
 

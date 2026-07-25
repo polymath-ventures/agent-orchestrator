@@ -41,7 +41,7 @@ describe("ShellTerminalsView", () => {
 		expect(screen.queryByText(/terminal button/i)).not.toBeInTheDocument();
 	});
 
-	it("only focuses a shell pane after explicit tab activation", () => {
+	it("focuses on route adoption and explicit tab activation", () => {
 		shellMocks.shellTerminals = [
 			{ handleId: "shell-1", title: "one", workingDir: "/tmp/one", createdAt: "2026-07-25T00:00:00Z" },
 		];
@@ -49,14 +49,14 @@ describe("ShellTerminalsView", () => {
 		const { rerender } = render(<ShellTerminalsView />);
 
 		expect(shellMocks.terminalPaneProps.terminalTarget?.handleId).toBe("shell-1");
-		expect(shellMocks.terminalPaneProps.autoFocus).toBe(false);
-		expect(shellMocks.terminalPaneProps.focusRequest).toBeUndefined();
+		expect(shellMocks.terminalPaneProps.autoFocus).toBe(true);
+		expect(shellMocks.terminalPaneProps.focusRequest).toBe(1);
 
 		fireEvent.click(screen.getByRole("button", { name: "one" }));
 		rerender(<ShellTerminalsView />);
 
 		expect(shellMocks.terminalPaneProps.autoFocus).toBe(true);
-		expect(shellMocks.terminalPaneProps.focusRequest).toBe(1);
+		expect(shellMocks.terminalPaneProps.focusRequest).toBe(2);
 	});
 
 	it("clears stale selections when the shell list is empty", () => {

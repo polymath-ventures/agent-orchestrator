@@ -17,6 +17,19 @@ test("terminals screen hands keyboard focus to the terminal with no extra click"
 	await expect.poll(() => activeElementClass(page)).toContain("xterm-helper-textarea");
 });
 
+test("returning to the terminals screen focuses the selected terminal", async ({ page }) => {
+	await installBrowserModeApiFixtures(page);
+	await page.goto("/#/terminals");
+	await expect.poll(() => activeElementClass(page)).toContain("xterm-helper-textarea");
+
+	await page.goto("/#/projects/api-gateway/sessions/refactor-mux");
+	await expect(page.locator(".xterm-helper-textarea")).toBeAttached();
+
+	await page.goto("/#/terminals");
+	await expect(page.getByTestId("session-terminal")).toBeVisible();
+	await expect.poll(() => activeElementClass(page)).toContain("xterm-helper-textarea");
+});
+
 test("Ctrl+F6 exits terminal focus while bare Escape remains terminal input", async ({ page }) => {
 	await installBrowserModeApiFixtures(page);
 	await page.goto("/#/terminals");

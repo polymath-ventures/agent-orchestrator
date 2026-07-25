@@ -455,6 +455,18 @@ describe("SessionView", () => {
 		expect(centerPaneProps.value.focusRequest).toBe(1);
 	});
 
+	it("does not reset focus request nonces across session navigation", () => {
+		const { rerender } = render(<SessionView sessionId="sess-1" />);
+		act(() => centerPaneProps.value.onSelectSessionTerminal?.());
+		expect(centerPaneProps.value.focusRequest).toBe(1);
+
+		rerender(<SessionView sessionId="sess-2" />);
+		act(() => centerPaneProps.value.onSelectSessionTerminal?.());
+
+		expect(centerPaneProps.value.terminalTarget?.kind).toBe("worker");
+		expect(centerPaneProps.value.focusRequest).toBe(2);
+	});
+
 	it("requests terminal focus when opening a reviewer terminal and returning to agent", () => {
 		act(() => useUiStore.getState().setInspectorOpen("sess-1", true));
 		render(<SessionView sessionId="sess-1" />);

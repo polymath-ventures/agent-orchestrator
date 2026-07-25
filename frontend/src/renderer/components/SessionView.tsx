@@ -153,7 +153,6 @@ export function SessionView({ sessionId }: SessionViewProps) {
 
 	useEffect(() => {
 		setTerminalTarget({ kind: "worker" });
-		setTerminalFocusRequest(undefined);
 		previousActiveShellHandleRef.current = useUiStore.getState().activeShellTerminalHandleId;
 		setBrowserPoppedOut(false);
 		setFilesPoppedOut(false);

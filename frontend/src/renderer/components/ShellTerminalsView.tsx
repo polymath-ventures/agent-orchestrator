@@ -25,7 +25,7 @@ export function ShellTerminalsView() {
 	const setActiveShellTerminal = useUiStore((state) => state.setActiveShellTerminal);
 	const [focusRequest, setFocusRequest] = useState<number | undefined>();
 	const rootRef = useRef<HTMLDivElement | null>(null);
-	const previousActiveHandleRef = useRef(activeHandleId);
+	const previousActiveHandleRef = useRef<string | null>(null);
 	const requestFocus = useCallback(() => {
 		setFocusRequest((current) => (current ?? 0) + 1);
 	}, []);
