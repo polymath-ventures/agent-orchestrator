@@ -82,7 +82,11 @@ func TestNamingNeverTakesThePositionalSlot(t *testing.T) {
 			}
 		})
 	}
+	// Hermetic without any proprietary CLI installed: the fake adapter resolves a
+	// shell rather than a harness binary, so at least one adapter always builds a
+	// launch command on a POSIX host. Failing here rather than skipping is the
+	// point — a skip is exactly the vacuous pass this half exists to prevent.
 	if exercised == 0 {
-		t.Fatal("no harness binary resolved on this host, so the argv half checked nothing")
+		t.Fatal("no adapter produced a launch command, not even the shell-backed fake adapter, so the argv half checked nothing")
 	}
 }

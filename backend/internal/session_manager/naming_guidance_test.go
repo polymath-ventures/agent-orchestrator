@@ -32,10 +32,12 @@ func TestGeneratedGuidanceDoesNotTeachAgentsToNameSessions(t *testing.T) {
 			if strings.TrimSpace(body) == "" {
 				t.Fatalf("%s produced no text; the guard would pass vacuously", producer)
 			}
-			for i, line := range strings.Split(body, "\n") {
-				if strings.Contains(line, "ao spawn") && strings.Contains(line, "--name") {
-					t.Errorf("%s line %d pairs a spawn instruction with the name flag; the daemon computes the name:\n\t%s", producer, i+1, strings.TrimSpace(line))
-				}
+			// Whole-body, not line-by-line: a spawn example wrapped across lines
+			// would slip past a per-line check, and no generated guidance has a
+			// legitimate reason to mention the name flag at all once it mentions
+			// spawning.
+			if strings.Contains(body, "ao spawn") && strings.Contains(body, "--name") {
+				t.Errorf("%s describes spawning and mentions the name flag; the daemon computes the name:\n%s", producer, body)
 			}
 		})
 	}

@@ -77,7 +77,11 @@ func (m *Manager) deliverSpawnName(ctx context.Context, agent ports.Agent, cfg p
 	if err != nil {
 		return err
 	}
-	return m.deliverName(ctx, rec)
+	// Solicited: this write is part of creating the session, into a TUI that was
+	// just drawn for it, so it uses the plain delivery policy. A worker whose
+	// prompt rides argv may already be mid-turn by the time the harness reports
+	// ready, and refusing there would leave that session permanently unnamed.
+	return m.deliverName(ctx, rec, m.messenger.Deliver)
 }
 
 // DeliverName pushes a session's persisted display name into its running
@@ -88,7 +92,18 @@ func (m *Manager) DeliverName(ctx context.Context, id domain.SessionID) error {
 	if err != nil {
 		return err
 	}
-	return m.deliverName(ctx, rec)
+	// Unsolicited, relative to whatever the agent is doing: an operator renaming
+	// a long-running session has no idea whether it is mid-turn or sitting on a
+	// permission dialog. The coordination policy writes only while the session is
+	// idle and re-reads that at the write boundary, so the check cannot go stale
+	// between the decision and the keystroke. A harness that takes mid-turn input
+	// treats it as steering and one that does not queues it as the next prompt —
+	// either way the rename would reach the model as text, and a cosmetic write is
+	// never worth disturbing work in progress. Passing no steers-active-turn
+	// predicate is deliberate: no harness is exempt.
+	return m.deliverName(ctx, rec, func(ctx context.Context, id domain.SessionID, msg string) (sessionguard.Outcome, error) {
+		return m.messenger.NudgeCoordination(ctx, id, msg, nil)
+	})
 }
 
 // deliverName is the single routine every naming path goes through — spawn and
@@ -99,21 +114,12 @@ func (m *Manager) DeliverName(ctx context.Context, id domain.SessionID) error {
 //
 // A session that is terminated or has no runtime keeps its persisted name and is
 // not written to; an adapter that declares no naming capability is left alone
-// rather than having text typed blindly into a TUI AO does not understand.
-func (m *Manager) deliverName(ctx context.Context, rec domain.SessionRecord) error {
+// rather than having text typed blindly into a TUI AO does not understand. The
+// caller supplies the delivery policy, which is the one thing that legitimately
+// differs between the two paths — see the two call sites.
+func (m *Manager) deliverName(ctx context.Context, rec domain.SessionRecord, send nameSender) error {
 	name := strings.TrimSpace(rec.DisplayName)
 	if name == "" || rec.IsTerminated || rec.Metadata.RuntimeHandleID == "" {
-		return nil
-	}
-	// Never write a name into a turn already in flight. A harness that accepts
-	// mid-turn input treats it as steering, and one that does not queues it as
-	// the next prompt — either way the rename reaches the model as text instead
-	// of running as a command, and the session's actual task is what pays. The
-	// name is already persisted and already on every AO surface; the harness
-	// catching up is not worth disturbing work in progress.
-	if rec.Activity.State == domain.ActivityActive {
-		m.logger.Info("session name not delivered: harness is mid-turn; AO's name stands until the next rename",
-			"sessionID", rec.ID, "harness", string(rec.Harness))
 		return nil
 	}
 	agent, ok := m.agents.Agent(rec.Harness)
@@ -130,7 +136,10 @@ func (m *Manager) deliverName(ctx context.Context, rec domain.SessionRecord) err
 			"sessionID", rec.ID, "harness", string(rec.Harness))
 		return nil
 	}
-	outcome, err := m.messenger.Deliver(ctx, rec.ID, cmd)
+	if !m.agentStillRunning(ctx, rec) {
+		return nil
+	}
+	outcome, err := send(ctx, rec.ID, cmd)
 	if err != nil {
 		return fmt.Errorf("deliver name %s: %w", rec.ID, err)
 	}
@@ -139,6 +148,47 @@ func (m *Manager) deliverName(ctx context.Context, rec domain.SessionRecord) err
 			"sessionID", rec.ID, "outcome", outcome.String())
 	}
 	return nil
+}
+
+// nameSender is the guarded pane-write policy a naming path uses. Spawn's write
+// is solicited and rename's is not, and that is the only difference between
+// them; everything else about delivery is shared.
+type nameSender func(ctx context.Context, id domain.SessionID, msg string) (sessionguard.Outcome, error)
+
+// agentStillRunning requires positive proof that the pane is still running the
+// agent before any name is typed into it.
+//
+// This is a security boundary, not a nicety. AO keeps a session's pane alive
+// after the agent exits by exec'ing an interactive shell into it, so the pane
+// outlives the process AO thinks it is talking to — and a session whose agent
+// has died is not marked terminated until the reaper notices. A name delivered
+// in that window is not text in a TUI, it is a command line in a shell, and a
+// name is the one field an operator types freely. Confirming the agent is still
+// there is what makes the whole naming path unable to execute anything, rather
+// than relying on every future name being harmless.
+//
+// It fails closed: without proof, no write. A runtime that cannot answer loses
+// harness naming and keeps AO's own name, which is the pre-change behavior.
+func (m *Manager) agentStillRunning(ctx context.Context, rec domain.SessionRecord) bool {
+	prober, ok := m.runtime.(launchProcessProber)
+	if !ok {
+		m.logger.Warn("session name not delivered: runtime cannot confirm the agent is still running",
+			"sessionID", rec.ID)
+		return false
+	}
+	command := strings.TrimSpace(rec.Metadata.LaunchCommand)
+	if command == "" {
+		m.logger.Warn("session name not delivered: no recorded launch command to confirm against",
+			"sessionID", rec.ID)
+		return false
+	}
+	running, err := prober.IsRunningCommand(ctx, ports.RuntimeHandle{ID: rec.Metadata.RuntimeHandleID}, command)
+	if err != nil || !running {
+		m.logger.Warn("session name not delivered: the pane is no longer running the agent",
+			"sessionID", rec.ID, "error", err)
+		return false
+	}
+	return true
 }
 
 // forgiveSpawnNameFailure reports whether a failed name delivery may be treated

@@ -48,8 +48,7 @@ Electron. Repo rules require test-first development.
 - One computed name per session, owned by the daemon, rendered identically on the
   AO sidebar, `ao session ls`, the harness TUI, and the Claude / Codex desktop
   and mobile session lists.
-- One delivery path shared by spawn, rebind, and rename, so the three cannot
-  diverge.
+- One delivery path shared by spawn and rename, so the two cannot diverge.
 - Adding a future harness cannot silently reintroduce the unnamed-session gap.
 - The three historical failures above are prevented by construction and pinned by
   tests that fail if the prevention is removed.
@@ -194,8 +193,8 @@ skipped unreadable files and would have passed vacuously after a rename.
 
 No storage migration is expected: the display name column already exists, and
 this change alters who computes it and where else it is delivered. Existing
-sessions keep their current names until something renames or rebinds them;
-nothing retroactively renames live sessions.
+sessions keep their current names until something renames them; nothing
+retroactively renames live sessions.
 
 Rollback is per-layer and safe in either direction. Reverting the adapter
 capability leaves AO's own names intact and simply stops harness delivery, which

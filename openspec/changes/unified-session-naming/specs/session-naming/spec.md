@@ -141,6 +141,34 @@ that no surface can be updated without the others.
 A rename targeting a session that is terminated, or that has no running runtime,
 SHALL update persisted state without attempting harness delivery.
 
+Because a name is cosmetic relative to the session's task, a rename SHALL be
+delivered only while the session is idle, re-checked at the moment of the write,
+and SHALL be skipped when the session is mid-turn or awaiting the user. A spawn's
+own naming write is part of establishing the session and SHALL NOT be subject to
+that restriction.
+
+The system SHALL require positive confirmation that a session's runtime is still
+running its agent before writing a name into it, and SHALL skip the write when it
+cannot confirm this, because a runtime may keep a session's terminal alive after
+the agent exits and a name written there would be interpreted by whatever
+replaced it.
+
+#### Scenario: A rename is not written into a busy session
+
+- **WHEN** a rename targets a session that is mid-turn or awaiting the user
+- **THEN** the persisted display name is updated
+- **AND** no naming input is written to the runtime
+
+#### Scenario: A spawn names a session that is already working
+
+- **WHEN** a session's harness begins its task before it reports readiness
+- **THEN** the spawn's naming write is still delivered
+
+#### Scenario: A name is not written into a terminal the agent has left
+
+- **WHEN** a session's runtime is no longer running its agent
+- **THEN** no naming input is written to that runtime
+
 Harness delivery SHALL NOT decide whether the rename succeeded: the persisted
 name is the rename's outcome, and a failed delivery SHALL be recorded rather
 than reported as a failed rename.

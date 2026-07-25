@@ -231,20 +231,76 @@ func TestSpawnFailsWhenNamingFailsAndLivenessCannotBeConfirmed(t *testing.T) {
 // The rename path reaches the running harness, not just the database row.
 func TestDeliverNameWritesThePersistedNameToALiveSession(t *testing.T) {
 	m, st, _, msg := newNamingManager(renameOnlyAgent{})
-	st.sessions["mer-1"] = domain.SessionRecord{
-		ID:          "mer-1",
-		ProjectID:   "mer",
-		Harness:     domain.HarnessClaudeCode,
-		DisplayName: "ao #7 renamed",
-		Metadata:    domain.SessionMetadata{RuntimeHandleID: "h1"},
-		Activity:    domain.Activity{State: domain.ActivityIdle},
-	}
+	st.sessions["mer-1"] = liveNamedSession("ao #7 renamed", domain.ActivityIdle)
 
 	if err := m.DeliverName(ctx, "mer-1"); err != nil {
 		t.Fatal(err)
 	}
 	if len(msg.msgs) != 1 || msg.msgs[0] != "/rename ao #7 renamed" {
 		t.Fatalf("writes = %v, want the persisted name delivered verbatim", msg.msgs)
+	}
+}
+
+func liveNamedSession(name string, state domain.ActivityState) domain.SessionRecord {
+	return domain.SessionRecord{
+		ID:          "mer-1",
+		ProjectID:   "mer",
+		Harness:     domain.HarnessClaudeCode,
+		DisplayName: name,
+		Metadata:    domain.SessionMetadata{RuntimeHandleID: "h1", LaunchCommand: "launch"},
+		Activity:    domain.Activity{State: state},
+	}
+}
+
+// A rename is unsolicited relative to whatever the agent is doing. A harness
+// that takes mid-turn input steers on it; one that does not queues it as the
+// next prompt. Either way the rename would reach the model as text, so a
+// cosmetic write never interrupts a turn — or answers a pending dialog.
+func TestDeliverNameSkipsASessionThatIsNotIdle(t *testing.T) {
+	for _, state := range []domain.ActivityState{domain.ActivityActive, domain.ActivityBlocked, domain.ActivityWaitingInput} {
+		t.Run(string(state), func(t *testing.T) {
+			m, st, _, msg := newNamingManager(renameOnlyAgent{})
+			st.sessions["mer-1"] = liveNamedSession("ao #7 renamed", state)
+
+			if err := m.DeliverName(ctx, "mer-1"); err != nil {
+				t.Fatal(err)
+			}
+			if len(msg.msgs) != 0 {
+				t.Fatalf("writes = %v, want none while the session is %s", msg.msgs, state)
+			}
+		})
+	}
+}
+
+// AO keeps a pane alive after the agent exits by exec'ing an interactive shell
+// into it, and the session is not marked terminated until the reaper notices.
+// A name typed into that window would be a shell command line, not TUI text, so
+// delivery requires positive proof the agent is still running.
+func TestDeliverNameRefusesWhenThePaneIsNoLongerRunningTheAgent(t *testing.T) {
+	m, st, rt, msg := newNamingManager(renameOnlyAgent{})
+	st.sessions["mer-1"] = liveNamedSession("ao #7 renamed", domain.ActivityIdle)
+	rt.processAliveByHandle = map[string]bool{"h1": false}
+
+	if err := m.DeliverName(ctx, "mer-1"); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.msgs) != 0 {
+		t.Fatalf("writes = %v, want none once the pane is back at a shell", msg.msgs)
+	}
+}
+
+// Fails closed: with nothing to confirm the agent against, nothing is typed.
+func TestDeliverNameRefusesWithoutARecordedLaunchCommand(t *testing.T) {
+	m, st, _, msg := newNamingManager(renameOnlyAgent{})
+	rec := liveNamedSession("ao #7 renamed", domain.ActivityIdle)
+	rec.Metadata.LaunchCommand = ""
+	st.sessions["mer-1"] = rec
+
+	if err := m.DeliverName(ctx, "mer-1"); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.msgs) != 0 {
+		t.Fatalf("writes = %v, want none without proof the agent is running", msg.msgs)
 	}
 }
 
@@ -255,10 +311,6 @@ func TestDeliverNameSkipsSessionsWithNoLiveRuntime(t *testing.T) {
 	}{
 		{"terminated", domain.SessionRecord{ID: "mer-1", ProjectID: "mer", DisplayName: "ao #7", IsTerminated: true, Metadata: domain.SessionMetadata{RuntimeHandleID: "h1"}}},
 		{"no runtime handle", domain.SessionRecord{ID: "mer-1", ProjectID: "mer", DisplayName: "ao #7"}},
-		// A harness mid-turn either steers on the input or queues it as the next
-		// prompt; both send the rename to the model as text and disturb the work
-		// the session is actually doing.
-		{"mid-turn", domain.SessionRecord{ID: "mer-1", ProjectID: "mer", DisplayName: "ao #7", Metadata: domain.SessionMetadata{RuntimeHandleID: "h1"}, Activity: domain.Activity{State: domain.ActivityActive}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			m, st, _, msg := newNamingManager(renameOnlyAgent{})
@@ -389,4 +441,54 @@ type afterStartPromptAgent struct{ renameOnlyAgent }
 
 func (afterStartPromptAgent) GetPromptDeliveryStrategy(context.Context, ports.LaunchConfig) (ports.PromptDeliveryStrategy, error) {
 	return ports.PromptDeliveryAfterStart, nil
+}
+
+// goesActiveWhileWaitingAgent models a worker whose prompt rides argv: by the
+// time the harness reports ready, it is already working on its task.
+type goesActiveWhileWaitingAgent struct {
+	renameOnlyAgent
+	store *fakeStore
+	id    domain.SessionID
+}
+
+func (a goesActiveWhileWaitingAgent) PromptReadinessHints(context.Context, ports.LaunchConfig) (ports.PromptReadinessHints, error) {
+	a.store.mu.Lock()
+	rec := a.store.sessions[a.id]
+	rec.Activity = domain.Activity{State: domain.ActivityActive}
+	a.store.sessions[a.id] = rec
+	a.store.mu.Unlock()
+	return ports.PromptReadinessHints{}, nil
+}
+
+// The spawn write is solicited — it is part of creating the session, into a TUI
+// drawn moments earlier — so it must NOT inherit the rename path's idle-only
+// policy. A codex worker takes its prompt in argv and is routinely mid-turn by
+// the time the harness reports ready; refusing there would leave exactly the
+// sessions this change exists for permanently unnamed.
+func TestSpawnDeliversTheNameEvenWhenTheAgentIsAlreadyWorking(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{
+		ID:     "mer",
+		Config: domain.ProjectConfig{SessionPrefix: "ao", Worker: domain.RoleOverride{Harness: domain.HarnessClaudeCode}},
+	}
+	rt := &fakeRuntime{aliveByHandle: map[string]bool{"h1": true}}
+	msg := &fakeMessenger{}
+	m := New(Deps{
+		Runtime:   rt,
+		Agents:    agentsFor{agent: goesActiveWhileWaitingAgent{store: st, id: "mer-1"}},
+		Workspace: &fakeWorkspace{},
+		Store:     st,
+		Messenger: msg,
+		Lifecycle: &fakeLCM{store: st},
+		LookPath:  func(string) (string, error) { return "/bin/true", nil },
+	})
+
+	rec, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, IssueID: "150", IssueTitle: "Unified session naming"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "/rename " + rec.DisplayName
+	if len(msg.msgs) != 1 || msg.msgs[0] != want {
+		t.Fatalf("writes = %v, want the spawn-time name %q delivered despite the active turn", msg.msgs, want)
+	}
 }

@@ -32,8 +32,12 @@ func (s *Service) withIssueDetails(ctx context.Context, cfg ports.SpawnConfig, p
 	}
 	id, ok := s.trackerIDForIssue(project, cfg.IssueID)
 	if !ok {
+		// Deliberately no origin URL: a remote is whatever `git remote get-url`
+		// returned, which can carry userinfo or a token, and a warning is not
+		// worth putting a credential in the log. The project id identifies the
+		// remote for anyone diagnosing this.
 		slog.Default().Warn("spawn: work item id is not resolvable against a tracker; session name and task prompt degrade",
-			"projectID", cfg.ProjectID, "issueID", cfg.IssueID, "repoOriginURL", project.RepoOriginURL)
+			"projectID", cfg.ProjectID, "issueID", cfg.IssueID)
 		return cfg
 	}
 	issue, err := s.tracker.Get(ctx, id)
