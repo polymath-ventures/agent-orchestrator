@@ -4,6 +4,7 @@ package supervisor_test
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"net"
@@ -247,4 +248,264 @@ func TestReconnectWithinGraceCancels(t *testing.T) {
 func makePipe() (net.Conn, net.Conn) {
 	s, c := net.Pipe()
 	return s, c
+}
+
+// --- #147: the connection alone must not be the credential -------------------
+
+// httpProbe is what a bare `curl http://.../` puts on the wire: a realistic
+// non-protocol client that never speaks the supervisor handshake.
+const httpProbe = "GET / HTTP/1.1\r\nHost: local\r\n\r\n"
+
+// closeWindow bounds how long the server may take to hang up on a client that
+// is not speaking the supervisor protocol. It is deliberately generous: the
+// assertion is that the close *terminates*, not that it is fast.
+const closeWindow = 2 * time.Second
+
+// reconnectGrace is used where a test has to complete a full accept +
+// handshake round trip inside the grace period. testGrace (30ms) is too tight
+// to do that reliably under `-race` on a loaded machine, and a flaky watchdog
+// test is worse than a slightly slower one.
+const reconnectGrace = 200 * time.Millisecond
+
+// writeHandshake writes the supervisor handshake token from the client side of
+// a net.Pipe. The write is done off the test goroutine because net.Pipe is
+// unbuffered: it blocks until the server actually reads the token, which is
+// exactly the behavior under test. A blocked write is a failure, not a hang.
+func writeHandshake(t *testing.T, c net.Conn) {
+	t.Helper()
+
+	wrote := make(chan error, 1)
+	go func() {
+		_, err := c.Write([]byte(supervisor.HandshakeToken))
+		wrote <- err
+	}()
+
+	select {
+	case err := <-wrote:
+		if err != nil {
+			t.Fatalf("handshake write failed: %v", err)
+		}
+	case <-time.After(closeWindow):
+		t.Fatalf("handshake write blocked for more than %s: server never read the token", closeWindow)
+	}
+}
+
+// TestTransientNonHandshakeClientDoesNotArm is the restart-churn bug (#147 AC 1).
+// A connection that is accepted and then closed WITHOUT ever writing the
+// handshake token — a `curl --max-time 2`, a port scan, a mistaken probe —
+// must not arm the watchdog, so its disconnect must not fire the callback.
+func TestTransientNonHandshakeClientDoesNotArm(t *testing.T) {
+	t.Parallel()
+
+	fired := make(chan struct{})
+	cb := func() { close(fired) }
+
+	s := supervisor.New(testGrace, cb, noopLogger())
+	ln := newFakeListener()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- s.Serve(ctx, ln) }()
+
+	serverConn, clientConn := makePipe()
+	ln.enqueue(serverConn)
+	// Let the accept loop pick the conn up, so this is genuinely an accepted
+	// connection that then went away rather than one that was never accepted.
+	time.Sleep(5 * time.Millisecond)
+
+	// Gone without ever having spoken the protocol.
+	_ = clientConn.Close()
+
+	// Wait comfortably past grace: a real timer would have fired by now.
+	time.Sleep(comfortWait)
+
+	select {
+	case <-fired:
+		t.Fatal("callback fired for a client that never completed the supervisor handshake")
+	default:
+	}
+
+	cancel()
+	_ = ln.Close()
+	<-done
+}
+
+// TestNonProtocolClientClosedPromptly is the leaked-curl bug (#147 AC 2).
+// A client that writes bytes which are not the handshake token must be closed
+// by the server within a bounded window, instead of being drained forever
+// (the 8-hour hung `curl` the reporter observed).
+func TestNonProtocolClientClosedPromptly(t *testing.T) {
+	t.Parallel()
+
+	s := supervisor.New(testGrace, func() {}, noopLogger())
+	ln := newFakeListener()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- s.Serve(ctx, ln) }()
+
+	serverConn, clientConn := makePipe()
+	ln.enqueue(serverConn)
+	// Unblocks the goroutine below if the server never closes, so a regression
+	// fails this test instead of hanging the suite.
+	defer func() { _ = clientConn.Close() }()
+
+	// Both the write and the follow-up read can block indefinitely against a
+	// server that drains and never hangs up, so neither runs on the test
+	// goroutine.
+	result := make(chan error, 1)
+	go func() {
+		if _, err := clientConn.Write([]byte(httpProbe)); err != nil {
+			// The server hung up mid-write; that is a prompt close.
+			result <- err
+			return
+		}
+		buf := make([]byte, 64)
+		_, err := clientConn.Read(buf)
+		result <- err
+	}()
+
+	select {
+	case err := <-result:
+		if err == nil {
+			t.Fatal("expected the server to close a non-protocol connection; read returned data instead")
+		}
+		if !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrClosedPipe) {
+			t.Fatalf("expected io.EOF or a closed-connection error, got %v", err)
+		}
+	case <-time.After(closeWindow):
+		t.Fatalf("server held a non-protocol connection open for more than %s instead of closing it", closeWindow)
+	}
+
+	cancel()
+	_ = ln.Close()
+	<-done
+}
+
+// TestHandshakedClientFiresAfterGrace guards against a fix that just disables
+// the watchdog: a client that DOES write the handshake token counts as live,
+// and its disconnect still fires the callback exactly once after grace.
+func TestHandshakedClientFiresAfterGrace(t *testing.T) {
+	t.Parallel()
+
+	var mu sync.Mutex
+	fireCount := 0
+	fired := make(chan struct{}, 1)
+	cb := func() {
+		mu.Lock()
+		fireCount++
+		mu.Unlock()
+		select {
+		case fired <- struct{}{}:
+		default:
+		}
+	}
+
+	s := supervisor.New(testGrace, cb, noopLogger())
+	ln := newFakeListener()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- s.Serve(ctx, ln) }()
+
+	serverConn, clientConn := makePipe()
+	ln.enqueue(serverConn)
+	writeHandshake(t, clientConn)
+
+	_ = clientConn.Close()
+
+	select {
+	case <-fired:
+		// good
+	case <-time.After(comfortWait * 2):
+		t.Fatal("callback did not fire after a handshaked client disconnected and grace elapsed")
+	}
+
+	// Give a duplicate fire time to show up.
+	time.Sleep(comfortWait)
+	mu.Lock()
+	count := fireCount
+	mu.Unlock()
+	if count != 1 {
+		t.Fatalf("expected callback to fire exactly once, got %d", count)
+	}
+
+	cancel()
+	_ = ln.Close()
+	<-done
+}
+
+// TestHandshakedReconnectWithinGraceCancels is TestReconnectWithinGraceCancels
+// with both connections completing the handshake: a handshaked reconnect
+// inside the grace period must still cancel the pending shutdown, and the
+// second disconnect must still fire the callback exactly once.
+func TestHandshakedReconnectWithinGraceCancels(t *testing.T) {
+	t.Parallel()
+
+	var mu sync.Mutex
+	fireCount := 0
+	fired := make(chan struct{}, 1)
+	cb := func() {
+		mu.Lock()
+		fireCount++
+		mu.Unlock()
+		select {
+		case fired <- struct{}{}:
+		default:
+		}
+	}
+
+	s := supervisor.New(reconnectGrace, cb, noopLogger())
+	ln := newFakeListener()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- s.Serve(ctx, ln) }()
+
+	// --- first handshaked connection ---
+	serverConn1, clientConn1 := makePipe()
+	ln.enqueue(serverConn1)
+	writeHandshake(t, clientConn1)
+
+	// Disconnect: this arms grace.
+	_ = clientConn1.Close()
+
+	// --- handshaked reconnect, well inside grace ---
+	serverConn2, clientConn2 := makePipe()
+	ln.enqueue(serverConn2)
+	writeHandshake(t, clientConn2)
+
+	// Wait past grace: the reconnect should have cancelled the countdown.
+	time.Sleep(reconnectGrace * 3)
+
+	select {
+	case <-fired:
+		t.Fatal("callback fired even though a handshaked client reconnected before grace elapsed")
+	default:
+	}
+
+	// Now drop the second client: grace re-arms and the callback should fire.
+	_ = clientConn2.Close()
+
+	select {
+	case <-fired:
+		// good
+	case <-time.After(reconnectGrace * 6):
+		t.Fatal("callback did not fire after the second handshaked client disconnected and grace elapsed")
+	}
+
+	mu.Lock()
+	count := fireCount
+	mu.Unlock()
+	if count != 1 {
+		t.Fatalf("expected exactly one callback fire (process-lifetime once), got %d", count)
+	}
+
+	cancel()
+	_ = ln.Close()
+	<-done
 }
