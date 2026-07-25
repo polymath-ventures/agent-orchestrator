@@ -25,10 +25,9 @@ import (
 )
 
 const (
-	maxPromptLen      = 4096
-	maxMessageLen     = 4096
-	maxDisplayNameLen = 20
-	maxModelLen       = 128
+	maxPromptLen  = 4096
+	maxMessageLen = 4096
+	maxModelLen   = 128
 
 	// Attachment limits guard the daemon against oversized spawn bodies. Images
 	// are pasted/dropped into the task brief and inlined as base64 in the JSON
@@ -161,14 +160,20 @@ func (c *SessionsController) spawn(w http.ResponseWriter, r *http.Request) {
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "PROMPT_TOO_LONG", "prompt is too long", nil)
 		return
 	}
-	// displayName is optional at the API (the desktop new-task dialog omits it
-	// and the read model falls back to the session id). `ao spawn` makes it
-	// required CLI-side. When present, it is held to the same length cap here so
-	// a direct API call cannot exceed it.
+	// displayName is optional everywhere: an omitted name is the signal that asks
+	// the daemon to compute one from the session's role and work item. When
+	// present it is a deliberate override, held to the same length cap here so a
+	// direct API call cannot exceed it.
 	displayName := strings.TrimSpace(in.DisplayName)
-	if utf8.RuneCountInString(displayName) > maxDisplayNameLen {
-		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "DISPLAY_NAME_TOO_LONG", "displayName must be 20 characters or fewer", nil)
-		return
+	if displayName != "" {
+		if _, err := domain.ValidateSessionDisplayName(displayName); err != nil {
+			code := "DISPLAY_NAME_TOO_LONG"
+			if errors.Is(err, domain.ErrDisplayNameUnsafe) {
+				code = "DISPLAY_NAME_UNSAFE"
+			}
+			envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", code, err.Error(), nil)
+			return
+		}
 	}
 	if utf8.RuneCountInString(in.Model) > maxModelLen {
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "MODEL_TOO_LONG", "model is too long", nil)

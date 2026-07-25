@@ -2,12 +2,14 @@ package domain
 
 import "strings"
 
-const maxSessionDisplayNameRunes = 20
+// MaxSessionDisplayNameRunes is the single cap every session display name obeys,
+// whether the daemon computed it or an operator supplied it.
+const MaxSessionDisplayNameRunes = 20
 
 // ComposePrimeDisplayName builds the daemon-owned fallback label for prime.
 func ComposePrimeDisplayName(projectName string) string {
 	name := normalizePrimePrefix(projectName)
-	return roleDisplayName(name, " Prime", maxSessionDisplayNameRunes)
+	return roleDisplayName(name, " Prime", MaxSessionDisplayNameRunes)
 }
 
 func normalizePrimePrefix(prefix string) string {

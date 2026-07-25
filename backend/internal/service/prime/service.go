@@ -66,6 +66,9 @@ func (s *Service) SetSettings(ctx context.Context, settings domain.PrimeSettings
 	if err := settings.Validate(); err != nil {
 		return SettingsView{}, apierr.Invalid("INVALID_PRIME_SETTINGS", err.Error(), nil)
 	}
+	if err := settings.ValidateDisplayNameForWrite(); err != nil {
+		return SettingsView{}, apierr.Invalid("DISPLAY_NAME_UNSAFE", err.Error(), nil)
+	}
 	if err := s.store.SetPrimeSettings(ctx, settings); err != nil {
 		return SettingsView{}, err
 	}

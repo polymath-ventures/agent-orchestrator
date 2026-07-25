@@ -157,12 +157,37 @@ func TestSpawnNoTakeoverRequiresClaimPR(t *testing.T) {
 	}
 }
 
-// TestSpawnCommand_RequiresName asserts `ao spawn` rejects a missing --name
-// without contacting the daemon.
-func TestSpawnCommand_RequiresName(t *testing.T) {
-	_, _, err := executeCLI(t, Deps{}, "spawn", "--project", "demo", "--agent", "codex")
-	if err == nil || ExitCode(err) != 2 || !strings.Contains(err.Error(), "--name is required") {
-		t.Fatalf("err=%v exit=%d, want --name is required", err, ExitCode(err))
+// TestSpawnCommand_OmittedNameAsksTheDaemonToCompute asserts `ao spawn` accepts
+// a missing --name and sends an empty displayName, which is the signal that asks
+// the daemon to compute the session's name. The flag was previously required,
+// which is how dispatching orchestrators ended up hand-writing names — and, when
+// they dispatched with `--prompt "/address-issue <id>"`, naming workers after the
+// prompt.
+func TestSpawnCommand_OmittedNameAsksTheDaemonToCompute(t *testing.T) {
+	cfg := setConfigEnv(t)
+	var req spawnRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/projects/demo":
+			_, _ = io.WriteString(w, `{"status":"ok","project":{"id":"demo","name":"Demo","path":"/repo/demo"}}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/sessions":
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatal(err)
+			}
+			_, _ = io.WriteString(w, `{"session":{"id":"demo-16","status":"idle"}}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	writeRunFileFor(t, cfg, srv)
+
+	if _, errOut, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }}, "spawn", "--project", "demo", "--issue", "150"); err != nil {
+		t.Fatalf("spawn without --name: %v stderr=%s", err, errOut)
+	}
+	if req.DisplayName != "" {
+		t.Fatalf("displayName = %q, want empty so the daemon computes it", req.DisplayName)
 	}
 }
 
@@ -934,10 +959,7 @@ func TestSpawnUnknownAuthRefreshesWarnsAndAllows(t *testing.T) {
 // TestSpawnCommand_RejectsInvalidKind asserts `ao spawn` rejects a --kind value
 // outside worker/orchestrator at the CLI boundary, without contacting the daemon.
 func TestSpawnCommand_RejectsInvalidKind(t *testing.T) {
-	// Pass a valid --name so this exercises the --kind boundary specifically:
-	// spawn validates the required --name before --kind, so omitting it would
-	// trip the "--name is required" error instead of the kind error.
-	_, _, err := executeCLI(t, Deps{}, "spawn", "--project", "demo", "--name", "orch", "--kind", "orchestartor")
+	_, _, err := executeCLI(t, Deps{}, "spawn", "--project", "demo", "--kind", "orchestartor")
 	if err == nil || ExitCode(err) != 2 || !strings.Contains(err.Error(), `--kind must be "worker" or "orchestrator"`) {
 		t.Fatalf("err=%v exit=%d, want --kind validation error", err, ExitCode(err))
 	}

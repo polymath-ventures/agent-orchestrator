@@ -32,6 +32,7 @@ type fakeSessionService struct {
 	workspaceFiles  sessionsvc.WorkspaceFiles
 	workspaceFile   sessionsvc.WorkspaceFileDetail
 	spawnErr        error
+	spawned         bool
 	claimErr        error
 	listPRErr       error
 	workspaceErr    error
@@ -61,6 +62,7 @@ func (f *fakeSessionService) List(_ context.Context, filter sessionsvc.ListFilte
 }
 
 func (f *fakeSessionService) Spawn(_ context.Context, cfg ports.SpawnConfig) (domain.Session, int, int, error) {
+	f.spawned = true
 	if f.spawnErr != nil {
 		return domain.Session{}, 0, 0, f.spawnErr
 	}
@@ -1083,15 +1085,30 @@ func TestSessionsAPI_SpawnBranchNotFetchedReturnsTypedError(t *testing.T) {
 }
 
 // TestSessionsAPI_SpawnRejectsOverlongDisplayName asserts the spawn endpoint
-// caps displayName at 20 characters even though the field itself is optional
-// (the desktop new-task dialog omits it). `ao spawn` enforces the same limit
-// CLI-side before the request is sent.
+// caps displayName at 20 characters even though the field itself is optional —
+// omitting it is the normal case and the signal that asks the daemon to compute
+// the name.
 func TestSessionsAPI_SpawnRejectsOverlongDisplayName(t *testing.T) {
 	srv := newSessionTestServer(t, newFakeSessionService())
 
 	overlong := strings.Repeat("x", 21)
 	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions", `{"projectId":"ao","harness":"codex","displayName":"`+overlong+`"}`)
 	assertErrorCode(t, body, status, http.StatusBadRequest, "DISPLAY_NAME_TOO_LONG")
+}
+
+// A supplied name carrying shell syntax is refused at the endpoint rather than
+// silently swapped for the computed name: AO must never display a name the
+// harness would refuse, and the operator should learn that their name was not
+// used. The spawn must not reach the service at all.
+func TestSessionsAPI_SpawnRejectsUnsafeDisplayName(t *testing.T) {
+	svc := newFakeSessionService()
+	srv := newSessionTestServer(t, svc)
+
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions", `{"projectId":"ao","harness":"codex","displayName":"x; touch /tmp/pwn"}`)
+	assertErrorCode(t, body, status, http.StatusBadRequest, "DISPLAY_NAME_UNSAFE")
+	if svc.spawned {
+		t.Fatal("spawn reached the service despite an unsafe display name")
+	}
 }
 
 func TestSessionsAPI_RenameNotFound(t *testing.T) {

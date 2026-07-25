@@ -78,8 +78,58 @@ func (p *Plugin) EmitsSubmitActivity() bool { return true }
 // ports.ActivitySignaler.
 func (p *Plugin) EmitsBlockedActivity() bool { return true }
 
+// InHarnessRenameCommand renames a running Claude Code session. It writes the
+// same underlying name as the -n launch flag, so the two doors cannot drift into
+// two different names. See ports.AgentNamer.
+func (p *Plugin) InHarnessRenameCommand(name string) (string, bool) {
+	safe, ok := ports.DeliverableName(name)
+	if !ok {
+		return "", false
+	}
+	return "/rename " + safe, true
+}
+
+// LaunchNameArgs names the session in argv. -n is a flag, not the positional, so
+// it competes with nothing: the name lands atomically with process start and the
+// pane-readiness race is absent rather than mitigated. This is an optimization
+// over the universal in-harness path, not a replacement for it — dropping it
+// costs a race, not a name. See ports.AgentNamer.
+func (p *Plugin) LaunchNameArgs(name string) []string {
+	safe, ok := ports.DeliverableName(name)
+	if !ok {
+		return nil
+	}
+	return []string{"-n", safe}
+}
+
+// PromptReadinessHints waits for the Claude Code TUI to draw its composer before
+// AO writes into the pane.
+//
+// The `-n` launch flag means a normal spawn never needs a post-start write at
+// all, so these hints look redundant — they are what keeps that flag an
+// optimization rather than the mechanism. Verified by disabling `-n` and
+// spawning: runtime creation returns while the pane is still a bare shell, and
+// the rename lands there and is lost entirely before Claude Code starts drawing.
+// Without these hints the universal in-harness path could not stand on its own,
+// which is precisely the dependency this change refuses to take on.
+func (p *Plugin) PromptReadinessHints(ctx context.Context, _ ports.LaunchConfig) (ports.PromptReadinessHints, error) {
+	if err := ctx.Err(); err != nil {
+		return ports.PromptReadinessHints{}, err
+	}
+	return ports.PromptReadinessHints{
+		InitialDelay: 500 * time.Millisecond,
+		// The composer prompt glyph, and the shortcut hint drawn beside it.
+		Patterns:     []string{"❯", "for shortcuts"},
+		PollInterval: 200 * time.Millisecond,
+		Timeout:      20 * time.Second,
+		Lines:        80,
+	}, nil
+}
+
 var _ adapters.Adapter = (*Plugin)(nil)
 var _ ports.Agent = (*Plugin)(nil)
+var _ ports.AgentNamer = (*Plugin)(nil)
+var _ ports.AgentPromptReadinessProvider = (*Plugin)(nil)
 var _ ports.AgentAuthChecker = (*Plugin)(nil)
 var _ ports.AgentModelCatalog = (*Plugin)(nil)
 var _ ports.AgentModelValidator = (*Plugin)(nil)
@@ -173,6 +223,9 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 	if cfg.SessionID != "" {
 		cmd = append(cmd, "--session-id", claudeSessionUUID(cfg.SessionID))
 	}
+	// Ahead of the positional separator by construction: the name is a flag, and
+	// only the prompt may ever follow `--`.
+	cmd = append(cmd, p.LaunchNameArgs(cfg.DisplayName)...)
 	// A project's configured permissions drive the starting mode; the explicit
 	// LaunchConfig.Permissions wins when set so a per-spawn override still takes
 	// precedence over the stored project default.

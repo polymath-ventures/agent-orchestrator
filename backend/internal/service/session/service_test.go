@@ -215,7 +215,7 @@ func TestSessionRenameUpdatesDisplayName(t *testing.T) {
 	st := newFakeStore()
 	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer"}
 
-	err := (&Service{store: st}).Rename(context.Background(), "mer-1", "  Fix issue #90  ")
+	err := (&Service{store: st, manager: &fakeCommander{}}).Rename(context.Background(), "mer-1", "  Fix issue #90  ")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -507,6 +507,13 @@ type fakeCommander struct {
 	killsAtSpawn    int
 	restoreErr      error
 	restoreResult   sessionmanager.RestoreResult
+	deliveredNames  int
+	deliverNameErr  error
+}
+
+func (f *fakeCommander) DeliverName(_ context.Context, _ domain.SessionID) error {
+	f.deliveredNames++
+	return f.deliverNameErr
 }
 
 func (f *fakeCommander) Spawn(_ context.Context, cfg ports.SpawnConfig) (domain.SessionRecord, int, int, error) {

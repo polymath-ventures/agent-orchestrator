@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
@@ -54,6 +55,7 @@ type commander interface {
 	RetireForReplacement(ctx context.Context, id domain.SessionID) error
 	ReleaseStaleRoleResources(ctx context.Context, target domain.RoleTarget) (sessionmanager.ReleaseResult, error)
 	Send(ctx context.Context, id domain.SessionID, message string) error
+	DeliverName(ctx context.Context, id domain.SessionID) error
 	Cleanup(ctx context.Context, project domain.ProjectID) (sessionmanager.CleanupResult, error)
 	RollbackSpawn(ctx context.Context, id domain.SessionID) (deleted, killed bool, err error)
 }
@@ -188,7 +190,7 @@ func (s *Service) spawn(ctx context.Context, cfg ports.SpawnConfig, allowPrime b
 		return domain.Session{}, 0, 0, fmt.Errorf("count sessions: %w", err)
 	}
 	if !projectlessPrime {
-		cfg = s.withIssueContext(ctx, cfg, project)
+		cfg = s.withIssueDetails(ctx, cfg, project)
 	}
 	rec, promptBytes, systemPromptBytes, err := s.manager.Spawn(ctx, cfg)
 	if err != nil {
@@ -421,8 +423,15 @@ func (s *Service) planRole(ctx context.Context, target domain.RoleTarget) (roleP
 		if !settings.Enabled {
 			return rolePlan{}, apierr.Conflict("PRIME_DISABLED", "Fleet Prime is disabled. Enable it in Prime settings first.", nil)
 		}
-		displayName := strings.TrimSpace(settings.DisplayName)
-		if displayName == "" {
+		// Settings saved before the name character rule existed are still readable
+		// on purpose, so a stored name that delivery would refuse degrades here to
+		// the default rather than leaving Prime nameless.
+		displayName, nameErr := domain.ValidateSessionDisplayName(settings.DisplayName)
+		if nameErr != nil {
+			if !errors.Is(nameErr, domain.ErrDisplayNameEmpty) {
+				slog.Default().Warn("prime: stored display name cannot be delivered to a harness; using the default",
+					"error", nameErr)
+			}
 			displayName = domain.DefaultPrimeSettings().DisplayName
 		}
 		return rolePlan{
@@ -695,11 +704,22 @@ func (s *Service) Send(ctx context.Context, id domain.SessionID, message string)
 	return toAPIError(s.manager.Send(ctx, id, message))
 }
 
-// Rename updates the user-facing session display name.
+// Rename updates the user-facing session display name and pushes it into the
+// running harness, so the sidebar and the harness's own session list — the one
+// the desktop and mobile apps render — cannot drift apart. Persistence happens
+// first and owns the outcome: harness delivery is cosmetic and best-effort, so
+// its failure is logged rather than surfaced as a failed rename.
 func (s *Service) Rename(ctx context.Context, id domain.SessionID, displayName string) error {
-	displayName = strings.TrimSpace(displayName)
-	if displayName == "" {
+	displayName, err := domain.ValidateSessionDisplayName(displayName)
+	switch {
+	case errors.Is(err, domain.ErrDisplayNameEmpty):
 		return apierr.Invalid("DISPLAY_NAME_REQUIRED", "Display name is required", nil)
+	case errors.Is(err, domain.ErrDisplayNameTooLong):
+		return apierr.Invalid("DISPLAY_NAME_TOO_LONG", err.Error(), nil)
+	case errors.Is(err, domain.ErrDisplayNameUnsafe):
+		return apierr.Invalid("DISPLAY_NAME_UNSAFE", err.Error(), nil)
+	case err != nil:
+		return apierr.Invalid("DISPLAY_NAME_INVALID", err.Error(), nil)
 	}
 	renamed, err := s.store.RenameSession(ctx, id, displayName, time.Now().UTC())
 	if err != nil {
@@ -707,6 +727,9 @@ func (s *Service) Rename(ctx context.Context, id domain.SessionID, displayName s
 	}
 	if !renamed {
 		return apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
+	}
+	if err := s.manager.DeliverName(ctx, id); err != nil {
+		slog.Default().Warn("rename: session renamed but the harness was not updated", "sessionID", id, "error", err)
 	}
 	return nil
 }

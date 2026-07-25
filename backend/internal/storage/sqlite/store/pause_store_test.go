@@ -168,3 +168,32 @@ func TestPauseAndConfigAreIndependent(t *testing.T) {
 		t.Fatalf("config save cleared the pause bit: Paused = false, want true")
 	}
 }
+
+// The store is the durable boundary, so the name character rule is enforced
+// here rather than only in the service above it: Validate stays tolerant so
+// settings saved before the rule remain readable, which leaves this as the only
+// place that can keep a new unsafe name out of storage on every write path.
+func TestSetPrimeSettingsRejectsAnUnsafeDisplayName(t *testing.T) {
+	ctx := context.Background()
+	s, err := sqlite.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+
+	settings, err := s.GetPrimeSettings(ctx)
+	if err != nil {
+		t.Fatalf("GetPrimeSettings: %v", err)
+	}
+	settings.DisplayName = "x; touch /tmp/pwn"
+	if err := s.SetPrimeSettings(ctx, settings); err == nil {
+		t.Fatal("SetPrimeSettings persisted a display name carrying shell syntax")
+	}
+
+	stored, err := s.GetPrimeSettings(ctx)
+	if err != nil {
+		t.Fatalf("GetPrimeSettings after refusal: %v", err)
+	}
+	if stored.DisplayName != domain.DefaultPrimeSettings().DisplayName {
+		t.Fatalf("stored display name = %q, want the previous value untouched", stored.DisplayName)
+	}
+}

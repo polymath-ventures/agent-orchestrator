@@ -478,6 +478,11 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	promptBytes := len(prompt)
 	systemPromptBytes := len(systemPrompt)
 
+	// The daemon owns the name, and it is settled here — before the row exists —
+	// so the persisted name, the launch command, and any harness write all read
+	// the same single value.
+	cfg.DisplayName = m.resolveDisplayName(cfg, project)
+
 	rec, err := m.store.CreateSession(ctx, seedRecord(cfg, agentConfig.Effort, target.mixSelected, target.mixBucketModel, m.clock()))
 	if err != nil {
 		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn: create: %w", err)
@@ -558,6 +563,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	}
 	launchCfg := ports.LaunchConfig{
 		DataDir:          m.dataDir,
+		DisplayName:      cfg.DisplayName,
 		SessionID:        string(id),
 		WorkspacePath:    ws.Path,
 		Kind:             cfg.Kind,
@@ -646,6 +652,17 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		m.rollbackPreparedSpawnWorkspace(ctx, rec, ws, workspaceProject)
 		m.markSpawnFailedTerminated(ctx, id)
 		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: completed: %w", id, err)
+	}
+	// Name before prompt: the rename is instant, and leaving the prompt as the
+	// last thing written means the session ends up working on its task rather
+	// than with a rename typed into a turn already in flight.
+	if err := m.deliverNameForSpawn(ctx, agent, launchCfg, handle, id, cfg.DisplayName); err != nil {
+		if !m.forgiveSpawnNameFailure(ctx, handle, id, err) {
+			_ = m.runtime.Destroy(ctx, handle)
+			m.rollbackPreparedSpawnWorkspace(ctx, rec, ws, workspaceProject)
+			m.markSpawnFailedTerminatedWithoutWorkspace(ctx, id)
+			return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: deliver name: %w", id, err)
+		}
 	}
 	if delivery == ports.PromptDeliveryAfterStart && prompt != "" {
 		if err := m.deliverAfterStartPrompt(ctx, agent, launchCfg, handle, id, prompt); err != nil {
@@ -1750,18 +1767,30 @@ func (m *Manager) relaunchRestoredSession(ctx context.Context, rec domain.Sessio
 		m.cleanupSystemPromptDir(rec.ID)
 		return RestoreResult{}, fmt.Errorf("restore %s: completed: %w", rec.ID, err)
 	}
+	restoreLaunchCfg := ports.LaunchConfig{
+		DataDir:          m.dataDir,
+		DisplayName:      rec.DisplayName,
+		SessionID:        string(rec.ID),
+		WorkspacePath:    ws.Path,
+		Kind:             rec.Kind,
+		Prompt:           rec.Metadata.Prompt,
+		SystemPrompt:     systemPrompt,
+		SystemPromptFile: systemPromptFile,
+		Config:           agentConfig,
+		Permissions:      agentConfig.Permissions,
+	}
+	// A restore relaunches the harness, so the harness's name resets to whatever
+	// it derives for itself while AO keeps the name it owns. Without this, a
+	// session renamed before it was torn down comes back with the old harness
+	// name — a divergence reintroduced by the very lifecycle event meant to
+	// preserve the session. The resume command carries no launch-time name flag,
+	// so this always takes the in-harness path.
+	if err := m.deliverNameAfterStart(ctx, agent, restoreLaunchCfg, handle, rec.ID, rec.DisplayName); err != nil {
+		m.logger.Warn("restore: session name not delivered to the harness; AO's name stands",
+			"sessionID", rec.ID, "error", err)
+	}
 	if delivery == ports.PromptDeliveryAfterStart && rec.Metadata.Prompt != "" {
-		launchCfg := ports.LaunchConfig{
-			DataDir:          m.dataDir,
-			SessionID:        string(rec.ID),
-			WorkspacePath:    ws.Path,
-			Kind:             rec.Kind,
-			Prompt:           rec.Metadata.Prompt,
-			SystemPrompt:     systemPrompt,
-			SystemPromptFile: systemPromptFile,
-			Config:           agentConfig,
-			Permissions:      agentConfig.Permissions,
-		}
+		launchCfg := restoreLaunchCfg
 		if err := m.deliverAfterStartPrompt(ctx, agent, launchCfg, handle, rec.ID, rec.Metadata.Prompt); err != nil {
 			m.destroyFailedLaunchRuntime(ctx, handle)
 			m.markSpawnFailedTerminated(ctx, rec.ID)
@@ -2501,7 +2530,7 @@ You are acting as the AO orchestrator for project %s. Do not implement code chan
 
 Your next action for any implementation, fix, UI change, test, PR, or code-review task must be to spawn or redirect a worker session. Use:
 
-ao spawn --project %s --name "<label, max 20 chars>" --prompt "<clear worker task>"
+ao spawn --project %s --issue <issue-id> --prompt "<clear worker task>"
 
 If a suitable worker already exists, use ao send to redirect that worker instead. After spawning or redirecting, report the worker session id and stop. Do not do the worker's task in this orchestrator session.
 

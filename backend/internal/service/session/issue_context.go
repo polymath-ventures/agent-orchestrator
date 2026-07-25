@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net/url"
 	"strconv"
 	"strings"
@@ -13,23 +14,47 @@ import (
 
 const issueContextBodyLimit = 12000
 
-func (s *Service) withIssueContext(ctx context.Context, cfg ports.SpawnConfig, project domain.ProjectRecord) ports.SpawnConfig {
-	if cfg.IssueContext != "" || cfg.IssueID == "" || s.tracker == nil {
+// withIssueDetails fills in whatever the request did not already carry about its
+// work item: the task-prompt context, and the title the daemon slugs into the
+// session's display name. Both come from one tracker fetch, in the one service
+// every spawn path funnels through, so the CLI, the HTTP API, and tracker intake
+// cannot disagree about either. A tracker that is absent, unresolvable, or down
+// costs the enrichment, never the spawn.
+func (s *Service) withIssueDetails(ctx context.Context, cfg ports.SpawnConfig, project domain.ProjectRecord) ports.SpawnConfig {
+	if cfg.IssueID == "" || s.tracker == nil {
 		return cfg
 	}
 	if cfg.Kind != "" && cfg.Kind != domain.KindWorker {
 		return cfg
 	}
+	if cfg.IssueContext != "" && cfg.IssueTitle != "" {
+		return cfg
+	}
 	id, ok := s.trackerIDForIssue(project, cfg.IssueID)
 	if !ok {
+		// Deliberately no origin URL: a remote is whatever `git remote get-url`
+		// returned, which can carry userinfo or a token, and a warning is not
+		// worth putting a credential in the log. The project id identifies the
+		// remote for anyone diagnosing this.
+		slog.Default().Warn("spawn: work item id is not resolvable against a tracker; session name and task prompt degrade",
+			"projectID", cfg.ProjectID, "issueID", cfg.IssueID)
 		return cfg
 	}
 	issue, err := s.tracker.Get(ctx, id)
 	if err != nil {
+		// Silence here is what makes a degraded name undiagnosable: the manager
+		// can report that the title was missing, but only this call knows why.
+		slog.Default().Warn("spawn: work item lookup failed; session name and task prompt degrade",
+			"projectID", cfg.ProjectID, "issueID", cfg.IssueID, "trackerID", id.Native, "error", err)
 		return cfg
 	}
-	if issueContext := formatIssueContext(issue); issueContext != "" {
-		cfg.IssueContext = issueContext
+	if cfg.IssueTitle == "" {
+		cfg.IssueTitle = strings.TrimSpace(issue.Title)
+	}
+	if cfg.IssueContext == "" {
+		if issueContext := formatIssueContext(issue); issueContext != "" {
+			cfg.IssueContext = issueContext
+		}
 	}
 	return cfg
 }

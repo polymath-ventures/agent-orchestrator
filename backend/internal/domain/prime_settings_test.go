@@ -68,3 +68,32 @@ func TestPrimeSettingsValidateRejectsBadValues(t *testing.T) {
 		})
 	}
 }
+
+// Prime's name is delivered into its harness like any other, so a NEW name must
+// not be one delivery would refuse — Prime would spawn with no name at all.
+func TestPrimeSettingsRejectAnUnsafeDisplayNameOnWrite(t *testing.T) {
+	s := DefaultPrimeSettings()
+	s.DisplayName = "x; touch /tmp/pwn"
+	if err := s.ValidateDisplayNameForWrite(); err == nil {
+		t.Fatal("write validation accepted a display name carrying shell syntax")
+	}
+	s.DisplayName = "AO Prime"
+	if err := s.ValidateDisplayNameForWrite(); err != nil {
+		t.Fatalf("write validation rejected a normal name: %v", err)
+	}
+}
+
+// Validate also runs when stored settings are READ, so it must stay tolerant of
+// a name that was legal when it was saved. Rejecting one there would fail every
+// subsequent read and take the Prime supervisor down with it — the settings
+// would be unreachable, so the operator could not even correct the name.
+func TestPrimeSettingsValidateStaysReadableForLegacyNames(t *testing.T) {
+	s := DefaultPrimeSettings()
+	s.DisplayName = "Nick's Prime"
+	if err := s.Validate(); err != nil {
+		t.Fatalf("Validate rejected a name that predates the character rule: %v", err)
+	}
+	if err := s.ValidateDisplayNameForWrite(); err == nil {
+		t.Fatal("write validation accepted the same name; the split has collapsed")
+	}
+}

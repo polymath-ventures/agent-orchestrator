@@ -194,8 +194,9 @@ type SpawnSessionRequest struct {
 	Branch string `json:"branch,omitempty"`
 	Prompt string `json:"prompt,omitempty" maxLength:"4096"`
 	// DisplayName is the sidebar label for the session, capped at 20 characters.
-	// `ao spawn --name` always sets it; other clients (e.g. the desktop new-task
-	// dialog) may omit it and fall back to the session id in the read model.
+	// Omitting it is the normal case and the signal that asks the daemon to
+	// compute the name from the session's role and work item; supplying one is a
+	// deliberate override for a session with no work item to name it after.
 	DisplayName string `json:"displayName,omitempty" maxLength:"20"`
 	// Force overrides the pause guard: a forced worker spawn proceeds even while
 	// the project or fleet is paused. It is the operator's manual escape hatch.
@@ -272,7 +273,7 @@ type SessionPreviewResponse struct {
 
 // RenameSessionRequest is the body of PATCH /api/v1/sessions/{sessionId}.
 type RenameSessionRequest struct {
-	DisplayName string `json:"displayName" minLength:"1"`
+	DisplayName string `json:"displayName" minLength:"1" maxLength:"20"`
 }
 
 // SetSessionPreviewRequest is the body of POST /api/v1/sessions/{sessionId}/preview.

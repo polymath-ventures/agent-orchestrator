@@ -3,6 +3,7 @@ package ports
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -180,6 +181,57 @@ type PromptReadinessHints struct {
 	Lines        int
 }
 
+// AgentNamer is the OPTIONAL capability an Agent adapter implements when its
+// harness can be told what to call the session it is running, so the harness's
+// own session list — and the desktop/mobile apps that render it — shows the same
+// name AO shows.
+//
+// Callers dispatch on this capability, never on a harness name: a switch on
+// harness identity is a list a future adapter is silently missing from, whereas
+// a capability check makes the adapter's own declaration the only thing that
+// matters. An adapter that does not implement AgentNamer is left alone; AO keeps
+// its own display name rather than typing blindly into an unknown TUI.
+type AgentNamer interface {
+	// InHarnessRenameCommand returns the line to type into a running harness to
+	// rename its session. This is the universal form — it is the only path that
+	// works on an already-running session, so every AgentNamer implements it.
+	// ok=false means the harness cannot be renamed while running.
+	InHarnessRenameCommand(name string) (cmd string, ok bool)
+
+	// LaunchNameArgs returns the argv fragment that names the session at process
+	// start, or nil when the harness has no launch-time naming flag. Naming in
+	// argv is atomic with process start, so where it exists the spawn-time race
+	// against a TUI that has not drawn yet is absent rather than mitigated. The
+	// adapter splices these into its own GetLaunchCommand output — only the
+	// adapter knows where the fragment is safe to place — so callers use this
+	// solely to learn whether the launch already carried the name.
+	LaunchNameArgs(name string) []string
+}
+
+// DeliverableName reports whether a name can be handed to a harness verbatim.
+//
+// It rejects rather than repairs: a delivered name that differs from the name AO
+// persists is the divergence this whole capability exists to remove. The
+// accepted character set is domain.NameRuneAllowed — no control characters (a
+// newline would submit a rename mid-name and strand the remainder as a prompt)
+// and none of the shell grammar that starts, substitutes, quotes, escapes, or
+// redirects a command, so a naming write that lands somewhere other than the
+// intended TUI cannot cause one to run. Daemon-
+// computed names are already within that set by construction; this is the gate
+// for an operator-supplied override.
+func DeliverableName(name string) (string, bool) {
+	trimmed := strings.TrimSpace(name)
+	if trimmed == "" {
+		return "", false
+	}
+	for _, r := range trimmed {
+		if !domain.NameRuneAllowed(r) {
+			return "", false
+		}
+	}
+	return trimmed, true
+}
+
 // AgentResolver maps a session's harness onto the Agent adapter that drives it,
 // so the Session Manager can spawn (and restore) a different agent per session
 // without depending on the concrete adapter registry. ok=false means no adapter
@@ -282,8 +334,12 @@ const (
 
 // LaunchConfig carries inputs needed to build a new agent launch command.
 type LaunchConfig struct {
-	Config      AgentConfig
-	DataDir     string
+	Config  AgentConfig
+	DataDir string
+	// DisplayName is the daemon-computed session name. Adapters that implement
+	// AgentNamer with a launch-time form splice it into their own argv; the rest
+	// ignore it and are named (or not) after start.
+	DisplayName string
 	IssueID     string
 	Kind        domain.SessionKind
 	Permissions PermissionMode
