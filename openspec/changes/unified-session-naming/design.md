@@ -117,15 +117,24 @@ check makes the new adapter's own declaration the only thing that matters. The
 codex adapter serves both `codex` and `codex-fugu` by parameterization, so one
 implementation covers both without either being enumerated.
 
-### One delivery function for spawn, rebind, and rename
+### One delivery function for spawn and rename
 
-A single internal name-delivery routine is called by all three.
+A single internal name-delivery routine is called by both, and it reads the name
+off the session record rather than accepting it as an argument.
 
 _Why:_ the failure this prevents is partial coverage — sidebar rename updating the
-database while the harness keeps the old name, which is the current behavior.
-Three call sites into one function means a surface cannot be forgotten, and the
-guard behavior (skip terminated sessions, skip sessions with no runtime) is
-written once.
+database while the harness keeps the old name, which is the current behavior. Two
+call sites into one function means a surface cannot be forgotten, and the guard
+behavior (skip terminated sessions, skip sessions with no runtime) is written
+once. Reading the name from the record is what makes "the delivered name is
+byte-identical to the displayed name" true by construction rather than by
+convention: there is only one string, so there is nothing to keep in sync.
+
+_Rebind is deliberately absent._ The prior fork had a work-item rebind path and
+this design was drafted against it; this fork has none — no API route, no CLI
+command, no store mutation changes a session's work item after spawn. The
+delivery routine is the seam a future rebind would use, so nothing is lost by
+not specifying naming for a capability that does not exist.
 
 ### Naming failure is forgiven only against a proven-live runtime
 

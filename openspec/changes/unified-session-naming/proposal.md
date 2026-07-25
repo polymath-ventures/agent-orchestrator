@@ -16,14 +16,13 @@ the name is the only identifying cue.
 ## What Changes
 
 - The daemon becomes the **single owner** of a session's display name, computing
-  it once at the moment the session's identity is set — spawn, work-item rebind,
-  or explicit rename — instead of accepting a name invented by the caller.
+  it once at the moment the session's identity is set — spawn or explicit
+  rename — instead of accepting a name invented by the caller.
 - A session's name is delivered into the **harness itself**, so the harness's own
   session list (and therefore the Claude / Codex desktop and mobile apps) shows
   the same string AO shows. Today no code path does this at all.
-- Renaming a session from the AO sidebar, or rebinding a worker to a different
-  work item, updates the harness name on the **live** session rather than only
-  the database row.
+- Renaming a session from the AO sidebar updates the harness name on the **live**
+  session rather than only the database row.
 - A new agent-adapter capability expresses naming in two forms: a universal
   in-harness rename command, and an optional launch-time argument used to name a
   session atomically at start-up so nothing races the harness's own naming.
@@ -52,15 +51,25 @@ configuration — this change consumes that value rather than redefining it — 
 parameterization, so it inherits the new naming behavior without a requirement
 change.
 
+## Out of scope
+
+Rebinding a live worker to a different work item. The prior fork had that
+capability and the naming design was drafted against it, but this fork has no
+path that changes a session's work item after spawn — no API route, no CLI
+command, no store mutation. Specifying naming behavior for it would describe a
+subject that does not exist, and building the rebind capability itself is a
+separate feature. The single delivery path is the seam that would carry it: a
+future rebind recomputes the name and calls the same routine spawn and rename
+already share.
+
 ## Impact
 
 - **Agent adapter port** — a new optional naming capability, implemented by the
   claude-code adapter and by the Codex adapter (which serves both `codex` and
   `codex-fugu`).
 - **Session manager** — name computation for worker and Orc roles, and a single
-  name-delivery path shared by spawn, rebind, and rename.
-- **Session service and HTTP API** — the rename path gains harness delivery; the
-  work-item rebind path recomputes the name.
+  name-delivery path shared by spawn and rename.
+- **Session service and HTTP API** — the rename path gains harness delivery.
 - **CLI** — `ao spawn --name` becomes optional; `ao session rename` keeps the
   same display-name cap as the API.
 - **Frontend** — no new UI, but the existing sidebar rename now has a visible

@@ -122,15 +122,18 @@ the system SHALL NOT attempt to name it by writing blindly into its input.
 - **THEN** the name delivered to the harness is byte-identical to the display
   name AO persists
 
-### Requirement: Renames and rebinds reach the running session
+### Requirement: A rename reaches the running session
 
 A rename of a live session SHALL update both the persisted display name and the
-name inside the running harness. Rebinding a live worker to a different work item
-SHALL recompute the display name from the new work item and SHALL deliver the
-recomputed name to the harness through the same path a rename uses.
+name inside the running harness, through the same delivery path spawn uses, so
+that no surface can be updated without the others.
 
-A rename or rebind targeting a session that is terminated, or that has no running
-runtime, SHALL update persisted state without attempting harness delivery.
+A rename targeting a session that is terminated, or that has no running runtime,
+SHALL update persisted state without attempting harness delivery.
+
+Harness delivery SHALL NOT decide whether the rename succeeded: the persisted
+name is the rename's outcome, and a failed delivery SHALL be recorded rather
+than reported as a failed rename.
 
 #### Scenario: Sidebar rename updates the harness
 
@@ -138,17 +141,17 @@ runtime, SHALL update persisted state without attempting harness delivery.
 - **THEN** the persisted display name is updated
 - **AND** the new name is delivered to the running harness
 
-#### Scenario: Rebinding a worker recomputes and delivers
-
-- **WHEN** a live worker is rebound to a different work item
-- **THEN** the display name is recomputed from the new work item
-- **AND** the recomputed name is delivered to the running harness
-
 #### Scenario: Renaming a terminated session skips delivery
 
 - **WHEN** a rename targets a terminated session
 - **THEN** the persisted display name is updated
 - **AND** no naming input is written to any runtime
+
+#### Scenario: A failed harness write still renames the session
+
+- **WHEN** a rename persists but the harness write fails
+- **THEN** the rename succeeds
+- **AND** the failure is recorded
 
 ### Requirement: The startup prompt slot always belongs to the prompt
 
