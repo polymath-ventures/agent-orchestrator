@@ -40,6 +40,26 @@ type PrimeSettings struct {
 // unattended, so the useful default is the unattended one. An operator who wants
 // prompting back sets permissions explicitly to "default"; WithDefaults only
 // fills the field when it is empty.
+//
+// On already-deployed daemons this default changes behavior, and that is the
+// point rather than a hazard, because for Prime an EMPTY permission mode means
+// "never configured" and nothing else:
+//
+//   - There is no CLI flag and no UI control for the field (a control is GH
+//     #163), so the only way to store a value is a raw PUT /prime/settings.
+//   - An explicitly stored value — including "default" — is preserved
+//     untouched, forever, by the emptiness test in WithDefaults below.
+//   - The behavior an empty value produced is the stall described above, so
+//     there is no working prior configuration to escalate away from.
+//
+// Migrating stored empty rows to a persisted "default" would therefore freeze
+// the reported bug in place for exactly the operators who hit it. What the
+// default must not be is invisible, so the spawn path logs once, at INFO, when
+// a Prime is launched with a permission mode that came from here rather than
+// from stored settings.
+//
+// DefaultPrimeSettings is also the shape a fresh daemon persists, so the
+// default is durable for new installs and applied on read for old ones.
 func DefaultPrimeSettings() PrimeSettings {
 	return PrimeSettings{
 		DisplayName:  defaultPrimeDisplayName,
@@ -48,7 +68,16 @@ func DefaultPrimeSettings() PrimeSettings {
 	}
 }
 
-// WithDefaults overlays daemon defaults onto unset Prime settings.
+// WithDefaults overlays daemon defaults onto UNSET Prime settings, and only
+// onto unset ones: every field is filled from the default exactly when it is
+// empty, so a stored value always wins.
+//
+// For AgentConfig.Permissions this emptiness test is the whole contract that
+// makes the unattended default safe (see DefaultPrimeSettings). An operator who
+// wants prompting stores "default" and gets prompting on every subsequent read;
+// only "never configured" resolves to the daemon default. This runs on every
+// settings READ, so it never logs — the spawn path reports the applied default
+// once, where it actually takes effect.
 func (s PrimeSettings) WithDefaults() PrimeSettings {
 	def := DefaultPrimeSettings()
 	if s.DisplayName == "" {

@@ -50,11 +50,25 @@ func TestPrimeSettingsDefaultToUnattendedPermissions(t *testing.T) {
 // The escape hatch: an operator who wants Prime to prompt sets the mode
 // explicitly. WithDefaults fills the field only when it is empty, so an explicit
 // "default" survives and is not overwritten by the unattended default above.
+//
+// This is what makes an empty stored value mean "never configured" and nothing
+// else, and therefore what makes the unattended default safe to apply on read
+// instead of migrating stored rows. WithDefaults runs on EVERY settings read, so
+// the property is asserted under repetition too: a mode that survived once but
+// decayed on a later read would escalate the operator's choice away silently,
+// exactly what the on-read default is claimed not to do.
 func TestPrimeSettingsWithDefaultsPreservesExplicitPermissions(t *testing.T) {
 	for _, want := range []PermissionMode{PermissionModeDefault, PermissionModeAcceptEdits, PermissionModeAuto} {
 		got := (PrimeSettings{AgentConfig: AgentConfig{Permissions: want}}).WithDefaults()
 		if got.AgentConfig.Permissions != want {
 			t.Fatalf("explicit permissions %q overwritten with %q", want, got.AgentConfig.Permissions)
+		}
+		for read := 2; read <= 5; read++ {
+			got = got.WithDefaults()
+			if got.AgentConfig.Permissions != want {
+				t.Fatalf("explicit permissions %q became %q by settings read %d; the operator's mode must survive every read",
+					want, got.AgentConfig.Permissions, read)
+			}
 		}
 	}
 }

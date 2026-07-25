@@ -378,7 +378,22 @@ func (s *Service) ReconcileRole(ctx context.Context, target domain.RoleTarget, o
 	// "the running role session survives a replacement that cannot be created"
 	// true by construction rather than by hoping Spawn succeeds. It is the same
 	// code Spawn runs, so the two cannot disagree.
+	//
+	// Preflight answers about the world BEFORE the retirement below, and Spawn
+	// re-resolves everything against the world after it. That check-then-act
+	// window is deliberate: the plan Preflight resolves carries the project
+	// record, the project kind, and the pause verdict, all of which the teardown
+	// can change, so handing that stale plan to Spawn would skip re-checking
+	// exactly the state the teardown moved. Recomputation is correct by
+	// freshness; what Preflight buys is refusing the DETERMINISTIC failures
+	// before anything is destroyed.
+	preflightStart := s.now()
 	if err := s.manager.Preflight(ctx, plan.spawn); err != nil {
+		// A refusal here is a spawn that did not happen, exactly as a refusal
+		// inside Spawn is — the operator's role session is missing or unreplaced
+		// either way, so it must be equally observable. Without this, moving a
+		// check earlier silently deleted its telemetry.
+		s.emitSpawnFailed(plan.spawn, err, s.now().Sub(preflightStart).Milliseconds())
 		return domain.Session{}, toAPIError(err)
 	}
 

@@ -92,6 +92,11 @@ var (
 	// ErrModelUnreachable means a fresh cached verdict definitively rejected the
 	// resolved model or effort. Spawn returns it before creating durable state.
 	ErrModelUnreachable = errors.New("session: resolved model selection is unreachable")
+	// ErrPreflightWorkerUnsupported means Preflight was asked about a worker
+	// spawn. Resolving a worker's mix bucket debits candidate health, so the
+	// speculative entry point refuses the kind rather than mutating fleet state
+	// for a spawn that may never happen.
+	ErrPreflightWorkerUnsupported = errors.New("session: preflight does not support worker spawns")
 )
 
 // SpawnModelSelectionValidator supplies cache-only model and effort verdicts
@@ -386,6 +391,18 @@ type spawnPlan struct {
 	requestedModel   string
 }
 
+// spawnPass distinguishes the speculative Preflight pass over the spawn
+// preconditions from the real Spawn pass. Both run the identical checklist and
+// reach the identical verdict; the pass only gates the once-per-spawn
+// operator-facing logs, which would otherwise be emitted twice for a single
+// role reconcile (which preflights, then spawns).
+type spawnPass bool
+
+const (
+	realSpawn        spawnPass = false
+	speculativeSpawn spawnPass = true
+)
+
 // preflightSpawn runs every spawn precondition that can be decided before any
 // durable state exists, and resolves the values the rest of Spawn launches
 // with. It is the ONLY place those checks live: Spawn calls it, and Preflight
@@ -400,14 +417,15 @@ type spawnPlan struct {
 // candidate-health skip debit inside selectMixBucket — are both reached only
 // under `cfg.Kind == domain.KindWorker`. The admission lock is therefore left
 // to Spawn (see below), and mix selection simply does not run for a role
-// preflight. Preflight is not safe to call speculatively for a worker.
+// preflight. A worker preflight is NOT side-effect free for that reason, which
+// is why exported Preflight refuses the worker kind outright.
 //
 // Residual gap: preconditions that only become reachable after the seed row
 // exists are still not covered — ErrProjectNotResolvable, the
 // ports.ErrWorkspaceBranch* sentinels raised inside createSessionWorkspace, and
 // ports.ErrAgentBinaryNotFound from the adapter's launch command. A caller that
 // retires before spawning can still be caught by those.
-func (m *Manager) preflightSpawn(ctx context.Context, cfg ports.SpawnConfig) (spawnPlan, error) {
+func (m *Manager) preflightSpawn(ctx context.Context, cfg ports.SpawnConfig, pass spawnPass) (spawnPlan, error) {
 	projectlessPrime := cfg.Kind == domain.KindPrime && cfg.ProjectID == ""
 	project := domain.ProjectRecord{}
 	var err error
@@ -474,9 +492,23 @@ func (m *Manager) preflightSpawn(ctx context.Context, cfg ports.SpawnConfig) (sp
 		if err != nil {
 			return spawnPlan{}, fmt.Errorf("spawn: prime settings: %w", err)
 		}
+		storedPermissions := settings.AgentConfig.Permissions
 		agentConfig = settings.WithDefaults().AgentConfig
 		if agentConfig.Effort == "" {
 			agentConfig.Effort = target.effort
+		}
+		// Prime is projectless, so its permission mode comes from stored
+		// settings or from nowhere. An empty stored value means the daemon
+		// default is what the harness is about to be launched with — say so, on
+		// the pass that actually launches, so the mode a Prime is running under
+		// is visible in the log without an operator inferring it from source.
+		// Empty-vs-set is exactly the distinction that matters and is read here
+		// before WithDefaults fills it in, so this never mislabels an explicit
+		// choice as the default.
+		if pass == realSpawn && storedPermissions == "" {
+			m.logger.Info("prime: no permission mode stored in Prime settings; launching with the daemon's unattended default",
+				"permissions", agentConfig.Permissions,
+				"override", "PUT /prime/settings with agentConfig.permissions (\"default\" restores prompting)")
 		}
 	} else {
 		agentConfig, err = agentconfig.Effective(cfg.Kind, project.Config, "", cfg.Harness)
@@ -487,7 +519,7 @@ func (m *Manager) preflightSpawn(ctx context.Context, cfg ports.SpawnConfig) (sp
 	if target.mixSelected {
 		agentConfig.Effort = target.effort
 	}
-	if err := m.validateSpawnSelection(ctx, cfg.Harness, cfg.Model, agentConfig.Effort, spawnModelSource(explicitSpawnModel, target.mixSelected)); err != nil {
+	if err := m.validateSpawnSelection(ctx, cfg.Harness, cfg.Model, agentConfig.Effort, spawnModelSource(explicitSpawnModel, target.mixSelected), pass); err != nil {
 		return spawnPlan{}, fmt.Errorf("spawn: %w", err)
 	}
 
@@ -526,10 +558,19 @@ func (m *Manager) preflightSpawn(ctx context.Context, cfg ports.SpawnConfig) (sp
 // This exists for callers that must tear something down to make room for the
 // spawn — role reconciliation retiring the live orchestrator or Prime — and so
 // must learn about a deterministic refusal before, not after, the teardown.
-// Per preflightSpawn's contract, do not call it for cfg.Kind == KindWorker:
-// resolving a worker's mix bucket debits the candidate-health skip ledger.
+//
+// Workers are refused with ErrPreflightWorkerUnsupported: resolving a worker's
+// mix bucket debits the candidate-health skip ledger, so a speculative worker
+// preflight would create nothing but still change fleet state. The refusal is
+// here rather than in a doc note because "creates nothing" is the whole value
+// of this method, and a contract only callers can keep is one a caller will
+// eventually break. Workers have no use for it anyway — nothing is retired to
+// make room for a worker.
 func (m *Manager) Preflight(ctx context.Context, cfg ports.SpawnConfig) error {
-	_, err := m.preflightSpawn(ctx, cfg)
+	if cfg.Kind == domain.KindWorker {
+		return fmt.Errorf("preflight: %w", ErrPreflightWorkerUnsupported)
+	}
+	_, err := m.preflightSpawn(ctx, cfg, speculativeSpawn)
 	return err
 }
 
@@ -553,7 +594,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		}()
 	}
 
-	plan, err := m.preflightSpawn(ctx, cfg)
+	plan, err := m.preflightSpawn(ctx, cfg, realSpawn)
 	if err != nil {
 		return domain.SessionRecord{}, 0, 0, err
 	}
@@ -1106,13 +1147,19 @@ func effectiveWorkerMix(cfg domain.ProjectConfig) (domain.WorkerMix, error) {
 	return mix, nil
 }
 
-func (m *Manager) validateSpawnSelection(ctx context.Context, harness domain.AgentHarness, model string, effort domain.Effort, source string) error {
+// validateSpawnSelection gates the resolved native selection. The verdict is
+// identical on both passes; only the "unavailable" warning is suppressed on the
+// speculative one, so a role reconcile — which preflights and then spawns —
+// logs it once, from the pass that actually launches.
+func (m *Manager) validateSpawnSelection(ctx context.Context, harness domain.AgentHarness, model string, effort domain.Effort, source string, pass spawnPass) error {
 	if m.modelValidator == nil {
 		return nil
 	}
 	result, err := m.modelValidator.ValidateSpawnSelection(ctx, harness, model, effort)
 	if err != nil {
-		m.warnSpawnSelectionUnavailable(harness, model, effort, source, err.Error())
+		if pass == realSpawn {
+			m.warnSpawnSelectionUnavailable(harness, model, effort, source, err.Error())
+		}
 		return nil
 	}
 	if result.Status == ports.ModelValidationUnreachable {
@@ -1127,7 +1174,9 @@ func (m *Manager) validateSpawnSelection(ctx context.Context, harness domain.Age
 		if reason == "" {
 			reason = "no fresh cached model selection verdict"
 		}
-		m.warnSpawnSelectionUnavailable(harness, model, effort, source, reason)
+		if pass == realSpawn {
+			m.warnSpawnSelectionUnavailable(harness, model, effort, source, reason)
+		}
 	}
 	return nil
 }
@@ -1523,6 +1572,14 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 	// worktree. Its own runtime is still destroyed and the row still terminates;
 	// only the shared workspace is spared.
 	killWorkspaceOwnedElsewhere := false
+	// The live set the child-worktree reclaim below resolves coverage against.
+	// Captured here, where ownership is decided, but *used* only after the
+	// runtime teardown has succeeded: reclaiming a child while the killed
+	// session's agent process is still running would pull the directory out from
+	// under it, and a failed runtime destroy aborts Kill with the session still
+	// live — with the reclaim already done, that would have removed the workspace
+	// of a session that stays up.
+	var liveAtKill []domain.SessionRecord
 	if ws.Path != "" || rec.Metadata.Branch != "" {
 		live, liveErr := m.liveSessions(ctx)
 		if liveErr != nil {
@@ -1532,12 +1589,7 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 			m.logger.Info("kill: workspace still owned by a live session; preserving",
 				"sessionID", rec.ID, "path", ws.Path, "owner", owner)
 			killWorkspaceOwnedElsewhere = true
-			// The root is owned, but a multi-repo CHILD the live owner does not
-			// occupy is held by nobody. Reclaim it here, while its row still
-			// names it: every marker is cleared below, and nothing else in the
-			// system records a per-repo path, so a child left behind now is
-			// orphaned for good (#144).
-			m.destroyUncoveredChildWorktrees(ctx, rec, live)
+			liveAtKill = live
 		}
 	}
 
@@ -1567,6 +1619,16 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 		if err := m.runtime.Destroy(ctx, handle); err != nil {
 			return false, fmt.Errorf("kill %s: runtime: %w", id, err)
 		}
+	}
+	if killWorkspaceOwnedElsewhere {
+		// The root is owned, but a multi-repo CHILD the live owner does not
+		// occupy is held by nobody. Reclaim it here, while its row still names
+		// it: every marker is cleared below, and nothing else in the system
+		// records a per-repo path, so a child left behind now is orphaned for
+		// good (#144). Ordered after the runtime destroy above so the agent
+		// whose worktree this is has already been torn down — a runtime destroy
+		// that fails returns before this point and reclaims nothing.
+		m.destroyUncoveredChildWorktrees(ctx, rec, liveAtKill)
 	}
 	freed := false
 	if workspaceProject {

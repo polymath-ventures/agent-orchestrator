@@ -263,3 +263,40 @@ func TestRetireActivePrimeRetiresEveryActivePrime(t *testing.T) {
 		t.Fatalf("Prime %q still active after the disable pass returned", active.ID)
 	}
 }
+
+// Moving a spawn precondition earlier must not delete its telemetry.
+//
+// A role replacement refused at preflight is a spawn that did not happen, the
+// same as one refused inside Spawn: the operator's Prime or orchestrator is
+// missing or unreplaced either way. Before this, the refusal that the preflight
+// gate now catches FIRST stopped emitting ao.session.spawn_failed entirely — the
+// fix for one defect silently blinded the alerting for it.
+func TestReconcileRolePreflightRejectionEmitsSpawnFailed(t *testing.T) {
+	st := newFakeStore()
+	st.prime = domain.PrimeSettings{Enabled: true, Harness: domain.HarnessClaudeCode}.WithDefaults()
+	st.sessions["prime-1"] = domain.SessionRecord{ID: "prime-1", Kind: domain.KindPrime, Harness: domain.HarnessClaudeCode}
+
+	sink := &fakeTelemetrySink{}
+	fc := &fakeCommander{spawnErr: fmt.Errorf("spawn: %w: tmux is required for terminal sessions", ports.ErrRuntimePrerequisite)}
+	svc := NewWithDeps(Deps{Manager: fc, Store: st, Telemetry: sink})
+
+	if _, err := svc.ReconcileRole(context.Background(), domain.PrimeTarget(), ReconcileOptions{Clean: true}); err == nil {
+		t.Fatal("ReconcileRole() = nil error, want the preflight refusal surfaced")
+	}
+	if len(fc.retired) != 0 {
+		t.Fatalf("retired = %v: setup must exercise the PREFLIGHT rejection, before any teardown", fc.retired)
+	}
+	if len(sink.events) != 1 {
+		t.Fatalf("telemetry events = %#v, want exactly one spawn_failed for the refused replacement", sink.events)
+	}
+	ev := sink.events[0]
+	if ev.Name != "ao.session.spawn_failed" || ev.Source != "session_service" || ev.Level != ports.TelemetryLevelError {
+		t.Fatalf("event = %+v, want an error-level ao.session.spawn_failed", ev)
+	}
+	if got := ev.Payload["kind"]; got != string(domain.KindPrime) {
+		t.Fatalf("event payload kind = %#v, want prime", got)
+	}
+	if got := ev.Payload["fingerprint"]; got == "" {
+		t.Fatalf("event payload fingerprint = %#v, want non-empty so the refusal groups with its Spawn-side twin", got)
+	}
+}

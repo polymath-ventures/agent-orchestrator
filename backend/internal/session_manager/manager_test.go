@@ -36,6 +36,9 @@ type fakeStore struct {
 	upsertWTErr    error
 	// worktrees maps session ID to its saved worktree rows (shutdown-saved marker).
 	worktrees map[domain.SessionID][]domain.SessionWorktreeRecord
+	// listWTErr maps a session ID to an error ListSessionWorktrees returns for
+	// it, so a test can make coverage for ONE session unresolvable.
+	listWTErr map[domain.SessionID]error
 	// sharedLog, when non-nil, receives an ordered call entry for each
 	// UpsertSessionWorktree invocation so ordering tests can compare across fakes.
 	sharedLog    *[]string
@@ -154,6 +157,9 @@ func (f *fakeStore) UpsertSessionWorktree(_ context.Context, row domain.SessionW
 	return nil
 }
 func (f *fakeStore) ListSessionWorktrees(_ context.Context, id domain.SessionID) ([]domain.SessionWorktreeRecord, error) {
+	if err := f.listWTErr[id]; err != nil {
+		return nil, err
+	}
 	return f.worktrees[id], nil
 }
 func (f *fakeStore) DeleteSessionWorktrees(_ context.Context, id domain.SessionID) error {
@@ -214,6 +220,10 @@ type fakeRuntime struct {
 	processAliveErr      error
 	processCommands      []string
 	destroyedIDs         []string
+	// sharedLog, when non-nil, receives an entry per Destroy so ordering tests
+	// can compare runtime teardown against workspace and store calls in one
+	// sequence.
+	sharedLog *[]string
 }
 
 func (r *fakeRuntime) Create(_ context.Context, cfg ports.RuntimeConfig) (ports.RuntimeHandle, error) {
@@ -227,6 +237,9 @@ func (r *fakeRuntime) Create(_ context.Context, cfg ports.RuntimeConfig) (ports.
 func (r *fakeRuntime) Destroy(_ context.Context, handle ports.RuntimeHandle) error {
 	r.destroyed++
 	r.destroyedIDs = append(r.destroyedIDs, handle.ID)
+	if r.sharedLog != nil {
+		*r.sharedLog = append(*r.sharedLog, "RuntimeDestroy:"+handle.ID)
+	}
 	return r.destroyErr
 }
 func (r *fakeRuntime) IsAlive(_ context.Context, handle ports.RuntimeHandle) (bool, error) {

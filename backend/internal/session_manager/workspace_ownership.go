@@ -77,9 +77,9 @@ func workspaceOwnedByLiveSession(rec domain.SessionRecord, live []domain.Session
 // directory outlived it, and an uncovered child is by definition held by
 // nobody, so there is nothing to wait for.
 //
-// Every step is best effort and logged: this runs before the runtime is
-// destroyed and the row terminated, so no failure here may abort Kill and leave
-// the old agent process alive.
+// Every step is best effort and logged: this runs after the runtime is
+// destroyed but before the row is terminated and its markers cleared, so no
+// failure here may abort Kill and leave the row un-terminated.
 func (m *Manager) destroyUncoveredChildWorktrees(ctx context.Context, rec domain.SessionRecord, live []domain.SessionRecord) {
 	rows, err := m.store.ListSessionWorktrees(ctx, rec.ID)
 	if err != nil {
@@ -104,7 +104,20 @@ func (m *Manager) destroyUncoveredChildWorktrees(ctx context.Context, rec domain
 			continue
 		}
 		if occupied == nil {
-			occupied = m.liveWorktreePaths(ctx, live, rec.ID)
+			paths, complete := m.liveWorktreePaths(ctx, live, rec.ID)
+			if !complete {
+				// Coverage is what separates "held by nobody" from "held by a
+				// live session". Without it in full there is no uncovered child,
+				// only unknown ones, and destroying on a guess deletes a
+				// directory a live session is working in. Nothing is reclaimed
+				// this pass; the rows are cleared regardless, so what survives is
+				// a directory an operator can still see and remove — strictly
+				// better than a worktree yanked out from under a running agent.
+				m.logger.Warn("kill: live worktree coverage is incomplete; no child worktrees reclaimed (a child may be held by a live session)",
+					"sessionID", rec.ID, "project", rec.ProjectID)
+				return
+			}
+			occupied = paths
 		}
 		if owner, covered := occupied[path]; covered {
 			m.logger.Debug("kill: child worktree occupied by a live session; preserving",
@@ -185,10 +198,14 @@ func (m *Manager) workspaceRepoPaths(ctx context.Context, projectID domain.Proje
 // session_worktrees rows. The session being torn down is excluded — it is still
 // live in the store at that point, and a row cannot cover itself.
 //
-// A live session whose rows fail to load contributes only its root path.
-// Under-reporting coverage is the safe direction here: it leaves a directory
-// alone, whereas over-reporting would destroy a worktree somebody is using.
-func (m *Manager) liveWorktreePaths(ctx context.Context, live []domain.SessionRecord, exclude domain.SessionID) map[string]domain.SessionID {
+// The second return reports whether coverage is COMPLETE. It is false as soon
+// as one live session's rows fail to load, and the caller must then destroy
+// nothing. Coverage is consumed as "this path is held by nobody, so reclaim
+// it", so a partial map under-reports occupancy and turns a transient DB error
+// into deleting a worktree a live session is working in. Failing closed costs a
+// directory left on disk, which an operator can still see and remove; failing
+// open costs somebody's uncommitted work.
+func (m *Manager) liveWorktreePaths(ctx context.Context, live []domain.SessionRecord, exclude domain.SessionID) (map[string]domain.SessionID, bool) {
 	occupied := make(map[string]domain.SessionID)
 	for _, other := range live {
 		if other.ID == exclude || other.IsTerminated {
@@ -199,9 +216,9 @@ func (m *Manager) liveWorktreePaths(ctx context.Context, live []domain.SessionRe
 		}
 		rows, err := m.store.ListSessionWorktrees(ctx, other.ID)
 		if err != nil {
-			m.logger.Warn("worktree coverage: listing a live session's worktrees failed; counting its root only",
+			m.logger.Warn("worktree coverage: listing a live session's worktrees failed; coverage is indeterminate",
 				"sessionID", other.ID, "error", err)
-			continue
+			return occupied, false
 		}
 		for _, row := range rows {
 			if path := normalizeWorkspacePath(row.WorktreePath); path != "" {
@@ -209,7 +226,7 @@ func (m *Manager) liveWorktreePaths(ctx context.Context, live []domain.SessionRe
 			}
 		}
 	}
-	return occupied
+	return occupied, true
 }
 
 // normalizeWorkspacePath canonicalizes a recorded workspace path for comparison.
