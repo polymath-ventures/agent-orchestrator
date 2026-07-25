@@ -94,15 +94,19 @@ func (r *doctorRequestRecorder) assertReadOnly(t *testing.T) {
 	}
 }
 
-// doctorProc is one process on a pane's tty, as `ps -o pid=,ppid=,etimes=,comm=`
+// doctorProc is one process on a pane's tty, as `ps -o pid=,ppid=,etime=,comm=`
 // reports it. ppid is what makes a pane's real foreground process findable:
 // tmux.buildLaunchCommand wraps every pane in `sh -c '... <agent>; exec $SHELL
 // -i'`, so the agent and anything it spawns hang off the pane's own pid.
+//
+// etime is a STRING in ps's own `[[dd-]hh:]mm:ss` format, not integer seconds:
+// the integer `etimes` field is a procps extension macOS ps does not have, and
+// AO supports tmux on Darwin too.
 type doctorProc struct {
-	pid    int
-	ppid   int
-	etimes int
-	comm   string
+	pid   int
+	ppid  int
+	etime string
+	comm  string
 }
 
 // doctorPane is one pane of the read-only `tmux list-panes` probe together with
@@ -125,11 +129,22 @@ func doctorPaneOutput(panes []doctorPane) string {
 	return b.String()
 }
 
-// doctorPSOutput mimics `ps -o pid=,ppid=,etimes=,comm= -t <csv>`: right-aligned
+// doctorPSOutput mimics `ps -o pid=,ppid=,etime=,comm= -t <csv>`: right-aligned
 // columns, no header, and only the ttys actually asked for. Honouring -t is what
 // lets a test prove foreign panes never even reach the probe.
+//
+// It also guards the probe's portability: `etimes` is a procps-only field, so
+// reintroducing it would silently disable this whole check on macOS, where AO
+// also supports tmux. Every pane test fails if it comes back.
 func doctorPSOutput(t *testing.T, panes []doctorPane, args []string) string {
 	t.Helper()
+	spec := strings.Join(args, " ")
+	if strings.Contains(spec, "etimes") {
+		t.Errorf("ps probe asked for `etimes`, a Linux/procps-only field macOS ps does not have: ps %s", spec)
+	}
+	if !strings.Contains(spec, "etime=") {
+		t.Errorf("ps probe does not request the portable `etime` field: ps %s", spec)
+	}
 	wanted := map[string]bool{}
 	for i, arg := range args {
 		if arg == "-t" && i+1 < len(args) {
@@ -139,7 +154,7 @@ func doctorPSOutput(t *testing.T, panes []doctorPane, args []string) string {
 		}
 	}
 	if len(wanted) == 0 {
-		t.Errorf("ps probe did not scope to any tty: ps %s", strings.Join(args, " "))
+		t.Errorf("ps probe did not scope to any tty: ps %s", spec)
 	}
 	var b strings.Builder
 	for _, p := range panes {
@@ -148,7 +163,7 @@ func doctorPSOutput(t *testing.T, panes []doctorPane, args []string) string {
 		}
 		delete(wanted, p.tty)
 		for _, proc := range p.procs {
-			fmt.Fprintf(&b, "%7d %7d %6d %s\n", proc.pid, proc.ppid, proc.etimes, proc.comm)
+			fmt.Fprintf(&b, "%7d %7d %12s %s\n", proc.pid, proc.ppid, proc.etime, proc.comm)
 		}
 	}
 	for tty := range wanted {
@@ -246,13 +261,13 @@ func TestDoctorAgentProcessesWarnsOnStaleGrandchildSquatter(t *testing.T) {
 	}
 	panes := []doctorPane{
 		{tmuxSession: "sess-stale", panePID: 5000, tty: "pts/1", procs: []doctorProc{
-			{pid: 5000, ppid: 900, etimes: 57600, comm: "sh"},      // pane shell, up 16h
-			{pid: 5100, ppid: 5000, etimes: 54000, comm: "claude"}, // the agent
-			{pid: 5200, ppid: 5100, etimes: 28800, comm: "curl"},   // the 8h squatter
+			{pid: 5000, ppid: 900, etime: "16:00:00", comm: "sh"},      // pane shell, up 16h
+			{pid: 5100, ppid: 5000, etime: "15:00:00", comm: "claude"}, // the agent
+			{pid: 5200, ppid: 5100, etime: "08:00:00", comm: "curl"},   // the 8h squatter
 		}},
 		{tmuxSession: "sess-ok", panePID: 6000, tty: "pts/2", procs: []doctorProc{
-			{pid: 6000, ppid: 900, etimes: 57600, comm: "sh"},
-			{pid: 6100, ppid: 6000, etimes: 54000, comm: "codex"},
+			{pid: 6000, ppid: 900, etime: "16:00:00", comm: "sh"},
+			{pid: 6100, ppid: 6000, etime: "15:00:00", comm: "codex"},
 		}},
 	}
 	srv := doctorDaemonServer(t, sessions)
@@ -306,7 +321,7 @@ func TestDoctorAgentProcessesPassesOnRestingPaneShell(t *testing.T) {
 	panes := []doctorPane{
 		{tmuxSession: "sess-idle", panePID: 3194093, tty: "pts/9", procs: []doctorProc{
 			// Up 16h, command `bash`, and crucially NO descendants.
-			{pid: 3194093, ppid: 900, etimes: 57600, comm: "bash"},
+			{pid: 3194093, ppid: 900, etime: "16:00:00", comm: "bash"},
 		}},
 	}
 	srv := doctorDaemonServer(t, sessions)
@@ -339,21 +354,25 @@ func TestDoctorAgentProcessesPassesOnAgentAndShortLivedHelpers(t *testing.T) {
 	}
 	panes := []doctorPane{
 		// The agent AO launched, as a direct child, running for 15h: expected.
+		// comm is the full executable path macOS ps reports (Linux reports the
+		// bare name), so this also pins the base-name normalization: without it
+		// the agent itself would be flagged as a squatter on every Mac.
 		{tmuxSession: "sess-claude", panePID: 1000, tty: "pts/3", procs: []doctorProc{
-			{pid: 1000, ppid: 900, etimes: 57600, comm: "sh"},
-			{pid: 1100, ppid: 1000, etimes: 54000, comm: "claude"},
+			{pid: 1000, ppid: 900, etime: "16:00:00", comm: "/bin/sh"},
+			{pid: 1100, ppid: 1000, etime: "15:00:00", comm: "/opt/homebrew/bin/claude"},
 		}},
-		// The agent plus a 2-minute helper grandchild, inside a 16h-old pane.
+		// The agent plus a 2-minute helper grandchild (mm:ss etime shape), inside
+		// a 16h-old pane: the false positive a pane-age threshold produces.
 		{tmuxSession: "sess-codex", panePID: 2000, tty: "pts/4", procs: []doctorProc{
-			{pid: 2000, ppid: 900, etimes: 57600, comm: "sh"},
-			{pid: 2100, ppid: 2000, etimes: 54000, comm: "codex"},
-			{pid: 2200, ppid: 2100, etimes: 120, comm: "rg"},
+			{pid: 2000, ppid: 900, etime: "16:00:00", comm: "sh"},
+			{pid: 2100, ppid: 2000, etime: "15:00:00", comm: "codex"},
+			{pid: 2200, ppid: 2100, etime: "02:00", comm: "rg"},
 		}},
 		// A tmux session AO knows nothing about: out of population entirely. Its
 		// tty must never reach the ps probe (doctorPSOutput asserts that).
 		{tmuxSession: "someones-shell", panePID: 4000, tty: "pts/5", procs: []doctorProc{
-			{pid: 4000, ppid: 900, etimes: 999999, comm: "bash"},
-			{pid: 4100, ppid: 4000, etimes: 999999, comm: "vim"},
+			{pid: 4000, ppid: 900, etime: "11-13:46:39", comm: "bash"},
+			{pid: 4100, ppid: 4000, etime: "11-13:46:39", comm: "vim"},
 		}},
 	}
 	srv := doctorDaemonServer(t, sessions)
@@ -370,6 +389,185 @@ func TestDoctorAgentProcessesPassesOnAgentAndShortLivedHelpers(t *testing.T) {
 	}
 	rec.assertNoSupervisorSocketProbe(t)
 	httpRec.assertReadOnly(t)
+}
+
+// TestDoctorAgentProcessesWarnsOnMultiDaySquatter exercises the third etime
+// shape, `dd-hh:mm:ss`, driving the staleness threshold. A squatter that has
+// outlived a whole weekend is the strongest form of the reported bug.
+func TestDoctorAgentProcessesWarnsOnMultiDaySquatter(t *testing.T) {
+	cfg := setConfigEnv(t)
+	sessions := []sessionDTO{
+		{ID: "sess-weekend", ProjectID: "demo", Kind: "worker", Harness: "codex", Status: "running"},
+	}
+	panes := []doctorPane{
+		{tmuxSession: "sess-weekend", panePID: 7000, tty: "pts/6", procs: []doctorProc{
+			{pid: 7000, ppid: 900, etime: "3-00:00:00", comm: "sh"},
+			{pid: 7100, ppid: 7000, etime: "2-23:00:00", comm: "codex"},
+			{pid: 7200, ppid: 7100, etime: "2-02:00:00", comm: "ssh"}, // 50h
+		}},
+	}
+	srv := doctorDaemonServer(t, sessions)
+	rec := &doctorProbeRecorder{}
+	c, httpRec := doctorLiveDaemonContext(t, cfg,
+		srv,
+		map[string]string{"git": "/bin/git", "tmux": "/bin/tmux", "ps": "/bin/ps"},
+		doctorPaneProbeFake(t, rec, panes),
+	)
+
+	check := findDoctorCheck(t, c.runDoctor(context.Background()), "agent-processes")
+	if check.Level != doctorWarn {
+		t.Fatalf("agent-processes = %+v, want WARN for a multi-day squatter", check)
+	}
+	for _, want := range []string{"7200", "ssh", "50h"} {
+		if !strings.Contains(check.Message, want) {
+			t.Fatalf("agent-processes message %q missing %q (dd-hh:mm:ss elapsed must parse)", check.Message, want)
+		}
+	}
+	rec.assertNoSupervisorSocketProbe(t)
+	httpRec.assertReadOnly(t)
+}
+
+// TestDoctorAgentProcessesPassesOnUnparseableElapsed: an age doctor could not
+// read is never grounds for a warning. Guessing here would mean warning about a
+// process whose age is unknown, which is exactly the wrong direction.
+func TestDoctorAgentProcessesPassesOnUnparseableElapsed(t *testing.T) {
+	cfg := setConfigEnv(t)
+	sessions := []sessionDTO{
+		{ID: "sess-odd", ProjectID: "demo", Kind: "worker", Harness: "codex", Status: "running"},
+	}
+	panes := []doctorPane{
+		{tmuxSession: "sess-odd", panePID: 8000, tty: "pts/7", procs: []doctorProc{
+			{pid: 8000, ppid: 900, etime: "16:00:00", comm: "sh"},
+			{pid: 8100, ppid: 8000, etime: "not-a-duration", comm: "curl"},
+		}},
+	}
+	srv := doctorDaemonServer(t, sessions)
+	rec := &doctorProbeRecorder{}
+	c, httpRec := doctorLiveDaemonContext(t, cfg,
+		srv,
+		map[string]string{"git": "/bin/git", "tmux": "/bin/tmux", "ps": "/bin/ps"},
+		doctorPaneProbeFake(t, rec, panes),
+	)
+
+	check := findDoctorCheck(t, c.runDoctor(context.Background()), "agent-processes")
+	if check.Level != doctorPass {
+		t.Fatalf("agent-processes = %+v, want PASS when the elapsed time will not parse", check)
+	}
+	rec.assertNoSupervisorSocketProbe(t)
+	httpRec.assertReadOnly(t)
+}
+
+// TestDoctorAgentProcessesPassesOnAmbiguousBranch: when the pane's process tree
+// forks, the deepest node is not necessarily the one holding the foreground — a
+// long-lived background helper (an MCP server, a dev server) can sit deeper than
+// whatever is actually blocking. Doctor declines rather than naming a pid it
+// guessed at, even though one branch is an old non-agent process.
+func TestDoctorAgentProcessesPassesOnAmbiguousBranch(t *testing.T) {
+	cfg := setConfigEnv(t)
+	sessions := []sessionDTO{
+		{ID: "sess-branch", ProjectID: "demo", Kind: "worker", Harness: "codex", Status: "running"},
+	}
+	panes := []doctorPane{
+		{tmuxSession: "sess-branch", panePID: 9000, tty: "pts/8", procs: []doctorProc{
+			{pid: 9000, ppid: 900, etime: "16:00:00", comm: "sh"},
+			{pid: 9100, ppid: 9000, etime: "15:00:00", comm: "codex"},
+			// Two sibling subtrees under the agent, BOTH old and neither the
+			// agent: a background dev server and something that may or may not
+			// be blocking the pane. Deliberately symmetric, so any implementation
+			// that picks one instead of declining warns about a pid it guessed —
+			// whichever branch it happens to walk first.
+			{pid: 9200, ppid: 9100, etime: "09:00:00", comm: "node"},
+			{pid: 9300, ppid: 9100, etime: "09:00:00", comm: "curl"},
+		}},
+	}
+	srv := doctorDaemonServer(t, sessions)
+	rec := &doctorProbeRecorder{}
+	c, httpRec := doctorLiveDaemonContext(t, cfg,
+		srv,
+		map[string]string{"git": "/bin/git", "tmux": "/bin/tmux", "ps": "/bin/ps"},
+		doctorPaneProbeFake(t, rec, panes),
+	)
+
+	check := findDoctorCheck(t, c.runDoctor(context.Background()), "agent-processes")
+	if check.Level != doctorPass {
+		t.Fatalf("agent-processes = %+v, want PASS when the process tree branches (foreground is unknowable)", check)
+	}
+	rec.assertNoSupervisorSocketProbe(t)
+	httpRec.assertReadOnly(t)
+}
+
+// TestPaneProcessTableMarksUnreadableAgeUnknown pins the plumbing behind the
+// "never warn on an age you could not read" rule: a row whose etime will not
+// parse stays in the tree, so the walk's parent links survive, but is marked
+// ageKnown=false rather than silently carrying a zero duration.
+func TestPaneProcessTableMarksUnreadableAgeUnknown(t *testing.T) {
+	c := &commandContext{deps: Deps{
+		CommandOutput: func(_ context.Context, _ string, _ ...string) ([]byte, error) {
+			return []byte("   4000    900     16:00:00 sh\n   4100   4000 not-a-duration curl\n"), nil
+		},
+	}.withDefaults()}
+
+	tree, err := c.paneProcessTable(context.Background(), "/bin/ps", []string{"pts/1"})
+	if err != nil {
+		t.Fatalf("paneProcessTable: %v", err)
+	}
+	readable, ok := tree.byPID[4000]
+	if !ok {
+		t.Fatal("row with a readable etime missing from the tree")
+	}
+	if !readable.ageKnown || readable.elapsed != 16*time.Hour {
+		t.Errorf("pid 4000 = %+v, want ageKnown with elapsed 16h", readable)
+	}
+	unreadable, ok := tree.byPID[4100]
+	if !ok {
+		t.Fatal("row with an unreadable etime was dropped from the tree; the walk's parent links must survive")
+	}
+	if unreadable.ageKnown {
+		t.Errorf("pid 4100 = %+v, want ageKnown=false for an etime that will not parse", unreadable)
+	}
+	// The parent link must still be intact even though the age is unknown.
+	if got := tree.children[4000]; len(got) != 1 || got[0] != 4100 {
+		t.Errorf("children[4000] = %v, want [4100]", got)
+	}
+}
+
+// TestParseETime pins the POSIX ps elapsed-time format, `[[dd-]hh:]mm:ss`. This
+// is the field that replaced procps-only `etimes`, so its parsing is the whole
+// reason agent-processes can run on macOS at all.
+func TestParseETime(t *testing.T) {
+	for _, tc := range []struct {
+		raw  string
+		want time.Duration
+		ok   bool
+	}{
+		{raw: "00:00", want: 0, ok: true},
+		{raw: "02:00", want: 2 * time.Minute, ok: true},
+		{raw: "59:59", want: 59*time.Minute + 59*time.Second, ok: true},
+		{raw: "08:00:00", want: 8 * time.Hour, ok: true},
+		{raw: "16:00:00", want: 16 * time.Hour, ok: true},
+		{raw: "7-18:10:32", want: 7*24*time.Hour + 18*time.Hour + 10*time.Minute + 32*time.Second, ok: true},
+		{raw: "3-00:00:00", want: 72 * time.Hour, ok: true},
+		{raw: "  08:00:00  ", want: 8 * time.Hour, ok: true},
+		// Unparseable: never a guessed duration.
+		{raw: ""},
+		{raw: "12"},
+		{raw: "not-a-duration"},
+		{raw: "1:2:3:4"},
+		{raw: "aa:bb"},
+		{raw: "x-01:00:00"},
+		{raw: "-1:00"},
+		// The procps integer form must NOT be silently accepted as seconds.
+		{raw: "28800"},
+	} {
+		got, ok := parseETime(tc.raw)
+		if ok != tc.ok {
+			t.Errorf("parseETime(%q) ok = %v, want %v", tc.raw, ok, tc.ok)
+			continue
+		}
+		if ok && got != tc.want {
+			t.Errorf("parseETime(%q) = %s, want %s", tc.raw, got, tc.want)
+		}
+	}
 }
 
 // TestDoctorAgentProcessesUnavailableWithoutTmux: no tmux means no pane

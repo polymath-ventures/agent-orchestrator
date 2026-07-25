@@ -137,6 +137,10 @@ func (c *commandContext) checkAgentProcesses(ctx context.Context) doctorCheck {
 		case fg.comm == agentByTmuxSession[pane.tmuxSession]:
 			// The agent AO launched for this session, doing its job.
 			continue
+		case !fg.ageKnown:
+			// ps reported an elapsed time doctor could not parse. An age that
+			// could not be read is never grounds for a warning.
+			continue
 		case fg.elapsed <= paneProcessStaleAfter:
 			// A helper the agent is legitimately running right now.
 			continue
@@ -226,11 +230,14 @@ func (c *commandContext) listTmuxPanes(ctx context.Context, tmuxPath string) ([]
 	return rows, nil
 }
 
-// paneProcess is one process living on an AO pane's tty.
+// paneProcess is one process living on an AO pane's tty. ageKnown is false when
+// ps reported an elapsed time this could not parse; an age doctor could not read
+// is never grounds for a warning.
 type paneProcess struct {
-	pid     int
-	comm    string
-	elapsed time.Duration
+	pid      int
+	comm     string
+	elapsed  time.Duration
+	ageKnown bool
 }
 
 // paneProcessTree is the process table of AO's pane ttys, indexed so a pane's
@@ -241,13 +248,20 @@ type paneProcessTree struct {
 }
 
 // paneProcessTable reads the processes on the given ttys. Elapsed time comes
-// from the kernel's own accounting (`etimes`), so the answer never depends on
+// from the kernel's own accounting (`etime`), so the answer never depends on
 // doctor's notion of "now". Restricting the probe to AO's pane ttys is what
 // keeps foreign panes out of the picture entirely.
+//
+// Every field here is POSIX ps, because AO supports tmux on Darwin as well as
+// Linux. `etimes` (elapsed seconds as an integer) is a procps extension that
+// macOS ps does not have, so this asks for the portable `etime` and parses it.
+// Likewise `comm` is POSIX but not uniform — macOS reports the full executable
+// path where Linux reports the bare name — so the value is reduced to its base
+// name and compared on that.
 func (c *commandContext) paneProcessTable(ctx context.Context, psPath string, ttys []string) (paneProcessTree, error) {
 	reqCtx, cancel := context.WithTimeout(ctx, probeTimeout)
 	defer cancel()
-	out, err := c.deps.CommandOutput(reqCtx, psPath, "-o", "pid=,ppid=,etimes=,comm=", "-t", strings.Join(ttys, ","))
+	out, err := c.deps.CommandOutput(reqCtx, psPath, "-o", "pid=,ppid=,etime=,comm=", "-t", strings.Join(ttys, ","))
 	if err != nil {
 		return paneProcessTree{}, err
 	}
@@ -265,14 +279,61 @@ func (c *commandContext) paneProcessTable(ctx context.Context, psPath string, tt
 		if err != nil {
 			continue
 		}
-		secs, err := strconv.Atoi(fields[2])
-		if err != nil {
-			continue
+		// A process whose age will not parse stays in the tree so the walk's
+		// parent links survive, but carries ageKnown=false so it cannot be
+		// flagged as stale.
+		elapsed, ageKnown := parseETime(fields[2])
+		tree.byPID[pid] = paneProcess{
+			pid:      pid,
+			comm:     filepath.Base(strings.Join(fields[3:], " ")),
+			elapsed:  elapsed,
+			ageKnown: ageKnown,
 		}
-		tree.byPID[pid] = paneProcess{pid: pid, comm: strings.Join(fields[3:], " "), elapsed: time.Duration(secs) * time.Second}
 		tree.children[ppid] = append(tree.children[ppid], pid)
 	}
 	return tree, nil
+}
+
+// parseETime reads the POSIX ps `etime` field, whose format is `[[dd-]hh:]mm:ss`
+// — so `mm:ss`, `hh:mm:ss`, or `dd-hh:mm:ss`. Anything else reports false rather
+// than a guessed duration.
+func parseETime(raw string) (time.Duration, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return 0, false
+	}
+	days := 0
+	if before, after, hasDays := strings.Cut(raw, "-"); hasDays {
+		parsed, err := strconv.Atoi(before)
+		if err != nil || parsed < 0 {
+			return 0, false
+		}
+		days, raw = parsed, after
+	}
+	parts := strings.Split(raw, ":")
+	if len(parts) < 2 || len(parts) > 3 {
+		return 0, false
+	}
+	hours := 0
+	if len(parts) == 3 {
+		parsed, err := strconv.Atoi(parts[0])
+		if err != nil || parsed < 0 {
+			return 0, false
+		}
+		hours, parts = parsed, parts[1:]
+	}
+	minutes, err := strconv.Atoi(parts[0])
+	if err != nil || minutes < 0 {
+		return 0, false
+	}
+	seconds, err := strconv.Atoi(parts[1])
+	if err != nil || seconds < 0 {
+		return 0, false
+	}
+	return time.Duration(days)*24*time.Hour +
+		time.Duration(hours)*time.Hour +
+		time.Duration(minutes)*time.Minute +
+		time.Duration(seconds)*time.Second, true
 }
 
 // foreground returns the deepest descendant of panePID — what is actually
@@ -285,36 +346,40 @@ func (c *commandContext) paneProcessTable(ctx context.Context, psPath string, tt
 // at the interactive shell tmux.buildLaunchCommand execs into once the agent
 // exits — the designed resting state, which this makes unflaggable by
 // construction, with no shell-name allowlist to maintain.
+// A branch — any process with more than one child — makes the answer a guess: a
+// background helper (an MCP server, a dev server) can sit deeper than whatever
+// is actually blocking the pane. Rather than pick, the walk declines and the
+// pane goes unflagged. Honest silence is the same posture the rest of this check
+// takes toward signals it cannot read.
 func (t paneProcessTree) foreground(panePID int) (paneProcess, bool) {
-	type node struct{ pid, depth int }
 	var (
-		best      paneProcess
-		bestDepth int
-		found     bool
+		deepest paneProcess
+		found   bool
 	)
 	// visited guards against a malformed ppid cycle in external command output;
 	// doctor must not spin on it.
 	visited := map[int]bool{panePID: true}
-	stack := []node{{pid: panePID, depth: 0}}
-	for len(stack) > 0 {
-		cur := stack[len(stack)-1]
-		stack = stack[:len(stack)-1]
-		if proc, ok := t.byPID[cur.pid]; ok && cur.depth > 0 {
-			// Deepest wins; equal depth resolves to the lowest pid so the report
-			// is stable rather than dependent on ps ordering.
-			if !found || cur.depth > bestDepth || (cur.depth == bestDepth && proc.pid < best.pid) {
-				best, bestDepth, found = proc, cur.depth, true
-			}
+	for current := panePID; ; {
+		children := t.children[current]
+		switch {
+		case len(children) == 0:
+			return deepest, found
+		case len(children) > 1:
+			// Ambiguous: more than one subtree to choose between.
+			return paneProcess{}, false
 		}
-		for _, child := range t.children[cur.pid] {
-			if visited[child] {
-				continue
-			}
-			visited[child] = true
-			stack = append(stack, node{pid: child, depth: cur.depth + 1})
+		child := children[0]
+		if visited[child] {
+			return paneProcess{}, false
 		}
+		visited[child] = true
+		proc, ok := t.byPID[child]
+		if !ok {
+			return paneProcess{}, false
+		}
+		deepest, found = proc, true
+		current = child
 	}
-	return best, found
 }
 
 // checkDaemonRestarts surfaces systemd restart churn for the unit that actually
