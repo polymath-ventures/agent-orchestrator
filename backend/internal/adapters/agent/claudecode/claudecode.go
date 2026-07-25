@@ -78,8 +78,33 @@ func (p *Plugin) EmitsSubmitActivity() bool { return true }
 // ports.ActivitySignaler.
 func (p *Plugin) EmitsBlockedActivity() bool { return true }
 
+// InHarnessRenameCommand renames a running Claude Code session. It writes the
+// same underlying name as the -n launch flag, so the two doors cannot drift into
+// two different names. See ports.AgentNamer.
+func (p *Plugin) InHarnessRenameCommand(name string) (string, bool) {
+	safe, ok := ports.DeliverableName(name)
+	if !ok {
+		return "", false
+	}
+	return "/rename " + safe, true
+}
+
+// LaunchNameArgs names the session in argv. -n is a flag, not the positional, so
+// it competes with nothing: the name lands atomically with process start and the
+// pane-readiness race is absent rather than mitigated. This is an optimization
+// over the universal in-harness path, not a replacement for it — dropping it
+// costs a race, not a name. See ports.AgentNamer.
+func (p *Plugin) LaunchNameArgs(name string) []string {
+	safe, ok := ports.DeliverableName(name)
+	if !ok {
+		return nil
+	}
+	return []string{"-n", safe}
+}
+
 var _ adapters.Adapter = (*Plugin)(nil)
 var _ ports.Agent = (*Plugin)(nil)
+var _ ports.AgentNamer = (*Plugin)(nil)
 var _ ports.AgentAuthChecker = (*Plugin)(nil)
 var _ ports.AgentModelCatalog = (*Plugin)(nil)
 var _ ports.AgentModelValidator = (*Plugin)(nil)
@@ -173,6 +198,9 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 	if cfg.SessionID != "" {
 		cmd = append(cmd, "--session-id", claudeSessionUUID(cfg.SessionID))
 	}
+	// Ahead of the positional separator by construction: the name is a flag, and
+	// only the prompt may ever follow `--`.
+	cmd = append(cmd, p.LaunchNameArgs(cfg.DisplayName)...)
 	// A project's configured permissions drive the starting mode; the explicit
 	// LaunchConfig.Permissions wins when set so a per-spawn override still takes
 	// precedence over the stored project default.

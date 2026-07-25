@@ -54,8 +54,8 @@ func (s PrimeSettings) Validate() error {
 	if s.DisplayName != strings.TrimSpace(s.DisplayName) {
 		return fmt.Errorf("displayName: must not have leading or trailing whitespace")
 	}
-	if len([]rune(s.DisplayName)) > maxSessionDisplayNameRunes {
-		return fmt.Errorf("displayName: must be at most %d characters", maxSessionDisplayNameRunes)
+	if len([]rune(s.DisplayName)) > MaxSessionDisplayNameRunes {
+		return fmt.Errorf("displayName: must be at most %d characters", MaxSessionDisplayNameRunes)
 	}
 	if s.Harness != "" && !s.Harness.IsKnown() {
 		return fmt.Errorf("agent: unknown harness %q", s.Harness)

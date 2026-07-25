@@ -121,9 +121,26 @@ func (p *Plugin) EmitsBlockedActivity() bool { return false }
 // ports.ActiveTurnSteerer.
 func (p *Plugin) SteersActiveTurn() bool { return true }
 
+// InHarnessRenameCommand renames a running codex session. Codex has no
+// launch-time naming flag, so this is the only door — and it takes the name
+// inline, with no modal and no round trip. One Plugin type serves codex and
+// codex-fugu, so both are covered without either being enumerated anywhere.
+func (p *Plugin) InHarnessRenameCommand(name string) (string, bool) {
+	safe, ok := ports.DeliverableName(name)
+	if !ok {
+		return "", false
+	}
+	return "/rename " + safe, true
+}
+
+// LaunchNameArgs is nil: codex accepts no name on its command line, so a codex
+// session is named after the TUI is ready. See ports.AgentNamer.
+func (p *Plugin) LaunchNameArgs(string) []string { return nil }
+
 var _ adapters.Adapter = (*Plugin)(nil)
 var _ ports.Agent = (*Plugin)(nil)
 var _ ports.ActiveTurnSteerer = (*Plugin)(nil)
+var _ ports.AgentNamer = (*Plugin)(nil)
 var _ ports.AgentAuthChecker = (*Plugin)(nil)
 var _ ports.AgentModelValidator = (*Plugin)(nil)
 var _ ports.AgentQuotaProber = (*Plugin)(nil)
