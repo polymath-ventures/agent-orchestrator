@@ -698,9 +698,14 @@ func (s *Service) Send(ctx context.Context, id domain.SessionID, message string)
 // first and owns the outcome: harness delivery is cosmetic and best-effort, so
 // its failure is logged rather than surfaced as a failed rename.
 func (s *Service) Rename(ctx context.Context, id domain.SessionID, displayName string) error {
-	displayName = strings.TrimSpace(displayName)
-	if displayName == "" {
+	displayName, err := domain.ValidateSessionDisplayName(displayName)
+	switch {
+	case errors.Is(err, domain.ErrDisplayNameEmpty):
 		return apierr.Invalid("DISPLAY_NAME_REQUIRED", "Display name is required", nil)
+	case errors.Is(err, domain.ErrDisplayNameTooLong):
+		return apierr.Invalid("DISPLAY_NAME_TOO_LONG", err.Error(), nil)
+	case err != nil:
+		return apierr.Invalid("DISPLAY_NAME_INVALID", err.Error(), nil)
 	}
 	renamed, err := s.store.RenameSession(ctx, id, displayName, time.Now().UTC())
 	if err != nil {

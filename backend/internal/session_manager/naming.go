@@ -18,8 +18,17 @@ import (
 // entry points (tracker intake, CLI, HTTP) funnel through one manager, and it is
 // the divergence between per-caller names that this change removes.
 func (m *Manager) resolveDisplayName(cfg ports.SpawnConfig, project domain.ProjectRecord) string {
-	if name := strings.TrimSpace(cfg.DisplayName); name != "" {
-		return name
+	if strings.TrimSpace(cfg.DisplayName) != "" {
+		// The entry points validate an operator's name and report a usable error;
+		// this is the backstop for any caller that reaches the manager directly.
+		// Falling back to the computed name rather than failing the spawn keeps a
+		// cosmetic field from costing a session.
+		name, err := domain.ValidateSessionDisplayName(cfg.DisplayName)
+		if err == nil {
+			return name
+		}
+		m.logger.Warn("spawn: supplied display name rejected; using the computed name instead",
+			"projectID", cfg.ProjectID, "error", err)
 	}
 	switch cfg.Kind {
 	case domain.KindWorker:
@@ -94,6 +103,17 @@ func (m *Manager) DeliverName(ctx context.Context, id domain.SessionID) error {
 func (m *Manager) deliverName(ctx context.Context, rec domain.SessionRecord) error {
 	name := strings.TrimSpace(rec.DisplayName)
 	if name == "" || rec.IsTerminated || rec.Metadata.RuntimeHandleID == "" {
+		return nil
+	}
+	// Never write a name into a turn already in flight. A harness that accepts
+	// mid-turn input treats it as steering, and one that does not queues it as
+	// the next prompt — either way the rename reaches the model as text instead
+	// of running as a command, and the session's actual task is what pays. The
+	// name is already persisted and already on every AO surface; the harness
+	// catching up is not worth disturbing work in progress.
+	if rec.Activity.State == domain.ActivityActive {
+		m.logger.Info("session name not delivered: harness is mid-turn; AO's name stands until the next rename",
+			"sessionID", rec.ID, "harness", string(rec.Harness))
 		return nil
 	}
 	agent, ok := m.agents.Agent(rec.Harness)

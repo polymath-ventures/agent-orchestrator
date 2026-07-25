@@ -3906,6 +3906,7 @@ components:
     RenameSessionRequest:
       properties:
         displayName:
+          maxLength: 20
           minLength: 1
           type: string
       required:

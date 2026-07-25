@@ -1,8 +1,11 @@
 package domain
 
 import (
+	"errors"
+	"fmt"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 )
 
 // orchestratorNameSuffix marks a project's orchestrator session. The harness is
@@ -47,6 +50,32 @@ func ComposeWorkerDisplayName(prefix, issueID, issueTitle string) string {
 // project's session prefix and the orchestrator role suffix: `<prefix> Orc`.
 func ComposeOrchestratorDisplayName(prefix string) string {
 	return roleDisplayName(sanitizeNamePart(prefix), orchestratorNameSuffix, MaxSessionDisplayNameRunes)
+}
+
+// ErrDisplayNameTooLong reports a session name over MaxSessionDisplayNameRunes.
+var ErrDisplayNameTooLong = fmt.Errorf("display name must be at most %d characters", MaxSessionDisplayNameRunes)
+
+// ErrDisplayNameEmpty reports a session name that is blank once trimmed.
+var ErrDisplayNameEmpty = errors.New("display name is required")
+
+// ValidateSessionDisplayName checks an operator-supplied name against the one
+// cap every session name obeys, and returns the trimmed value.
+//
+// It rejects rather than repairs, and it lives here rather than in each entry
+// point on purpose: a caller that silently shortened a name would persist a
+// string the operator did not choose, and a caller that skipped the check
+// entirely — as the rename endpoint did — would persist a name that exceeds the
+// cap the spawn path enforces. Composed names are already within the cap by
+// construction, so this guards the override paths.
+func ValidateSessionDisplayName(name string) (string, error) {
+	trimmed := strings.TrimSpace(name)
+	if trimmed == "" {
+		return "", ErrDisplayNameEmpty
+	}
+	if utf8.RuneCountInString(trimmed) > MaxSessionDisplayNameRunes {
+		return "", ErrDisplayNameTooLong
+	}
+	return trimmed, nil
 }
 
 // workerIssueSuffix renders the work item number as the second element of the

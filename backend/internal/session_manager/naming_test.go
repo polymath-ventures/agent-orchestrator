@@ -255,6 +255,10 @@ func TestDeliverNameSkipsSessionsWithNoLiveRuntime(t *testing.T) {
 	}{
 		{"terminated", domain.SessionRecord{ID: "mer-1", ProjectID: "mer", DisplayName: "ao #7", IsTerminated: true, Metadata: domain.SessionMetadata{RuntimeHandleID: "h1"}}},
 		{"no runtime handle", domain.SessionRecord{ID: "mer-1", ProjectID: "mer", DisplayName: "ao #7"}},
+		// A harness mid-turn either steers on the input or queues it as the next
+		// prompt; both send the rename to the model as text and disturb the work
+		// the session is actually doing.
+		{"mid-turn", domain.SessionRecord{ID: "mer-1", ProjectID: "mer", DisplayName: "ao #7", Metadata: domain.SessionMetadata{RuntimeHandleID: "h1"}, Activity: domain.Activity{State: domain.ActivityActive}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			m, st, _, msg := newNamingManager(renameOnlyAgent{})

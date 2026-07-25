@@ -3,9 +3,8 @@
 ### Requirement: The daemon owns a session's display name
 
 The daemon SHALL be the single authority for a session's display name. It SHALL
-compute the name at the moment the session's identity is established — on spawn,
-on rebind to a different work item, and on explicit rename — and SHALL persist
-exactly one name per session.
+compute the name at the moment the session's identity is established — on spawn
+and on explicit rename — and SHALL persist exactly one name per session.
 
 An omitted display name on a spawn request SHALL be the signal that asks the
 daemon to compute the name, and SHALL NOT result in an unnamed session. A
@@ -51,6 +50,17 @@ built from the parts that are available. Names SHALL be capped at the system's
 existing display-name length limit, and truncation SHALL preserve the leading
 identifying portion (prefix, work item number, role suffix) and clip the trailing
 title slug.
+
+An operator-supplied name SHALL be held to that same limit on every path that
+accepts one, including rename, and SHALL be rejected rather than silently
+shortened, so no path can persist a name that exceeds the cap the computed names
+obey.
+
+#### Scenario: An over-cap operator name is rejected
+
+- **WHEN** a rename supplies a name longer than the display-name limit
+- **THEN** the rename is rejected
+- **AND** the session keeps its previous name
 
 #### Scenario: Worker named from prefix, item, and title
 

@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"errors"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -95,5 +96,50 @@ func TestComposeOrchestratorDisplayName(t *testing.T) {
 				t.Fatalf("ComposeOrchestratorDisplayName(%q) = %q (%d runes), want at most %d", tt.prefix, got, n, MaxSessionDisplayNameRunes)
 			}
 		})
+	}
+}
+
+func TestValidateSessionDisplayName(t *testing.T) {
+	tests := []struct {
+		name    string
+		in      string
+		want    string
+		wantErr error
+	}{
+		{"trims", "  ao #7  ", "ao #7", nil},
+		{"blank is rejected", "   ", "", ErrDisplayNameEmpty},
+		{"empty is rejected", "", "", ErrDisplayNameEmpty},
+		{"at the cap is accepted", strings.Repeat("x", MaxSessionDisplayNameRunes), strings.Repeat("x", MaxSessionDisplayNameRunes), nil},
+		{"over the cap is rejected, not shortened", strings.Repeat("x", MaxSessionDisplayNameRunes+1), "", ErrDisplayNameTooLong},
+		// The cap counts runes, so a multi-byte name is not penalized for its
+		// encoding: 20 emoji are 20 characters to the operator.
+		{"counts runes not bytes", strings.Repeat("é", MaxSessionDisplayNameRunes), strings.Repeat("é", MaxSessionDisplayNameRunes), nil},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ValidateSessionDisplayName(tt.in)
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("ValidateSessionDisplayName(%q) err = %v, want %v", tt.in, err, tt.wantErr)
+			}
+			if got != tt.want {
+				t.Fatalf("ValidateSessionDisplayName(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+// Every computed name is within the cap by construction, so validation never
+// has to repair one.
+func TestComposedNamesAlwaysPassValidation(t *testing.T) {
+	for _, name := range []string{
+		ComposeWorkerDisplayName("ao", "1929", "better sqlite3 upgrade CI failures"),
+		ComposeWorkerDisplayName("a-very-long-project-prefix", "1929", "anything at all"),
+		ComposeOrchestratorDisplayName("a-very-long-project-prefix"),
+		ComposePrimeDisplayName("Agent Orchestrator"),
+	} {
+		if _, err := ValidateSessionDisplayName(name); err != nil {
+			t.Fatalf("composed name %q failed validation: %v", name, err)
+		}
 	}
 }

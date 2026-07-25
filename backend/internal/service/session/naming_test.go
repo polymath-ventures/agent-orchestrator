@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -120,5 +121,43 @@ func TestRenameOfUnknownSessionDeliversNothing(t *testing.T) {
 	}
 	if fc.deliveredNames != 0 {
 		t.Fatalf("harness name deliveries = %d, want 0", fc.deliveredNames)
+	}
+}
+
+// The rename endpoint enforced only non-emptiness, so a name well over the cap
+// every other path obeys could be persisted — and, now that AO delivers the
+// name, typed into the harness too.
+func TestRenameRejectsAnOverCapName(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer"}
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", DisplayName: "ao #7"}
+	fc := &fakeCommander{}
+	svc := NewWithDeps(Deps{Manager: fc, Store: st})
+
+	err := svc.Rename(context.Background(), "mer-1", strings.Repeat("x", domain.MaxSessionDisplayNameRunes+1))
+	if err == nil {
+		t.Fatal("Rename accepted a name over the display-name cap")
+	}
+	if got := st.sessions["mer-1"].DisplayName; got != "ao #7" {
+		t.Fatalf("display name = %q, want the previous name kept", got)
+	}
+	if fc.deliveredNames != 0 {
+		t.Fatalf("harness name deliveries = %d, want 0", fc.deliveredNames)
+	}
+}
+
+// A name exactly at the cap is still accepted.
+func TestRenameAcceptsANameAtTheCap(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer"}
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer"}
+	svc := NewWithDeps(Deps{Manager: &fakeCommander{}, Store: st})
+
+	name := strings.Repeat("x", domain.MaxSessionDisplayNameRunes)
+	if err := svc.Rename(context.Background(), "mer-1", name); err != nil {
+		t.Fatalf("Rename at the cap: %v", err)
+	}
+	if st.sessions["mer-1"].DisplayName != name {
+		t.Fatalf("display name = %q, want %q", st.sessions["mer-1"].DisplayName, name)
 	}
 }
