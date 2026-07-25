@@ -13,11 +13,20 @@ import (
 
 const issueContextBodyLimit = 12000
 
-func (s *Service) withIssueContext(ctx context.Context, cfg ports.SpawnConfig, project domain.ProjectRecord) ports.SpawnConfig {
-	if cfg.IssueContext != "" || cfg.IssueID == "" || s.tracker == nil {
+// withIssueDetails fills in whatever the request did not already carry about its
+// work item: the task-prompt context, and the title the daemon slugs into the
+// session's display name. Both come from one tracker fetch, in the one service
+// every spawn path funnels through, so the CLI, the HTTP API, and tracker intake
+// cannot disagree about either. A tracker that is absent, unresolvable, or down
+// costs the enrichment, never the spawn.
+func (s *Service) withIssueDetails(ctx context.Context, cfg ports.SpawnConfig, project domain.ProjectRecord) ports.SpawnConfig {
+	if cfg.IssueID == "" || s.tracker == nil {
 		return cfg
 	}
 	if cfg.Kind != "" && cfg.Kind != domain.KindWorker {
+		return cfg
+	}
+	if cfg.IssueContext != "" && cfg.IssueTitle != "" {
 		return cfg
 	}
 	id, ok := s.trackerIDForIssue(project, cfg.IssueID)
@@ -28,8 +37,13 @@ func (s *Service) withIssueContext(ctx context.Context, cfg ports.SpawnConfig, p
 	if err != nil {
 		return cfg
 	}
-	if issueContext := formatIssueContext(issue); issueContext != "" {
-		cfg.IssueContext = issueContext
+	if cfg.IssueTitle == "" {
+		cfg.IssueTitle = strings.TrimSpace(issue.Title)
+	}
+	if cfg.IssueContext == "" {
+		if issueContext := formatIssueContext(issue); issueContext != "" {
+			cfg.IssueContext = issueContext
+		}
 	}
 	return cfg
 }

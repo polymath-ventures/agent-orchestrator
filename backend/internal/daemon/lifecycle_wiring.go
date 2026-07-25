@@ -200,7 +200,7 @@ func startSession(cfg config.Config, runtime runtimeselect.Runtime, store *sqlit
 	// Build the GitHub tracker, but keep a true nil ports.Tracker interface on
 	// failure. newGitHubTracker returns (*github.Tracker)(nil) on ErrNoToken,
 	// which Go wraps as a non-nil typed-nil interface — that slips past the
-	// `s.tracker == nil` guard in withIssueContext and dereferences nil on the
+	// `s.tracker == nil` guard in withIssueDetails and dereferences nil on the
 	// first issue lookup (issue #2685). Assigning the concrete value only on
 	// success leaves tracker as a real interface-nil otherwise.
 	var tracker ports.Tracker

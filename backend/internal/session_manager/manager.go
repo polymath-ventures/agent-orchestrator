@@ -478,6 +478,11 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	promptBytes := len(prompt)
 	systemPromptBytes := len(systemPrompt)
 
+	// The daemon owns the name, and it is settled here — before the row exists —
+	// so the persisted name, the launch command, and any harness write all read
+	// the same single value.
+	cfg.DisplayName = m.resolveDisplayName(cfg, project)
+
 	rec, err := m.store.CreateSession(ctx, seedRecord(cfg, agentConfig.Effort, target.mixSelected, target.mixBucketModel, m.clock()))
 	if err != nil {
 		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn: create: %w", err)
@@ -558,6 +563,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	}
 	launchCfg := ports.LaunchConfig{
 		DataDir:          m.dataDir,
+		DisplayName:      cfg.DisplayName,
 		SessionID:        string(id),
 		WorkspacePath:    ws.Path,
 		Kind:             cfg.Kind,
@@ -642,6 +648,17 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		m.rollbackPreparedSpawnWorkspace(ctx, rec, ws, workspaceProject)
 		m.markSpawnFailedTerminated(ctx, id)
 		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: completed: %w", id, err)
+	}
+	// Name before prompt: the rename is instant, and leaving the prompt as the
+	// last thing written means the session ends up working on its task rather
+	// than with a rename typed into a turn already in flight.
+	if err := m.deliverSpawnName(ctx, agent, launchCfg, handle, id, cfg.DisplayName); err != nil {
+		if !m.forgiveSpawnNameFailure(ctx, handle, id, err) {
+			_ = m.runtime.Destroy(ctx, handle)
+			m.rollbackPreparedSpawnWorkspace(ctx, rec, ws, workspaceProject)
+			m.markSpawnFailedTerminatedWithoutWorkspace(ctx, id)
+			return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: deliver name: %w", id, err)
+		}
 	}
 	if delivery == ports.PromptDeliveryAfterStart && prompt != "" {
 		if err := m.deliverAfterStartPrompt(ctx, agent, launchCfg, handle, id, prompt); err != nil {

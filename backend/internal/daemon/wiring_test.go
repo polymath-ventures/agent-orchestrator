@@ -304,7 +304,7 @@ func TestStartSession_SpawnDoesNotPanicWhenNoTrackerToken(t *testing.T) {
 		t.Fatalf("startSession: %v", err)
 	}
 
-	// Spawn reaches withIssueContext (and the tracker guard) before the manager
+	// Spawn reaches withIssueDetails (and the tracker guard) before the manager
 	// tries to materialize a workspace. The manager may return an error from the
 	// no-op runtime, but it must not panic — that is the regression.
 	_, _, _, _ = svc.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, IssueID: "107"})

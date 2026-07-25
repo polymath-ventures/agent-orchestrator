@@ -28,8 +28,16 @@ type SpawnConfig struct {
 	Branch string
 	Prompt string
 
-	// DisplayName is the user-facing sidebar label. Empty falls back to the
-	// session id in the read model (e.g. orchestrator sessions).
+	// IssueTitle is the work item's title, resolved once by the session service
+	// on whichever spawn path the request arrived through. It feeds the trailing
+	// slug of the daemon-computed display name; an empty title degrades the name
+	// rather than failing the spawn.
+	IssueTitle string
+
+	// DisplayName is the user-facing sidebar label. EMPTY IS THE SIGNAL that asks
+	// the daemon to compute the name from the session's role and work item — it
+	// does not mean "unnamed". A non-empty value is a deliberate operator
+	// override and is honored as-is.
 	DisplayName string
 
 	// Force overrides the pause guard: a forced worker spawn proceeds even while
