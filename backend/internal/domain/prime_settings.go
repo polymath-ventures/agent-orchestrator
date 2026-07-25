@@ -26,11 +26,25 @@ type PrimeSettings struct {
 }
 
 // DefaultPrimeSettings returns the persisted default for fresh daemons: Prime
-// disabled with the daemon's standard display name and wake policy defaults.
+// disabled with the daemon's standard display name, wake policy defaults, and
+// the unattended permission mode every AO-managed role needs.
+//
+// Prime is projectless, so unlike orchestrator and worker sessions it has no
+// ProjectConfig.AgentConfig to inherit a permission mode from: whatever these
+// settings carry is what the harness is launched with. An empty permission mode
+// normalizes to PermissionModeDefault, which emits no --permission-mode flag at
+// all, so an enabled Prime blocks on the first tool prompt with nobody at its
+// pane to answer — and the supervisor's only recourse is to declare it unhealthy
+// and spawn a replacement that stalls identically. Prime is off until an
+// operator explicitly enables it, and its whole job is to supervise the fleet
+// unattended, so the useful default is the unattended one. An operator who wants
+// prompting back sets permissions explicitly to "default"; WithDefaults only
+// fills the field when it is empty.
 func DefaultPrimeSettings() PrimeSettings {
 	return PrimeSettings{
 		DisplayName:  defaultPrimeDisplayName,
 		WakeInterval: defaultPrimeWakeIntervalConfig,
+		AgentConfig:  AgentConfig{Permissions: PermissionModeBypassPermissions},
 	}
 }
 
@@ -42,6 +56,9 @@ func (s PrimeSettings) WithDefaults() PrimeSettings {
 	}
 	if s.WakeInterval == "" {
 		s.WakeInterval = def.WakeInterval
+	}
+	if s.AgentConfig.Permissions == "" {
+		s.AgentConfig.Permissions = def.AgentConfig.Permissions
 	}
 	return s
 }
