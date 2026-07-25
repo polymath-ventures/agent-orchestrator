@@ -3,8 +3,17 @@ import { describe, expect, it, vi } from "vitest";
 import type { WorkspaceSession } from "../types/workspace";
 import { CenterPane } from "./CenterPane";
 
+const terminalPaneProps = vi.hoisted(() => ({
+	value: {} as { autoFocus?: boolean; focusRequest?: number },
+}));
+
 // The terminal body pulls in xterm/SSE machinery irrelevant to the header under test.
-vi.mock("./TerminalPane", () => ({ TerminalPane: () => <div>terminal body</div> }));
+vi.mock("./TerminalPane", () => ({
+	TerminalPane: (props: { autoFocus?: boolean; focusRequest?: number }) => {
+		terminalPaneProps.value = props;
+		return <div>terminal body</div>;
+	},
+}));
 
 const worker = {
 	id: "sess-1",
@@ -32,6 +41,18 @@ describe("CenterPane toolbar session label", () => {
 		render(<CenterPane session={worker} theme="dark" daemonReady />);
 		expect(screen.getByText("do the thing")).toBeInTheDocument();
 		expect(screen.queryByText("sess-1")).not.toBeInTheDocument();
+	});
+
+	it("passes explicit focus requests through without focusing passive session mounts", () => {
+		const { rerender } = render(<CenterPane session={worker} theme="dark" daemonReady />);
+
+		expect(terminalPaneProps.value.autoFocus).toBe(false);
+		expect(terminalPaneProps.value.focusRequest).toBeUndefined();
+
+		rerender(<CenterPane focusRequest={1} session={worker} theme="dark" daemonReady />);
+
+		expect(terminalPaneProps.value.autoFocus).toBe(true);
+		expect(terminalPaneProps.value.focusRequest).toBe(1);
 	});
 
 	it("shows 'Orchestrator' for an orchestrator session", () => {

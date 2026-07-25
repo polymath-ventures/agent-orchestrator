@@ -3,6 +3,7 @@ import {
 	APP_SHORTCUTS,
 	matchesFocusTerminalShortcut,
 	matchesKeyboardShortcutsHelpShortcut,
+	matchesTerminalExitFocusShortcut,
 	matchesNextSessionShortcut,
 	matchesNewSessionShortcut,
 	matchesNewShellTerminalShortcut,
@@ -122,6 +123,13 @@ describe("additional application shortcuts", () => {
 		expect(matchesFocusTerminalShortcut(chord({ key: "T", meta: true, shift: true }), true)).toBe(true);
 		expect(matchesFocusTerminalShortcut(chord({ key: "t", ctrl: true, shift: true }), false)).toBe(true);
 		expect(matchesFocusTerminalShortcut(chord({ key: "t", ctrl: true, shift: true, alt: true }), false)).toBe(false);
+	});
+
+	it("matches terminal focus exit and rejects bare Escape", () => {
+		expect(matchesTerminalExitFocusShortcut(chord({ key: "F6", ctrl: true }), false)).toBe(true);
+		expect(matchesTerminalExitFocusShortcut(chord({ key: "F6", ctrl: true }), true)).toBe(true);
+		expect(matchesTerminalExitFocusShortcut(chord({ key: "Escape" }), false)).toBe(false);
+		expect(matchesTerminalExitFocusShortcut(chord({ key: "F6", ctrl: true, shift: true }), false)).toBe(false);
 	});
 });
 

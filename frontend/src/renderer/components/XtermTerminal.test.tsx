@@ -192,6 +192,17 @@ describe("XtermTerminal", () => {
 		tab.remove();
 	});
 
+	it("focuses an already-mounted terminal when the owner sends a focus request", () => {
+		const tab = document.body.appendChild(document.createElement("button"));
+		const { container, rerender } = render(<XtermTerminal focusRequest={0} theme="dark" />);
+		tab.focus();
+
+		rerender(<XtermTerminal focusRequest={1} theme="dark" />);
+
+		expect(document.activeElement).toBe(container.querySelector("textarea"));
+		tab.remove();
+	});
+
 	it("keeps focus on a text field that is not inside an overlay", () => {
 		const filter = document.body.appendChild(document.createElement("input"));
 		filter.focus();
@@ -253,6 +264,35 @@ describe("XtermTerminal", () => {
 		expect(allowed).toBe(false);
 		expect(event.preventDefault).toHaveBeenCalled();
 		expect(window.ao!.clipboard.writeText).toHaveBeenCalledWith("copied selection");
+	});
+
+	it("leaves bare Escape for the terminal but exits focus on Ctrl+F6", () => {
+		const onExitFocus = vi.fn();
+		render(<XtermTerminal onExitFocus={onExitFocus} theme="dark" />);
+		const escape = {
+			key: "Escape",
+			ctrlKey: false,
+			metaKey: false,
+			altKey: false,
+			shiftKey: false,
+			preventDefault: vi.fn(),
+			stopPropagation: vi.fn(),
+		} as unknown as KeyboardEvent;
+		const exit = {
+			key: "F6",
+			ctrlKey: true,
+			metaKey: false,
+			altKey: false,
+			shiftKey: false,
+			preventDefault: vi.fn(),
+			stopPropagation: vi.fn(),
+		} as unknown as KeyboardEvent;
+
+		expect(state.lastTerminal!.keyHandler!(escape)).toBe(true);
+		expect(onExitFocus).not.toHaveBeenCalled();
+		expect(state.lastTerminal!.keyHandler!(exit)).toBe(false);
+		expect(onExitFocus).toHaveBeenCalledTimes(1);
+		expect(exit.preventDefault).toHaveBeenCalled();
 	});
 
 	it("handles native copy events from inside the terminal", () => {

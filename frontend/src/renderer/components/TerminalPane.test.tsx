@@ -11,7 +11,7 @@ const { postMock, relaunchPrimeMock, navigateMock, terminalError, terminalState,
 	navigateMock: vi.fn(),
 	terminalError: { value: undefined as string | undefined },
 	terminalState: { value: "idle" },
-	terminalProps: { value: {} as { autoFocus?: boolean } },
+	terminalProps: { value: {} as { autoFocus?: boolean; focusRequest?: number; onExitFocus?: () => void } },
 }));
 let terminalLinkHandler: ((uri: string) => void) | undefined;
 
@@ -21,7 +21,7 @@ vi.mock("../lib/api-client", () => ({
 }));
 
 vi.mock("./XtermTerminal", () => ({
-	XtermTerminal: (props: { onLinkOpen?: (uri: string) => void; autoFocus?: boolean }) => {
+	XtermTerminal: (props: { onLinkOpen?: (uri: string) => void; autoFocus?: boolean; focusRequest?: number }) => {
 		terminalLinkHandler = props.onLinkOpen;
 		terminalProps.value = props;
 		return <div data-testid="xterm" />;
@@ -125,6 +125,25 @@ describe("TerminalPane autoFocus", () => {
 		try {
 			expect(terminalProps.value.autoFocus).toBe(true);
 		} finally {
+			view.restore();
+		}
+	});
+
+	it("does not autofocus when a background terminal handle arrives without a fresh activation", () => {
+		const outside = document.body.appendChild(document.createElement("button"));
+		outside.focus();
+		const view = renderPane(worker);
+		try {
+			view.rerender(
+				<QueryClientProvider client={view.queryClient}>
+					<TerminalPane daemonReady fontSize={12} session={{ ...worker, terminalHandleId: "term-1" }} theme="dark" />
+				</QueryClientProvider>,
+			);
+
+			expect(terminalProps.value.autoFocus).toBe(false);
+			expect(terminalProps.value.focusRequest).toBeUndefined();
+		} finally {
+			outside.remove();
 			view.restore();
 		}
 	});

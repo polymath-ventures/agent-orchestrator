@@ -22,9 +22,11 @@ describe("KeyboardShortcutsDialog", () => {
 		expect(screen.getByText("Open project 1–9")).toBeInTheDocument();
 		expect(screen.getByText("Toggle inspector")).toBeInTheDocument();
 		expect(screen.getByText("Open command palette")).toBeInTheDocument();
+		expect(screen.getByText("Move focus out of terminal")).toBeInTheDocument();
 		expect(screen.getByLabelText("Ctrl+/")).toBeInTheDocument();
 		expect(screen.getByLabelText("Ctrl+PageUp")).toBeInTheDocument();
 		expect(screen.getByLabelText("Ctrl+PageDown")).toBeInTheDocument();
+		expect(screen.getByLabelText("Ctrl+F6")).toBeInTheDocument();
 	});
 
 	it("uses macOS key labels when requested", () => {

@@ -235,6 +235,27 @@ describe("shell new-shell-terminal shortcut subscription", () => {
 		expect(shellMocks.openShellTerminal).toHaveBeenCalledWith("proj-1", expect.anything());
 	});
 
+	it("optimistically inserts the opened shell before marking it active", async () => {
+		await renderShell();
+		const shell = {
+			handleId: "shell-new",
+			title: "agent-orchestrator",
+			workingDir: "/tmp/agent-orchestrator",
+			createdAt: "2026-07-25T00:00:00Z",
+		};
+
+		pressNewShellTerminal();
+		const options = shellMocks.openShellTerminal.mock.calls[0][1] as { onSuccess?: (shell: typeof shell) => void };
+		act(() => options.onSuccess?.(shell));
+
+		expect(shellMocks.queryClient.setQueryData).toHaveBeenCalledWith(["shell-terminals"], expect.any(Function));
+		const updater = shellMocks.queryClient.setQueryData.mock.calls[0][1] as (
+			current: typeof shell[] | undefined,
+		) => typeof shell[];
+		expect(updater([{ ...shell, handleId: "shell-old" }])).toEqual([{ ...shell, handleId: "shell-old" }, shell]);
+		expect(useUiStore.getState().activeShellTerminalHandleId).toBe("shell-new");
+	});
+
 	it("re-fires on a repeat press so a second terminal can be opened", async () => {
 		await renderShell();
 
