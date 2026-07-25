@@ -101,6 +101,18 @@ vi.mock("../hooks/useDaemonStatus", () => ({
 // The shell layout opens standalone terminals; this suite only covers the
 // shortcut subscriptions, so the mutation is stubbed rather than driven.
 vi.mock("../hooks/useShellTerminals", () => ({
+	shellTerminalsQueryKey: ["shell-terminals"],
+	upsertShellTerminal: (
+		current:
+			{ handleId: string; title: string; workingDir: string; createdAt: string; projectId?: string }[] | undefined,
+		shell: { handleId: string; title: string; workingDir: string; createdAt: string; projectId?: string },
+	) => {
+		const shells = current ?? [];
+		if (shells.some((item) => item.handleId === shell.handleId)) {
+			return shells.map((item) => (item.handleId === shell.handleId ? shell : item));
+		}
+		return [...shells, shell];
+	},
 	useOpenShellTerminal: () => ({ mutate: shellMocks.openShellTerminal }),
 }));
 
@@ -147,6 +159,14 @@ vi.mock("../components/Sidebar", async () => {
 });
 
 import { Route } from "../routes/_shell";
+
+type TestShellTerminal = {
+	handleId: string;
+	title: string;
+	workingDir: string;
+	createdAt: string;
+	projectId?: string;
+};
 
 const workspaces = [
 	{
@@ -245,13 +265,15 @@ describe("shell new-shell-terminal shortcut subscription", () => {
 		};
 
 		pressNewShellTerminal();
-		const options = shellMocks.openShellTerminal.mock.calls[0][1] as { onSuccess?: (shell: typeof shell) => void };
+		const options = shellMocks.openShellTerminal.mock.calls[0][1] as {
+			onSuccess?: (shell: TestShellTerminal) => void;
+		};
 		act(() => options.onSuccess?.(shell));
 
 		expect(shellMocks.queryClient.setQueryData).toHaveBeenCalledWith(["shell-terminals"], expect.any(Function));
 		const updater = shellMocks.queryClient.setQueryData.mock.calls[0][1] as (
-			current: typeof shell[] | undefined,
-		) => typeof shell[];
+			current: TestShellTerminal[] | undefined,
+		) => TestShellTerminal[];
 		expect(updater([{ ...shell, handleId: "shell-old" }])).toEqual([{ ...shell, handleId: "shell-old" }, shell]);
 		expect(useUiStore.getState().activeShellTerminalHandleId).toBe("shell-new");
 	});

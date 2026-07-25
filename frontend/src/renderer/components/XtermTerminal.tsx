@@ -32,6 +32,7 @@ import { aoBridge } from "../lib/bridge";
 import { TERMINAL_FONT_SIZE_DEFAULT } from "../lib/design-tokens";
 import { OPEN_DIALOG_OR_MENU_SELECTOR } from "../lib/dom-selectors";
 import { buildTerminalThemes } from "../lib/terminal-themes";
+import { matchesTerminalExitFocusShortcut } from "../../shared/shortcuts";
 import type { Theme } from "../stores/ui-store";
 import {
 	DropdownMenu,
@@ -61,8 +62,12 @@ export type XtermTerminalProps = {
 	 * per call site rather than decided here.
 	 */
 	autoFocus?: boolean;
+	/** Bump when a user activation should focus an already-mounted terminal. */
+	focusRequest?: number;
 	/** Terminal construction failed; the owner decides how to surface it. */
 	onError?: (error: unknown) => void;
+	/** Called by the terminal focus-exit chord so the owner can focus nearby chrome. */
+	onExitFocus?: () => void;
 	/** Called after a terminal hyperlink is opened in the OS browser. */
 	onLinkOpen?: (uri: string) => void;
 	/**
@@ -252,6 +257,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 	const termRef = useRef<Terminal | null>(null);
 	const fitRef = useRef<(() => void) | null>(null);
 	const contextMenuActionsRef = useRef<TerminalContextMenuActions | null>(null);
+	const lastFocusRequestRef = useRef(props.focusRequest);
 	const [contextMenu, setContextMenu] = useState<TerminalContextMenuState>({
 		canCopy: false,
 		open: false,
@@ -278,6 +284,19 @@ export function XtermTerminal(props: XtermTerminalProps) {
 	useEffect(() => {
 		callbacksRef.current = props;
 	});
+
+	useEffect(() => {
+		if (props.focusRequest === undefined || props.focusRequest === lastFocusRequestRef.current) return;
+		lastFocusRequestRef.current = props.focusRequest;
+		const host = hostRef.current;
+		const term = termRef.current;
+		if (!host || !term || !canTakeFocusOnMount(host)) return;
+		try {
+			term.focus();
+		} catch {
+			// Terminal is being torn down or its hidden textarea is unavailable.
+		}
+	}, [props.focusRequest]);
 
 	useEffect(() => {
 		const term = termRef.current;
@@ -481,6 +500,23 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			if (event.key === "Enter" && event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey) {
 				consumeTerminalShortcut(event);
 				emitUserInput("\x1b\r", "keyboard");
+				return false;
+			}
+			if (
+				matchesTerminalExitFocusShortcut(
+					{
+						key: event.key,
+						code: event.code,
+						ctrl: event.ctrlKey,
+						meta: event.metaKey,
+						shift: event.shiftKey,
+						alt: event.altKey,
+					},
+					false,
+				)
+			) {
+				consumeTerminalShortcut(event);
+				callbacksRef.current.onExitFocus?.();
 				return false;
 			}
 			if (isTerminalCopyShortcut(event)) {
@@ -769,7 +805,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		<>
 			<div
 				ref={hostRef}
-				aria-label={props.ariaLabel}
+				aria-label={`${props.ariaLabel ?? "Terminal"}; press Ctrl+F6 to move focus out`}
 				className={props.className}
 				style={{ height: "100%", overflow: "hidden", width: "100%" }}
 			/>

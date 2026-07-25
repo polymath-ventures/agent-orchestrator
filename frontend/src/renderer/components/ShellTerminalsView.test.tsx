@@ -59,13 +59,12 @@ describe("ShellTerminalsView", () => {
 		expect(shellMocks.terminalPaneProps.focusRequest).toBe(1);
 	});
 
-	it("holds a pending new shell selection visible until the query includes it", () => {
-		useUiStore.setState({ activeShellTerminalHandleId: "shell-new" });
+	it("clears stale selections when the shell list is empty", () => {
+		useUiStore.setState({ activeShellTerminalHandleId: "shell-stale" });
 
 		render(<ShellTerminalsView />);
 
-		expect(screen.queryByText("No terminals open")).not.toBeInTheDocument();
-		expect(shellMocks.terminalPaneProps.terminalTarget?.handleId).toBe("shell-new");
-		expect(shellMocks.terminalPaneProps.autoFocus).toBe(true);
+		expect(screen.getByText("No terminals open")).toBeInTheDocument();
+		expect(useUiStore.getState().activeShellTerminalHandleId).toBeNull();
 	});
 });

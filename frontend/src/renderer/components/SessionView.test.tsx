@@ -461,7 +461,11 @@ describe("SessionView", () => {
 
 		fireEvent.click(screen.getByRole("button", { name: "open reviewer terminal" }));
 
-		expect(centerPaneProps.value.terminalTarget).toEqual({ kind: "reviewer", handleId: "reviewer-1", harness: "codex" });
+		expect(centerPaneProps.value.terminalTarget).toEqual({
+			kind: "reviewer",
+			handleId: "reviewer-1",
+			harness: "codex",
+		});
 		expect(centerPaneProps.value.focusRequest).toBe(1);
 
 		act(() => centerPaneProps.value.onSelectWorkerTerminal?.());

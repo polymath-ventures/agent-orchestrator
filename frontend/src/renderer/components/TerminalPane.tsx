@@ -28,9 +28,26 @@ type TerminalPaneProps = {
 	 * finally assigned a terminal handle — neither should move focus.
 	 */
 	autoFocus?: boolean;
+	focusRequest?: number;
+	onExitFocus?: () => void;
 };
 
-export function TerminalPane({ session, theme, daemonReady, terminalTarget, fontSize, autoFocus }: TerminalPaneProps) {
+export function TerminalPane({
+	session,
+	theme,
+	daemonReady,
+	terminalTarget,
+	fontSize,
+	autoFocus,
+	focusRequest,
+	onExitFocus,
+}: TerminalPaneProps) {
+	const previousFocusRequestRef = useRef<number | undefined>(undefined);
+	const focusRequestIsFresh = focusRequest !== undefined && focusRequest !== previousFocusRequestRef.current;
+	useEffect(() => {
+		if (focusRequest !== undefined) previousFocusRequestRef.current = focusRequest;
+	}, [focusRequest]);
+	const effectiveAutoFocus = Boolean(autoFocus) && (focusRequest === undefined || focusRequestIsFresh);
 	const terminalKey =
 		terminalTarget?.kind === "reviewer" || terminalTarget?.kind === "shell"
 			? terminalTarget.handleId
@@ -39,12 +56,14 @@ export function TerminalPane({ session, theme, daemonReady, terminalTarget, font
 	return (
 		<AttachedTerminal
 			key={terminalKey}
-			autoFocus={autoFocus}
+			autoFocus={effectiveAutoFocus}
+			focusRequest={focusRequest}
 			session={session}
 			theme={theme}
 			daemonReady={daemonReady}
 			fontSize={fontSize}
 			terminalTarget={terminalTarget}
+			onExitFocus={onExitFocus}
 		/>
 	);
 }
@@ -67,7 +86,16 @@ function bannerText(state: TerminalSessionState, error?: string): string | undef
 	return undefined;
 }
 
-function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSize, autoFocus }: TerminalPaneProps) {
+function AttachedTerminal({
+	session,
+	theme,
+	daemonReady,
+	terminalTarget,
+	fontSize,
+	autoFocus,
+	focusRequest,
+	onExitFocus,
+}: TerminalPaneProps) {
 	const attachSession =
 		session && terminalTarget?.kind === "reviewer"
 			? { ...session, terminalHandleId: terminalTarget.handleId }
@@ -242,9 +270,11 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 					// Today's opt-in call sites are shell targets, which always carry a
 					// handle; this keeps the prop's contract true for any owner that opts
 					// a handle-less pane in later.
-					autoFocus={autoFocus && !showEmptyState}
+					autoFocus={Boolean(autoFocus) && !showEmptyState}
+					focusRequest={showEmptyState ? undefined : focusRequest}
 					fontSize={fontSize}
 					onError={handleInitError}
+					onExitFocus={onExitFocus}
 					onLinkOpen={handleLinkOpen}
 					onReady={handleReady}
 					paneScrollsByKeyboard={providerScrollsByKeyboard(provider)}

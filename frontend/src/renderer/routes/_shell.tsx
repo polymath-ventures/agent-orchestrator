@@ -16,7 +16,12 @@ import { SidebarProvider } from "../components/ui/sidebar";
 import { WindowTitlebar } from "../components/WindowTitlebar";
 import { agentsQueryKey, agentsQueryOptions, refreshAgents } from "../hooks/useAgentsQuery";
 import { useDaemonStatus } from "../hooks/useDaemonStatus";
-import { useOpenShellTerminal } from "../hooks/useShellTerminals";
+import {
+	shellTerminalsQueryKey,
+	type ShellTerminal,
+	upsertShellTerminal,
+	useOpenShellTerminal,
+} from "../hooks/useShellTerminals";
 import { useWindowFullScreen } from "../hooks/useWindowFullScreen";
 import { useWorkspaceQuery, workspaceQueryKey, workspaceQueryOptions } from "../hooks/useWorkspaceQuery";
 import { apiClient, apiErrorCode, apiErrorMessage } from "../lib/api-client";
@@ -483,6 +488,9 @@ function ShellLayout() {
 		handledShellNonceRef.current = newShellTerminalNonce;
 		openShellTerminal.mutate(scopedProjectId, {
 			onSuccess: (shell) => {
+				queryClient.setQueryData<ShellTerminal[]>(shellTerminalsQueryKey, (current) =>
+					upsertShellTerminal(current, shell),
+				);
 				setActiveShellTerminal(shell.handleId);
 				if (!routeParams.sessionId) {
 					void navigate({ to: "/terminals" });

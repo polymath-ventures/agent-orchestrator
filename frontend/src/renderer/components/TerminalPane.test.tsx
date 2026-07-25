@@ -129,6 +129,42 @@ describe("TerminalPane autoFocus", () => {
 		}
 	});
 
+	it("does not reuse an old focus request for a later terminal remount", () => {
+		const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+		const { rerender, unmount } = render(
+			<QueryClientProvider client={queryClient}>
+				<TerminalPane
+					autoFocus
+					daemonReady
+					focusRequest={1}
+					fontSize={12}
+					terminalTarget={{ kind: "shell", handleId: "shell-1", title: "one" }}
+					theme="dark"
+				/>
+			</QueryClientProvider>,
+		);
+		try {
+			expect(terminalProps.value.autoFocus).toBe(true);
+
+			rerender(
+				<QueryClientProvider client={queryClient}>
+					<TerminalPane
+						autoFocus
+						daemonReady
+						focusRequest={1}
+						fontSize={12}
+						terminalTarget={{ kind: "shell", handleId: "shell-2", title: "two" }}
+						theme="dark"
+					/>
+				</QueryClientProvider>,
+			);
+
+			expect(terminalProps.value.autoFocus).toBe(false);
+		} finally {
+			unmount();
+		}
+	});
+
 	it("does not autofocus when a background terminal handle arrives without a fresh activation", () => {
 		const outside = document.body.appendChild(document.createElement("button"));
 		outside.focus();

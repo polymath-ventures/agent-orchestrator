@@ -65,6 +65,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const inspectorRef = useRef<PanelImperativeHandle | null>(null);
 	const inspectorSeparatorRef = useRef<HTMLDivElement | null>(null);
 	const [terminalTarget, setTerminalTarget] = useState<TerminalTarget>({ kind: "worker" });
+	const [terminalFocusRequest, setTerminalFocusRequest] = useState<number | undefined>();
 	const [browserPoppedOut, setBrowserPoppedOut] = useState(false);
 	const [filesPoppedOut, setFilesPoppedOut] = useState(false);
 
@@ -78,6 +79,10 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const activeShellTerminalHandleId = useUiStore((state) => state.activeShellTerminalHandleId);
 	const setActiveShellTerminal = useUiStore((state) => state.setActiveShellTerminal);
 	const requestNewShellTerminal = useUiStore((state) => state.requestNewShellTerminal);
+	const previousActiveShellHandleRef = useRef(activeShellTerminalHandleId);
+	const requestTerminalFocus = useCallback(() => {
+		setTerminalFocusRequest((current) => (current ?? 0) + 1);
+	}, []);
 
 	const selectShellTerminal = useCallback(
 		(handleId: string) => {
@@ -85,8 +90,9 @@ export function SessionView({ sessionId }: SessionViewProps) {
 			if (!shell) return;
 			setActiveShellTerminal(shell.handleId);
 			setTerminalTarget({ kind: "shell", handleId: shell.handleId, title: shell.title });
+			requestTerminalFocus();
 		},
-		[shellTerminals, setActiveShellTerminal],
+		[requestTerminalFocus, shellTerminals, setActiveShellTerminal],
 	);
 
 	const closeShellTerminalByHandle = useCallback(
@@ -107,7 +113,8 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const selectSessionTerminal = useCallback(() => {
 		setActiveShellTerminal(null);
 		setTerminalTarget({ kind: "worker" });
-	}, [setActiveShellTerminal]);
+		requestTerminalFocus();
+	}, [requestTerminalFocus, setActiveShellTerminal]);
 
 	// The shell layout owns opening (it is mounted on every route, so the button
 	// and Ctrl+Shift+` work everywhere); this view only follows the result. When a new
@@ -117,12 +124,15 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		if (!activeShellTerminalHandleId) return;
 		const shell = shellTerminals.find((s) => s.handleId === activeShellTerminalHandleId);
 		if (!shell) return;
+		const activated = previousActiveShellHandleRef.current !== activeShellTerminalHandleId;
+		previousActiveShellHandleRef.current = activeShellTerminalHandleId;
 		setTerminalTarget((current) =>
 			current.kind === "shell" && current.handleId === shell.handleId
 				? current
 				: { kind: "shell", handleId: shell.handleId, title: shell.title },
 		);
-	}, [activeShellTerminalHandleId, shellTerminals]);
+		if (activated) requestTerminalFocus();
+	}, [activeShellTerminalHandleId, requestTerminalFocus, shellTerminals]);
 	const isTerminalOnly = session ? isTerminalOnlySession(session) : false;
 	// Orchestrator and prime sessions are terminal-only; only worker sessions have the rail.
 	const hasInspector = Boolean(session && !isTerminalOnly);
@@ -143,6 +153,8 @@ export function SessionView({ sessionId }: SessionViewProps) {
 
 	useEffect(() => {
 		setTerminalTarget({ kind: "worker" });
+		setTerminalFocusRequest(undefined);
+		previousActiveShellHandleRef.current = useUiStore.getState().activeShellTerminalHandleId;
 		setBrowserPoppedOut(false);
 		setFilesPoppedOut(false);
 	}, [sessionId]);
@@ -315,6 +327,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 						onSelectWorkerTerminal={selectSessionTerminal}
 						session={session}
 						shellTerminals={shellTerminals}
+						focusRequest={terminalFocusRequest}
 						terminalTarget={terminalTarget}
 						theme={theme}
 					/>
@@ -354,9 +367,10 @@ export function SessionView({ sessionId }: SessionViewProps) {
 									}
 									isInspectorVisible={isInspectorOpen}
 									onOpenFiles={handleOpenFiles}
-									onOpenReviewerTerminal={({ handleId, harness }) =>
-										setTerminalTarget({ kind: "reviewer", handleId, harness })
-									}
+									onOpenReviewerTerminal={({ handleId, harness }) => {
+										setTerminalTarget({ kind: "reviewer", handleId, harness });
+										requestTerminalFocus();
+									}}
 									onToggleBrowserPopOut={handleToggleBrowserPopOut}
 									onViewChange={(next: InspectorView) => setInspectorViewForSession(sessionId, next)}
 									view={inspectorView}

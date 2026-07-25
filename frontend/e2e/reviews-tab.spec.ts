@@ -1,6 +1,9 @@
 import { expect, test } from "@playwright/test";
 import { installBrowserModeApiFixtures } from "./fixtures";
 
+const activeElementClass = (page: import("@playwright/test").Page) =>
+	page.evaluate(() => document.activeElement?.className ?? "");
+
 test.beforeEach(async ({ page }) => {
 	await installBrowserModeApiFixtures(page);
 });
@@ -37,4 +40,21 @@ test("the Reviews tab shows the empty state for a session with no PRs", async ({
 
 	await inspector.getByRole("tab", { name: "Reviews" }).click();
 	await expect(inspector.getByText("No pull request opened yet.")).toBeVisible();
+});
+
+test("reviewer terminal activation and back-to-agent activation focus the selected terminal", async ({ page }) => {
+	await page.goto("/");
+	await page.getByRole("button", { name: "Open auth stack" }).click();
+	await expect(page).toHaveURL(/sessions\/stacked-auth/);
+	await page.getByRole("button", { name: "Open inspector panel" }).click();
+
+	const inspector = page.locator("#inspector");
+	await inspector.getByRole("tab", { name: "Reviews" }).click();
+	await inspector.getByRole("button", { name: "Open terminal" }).click();
+
+	await expect(page.getByRole("button", { name: "Back to agent terminal" })).toBeVisible();
+	await expect.poll(() => activeElementClass(page)).toContain("xterm-helper-textarea");
+
+	await page.getByRole("button", { name: "Back to agent terminal" }).click();
+	await expect.poll(() => activeElementClass(page)).toContain("xterm-helper-textarea");
 });

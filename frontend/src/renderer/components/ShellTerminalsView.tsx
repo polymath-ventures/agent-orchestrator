@@ -1,5 +1,5 @@
 import { ChevronLeft, ChevronRight, Plus, X } from "lucide-react";
-import { useEffect } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useOverflowScroll } from "../hooks/useOverflowScroll";
 import { useTruncatedText } from "../hooks/useTruncatedText";
 import { useCloseShellTerminal, useShellTerminals, type ShellTerminal } from "../hooks/useShellTerminals";
@@ -23,6 +23,22 @@ export function ShellTerminalsView() {
 	const requestNewShellTerminal = useUiStore((state) => state.requestNewShellTerminal);
 	const activeHandleId = useUiStore((state) => state.activeShellTerminalHandleId);
 	const setActiveShellTerminal = useUiStore((state) => state.setActiveShellTerminal);
+	const [focusRequest, setFocusRequest] = useState<number | undefined>();
+	const rootRef = useRef<HTMLDivElement | null>(null);
+	const previousActiveHandleRef = useRef(activeHandleId);
+	const requestFocus = useCallback(() => {
+		setFocusRequest((current) => (current ?? 0) + 1);
+	}, []);
+	const selectShellTerminal = useCallback(
+		(handleId: string) => {
+			setActiveShellTerminal(handleId);
+			requestFocus();
+		},
+		[requestFocus, setActiveShellTerminal],
+	);
+	const focusActiveTerminalTab = useCallback(() => {
+		rootRef.current?.querySelector<HTMLButtonElement>('[data-terminal-tab="true"][aria-current="true"]')?.focus();
+	}, []);
 
 	// Keep the selection pointed at a shell that still exists: closing the active
 	// tab (or a daemon-side exit pruning it) would otherwise leave the pane bound
@@ -36,9 +52,15 @@ export function ShellTerminalsView() {
 		}
 		if (!active) setActiveShellTerminal(shellTerminals[0].handleId);
 	}, [shellTerminals, active, activeHandleId, setActiveShellTerminal]);
+	useEffect(() => {
+		if (!activeHandleId || !active) return;
+		const activated = previousActiveHandleRef.current !== activeHandleId;
+		previousActiveHandleRef.current = activeHandleId;
+		if (activated) requestFocus();
+	}, [active, activeHandleId, requestFocus]);
 
 	return (
-		<div className="flex h-full min-h-0 flex-col text-foreground">
+		<div ref={rootRef} className="flex h-full min-h-0 flex-col text-foreground">
 			<div className="flex h-inspector-tabs shrink-0 items-center gap-3 border-b border-border px-5">
 				<span className="shrink-0 font-mono text-caption font-semibold uppercase tracking-wide-lg text-muted-foreground">
 					TERMINALS
@@ -69,7 +91,7 @@ export function ShellTerminalsView() {
 								key={shell.handleId}
 								isActive={isActive}
 								onClose={() => closeShellTerminal.mutate(shell.handleId)}
-								onSelect={() => setActiveShellTerminal(shell.handleId)}
+								onSelect={() => selectShellTerminal(shell.handleId)}
 								shell={shell}
 							/>
 						);
@@ -104,9 +126,11 @@ export function ShellTerminalsView() {
 						// This screen exists to be typed into, and a mount here always
 						// follows a user action: arriving at the route, opening a shell, or
 						// selecting another tab (which re-keys the pane).
-						autoFocus
+						autoFocus={focusRequest !== undefined}
 						daemonReady={daemonStatus.state === "ready"}
 						fontSize={12}
+						focusRequest={focusRequest}
+						onExitFocus={focusActiveTerminalTab}
 						terminalTarget={{ kind: "shell", handleId: active.handleId, title: active.title }}
 						theme={theme}
 					/>
@@ -156,6 +180,7 @@ function ShellTab({
 					"min-w-flex-min max-w-shell-tab-max truncate font-mono text-control font-semibold transition-colors",
 					isActive ? "text-foreground" : "text-passive hover:text-foreground",
 				)}
+				data-terminal-tab="true"
 				onClick={onSelect}
 				title={isTruncated ? shell.title : shell.workingDir}
 				type="button"
