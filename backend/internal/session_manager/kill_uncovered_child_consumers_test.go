@@ -87,6 +87,14 @@ func TestCleanupSucceedsAfterKillOfSessionWithDeregisteredChildRepos(t *testing.
 // restoreWorkspaceProjectRows loops workspace.Restore over every row BEFORE it
 // checks for the root — materializing child directories on disk and only then
 // failing with "workspace project root worktree row missing".
+//
+// Scoped to exactly that property: leftover rows must not drive per-child
+// Restore calls. Whether the restore itself succeeds is deliberately NOT
+// asserted — RestoreWithMode gates only on rec.IsTerminated and consults
+// neither workspace ownership nor markers, so it will happily relaunch this
+// killed session into the worktree the live replacement still owns. That gap
+// predates this change and is tracked separately in GH #168; pinning "restore
+// succeeds" here would assert the unsafe outcome is correct.
 func TestRestoreAfterKillOfSessionWithDeregisteredChildReposLeavesNoStrayWorktrees(t *testing.T) {
 	m, st, _, ws := newLifecycleManager()
 
@@ -120,9 +128,8 @@ func TestRestoreAfterKillOfSessionWithDeregisteredChildReposLeavesNoStrayWorktre
 	}
 	ws.calls = nil
 
-	if _, err := m.RestoreWithMode(ctx, "mer-orch-1"); err != nil {
-		t.Fatalf("RestoreWithMode err = %v; a killed session's leftover rows must not be able to fail restore", err)
-	}
+	// The outcome is not asserted (see above); only the side effects are.
+	_, _ = m.RestoreWithMode(ctx, "mer-orch-1")
 	// No per-child Restore may run: with no resolvable child repos, any attempt
 	// would materialize stray directories before failing on the missing root.
 	for _, call := range ws.calls {

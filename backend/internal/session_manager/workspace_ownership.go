@@ -67,32 +67,28 @@ func workspaceOwnedByLiveSession(rec domain.SessionRecord, live []domain.Session
 // and the branch, the only two workspace fields a session row carries. A
 // workspace project's *children* live nowhere but session_worktrees, so
 // "somebody live holds the root" says nothing about a child the live owner does
-// not have. Kill clears the markers once the reclaim has run (it must: a
-// surviving restorable marker lets RestoreAll resurrect the killed session into
-// the live owner's worktree, #2319), so a child not reclaimed here can never be
-// found again — no HTTP, CLI, or read-model surface exposes session_worktrees.
+// not have. Kill clears every marker (it must: a surviving marker lets
+// RestoreAll resurrect the killed session into the live owner's worktree,
+// #2319), so a child not reclaimed here can never be found again — no HTTP,
+// CLI, or read-model surface exposes session_worktrees.
 //
 // Destroying it here rather than recording it for later cleanup is what removes
 // the orphan instead of tracking it: the row is only inventory because the
 // directory outlived it, and an uncovered child is by definition held by
 // nobody, so there is nothing to wait for.
 //
-// Returns whether Kill must KEEP this session's markers instead of clearing
-// them — true only when coverage could not be established, so nothing at all
-// was reclaimed and the rows are the only surviving record of the directories.
-//
 // Every step is best effort and logged: this runs after the runtime is
 // destroyed but before the row is terminated and its markers cleared, so no
 // failure here may abort Kill and leave the row un-terminated.
-func (m *Manager) destroyUncoveredChildWorktrees(ctx context.Context, rec domain.SessionRecord) bool {
+func (m *Manager) destroyUncoveredChildWorktrees(ctx context.Context, rec domain.SessionRecord) {
 	rows, err := m.store.ListSessionWorktrees(ctx, rec.ID)
 	if err != nil {
 		m.logger.Warn("kill: listing worktree rows failed; uncovered children not reclaimed",
 			"sessionID", rec.ID, "error", err)
-		return false
+		return
 	}
 	if len(rows) == 0 {
-		return false
+		return
 	}
 	var occupied map[string]domain.SessionID
 	var repoPaths map[string]string
@@ -122,23 +118,30 @@ func (m *Manager) destroyUncoveredChildWorktrees(ctx context.Context, rec domain
 			if liveErr != nil {
 				m.logger.Warn("kill: re-reading live sessions failed; no child worktrees reclaimed",
 					"sessionID", rec.ID, "error", liveErr)
-				return m.markersSafeToKeep(rows, rec)
+				return
 			}
 			paths, complete := m.liveWorktreePaths(ctx, live, rec.ID)
 			if !complete {
 				// Coverage is what separates "held by nobody" from "held by a
 				// live session". Without it in full there is no uncovered child,
 				// only unknown ones, and destroying on a guess deletes a
-				// directory a live session is working in.
+				// directory a live session is working in. Nothing is reclaimed
+				// this pass; the rows are cleared regardless, so what survives is
+				// a directory an operator can still see and remove — strictly
+				// better than a worktree yanked out from under a running agent.
 				//
-				// Nothing has been destroyed at this point (coverage is resolved
-				// before the first Destroy), so the rows still describe the
-				// complete workspace. Keeping them — reported to Kill below —
-				// is what makes a transient DB error retryable: cleared, they
-				// would leave a directory nothing in the system can name again.
+				// Clearing rather than keeping the rows for a later retry is
+				// deliberate: a session_worktrees row does not carry its own repo
+				// path, so every consumer re-resolves it through the workspace
+				// registry and hard-errors on a repo that was deregistered
+				// meanwhile — kept inventory can wedge Cleanup and
+				// RestoreWithMode on a case that clearing survives. Retention
+				// becomes safe once the row owns its repo path (GH #165); until
+				// then a transient failure here costs a visible directory, not a
+				// broken cleanup path.
 				m.logger.Warn("kill: live worktree coverage is incomplete; no child worktrees reclaimed (a child may be held by a live session)",
 					"sessionID", rec.ID, "project", rec.ProjectID)
-				return m.markersSafeToKeep(rows, rec)
+				return
 			}
 			occupied = paths
 		}
@@ -152,12 +155,9 @@ func (m *Manager) destroyUncoveredChildWorktrees(ctx context.Context, rec domain
 			if err != nil {
 				m.logger.Warn("kill: resolving workspace repos failed; uncovered children not reclaimed",
 					"sessionID", rec.ID, "error", err)
-				// Same shape as an indeterminate coverage read: a transient
-				// failure reclaimed nothing, so clearing the markers too would
-				// turn it into a permanent orphan instead of something a later
-				// Cleanup can retry. Nothing has been destroyed at this point,
-				// so the full row set is still intact and safe to keep.
-				return m.markersSafeToKeep(rows, rec)
+				// Same shape as an indeterminate coverage read, and cleared for
+				// the same reason recorded there.
+				return
 			}
 		}
 		repoPath := repoPaths[row.RepoName]
@@ -196,34 +196,6 @@ func (m *Manager) destroyUncoveredChildWorktrees(ctx context.Context, rec domain
 		m.logger.Info("kill: reclaimed child worktree no live session occupies",
 			"sessionID", rec.ID, "repo", row.RepoName, "path", row.WorktreePath)
 	}
-	return false
-}
-
-// markersSafeToKeep reports whether Kill may keep rec's worktree rows instead of
-// clearing them, and is asked only when the reclaim bailed out before destroying
-// anything — so the rows still describe the whole workspace, not a partial
-// subset, which is what broke every consumer of these rows in an earlier
-// approach.
-//
-// The one thing a surviving marker must never do is resurrect the killed
-// session into the live owner's worktree (#2319), so retention is conditioned on
-// the property that makes that impossible: not one row is restorable. Rows of a
-// running session are "active" and already fail that test; the rows RestoreAll
-// actually replays — shutdown-saved "removed" rows and legacy state-less ones —
-// are refused retention outright and cleared as before. Retryability is worth a
-// directory an operator can still see; it is not worth a killed agent coming
-// back inside a live one's tree.
-func (m *Manager) markersSafeToKeep(rows []domain.SessionWorktreeRecord, rec domain.SessionRecord) bool {
-	for _, row := range rows {
-		if restorableWorktreeRow(row) {
-			m.logger.Warn("kill: clearing worktree markers despite an incomplete reclaim; a restorable row cannot be kept",
-				"sessionID", rec.ID, "repo", row.RepoName, "path", row.WorktreePath)
-			return false
-		}
-	}
-	m.logger.Warn("kill: worktree markers kept so a later cleanup can retry the reclaim",
-		"sessionID", rec.ID, "project", rec.ProjectID, "rows", len(rows))
-	return true
 }
 
 // workspaceRepoPaths maps a workspace project's registered child repo names to
@@ -259,9 +231,8 @@ func (m *Manager) workspaceRepoPaths(ctx context.Context, projectID domain.Proje
 // nothing. Coverage is consumed as "this path is held by nobody, so reclaim
 // it", so a partial map under-reports occupancy and turns a transient DB error
 // into deleting a worktree a live session is working in. Failing closed costs a
-// directory left on disk, which an operator can still see and remove and whose
-// inventory rows the caller keeps for a later retry; failing open costs
-// somebody's uncommitted work.
+// directory left on disk, which an operator can still see and remove; failing
+// open costs somebody's uncommitted work.
 func (m *Manager) liveWorktreePaths(ctx context.Context, live []domain.SessionRecord, exclude domain.SessionID) (map[string]domain.SessionID, bool) {
 	occupied := make(map[string]domain.SessionID)
 	for _, other := range live {

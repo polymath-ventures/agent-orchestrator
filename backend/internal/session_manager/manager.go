@@ -1582,11 +1582,11 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 	// leaving the old process alive, which is the opposite of what Kill promises.
 	if killWorkspaceOwnedElsewhere {
 		// The shared root and every child the live owner occupies are left
-		// alone; uncovered children are reclaimed below. Restore markers are
-		// cleared below too, because keeping a restorable one would let
-		// RestoreAll resurrect this killed session into the worktree the live
-		// replacement is using (#2319).
-		m.logger.Warn("kill: workspace preserved for a live owner",
+		// alone; uncovered children are reclaimed below. All restore markers are
+		// still cleared below, because keeping any would let RestoreAll
+		// resurrect this killed session into the worktree the live replacement
+		// is using (#2319).
+		m.logger.Warn("kill: workspace preserved for a live owner; restore markers cleared",
 			"sessionID", rec.ID, "path", ws.Path, "branch", rec.Metadata.Branch)
 		workspaceProject = false
 	} else if rows, ok, rowErr := m.workspaceProjectRows(ctx, rec); rowErr != nil {
@@ -1601,16 +1601,15 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 			return false, fmt.Errorf("kill %s: runtime: %w", id, err)
 		}
 	}
-	keepWorktreeMarkers := false
 	if killWorkspaceOwnedElsewhere {
 		// The root is owned, but a multi-repo CHILD the live owner does not
 		// occupy is held by nobody. Reclaim it here, while its row still names
-		// it: the markers are cleared below, and nothing else in the system
+		// it: every marker is cleared below, and nothing else in the system
 		// records a per-repo path, so a child left behind now is orphaned for
 		// good (#144). Ordered after the runtime destroy above so the agent
 		// whose worktree this is has already been torn down — a runtime destroy
 		// that fails returns before this point and reclaims nothing.
-		keepWorktreeMarkers = m.destroyUncoveredChildWorktrees(ctx, rec)
+		m.destroyUncoveredChildWorktrees(ctx, rec)
 	}
 	freed := false
 	if workspaceProject {
@@ -1649,14 +1648,9 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 	// Clear the restore marker so the next boot's RestoreAll cannot resurrect a
 	// killed session (#2319). For workspace projects this must happen after
 	// teardown reads the rows; dirty-preserved rows return above and are left as
-	// non-restorable inventory. keepWorktreeMarkers is the same exception, for
-	// the same reason: the reclaim above found nothing it could safely destroy,
-	// so these already-non-restorable rows are the only remaining record of the
-	// directories and are kept for a later Cleanup to retry.
-	if !keepWorktreeMarkers {
-		if err := m.store.DeleteSessionWorktrees(ctx, id); err != nil {
-			m.logger.Warn("kill: delete restore marker failed", "sessionID", id, "error", err)
-		}
+	// non-restorable inventory.
+	if err := m.store.DeleteSessionWorktrees(ctx, id); err != nil {
+		m.logger.Warn("kill: delete restore marker failed", "sessionID", id, "error", err)
 	}
 	if err := m.lcm.MarkTerminated(ctx, id); err != nil {
 		return false, fmt.Errorf("kill %s: %w", id, err)
@@ -2308,18 +2302,11 @@ func (m *Manager) RestoreAll(ctx context.Context) error {
 func restorableWorktreeRows(rows []domain.SessionWorktreeRecord) []domain.SessionWorktreeRecord {
 	out := make([]domain.SessionWorktreeRecord, 0, len(rows))
 	for _, row := range rows {
-		if restorableWorktreeRow(row) {
+		if row.State == "removed" || legacyRestorableWorktreeRow(row) {
 			out = append(out, row)
 		}
 	}
 	return out
-}
-
-// restorableWorktreeRow reports whether RestoreAll would replay this row, i.e.
-// whether keeping it could bring a terminated session back up. Teardown paths
-// that want to keep rows as inventory consult it to prove they are not.
-func restorableWorktreeRow(row domain.SessionWorktreeRecord) bool {
-	return row.State == "removed" || legacyRestorableWorktreeRow(row)
 }
 
 func legacyRestorableWorktreeRow(row domain.SessionWorktreeRecord) bool {
