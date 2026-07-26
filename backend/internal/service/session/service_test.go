@@ -1047,6 +1047,10 @@ func TestToAPIErrorMapsWorkspaceBranchSentinels(t *testing.T) {
 		{"project paused", fmt.Errorf("spawn: %w: project scope; resume it or pass Force to override", sessionmanager.ErrProjectPaused), apierr.KindConflict, "PROJECT_PAUSED"},
 		{"worker mix exhausted", fmt.Errorf("spawn: %w: project mer configures 3 bucket(s), none selectable", sessionmanager.ErrWorkerMixExhausted), apierr.KindConflict, "WORKER_MIX_EXHAUSTED"},
 		{"worker mix bucket down", fmt.Errorf("spawn: worker mix selected codex: %w", sessionmanager.ErrWorkerMixBucketDown), apierr.KindConflict, "WORKER_MIX_BUCKET_DOWN"},
+		// A live session holding the terminated row's workspace is a transient
+		// conflict the client can retry, not a server fault. Without this row an
+		// ordering or mapping regression turns the refusal into a sanitized 500.
+		{"workspace owned by a live session", fmt.Errorf("restore mer-1: workspace %q is held by live session %s: %w", "/ws/mer", "mer-2", sessionmanager.ErrWorkspaceOwnedByLiveSession), apierr.KindConflict, "SESSION_WORKSPACE_IN_USE"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -1,6 +1,7 @@
 package sessionmanager
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
@@ -841,6 +842,57 @@ func TestRetireForReplacementReclaimsNoChildWorktreesWhenRuntimeDestroyFails(t *
 	}
 	if rows := st.worktrees["mer-orch-1"]; len(rows) != 3 {
 		t.Fatalf("worktree rows = %#v, want all 3 preserved for the retry", rows)
+	}
+}
+
+// failingWorktreeClearStore fails only the restore-marker clear, leaving every
+// other store operation intact.
+type failingWorktreeClearStore struct {
+	*fakeStore
+	err error
+}
+
+func (s *failingWorktreeClearStore) DeleteSessionWorktrees(ctx context.Context, id domain.SessionID) error {
+	if s.err != nil {
+		return s.err
+	}
+	return s.fakeStore.DeleteSessionWorktrees(ctx, id)
+}
+
+// Once the runtime is destroyed the row MUST end terminated, whatever else
+// fails. The owned-elsewhere arm clears markers AFTER the runtime destroy (the
+// reclaim reads the rows the clear deletes), so a clear that returns early would
+// leave a live row whose runtime is already dead. reconcileLive reads exactly
+// that as crash recovery on the next boot and stashes and force-destroys this
+// row's shared root and covered children — underneath the live replacement that
+// legitimately owns them.
+func TestRetireForReplacementTerminatesWhenMarkerClearFailsAfterRuntimeDestroy(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+	rt := &fakeRuntime{}
+	m := New(Deps{
+		Runtime:   rt,
+		Agents:    fakeAgents{},
+		Workspace: &fakeWorkspace{},
+		Store:     &failingWorktreeClearStore{fakeStore: st, err: errors.New("sqlite: database is locked")},
+		Messenger: &fakeMessenger{},
+		Lifecycle: &fakeLCM{store: st},
+		LookPath:  func(string) (string, error) { return "/bin/true", nil },
+	})
+	seedUncoveredChildKill(st)
+
+	err := m.RetireForReplacement(ctx, "mer-orch-1")
+	if err == nil {
+		t.Fatal("RetireForReplacement err = nil, want the marker clear failure surfaced")
+	}
+	if !strings.Contains(err.Error(), "clear restore markers") {
+		t.Fatalf("err = %v, want the marker clear failure named in it", err)
+	}
+	if rt.destroyed != 1 {
+		t.Fatalf("runtime destroys = %d, want 1 (the precondition for this test)", rt.destroyed)
+	}
+	if !st.sessions["mer-orch-1"].IsTerminated {
+		t.Fatal("the row is still live after its runtime was destroyed; the next boot reads that as a crash and tears down the live replacement's shared root")
 	}
 }
 

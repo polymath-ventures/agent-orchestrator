@@ -1712,6 +1712,7 @@ func (m *Manager) RetireForReplacement(ctx context.Context, id domain.SessionID)
 				return fmt.Errorf("retire replacement %s: runtime: %w", id, err)
 			}
 		}
+		var clearErr error
 		if workspaceOwnedElsewhere {
 			// Same defect, same remedy as Kill (#144): the live owner holds the
 			// root, but a multi-repo CHILD it does not occupy is held by nobody,
@@ -1727,13 +1728,20 @@ func (m *Manager) RetireForReplacement(ctx context.Context, id domain.SessionID)
 			// the function's own workspace-teardown path already uses.
 			m.destroyUncoveredChildWorktrees(ctx, rec)
 			if err := m.store.DeleteSessionWorktrees(ctx, rec.ID); err != nil {
-				return fmt.Errorf("retire replacement %s: clear restore markers: %w", id, err)
+				clearErr = fmt.Errorf("retire replacement %s: clear restore markers: %w", id, err)
 			}
 		}
+		// Past the runtime destroy the row MUST end terminated, whatever else
+		// failed: a live row whose runtime is dead is a lie, and on the next boot
+		// reconcileLive reads it as crash recovery and stashes and force-destroys
+		// this row's shared root and covered children — underneath the live
+		// replacement that legitimately owns them. Returning on the marker-clear
+		// failure alone would leave exactly that row, so both failures are
+		// reported instead and neither is swallowed.
 		if err := m.lcm.MarkTerminated(ctx, id); err != nil {
-			return fmt.Errorf("retire replacement %s: mark terminated: %w", id, err)
+			return errors.Join(clearErr, fmt.Errorf("retire replacement %s: mark terminated: %w", id, err))
 		}
-		return nil
+		return clearErr
 	}
 	if rows, ok, rowErr := m.workspaceProjectRows(ctx, rec); rowErr != nil {
 		return fmt.Errorf("retire replacement %s: workspace rows: %w", id, rowErr)

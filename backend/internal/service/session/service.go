@@ -728,6 +728,19 @@ func (s *Service) Restore(ctx context.Context, id domain.SessionID) (RestoreOutc
 	if ok && rec.Kind == domain.KindPrime {
 		return RestoreOutcome{}, apierr.Forbidden("PRIME_MANUAL_RESTORE_FORBIDDEN", "Prime sessions are managed only by the fleet Prime supervisor and cannot be restored manually", nil)
 	}
+	// Restore is the third lifecycle operation over a role's canonical workspace,
+	// and the manager's ownership guard that refuses to relaunch a row whose
+	// workspace a live session holds is a check-then-act: a ReconcileRole landing
+	// between the guard's live-session read and the relaunch would recreate the
+	// two-runtimes-on-one-worktree defect the guard exists to prevent. Unlike Kill
+	// and Cleanup, restore runs in the service that owns the per-RoleTarget lock,
+	// so serializing it here costs nothing and makes the guard non-racy. The
+	// target is resolved from the row first — a worker has no RoleTarget and takes
+	// no lock, and Prime is already refused above.
+	if ok && rec.Kind == domain.KindOrchestrator {
+		unlock := s.lockRole(domain.OrchestratorTarget(rec.ProjectID))
+		defer unlock()
+	}
 	res, err := s.manager.RestoreWithMode(ctx, id)
 	if err != nil {
 		return RestoreOutcome{}, toAPIError(err)

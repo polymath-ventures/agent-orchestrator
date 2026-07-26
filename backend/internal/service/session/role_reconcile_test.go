@@ -4,7 +4,10 @@ import (
 	"context"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
+
+	sessionmanager "github.com/aoagents/agent-orchestrator/backend/internal/session_manager"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 
@@ -320,5 +323,111 @@ func TestReconcileRoleRetiresUnverifiedReplacementWhenCallerDisconnects(t *testi
 	}
 	if len(fc.retired) != 1 || fc.retired[0] != "prime-1" {
 		t.Fatalf("retired = %v, want the unverified prime-1 retired", fc.retired)
+	}
+}
+
+// roleLockProbeCommander parks ReconcileRole inside the role lock — at
+// ReleaseStaleRoleResources, which the reconcile reaches only after it has taken
+// the lock — and records whether a restore reached the manager while it was
+// parked.
+type roleLockProbeCommander struct {
+	*fakeCommander
+	entered chan struct{}
+	release chan struct{}
+	// reconcileParked is true for exactly the span in which ReconcileRole holds
+	// the role lock and is stopped inside it.
+	reconcileParked        atomic.Bool
+	restoreDuringReconcile atomic.Bool
+}
+
+func (f *roleLockProbeCommander) ReleaseStaleRoleResources(ctx context.Context, target domain.RoleTarget) (sessionmanager.ReleaseResult, error) {
+	f.reconcileParked.Store(true)
+	close(f.entered)
+	<-f.release
+	f.reconcileParked.Store(false)
+	return f.fakeCommander.ReleaseStaleRoleResources(ctx, target)
+}
+
+func (f *roleLockProbeCommander) RestoreWithMode(ctx context.Context, id domain.SessionID) (sessionmanager.RestoreResult, error) {
+	if f.reconcileParked.Load() {
+		f.restoreDuringReconcile.Store(true)
+	}
+	return f.fakeCommander.RestoreWithMode(ctx, id)
+}
+
+// restoreHandoffStore signals the moment Restore has resolved the row it is
+// about to relaunch. That read is the last thing Restore does BEFORE taking the
+// role lock, so it is the handoff point: once it fires, the restore's very next
+// act is either to block on the lock (correct) or to call straight into the
+// manager (the defect).
+type restoreHandoffStore struct {
+	*fakeStore
+	id     domain.SessionID
+	looked chan struct{}
+	once   sync.Once
+}
+
+func (s *restoreHandoffStore) GetSession(ctx context.Context, id domain.SessionID) (domain.SessionRecord, bool, error) {
+	rec, ok, err := s.fakeStore.GetSession(ctx, id)
+	if id == s.id {
+		s.once.Do(func() { close(s.looked) })
+	}
+	return rec, ok, err
+}
+
+// The manager's restore-side ownership guard reads the live sessions and only
+// then relaunches. That is a check-then-act: a ReconcileRole for the same role
+// target landing in between creates or releases the canonical role workspace and
+// puts two runtimes on one worktree — the exact defect the guard exists to
+// prevent. Restore runs in the service that owns the per-RoleTarget lock, so the
+// two must serialize on it.
+//
+// Driven by channel handoff, not timing: the reconcile is parked inside the lock
+// before the restore starts, and the restore is released to take the lock before
+// the reconcile is let go.
+func TestRestoreSerializesWithRoleReconcileForTheSameTarget(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer"}
+	st.sessions["mer-orch-1"] = domain.SessionRecord{
+		ID: "mer-orch-1", ProjectID: "mer", Kind: domain.KindOrchestrator, IsTerminated: true,
+	}
+	handoff := &restoreHandoffStore{fakeStore: st, id: "mer-orch-1", looked: make(chan struct{})}
+	fc := &roleLockProbeCommander{
+		fakeCommander: &fakeCommander{
+			spawnRecord:   domain.SessionRecord{ID: "mer-2", ProjectID: "mer", Kind: domain.KindOrchestrator},
+			restoreResult: sessionmanager.RestoreResult{Session: st.sessions["mer-orch-1"], Mode: sessionmanager.RestoreModeNative},
+		},
+		entered: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	svc := &Service{manager: fc, store: handoff}
+
+	reconcileDone := make(chan error, 1)
+	go func() {
+		_, err := svc.ReconcileRole(context.Background(), domain.OrchestratorTarget("mer"), ReconcileOptions{})
+		reconcileDone <- err
+	}()
+	<-fc.entered // the reconcile now provably holds the orchestrator role lock
+
+	restoreDone := make(chan error, 1)
+	go func() {
+		_, err := svc.Restore(context.Background(), "mer-orch-1")
+		restoreDone <- err
+	}()
+	<-handoff.looked // the restore has resolved its row and is about to take the lock
+
+	close(fc.release)
+	if err := <-reconcileDone; err != nil {
+		t.Fatalf("ReconcileRole: %v", err)
+	}
+	if err := <-restoreDone; err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+
+	if fc.restoreDuringReconcile.Load() {
+		t.Fatal("Restore reached the manager while a ReconcileRole for the same role target was mid-flight; the reconcile can create or release the canonical role workspace under the restore's ownership check, putting two runtimes on one worktree")
+	}
+	if fc.restoreCalls != 1 {
+		t.Fatalf("RestoreWithMode calls = %d, want 1 — the restore must still run, just after the reconcile", fc.restoreCalls)
 	}
 }
