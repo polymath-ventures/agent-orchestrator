@@ -318,8 +318,11 @@ func scopedSystemctlFake(t *testing.T, rec *doctorProbeRecorder, wantUnit, nrest
 			if got := slices.Contains(args, "--user"); got != wantUserScope {
 				t.Errorf("systemctl --user = %v, want %v (args: %s)", got, wantUserScope, joined)
 			}
-			if !strings.Contains(joined, wantUnit) {
-				t.Errorf("systemctl probed %q, want the derived unit %q", joined, wantUnit)
+			// Exact argv element, not a substring: "__ao.service" CONTAINS
+			// "_ao.service", so a substring check is satisfied even when the
+			// unescape step is missing.
+			if !slices.Contains(args, wantUnit) {
+				t.Errorf("systemctl probed %q, want the derived unit %q as an exact argument", joined, wantUnit)
 			}
 			return []byte(nrestarts + "\n"), nil
 		default:
@@ -535,8 +538,10 @@ func TestDoctorDaemonRestartsUnescapesCgroupNames(t *testing.T) {
 			c.deps.ProcRoot = writeProcCgroup(t, doctorFakeDaemonPID, "0::/system.slice/"+tc.onCgroup+"\n")
 
 			check := findDoctorCheck(t, c.runDoctor(context.Background()), "daemon-restarts")
-			if check.Level != doctorPass || !strings.Contains(check.Message, tc.wantUnit) {
-				t.Fatalf("daemon-restarts = %+v, want PASS naming the unescaped unit %q", check, tc.wantUnit)
+			// Anchored on the message's leading token: the escaped form is a
+			// superstring of the unescaped one, so Contains cannot tell them apart.
+			if check.Level != doctorPass || !strings.HasPrefix(check.Message, tc.wantUnit+" has restarted") {
+				t.Fatalf("daemon-restarts = %+v, want PASS naming exactly the unescaped unit %q", check, tc.wantUnit)
 			}
 		})
 	}
@@ -559,5 +564,26 @@ func TestDoctorDaemonRestartsAcceptsWellFormedEscapes(t *testing.T) {
 	check := findDoctorCheck(t, c.runDoctor(context.Background()), "daemon-restarts")
 	if check.Level != doctorPass || !strings.Contains(check.Message, unit) {
 		t.Fatalf("daemon-restarts = %+v, want PASS naming the escaped unit %q", check, unit)
+	}
+}
+
+// TestCgroupUnescape pins the transformation directly, by equality. The
+// indirect checks cannot: systemd's escaped form is a superstring of the
+// unescaped one, so `strings.Contains` is satisfied either way and a test built
+// on it would pass with the unescape step deleted.
+func TestCgroupUnescape(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{"__ao.service", "_ao.service"}, // a unit literally named _ao.service
+		{"_cpu.service", "cpu.service"}, // collided with a controller filename
+		{"ao.service", "ao.service"},    // never escaped, must be untouched
+		{"", ""},                        // degenerate, must not panic
+		{"_", ""},                       // bare prefix
+		{"a_b.service", "a_b.service"},  // underscore not leading, untouched
+	} {
+		t.Run(tc.in, func(t *testing.T) {
+			if got := cgroupUnescape(tc.in); got != tc.want {
+				t.Fatalf("cgroupUnescape(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
 	}
 }
