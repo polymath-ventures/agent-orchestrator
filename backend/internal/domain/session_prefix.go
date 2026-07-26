@@ -23,8 +23,7 @@ const MaxSessionPrefixRunes = 3
 const prefixTokenAlphabet = "abcdefghijklmnopqrstuvwxyz0123456789"
 
 // DeriveSessionPrefix returns a project's session prefix, derived from its name
-// and distinct from every prefix in taken whenever a distinct one exists — see
-// the bound below.
+// and distinct from every prefix in taken.
 //
 // It exists because the prefix heads every session name, and the name is the
 // only project cue once names propagate into a harness's own flat, cross-project
@@ -36,17 +35,15 @@ const prefixTokenAlphabet = "abcdefghijklmnopqrstuvwxyz0123456789"
 // The rule, in order: the initials of a multi-word name, or the leading
 // characters of a single-word one; then a longer draw from the name's own
 // characters; then the smallest free numeric suffix that still fits the cap; then
-// a deterministic sweep of the token space. The sweep is what makes uniqueness a
-// property rather than an aspiration: it returns a free token whenever one
-// exists.
+// a deterministic sweep of every token width the cap allows. The sweep is what
+// makes uniqueness a property rather than an aspiration: it searches the whole
+// space the cap can express, so it returns a free prefix whenever one exists.
 //
-// The cap bounds that guarantee, precisely: the sweep walks the fixed-width
-// three-character tokens over prefixTokenAlphabet, so uniqueness holds while any
-// of those len(prefixTokenAlphabet)^MaxSessionPrefixRunes tokens is free. Once
-// every one is taken, the last candidate is returned even though it duplicates —
-// deliberately, because the caller's alternative is refusing to create the
-// project, and a duplicate prefix an operator can retype beats a project that
-// cannot be registered.
+// The cap is therefore the only bound on that guarantee. Once every prefix the
+// cap can express is taken, the last candidate is returned even though it
+// duplicates — deliberately, because the caller's alternative is refusing to
+// create the project, and a duplicate prefix an operator can retype beats a
+// project that cannot be registered.
 //
 // A name with no usable characters derives from projectID instead, and inputs
 // with nothing usable at all derive a token seeded by those inputs. Neither path
@@ -103,22 +100,30 @@ func DeriveSessionPrefix(projectName, projectID string, taken []string) string {
 	// Nothing drawn from the project is free — or the project offered nothing to
 	// draw from. Walk the token space from an input-seeded offset, so two projects
 	// in this state land in different places and neither lands on a constant.
-	space := len(prefixTokenAlphabet) * len(prefixTokenAlphabet) * len(prefixTokenAlphabet)
-	seed := int(prefixSeed(projectName, projectID) % uint32(space))
-	for i := 0; i < space; i++ {
-		if candidate := prefixToken((seed + i) % space); free(candidate) {
-			return candidate
+	//
+	// Every width the cap allows is swept, widest first: a narrower token is still
+	// a legal prefix, so stopping at one width would hand back a duplicate while
+	// legal values sat free. Widest first because the widest space is the largest
+	// and leaves the scarcer short tokens available.
+	seed := prefixSeed(projectName, projectID)
+	for width := MaxSessionPrefixRunes; width >= 1; width-- {
+		space := prefixTokenSpace(width)
+		start := seed % space
+		for i := uint32(0); i < space; i++ {
+			if candidate := prefixToken((start+i)%space, width); free(candidate) {
+				return candidate
+			}
 		}
 	}
 
-	// Every token in the space is taken, which needs as many projects as the cap
-	// can represent. This is the one path that returns a duplicate, and it is the
-	// least-bad option: a blank prefix would put the caller back where this
-	// started, and an error would fail project creation over a display detail.
+	// Every prefix the cap can express is taken. This is the one path that returns
+	// a duplicate, and it is the least-bad option: a blank prefix would put the
+	// caller back where this started, and an error would fail project creation
+	// over a display detail.
 	if base != "" {
 		return base
 	}
-	return prefixToken(seed)
+	return prefixToken(seed%prefixTokenSpace(MaxSessionPrefixRunes), MaxSessionPrefixRunes)
 }
 
 // basePrefix is the first candidate: one leading character per word for a
@@ -150,15 +155,25 @@ func prefixWords(s string) []string {
 	})
 }
 
-// prefixToken renders n as a fixed-width token over prefixTokenAlphabet.
-func prefixToken(n int) string {
-	base := len(prefixTokenAlphabet)
-	out := make([]byte, MaxSessionPrefixRunes)
-	for i := MaxSessionPrefixRunes - 1; i >= 0; i-- {
+// prefixToken renders n as a width-character token over prefixTokenAlphabet.
+func prefixToken(n uint32, width int) string {
+	base := uint32(len(prefixTokenAlphabet))
+	out := make([]byte, width)
+	for i := width - 1; i >= 0; i-- {
 		out[i] = prefixTokenAlphabet[n%base]
 		n /= base
 	}
 	return string(out)
+}
+
+// prefixTokenSpace is how many distinct tokens of the given width exist. It is
+// uint32 to match the seed it bounds, which keeps the sweep free of conversions.
+func prefixTokenSpace(width int) uint32 {
+	space := uint32(1)
+	for i := 0; i < width; i++ {
+		space *= uint32(len(prefixTokenAlphabet))
+	}
+	return space
 }
 
 // prefixSeed hashes the inputs so the sweep starts somewhere the inputs chose.

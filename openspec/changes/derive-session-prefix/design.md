@@ -76,10 +76,19 @@ Checked against the prefixes already in use, in this order:
    prefix beats an arbitrary one, so the name is exhausted before falling back.
 3. The smallest unused numeric suffix that keeps the whole prefix within three
    characters (`cc` → `cc2`), truncating the base as needed to make room.
+4. A sweep of every token width the cap allows, widest first, from an
+   input-seeded offset.
 
-Step 3 always terminates: the three-character alphanumeric space is far larger
-than any plausible project count, and the search walks it in a fixed order, so
-the result is deterministic given the same set of taken prefixes.
+Step 4 is what makes uniqueness a property rather than a hope: it searches the
+whole space the cap can express, so it finds a free prefix whenever one exists.
+Sweeping only the widest width would have been the subtler bug — a duplicate
+handed back while shorter, equally legal prefixes sat free. The walk is in a
+fixed order, so the result is deterministic given the same taken set.
+
+Once every prefix the cap can express is taken, derivation returns a duplicate
+rather than failing. That is the deliberate terminal behavior: the caller's only
+alternative is refusing to register the project, and a prefix an operator can
+retype beats a project that cannot exist.
 
 ### Compare against _resolved_ prefixes, not stored ones
 
@@ -106,7 +115,7 @@ post-hoc duplicate check.
 
 When a name yields no usable characters, the fallback derives from the project id
 instead — and when that yields nothing either, from a deterministic hash of the
-id. Emitting a fixed literal here would recreate the defect: `ao` on every project
+name and the id together. Emitting a fixed literal here would recreate the defect: `ao` on every project
 is exactly the state being fixed, and per the operator, a meaningless-but-unique
 token beats a meaningful-but-shared one. Creation never fails over a prefix.
 

@@ -153,23 +153,54 @@ func TestDeriveSessionPrefixIsUniqueUnderContention(t *testing.T) {
 	}
 }
 
-// The bounded side of the uniqueness contract. With every prefix the rule can
-// produce already taken, derivation still returns a usable value rather than a
-// blank or a failure — a duplicate an operator can retype beats a project that
-// cannot be registered. This pins the deliberate terminal behavior so a future
-// change cannot quietly turn it into an empty string.
-func TestDeriveSessionPrefixDegradesToADuplicateWhenTheSpaceIsExhausted(t *testing.T) {
-	alphabet := []rune(prefixTokenAlphabet)
-	taken := make([]string, 0, len(alphabet)*len(alphabet)*len(alphabet)+2)
-	for _, a := range alphabet {
-		for _, b := range alphabet {
-			for _, c := range alphabet {
-				taken = append(taken, string([]rune{a, b, c}))
+// allPrefixTokens returns every token of the given width over the sweep
+// alphabet, so a test can take an entire width out of circulation.
+func allPrefixTokens(width int) []string {
+	tokens := []string{""}
+	for i := 0; i < width; i++ {
+		next := make([]string, 0, len(tokens)*len(prefixTokenAlphabet))
+		for _, prefix := range tokens {
+			for _, r := range prefixTokenAlphabet {
+				next = append(next, prefix+string(r))
 			}
 		}
+		tokens = next
 	}
-	// The name-drawn candidates are shorter than the sweep's fixed width, so they
-	// are not in the block above and must be taken explicitly.
+	return tokens
+}
+
+// Uniqueness is bounded by the cap, not by one width inside it. With every
+// three-character value taken, shorter values are still legal prefixes and still
+// free — so derivation must reach for one instead of handing back a duplicate.
+func TestDeriveSessionPrefixUsesAShorterPrefixWhenTheWidestIsExhausted(t *testing.T) {
+	taken := append(allPrefixTokens(MaxSessionPrefixRunes), "cc", "coa")
+	takenSet := map[string]bool{}
+	for _, p := range taken {
+		takenSet[p] = true
+	}
+
+	got := DeriveSessionPrefix("Coach Claw", "coachclaw", taken)
+	if got == "" {
+		t.Fatalf("derived an empty prefix while shorter values were still free")
+	}
+	if takenSet[got] {
+		t.Fatalf("derived %q, which is already taken, while shorter values were still free", got)
+	}
+	if n := utf8.RuneCountInString(got); n < 1 || n > MaxSessionPrefixRunes {
+		t.Fatalf("derived %q with %d runes, want 1..%d", got, n, MaxSessionPrefixRunes)
+	}
+}
+
+// The far side of that boundary. With every value of every width taken, there is
+// no distinct prefix left to hand out, and derivation still returns a usable one
+// rather than a blank or a failure — a duplicate an operator can retype beats a
+// project that cannot be registered. This pins the deliberate terminal behavior
+// so a future change cannot quietly turn it into an empty string.
+func TestDeriveSessionPrefixDegradesToADuplicateWhenEveryWidthIsExhausted(t *testing.T) {
+	var taken []string
+	for width := 1; width <= MaxSessionPrefixRunes; width++ {
+		taken = append(taken, allPrefixTokens(width)...)
+	}
 	taken = append(taken, "cc", "coa")
 
 	got := DeriveSessionPrefix("Coach Claw", "coachclaw", taken)

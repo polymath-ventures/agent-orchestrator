@@ -27,9 +27,9 @@ is worse than a meaningless-but-unique token would be.
 - The derived prefix is **checked against prefixes already in use by other
   projects**. A collision lengthens from the name's own characters first, then
   falls back to the smallest free numeric suffix that still fits in three
-  characters (`cc` → `coa` → `cc2`). The stored prefix is unique whenever the
-  capped prefix space still has a free value, which the project count would have
-  to exhaust to break.
+  characters (`cc` → `coa` → `cc2`), then a sweep of every prefix width the cap
+  allows. The stored prefix is unique while the capped space holds a free value;
+  past that it duplicates rather than failing project creation.
 - A name yielding no usable characters derives a deterministic token from the
   project id instead. This path deliberately produces a _distinct_ token rather
   than a shared literal — a shared default is the defect being fixed — and never
@@ -65,4 +65,6 @@ is worse than a meaningless-but-unique token would be.
   `service/session`. Those govern projects that already have no stored prefix, and
   repointing them at the new rule would rename existing projects.
 - `frontend/src/renderer/components/ProjectSettingsForm.tsx` — unchanged
-  behavior; the field now arrives populated for newly created projects.
+  behavior; the field now arrives populated for newly created projects. Its `ao`
+  placeholder is dropped, having named one project's prefix as though it were
+  every project's default.

@@ -106,6 +106,14 @@ is renamed by it.
 - **AND** the persisted prefix is derived from the project's id
 - **AND** two such projects do not receive the same prefix
 
+#### Scenario: An exhausted prefix space still creates the project
+
+- **WHEN** a project is created and every prefix the cap can express is already
+  in use
+- **THEN** project creation succeeds
+- **AND** the persisted prefix is non-blank and within the cap
+- **AND** it may duplicate an existing prefix, which the operator can retype
+
 #### Scenario: Existing projects are not renamed
 
 - **WHEN** a project that predates this requirement resolves its session prefix
