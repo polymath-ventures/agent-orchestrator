@@ -287,11 +287,20 @@ func hookFailureCause(line string) string {
 	if tag < 0 {
 		return ""
 	}
-	sep := strings.Index(line[tag:], ": ")
-	if sep < 0 {
+	// "<agent> <event>: <cause>". Requiring exactly two bare tokens before the
+	// separator is what makes the split unambiguous: an argument that carries
+	// its own ": " cannot shift where the cause appears to begin, so no
+	// validation gate is needed on the hook path itself — and a hook must never
+	// fail the agent, so a gate there would be the worse trade.
+	_, rest, ok := strings.Cut(line[tag+len(hookFailureTag):], " ")
+	if !ok {
 		return ""
 	}
-	return line[tag+sep+len(": "):]
+	event, cause, ok := strings.Cut(rest, ": ")
+	if !ok || strings.Contains(event, " ") {
+		return ""
+	}
+	return cause
 }
 
 // appendHooksLog appends one line to the hooks log, truncating first when the

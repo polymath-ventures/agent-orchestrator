@@ -136,6 +136,10 @@ func TestQuotedMarkerIsNotMistakenForADaemonDownFailure(t *testing.T) {
 		"2026-07-26T00:00:00Z session=s1 ao hooks codex stop: cwd /tmp/AO daemon is not running — x/y is unreadable",
 		// Not a hook-failure line at all.
 		"AO daemon is not running — start it with `ao daemon`",
+		// An argument carrying its own ": " must not shift where the cause
+		// appears to begin. `ao hooks` argv is AO's own, but the split should
+		// hold by construction rather than by trusting the caller.
+		"2026-07-26T00:00:00Z session=s1 ao hooks x: AO daemon is not running — y stop: connection refused",
 		"2026-07-26T00:00:00Z session=s1 ao hooks codex stop: connection refused",
 	} {
 		if isExpectedHookRestartWindowMiss(line) {
