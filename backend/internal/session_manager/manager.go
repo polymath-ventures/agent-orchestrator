@@ -1608,6 +1608,16 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 			return false, fmt.Errorf("kill %s: runtime: %w", id, err)
 		}
 	}
+	teardownCtx := ctx
+	if handle.ID != "" {
+		// Past this point the runtime is gone. The request remains entitled to
+		// abandon agent-side cleanup below, but durable teardown must complete
+		// on a bounded cleanup context so the row cannot stay live with a dead
+		// runtime.
+		cleanupCtx, cancelTeardown := cleanupContext(ctx)
+		defer cancelTeardown()
+		teardownCtx = cleanupCtx
+	}
 	if killWorkspaceOwnedElsewhere {
 		// The root is owned, but a multi-repo CHILD the live owner does not
 		// occupy is held by nobody. Reclaim it here, while its row still names
@@ -1616,14 +1626,14 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 		// good (#144). Ordered after the runtime destroy above so the agent
 		// whose worktree this is has already been torn down — a runtime destroy
 		// that fails returns before this point and reclaims nothing.
-		m.destroyUncoveredChildWorktrees(ctx, rec)
+		m.destroyUncoveredChildWorktrees(teardownCtx, rec)
 	}
 	freed := false
 	if workspaceProject {
-		cleaned, err := m.destroyWorkspaceProjectRows(ctx, workspaceProjectRows)
+		cleaned, err := m.destroyWorkspaceProjectRows(teardownCtx, workspaceProjectRows)
 		if err != nil {
 			if errors.Is(err, ports.ErrWorkspaceDirty) {
-				if err := m.lcm.MarkTerminated(ctx, id); err != nil {
+				if err := m.lcm.MarkTerminated(teardownCtx, id); err != nil {
 					return false, fmt.Errorf("kill %s: %w", id, err)
 				}
 				m.cleanupSystemPromptDir(id)
@@ -1636,12 +1646,12 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 			m.cleanupAgentWorkspace(ctx, rec, ws.Path)
 		}
 	} else if ws.Path != "" && !killWorkspaceOwnedElsewhere {
-		if err := m.workspace.Destroy(ctx, ws); err != nil {
+		if err := m.workspace.Destroy(teardownCtx, ws); err != nil {
 			if errors.Is(err, ports.ErrWorkspaceDirty) {
-				if err := m.store.DeleteSessionWorktrees(ctx, id); err != nil {
+				if err := m.store.DeleteSessionWorktrees(teardownCtx, id); err != nil {
 					m.logger.Warn("kill: delete restore marker failed", "sessionID", id, "error", err)
 				}
-				if err := m.lcm.MarkTerminated(ctx, id); err != nil {
+				if err := m.lcm.MarkTerminated(teardownCtx, id); err != nil {
 					return false, fmt.Errorf("kill %s: %w", id, err)
 				}
 				m.cleanupSystemPromptDir(id)
@@ -1656,10 +1666,10 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 	// killed session (#2319). For workspace projects this must happen after
 	// teardown reads the rows; dirty-preserved rows return above and are left as
 	// non-restorable inventory.
-	if err := m.store.DeleteSessionWorktrees(ctx, id); err != nil {
+	if err := m.store.DeleteSessionWorktrees(teardownCtx, id); err != nil {
 		m.logger.Warn("kill: delete restore marker failed", "sessionID", id, "error", err)
 	}
-	if err := m.lcm.MarkTerminated(ctx, id); err != nil {
+	if err := m.lcm.MarkTerminated(teardownCtx, id); err != nil {
 		return false, fmt.Errorf("kill %s: %w", id, err)
 	}
 	m.cleanupSystemPromptDir(id)
