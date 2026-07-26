@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 )
 
 // MaxSessionPrefixRunes caps a derived session prefix.
@@ -124,7 +125,8 @@ func basePrefix(words []string) string {
 		if len(initials) >= MaxSessionPrefixRunes {
 			break
 		}
-		initials = append(initials, []rune(word)[0])
+		r, _ := utf8.DecodeRuneInString(word)
+		initials = append(initials, r)
 	}
 	return string(initials)
 }
