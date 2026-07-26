@@ -241,6 +241,74 @@ afterEach(() => {
 	vi.restoreAllMocks();
 });
 
+describe("Sidebar harness indicator", () => {
+	// The session name deliberately omits the harness (see the session-naming
+	// spec), so the sidebar is where the harness becomes visible instead. The
+	// row already owns an aria-label, which drops its descendants from the name
+	// computation — so the harness rides on the row's DESCRIPTION, and the chip
+	// itself is decorative. A chip that labelled itself would never be spoken.
+	it("describes each session's harness without touching the row's name", () => {
+		renderSidebar({ workspaces: [{ ...workspace, sessions: [session] }] });
+
+		const row = screen.getByRole("button", { name: "Open fix login" });
+		expect(row).toHaveAccessibleDescription("Claude Code");
+		expect(row).toHaveTextContent("fix login");
+	});
+
+	it("distinguishes sessions running different harnesses", () => {
+		renderSidebar({
+			primeVisible: true,
+			primeSession,
+			workspaces: [{ ...workspace, sessions: [session, primeSession] }],
+		});
+
+		expect(screen.getByRole("button", { name: "Open fix login" })).toHaveAccessibleDescription("Claude Code");
+		for (const row of screen.getAllByRole("button", { name: "Open AO Prime" })) {
+			expect(row).toHaveAccessibleDescription("Codex");
+		}
+	});
+
+	it("still shows an indicator for a harness with no published mark", () => {
+		renderSidebar({
+			workspaces: [{ ...workspace, sessions: [{ ...session, provider: "aider" }] }],
+		});
+
+		expect(screen.getByRole("button", { name: "Open fix login" })).toHaveAccessibleDescription("Aider");
+		expect(document.body.querySelector("[data-harness-glyph]")).toHaveTextContent("Ai");
+	});
+
+	// The dot and the glyph are one marker pair that owns its own internal
+	// spacing. As bare siblings they collected the row's gap twice — costing the
+	// name 22px instead of 13px — and in the Prime row, whose marker slot is not
+	// a flex container, they collapsed against each other with no gap at all.
+	it("keeps the markers in a single fixed-width slot that owns its spacing", () => {
+		renderSidebar({
+			workspaces: [{ ...workspace, sessions: [{ ...session, title: "a very long session name that must truncate" }] }],
+		});
+
+		const markers = document.body.querySelector("[data-session-markers]");
+		const glyph = document.body.querySelector("[data-harness-glyph]");
+		const name = screen.getByText("a very long session name that must truncate");
+		const row = screen.getByRole("button", { name: /Open a very long session name/ });
+
+		expect(row).toContainElement(markers as HTMLElement);
+		expect(markers).toContainElement(glyph as HTMLElement);
+		// One slot, so the row's gap is paid once; the pair spaces itself.
+		expect(markers).toHaveClass("inline-flex", "shrink-0", "items-center");
+		// The name keeps the row's only flexing slot and truncates rather than wrapping.
+		expect(name).toHaveClass("truncate");
+		expect(name.parentElement).toHaveClass("min-w-0", "flex-1");
+	});
+
+	it("gives the Prime row the same self-spaced marker pair", () => {
+		renderSidebar({ primeVisible: true, primeSession });
+
+		const markers = document.body.querySelector("[data-session-markers]");
+		expect(markers).toHaveClass("inline-flex", "items-center");
+		expect(markers).toContainElement(document.body.querySelector("[data-harness-glyph]") as HTMLElement);
+	});
+});
+
 describe("Sidebar", () => {
 	// The regression: Prime used to disappear from the nav the moment its session
 	// row went terminated — exactly when the operator needed it to recover.

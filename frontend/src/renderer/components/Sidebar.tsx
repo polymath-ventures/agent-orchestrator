@@ -12,7 +12,7 @@ import {
 	Settings,
 	Trash2,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import type { UpdateStatus } from "../../main/update-settings";
 import {
 	newestActiveOrchestrator,
@@ -63,6 +63,8 @@ import { cn } from "../lib/utils";
 import { useUiStore } from "../stores/ui-store";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { CreateProjectFlow, type CreateProjectInput } from "./CreateProjectFlow";
+import { HarnessGlyph } from "./HarnessGlyph";
+import { getHarnessGlyphView } from "../lib/harness-glyphs";
 import { QuotaPanel } from "./QuotaPanel";
 import { ResizeHandle } from "./ResizeHandle";
 import { TitlebarNav } from "./TitlebarNav";
@@ -140,6 +142,34 @@ function useSelection() {
 function SessionDot({ session }: { session: WorkspaceSession }) {
 	const dot = getSessionDotView(session);
 	return <span aria-hidden="true" className={cn("mt-px h-1.5 w-1.5 shrink-0 rounded-full", dot.className)} />;
+}
+
+// Status (what the session is doing) and harness (what is running it) are the
+// two things worth knowing without opening a session, so they travel together
+// as one fixed-width marker pair.
+//
+// This is a real element, not a fragment, for two reasons: as bare siblings the
+// pair collected the row's own gap twice (costing the name 22px rather than 13),
+// and in the Prime row — whose marker slot is not a flex container — they
+// collapsed against each other with no gap at all. Owning the internal spacing
+// makes the pair render identically wherever a row puts it.
+//
+// `descriptionId` is how the harness reaches assistive technology. Every row
+// here is a control with its own `aria-label`, which drops descendants from the
+// accessible name, so the chip is `aria-hidden` and the row points
+// `aria-describedby` at this hidden label instead.
+function SessionMarkers({ session, descriptionId }: { session: WorkspaceSession; descriptionId?: string }) {
+	return (
+		<span className="inline-flex shrink-0 items-center gap-[7px]" data-session-markers="">
+			<SessionDot session={session} />
+			<HarnessGlyph harness={session.provider} />
+			{descriptionId ? (
+				<span className="sr-only" id={descriptionId}>
+					{getHarnessGlyphView(session.provider).label}
+				</span>
+			) : null}
+		</span>
+	);
 }
 
 // Built on shadcn's sidebar primitives (components/ui/sidebar): the provider in
@@ -441,10 +471,12 @@ export function Sidebar({
 type Selection = ReturnType<typeof useSelection>;
 
 function PrimeItem({ session, active, onOpen }: { session: WorkspaceSession; active: boolean; onOpen: () => void }) {
+	const harnessDescId = useId();
 	return (
 		<SidebarMenuItem>
 			<SidebarMenuButton
 				aria-current={active ? "page" : undefined}
+				aria-describedby={harnessDescId}
 				aria-label={`Open ${session.title}`}
 				className={cn(
 					"relative h-9 gap-[9px] rounded-[5px] px-2 py-0 text-[13px] font-medium text-muted-foreground transition-colors",
@@ -461,7 +493,7 @@ function PrimeItem({ session, active, onOpen }: { session: WorkspaceSession; act
 					{session.title}
 				</span>
 				<span className="sidebar-expanded-chrome group-data-[collapsible=icon]:hidden">
-					<SessionDot session={session} />
+					<SessionMarkers descriptionId={harnessDescId} session={session} />
 				</span>
 			</SidebarMenuButton>
 		</SidebarMenuItem>
@@ -780,6 +812,7 @@ function ProjectItem({
 // flips the label into an inline input (Enter/blur saves, Escape cancels) that
 // persists through the daemon rename endpoint, so the new name survives reload.
 function SessionRow({ session, active, onOpen }: { session: WorkspaceSession; active: boolean; onOpen: () => void }) {
+	const harnessDescId = useId();
 	const queryClient = useQueryClient();
 	const [isEditing, setIsEditing] = useState(false);
 	const [draft, setDraft] = useState(session.title);
@@ -813,8 +846,9 @@ function SessionRow({ session, active, onOpen }: { session: WorkspaceSession; ac
 		return (
 			<SidebarMenuSubItem>
 				<div className="relative flex h-auto w-full items-center gap-2.25 rounded-sm py-1.25 pl-2.5 pr-1.5">
-					<SessionDot session={session} />
+					<SessionMarkers descriptionId={harnessDescId} session={session} />
 					<input
+						aria-describedby={harnessDescId}
 						aria-label={`Rename ${session.title}`}
 						autoFocus
 						className="min-w-0 flex-1 rounded-xs border border-accent bg-transparent px-1 py-px text-xs text-foreground outline-none focus-visible:ring-1 focus-visible:ring-accent"
@@ -843,6 +877,7 @@ function SessionRow({ session, active, onOpen }: { session: WorkspaceSession; ac
 		<SidebarMenuSubItem>
 			<button
 				aria-current={active ? "page" : undefined}
+				aria-describedby={harnessDescId}
 				aria-label={`Open ${session.title}`}
 				className={cn(
 					"relative flex h-auto w-full items-center gap-2.25 rounded-sm py-1.25 pl-2.5 pr-7 text-left outline-hidden transition-[color]",
@@ -853,7 +888,7 @@ function SessionRow({ session, active, onOpen }: { session: WorkspaceSession; ac
 				onClick={onOpen}
 				type="button"
 			>
-				<SessionDot session={session} />
+				<SessionMarkers descriptionId={harnessDescId} session={session} />
 				<span className="min-w-0 flex-1">
 					<span className={cn("block truncate text-xs", active ? "text-foreground" : "text-muted-foreground")}>
 						{session.title}
