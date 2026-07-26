@@ -110,9 +110,11 @@ id. Emitting a fixed literal here would recreate the defect: `ao` on every proje
 is exactly the state being fixed, and per the operator, a meaningless-but-unique
 token beats a meaningful-but-shared one. Creation never fails over a prefix.
 
-### Rule lives in `domain/session_naming.go`
+### Rule lives in `domain/session_prefix.go`
 
-Beside `ComposeWorkerDisplayName`, which consumes it. The service supplies the
+In the `domain` package beside `session_naming.go`, whose
+`ComposeWorkerDisplayName` consumes the prefix — its own file because derivation
+and the grammar are separate concerns over the same value. The service supplies the
 inputs (project name, id, the set of prefixes in use) and stores the result; it
 holds no derivation logic of its own. Derived prefixes are lowercase
 alphanumerics, so they satisfy `NameRuneAllowed` and `validateNameComponent` by

@@ -25,7 +25,9 @@ accepts one. Derivation fills a blank; it never overrides a choice.
 - **WHEN** a project is created with a name and no session prefix
 - **THEN** a prefix derived from that name is persisted on the project
 - **AND** the prefix is at most three characters
-- **AND** the prefix is neither blank nor a slice of the project id
+- **AND** the prefix is not blank
+- **AND** the prefix is derived by the stated rule rather than by slicing the
+  project id to the display cap
 
 #### Scenario: A multi-word name yields its initials
 
@@ -59,8 +61,13 @@ projects, and a collision SHALL yield a distinct prefix rather than a duplicate.
 Collision resolution SHALL first lengthen the candidate using further characters
 from the project's own name, and SHALL fall back to the smallest unused numeric
 suffix that keeps the prefix within the three-character cap only when the name
-offers no distinguishing characters. The persisted prefix is therefore unique by
-construction.
+offers no distinguishing characters.
+
+The three-character cap bounds how many distinct prefixes can exist, so
+uniqueness SHALL hold for every project count the cap can represent. Beyond that
+bound the system SHALL still create the project rather than fail it, because a
+project that cannot be registered is a worse outcome than a prefix an operator
+can retype.
 
 When a project's name yields no usable characters, the system SHALL derive a
 distinct token from the project's id instead. This path SHALL NOT emit a value

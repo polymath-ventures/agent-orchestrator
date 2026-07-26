@@ -52,7 +52,7 @@ is worse than a meaningless-but-unique token would be.
 
 ## Impact
 
-- `backend/internal/domain/session_naming.go` — the single home for the
+- `backend/internal/domain/session_prefix.go` — the single home for the
   derivation rule, beside the grammar that consumes it.
 - `backend/internal/service/project/service.go` — the create path fills a blank
   prefix, reading existing projects' prefixes for the collision check.

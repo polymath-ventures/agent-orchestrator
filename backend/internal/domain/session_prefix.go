@@ -35,9 +35,16 @@ const prefixTokenAlphabet = "abcdefghijklmnopqrstuvwxyz0123456789"
 // The rule, in order: the initials of a multi-word name, or the leading
 // characters of a single-word one; then a longer draw from the name's own
 // characters; then the smallest free numeric suffix that still fits the cap; then
-// a deterministic sweep of the token space. The last step is what makes
-// uniqueness a property rather than an aspiration — it cannot exhaust while any
-// token is free.
+// a deterministic sweep of the token space. The sweep is what makes uniqueness a
+// property rather than an aspiration: it returns a free token whenever one
+// exists.
+//
+// The cap bounds that guarantee. Three characters over this alphabet is a finite
+// space, so uniqueness holds up to the number of prefixes the cap can represent
+// and no further. Past that the last candidate is returned even though it
+// duplicates — deliberately, because the caller's alternative is refusing to
+// create the project, and a duplicate prefix an operator can retype beats a
+// project that cannot be registered.
 //
 // A name with no usable characters derives from projectID instead, and inputs
 // with nothing usable at all derive a token seeded by those inputs. Neither path
@@ -102,9 +109,10 @@ func DeriveSessionPrefix(projectName, projectID string, taken []string) string {
 		}
 	}
 
-	// Every token in the space is taken, which needs tens of thousands of
-	// projects. Returning the base beats returning nothing: a duplicate prefix is
-	// confusing, but a blank one would put the caller back where this started.
+	// Every token in the space is taken, which needs as many projects as the cap
+	// can represent. This is the one path that returns a duplicate, and it is the
+	// least-bad option: a blank prefix would put the caller back where this
+	// started, and an error would fail project creation over a display detail.
 	if base != "" {
 		return base
 	}
