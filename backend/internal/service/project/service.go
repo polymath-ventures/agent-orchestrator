@@ -241,10 +241,14 @@ func (m *Service) Add(ctx context.Context, in AddInput) (Project, error) {
 	m.addMu.Lock()
 	defer m.addMu.Unlock()
 
-	projectCountBefore, err := m.activeProjectCount(ctx)
+	// One listing serves two readers: the first-project telemetry check below and
+	// the session-prefix derivation further down, which needs the prefixes the
+	// existing projects resolve to.
+	existing, err := m.store.ListProjects(ctx)
 	if err != nil {
 		return Project{}, apierr.Internal("PROJECT_LOAD_FAILED", "Failed to load project")
 	}
+	projectCountBefore := len(existing)
 
 	name := string(id)
 	if in.Name != nil {
@@ -287,6 +291,15 @@ func (m *Service) Add(ctx context.Context, in AddInput) (Project, error) {
 		RegisteredAt: registeredAt,
 		Kind:         domain.ProjectKindSingleRepo,
 		Config:       projectConfig,
+	}
+	// The prefix heads every session name, and a project that ships without one
+	// falls through to an id slice unrelated projects share. Derive it here, where
+	// the project's name and its siblings' resolved prefixes are both in hand and
+	// addMu already serializes the read against the write — so two concurrent adds
+	// cannot both claim the same free prefix. An operator-supplied prefix is left
+	// alone; derivation only fills a blank.
+	if strings.TrimSpace(row.Config.SessionPrefix) == "" {
+		row.Config.SessionPrefix = domain.DeriveSessionPrefix(name, row.ID, resolvedSessionPrefixes(existing))
 	}
 	if in.AsWorkspace {
 		repos, err := prepareWorkspaceProject(ctx, path, domain.ProjectID(row.ID), registeredAt)
@@ -547,12 +560,15 @@ func nestedGitRepositoryPaths(root string) ([]string, error) {
 	return nested, nil
 }
 
-func (m *Service) activeProjectCount(ctx context.Context) (int, error) {
-	projects, err := m.store.ListProjects(ctx)
-	if err != nil {
-		return 0, err
+// resolvedSessionPrefixes returns the prefix each project resolves to, which is
+// what an operator actually sees: a project storing no prefix still displays the
+// id-derived one, and colliding with a displayed prefix is a real collision.
+func resolvedSessionPrefixes(rows []domain.ProjectRecord) []string {
+	prefixes := make([]string, 0, len(rows))
+	for _, row := range rows {
+		prefixes = append(prefixes, resolveSessionPrefix(row))
 	}
-	return len(projects), nil
+	return prefixes
 }
 
 func (m *Service) emitProjectAdded(row domain.ProjectRecord, firstProject bool) {
@@ -664,17 +680,22 @@ func (m *Service) EnsureDefaultScratchProject(ctx context.Context, scratchPath s
 		return Project{}, apierr.Internal("SCRATCH_PROJECT_SEED_FAILED", "Failed to create scratch project directory")
 	}
 
+	const scratchID, scratchName = "scratch", "Scratch"
 	cfg := domain.ProjectConfig{
 		Worker:       domain.RoleOverride{Harness: m.defaultHarness},
 		Orchestrator: domain.RoleOverride{Harness: m.defaultHarness},
+		// Seeded through the same rule as any other project. There is nothing to
+		// collide with — this only runs on an empty registry — but one rule beats
+		// two.
+		SessionPrefix: domain.DeriveSessionPrefix(scratchName, scratchID, nil),
 	}
 	if err := cfg.Validate(); err != nil {
 		return Project{}, apierr.Internal("SCRATCH_PROJECT_SEED_FAILED", "Default scratch project config is invalid")
 	}
 	row := domain.ProjectRecord{
-		ID:           "scratch",
+		ID:           scratchID,
 		Path:         path,
-		DisplayName:  "Scratch",
+		DisplayName:  scratchName,
 		RegisteredAt: m.clock().UTC(),
 		Kind:         domain.ProjectKindScratch,
 		Config:       cfg,

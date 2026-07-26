@@ -363,7 +363,11 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 								className="h-control-form w-full rounded-md border border-input bg-transparent px-2.5 text-control text-foreground placeholder:text-passive focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-weak"
 								value={form.sessionPrefix}
 								onChange={(e) => setForm((f) => ({ ...f, sessionPrefix: e.target.value }))}
-								placeholder="ao"
+								// No placeholder on purpose. A literal one ("ao") names a single
+								// project's prefix as if it were every project's default, which is
+								// the collision a derived prefix exists to avoid; a word like "auto"
+								// reads as a value to type. New projects arrive with the field
+								// already filled, so there is nothing left for a hint to say.
 							/>
 						</Field>
 					</CardContent>
