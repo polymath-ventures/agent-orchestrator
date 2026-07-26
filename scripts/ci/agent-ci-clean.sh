@@ -77,13 +77,10 @@ case "$raw_workdir" in
 esac
 
 if [ ! -d "$raw_workdir" ]; then
-	if [ "$mode" = "dry-run" ]; then
-		printf 'agent-ci workdir: %s\n' "$raw_workdir"
-		printf 'mode: %s; stale threshold: %s days\n' "$mode" "$older_than_days"
-		printf '\nagent-ci workdir does not exist; nothing to clean\n'
-		exit 0
-	fi
-	mkdir -p "$raw_workdir"
+	printf 'agent-ci workdir: %s\n' "$raw_workdir"
+	printf 'mode: %s; stale threshold: %s days\n' "$mode" "$older_than_days"
+	printf '\nagent-ci workdir does not exist; nothing to clean\n'
+	exit 0
 fi
 
 workdir="$(cd "$raw_workdir" && pwd -P)"
@@ -109,11 +106,6 @@ has_pause_marker() {
 	[ -e "$1/signals/paused" ]
 }
 
-docker_container_exists() {
-	command -v docker >/dev/null 2>&1 || return 1
-	docker ps --format '{{.Names}}' 2>/dev/null | grep -Fxq "$(basename "$1")"
-}
-
 remove_with_docker_root_helper() {
 	local path="$1"
 	local rel="${path#"$workdir"/}"
@@ -127,8 +119,8 @@ consider_run() {
 	local path="$1"
 	if has_pause_marker "$path"; then
 		preserved+=("$path (paused retry state)")
-	elif docker_container_exists "$path"; then
-		preserved+=("$path (active docker container)")
+	elif find "$path" -mindepth 0 -mmin "-$cutoff_minutes" -print -quit | grep -q .; then
+		preserved+=("$path (recent)")
 	elif is_stale "$path"; then
 		selected+=("$path")
 	else

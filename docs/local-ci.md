@@ -64,11 +64,12 @@ by that startup prune. Cleanup covers these Agent CI workdir areas:
 - `runner`
 
 By default, paths must be older than 14 days before they are selected. Recent
-runs and caches are preserved, including caches with recent descendant files.
+runs and caches are preserved, including directories with recent descendant
+files.
 
-Paused or intentionally detached retry state is preserved indefinitely when a
-run directory contains Agent CI's `signals/paused` marker. Abort or resolve
-that retry state before pruning it.
+Paused retry state is preserved indefinitely only when a run directory contains
+Agent CI's `signals/paused` marker. `detached.json` alone is not a preservation
+marker. Abort or resolve paused retry state before pruning it.
 
 Files written by runner containers may appear on the host as UID/GID `1001`
 and may display as `jt:coachclaw` on this machine. Treat that as numeric

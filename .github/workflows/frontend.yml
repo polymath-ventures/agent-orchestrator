@@ -16,6 +16,7 @@ on:
     paths:
       - "frontend/**"
       - "ops/**"
+      - "scripts/ci/**"
       - "package.json"
       - "package-lock.json"
       - ".github/workflows/frontend.yml"

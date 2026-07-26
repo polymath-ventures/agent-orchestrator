@@ -68,6 +68,35 @@ test("agent-ci wrapper uses the repo slug from plain checkouts and subdirectorie
 	}
 });
 
+test("agent-ci wrapper warns when an override points at temporary storage", () => {
+	const scratch = mkdtempSync(join(root, ".cache-test-agent-ci-clean-"));
+	try {
+		const fakeBin = join(scratch, "bin");
+		const tmpWorkdir = join("/tmp", "ao-agent-ci-wrapper-warning");
+		mkdirSync(fakeBin, { recursive: true });
+
+		const fakeNpx = join(fakeBin, "npx");
+		writeFileSync(fakeNpx, "#!/usr/bin/env bash\nexit 0\n");
+		chmodSync(fakeNpx, 0o755);
+
+		const result = spawnSync("bash", [join(root, "scripts/ci/agent-ci.sh")], {
+			cwd: root,
+			env: {
+				...process.env,
+				AGENT_CI_WORKING_DIR: tmpWorkdir,
+				PATH: `${fakeBin}:${process.env.PATH}`,
+			},
+			encoding: "utf8",
+		});
+
+		assert.equal(result.status, 0, result.stderr);
+		assert.match(result.stderr, /AGENT_CI_WORKING_DIR resolves under temporary storage/);
+	} finally {
+		rmSync(join("/tmp", "ao-agent-ci-wrapper-warning"), { recursive: true, force: true });
+		rmSync(scratch, { recursive: true, force: true });
+	}
+});
+
 test("agent-ci cleanup is dry-run by default and refuses tmp roots", () => {
 	const src = read("scripts/ci/agent-ci-clean.sh");
 	assert.match(src, /mode=dry-run/);
@@ -86,6 +115,24 @@ test("agent-ci cleanup is dry-run by default and refuses tmp roots", () => {
 	assert.equal(result.status, 2);
 	assert.match(result.stderr, /refusing to clean unsafe agent-ci workdir/);
 	assert.equal(existsSync(refused), false, "refused /tmp workdir must not be created");
+});
+
+test("agent-ci cleanup force does not create a missing workdir", () => {
+	const scratch = mkdtempSync(join(root, ".cache-test-agent-ci-clean-"));
+	try {
+		const missingWorkdir = join(scratch, "missing-agent-ci-workdir");
+		const result = spawnSync("bash", ["scripts/ci/agent-ci-clean.sh", "--force"], {
+			cwd: root,
+			env: { ...process.env, AGENT_CI_WORKING_DIR: missingWorkdir },
+			encoding: "utf8",
+		});
+
+		assert.equal(result.status, 0, result.stderr);
+		assert.match(result.stdout, /agent-ci workdir does not exist; nothing to clean/);
+		assert.equal(existsSync(missingWorkdir), false, "--force must not create a missing cleanup target");
+	} finally {
+		rmSync(scratch, { recursive: true, force: true });
+	}
 });
 
 test("agent-ci cleanup default cache slug is stable across task worktrees", () => {
@@ -173,9 +220,11 @@ test("agent-ci cleanup does not treat detached metadata as paused state", () => 
 	const workdir = mkdtempSync(join(root, ".cache-test-agent-ci-clean-"));
 	try {
 		const detachedRun = join(workdir, "runs", "agent-ci-detached-j1");
-		mkdirSync(join(detachedRun, "detached.json"), { recursive: true });
+		mkdirSync(detachedRun, { recursive: true });
+		writeFileSync(join(detachedRun, "detached.json"), "{}\n");
 
 		const old = new Date(Date.now() - 16 * 24 * 60 * 60 * 1000);
+		utimesSync(join(detachedRun, "detached.json"), old, old);
 		utimesSync(detachedRun, old, old);
 
 		const result = spawnSync("bash", ["scripts/ci/agent-ci-clean.sh", "--dry-run", "--older-than", "14"], {
@@ -241,5 +290,35 @@ test("agent-ci cleanup preserves cache roots with recent descendant files", () =
 		assert.doesNotMatch(result.stdout, /selected for cleanup:[\s\S]*cache\/toolcache/);
 	} finally {
 		rmSync(workdir, { recursive: true, force: true });
+	}
+});
+
+test("agent-ci cleanup preserves run directories with recent descendant files", () => {
+	const workdir = mkdtempSync(join(root, ".cache-test-agent-ci-clean-"));
+	try {
+		const oldRun = join(workdir, "runs", "agent-ci-old-but-active-j1");
+		const recentDescendant = join(oldRun, "workspace", "log.txt");
+		mkdirSync(recentDescendant, { recursive: true });
+
+		const old = new Date(Date.now() - 16 * 24 * 60 * 60 * 1000);
+		utimesSync(oldRun, old, old);
+
+		const result = spawnSync("bash", ["scripts/ci/agent-ci-clean.sh", "--dry-run", "--older-than", "14"], {
+			cwd: root,
+			env: { ...process.env, AGENT_CI_WORKING_DIR: workdir },
+			encoding: "utf8",
+		});
+
+		assert.equal(result.status, 0, result.stderr);
+		assert.match(result.stdout, /agent-ci-old-but-active-j1 \(recent\)/);
+		assert.doesNotMatch(result.stdout, /selected for cleanup:[\s\S]*agent-ci-old-but-active-j1/);
+	} finally {
+		rmSync(workdir, { recursive: true, force: true });
+	}
+});
+
+test("workflows run ops tests when CI scripts change", () => {
+	for (const workflow of [".github/workflows/go.yml", ".github/workflows/frontend.yml"]) {
+		assert.match(read(workflow), /scripts\/ci\/\*\*/);
 	}
 });
