@@ -42,7 +42,8 @@ All of these were traced to the same root cause:
 - Sessions stuck `idle` + `is_terminated = 0` in the store, never reaped, and
   therefore not restorable (`Restore` requires `IsTerminated`, otherwise
   `ErrNotRestorable`).
-- `tmux list-sessions` showing sessions as alive-but-unreachable or dead,
+- `tmux -S "${AO_DATA_DIR:-$HOME/.ao/data}/run/tmux/default" list-sessions` showing sessions as
+  alive-but-unreachable or dead,
   depending on which socket universe was inspected.
 
 The unifying cause: the running, GUI-launched daemon cannot execute

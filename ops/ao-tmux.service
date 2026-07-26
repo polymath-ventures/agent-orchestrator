@@ -4,12 +4,28 @@ Before=ao.service
 RefuseManualStop=yes
 
 [Service]
-# Skip when a tmux server already owns the default socket; that covers migration
-# hosts with a legacy server. If the socket is free, start the server here so
-# later daemon-created sessions are children of this unit instead of ao.service.
-ExecCondition=/bin/sh -c 'if tmux list-sessions >/dev/null 2>&1; then exit 1; fi; if tmux list-sessions 2>&1 | grep -qiE "error connecting|no server running"; then exit 0; fi; echo "ao-tmux.service: tmux ownership probe failed" >&2; tmux list-sessions 2>&1 | sed "s/^/  /" >&2; exit 2'
+# The server this unit owns must live on the socket the daemon actually uses:
+# $AO_DATA_DIR/run/tmux/default, not tmux's default /tmp/tmux-$UID/default. A
+# runtime session handle is app state, and a routine operator /tmp sweep of the
+# default socket orphans the whole live fleet (issue #160).
+#
+# The socket is DERIVED from AO_DATA_DIR rather than written out, so a drop-in
+# that overrides AO_DATA_DIR moves the daemon and this unit together instead of
+# silently splitting them. AO_DATA_DIR is pinned to the same value as
+# ao.service; the "/run/tmux/default" suffix is the one systemd-side copy of
+# tmux.SocketPath's layout, and ops/ao-systemd-units.test.mjs enforces both.
+Environment=AO_DATA_DIR=%h/.ao/data
+#
+# Skip when a tmux server already owns that socket. If it is free, start the
+# server here so later daemon-created sessions are children of this unit
+# instead of ao.service.
+ExecCondition=/bin/sh -c 'if tmux -S "$AO_DATA_DIR/run/tmux/default" list-sessions >/dev/null 2>&1; then exit 1; fi; if tmux -S "$AO_DATA_DIR/run/tmux/default" list-sessions 2>&1 | grep -qiE "error connecting|no server running|no such file"; then exit 0; fi; echo "ao-tmux.service: tmux ownership probe failed" >&2; tmux -S "$AO_DATA_DIR/run/tmux/default" list-sessions 2>&1 | sed "s/^/  /" >&2; exit 2'
 Type=forking
-ExecStart=/usr/bin/tmux start-server ";" set-option -g exit-empty off
+# tmux refuses to bind a socket whose directory is missing. 0700 matches tmux's
+# own /tmp/tmux-$UID permissions. ${...} (braced) is substituted by systemd
+# without word-splitting, so a home path containing spaces stays one argument.
+ExecStartPre=/usr/bin/install -d -m 700 ${AO_DATA_DIR}/run/tmux
+ExecStart=/usr/bin/tmux -S ${AO_DATA_DIR}/run/tmux/default start-server ";" set-option -g exit-empty off
 
 # There is deliberately no ExecStop. Stopping this unit must not run
 # tmux kill-server or signal the whole cgroup; both are fleet kills.

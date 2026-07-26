@@ -101,7 +101,7 @@ tail -n 100 ~/.ao/daemon.log                        # daemon log
 # Sessions & runtime
 /tmp/ao session ls                                  # all sessions and their state
 /tmp/ao session get <id>                            # one session: spawn config, runtime, lifecycle
-tmux ls                                             # tmux runtime sessions backing terminals (macOS/Linux)
+tmux -S "${AO_DATA_DIR:-$HOME/.ao/data}/run/tmux/default" ls   # tmux runtime sessions backing terminals (macOS/Linux)
 
 # Durable state (SQLite at ~/.ao/data)
 sqlite3 ~/.ao/data/ao.db '.tables'                  # inspect schema/rows if state looks wrong
@@ -355,17 +355,17 @@ any priority/confidence stated in the body), root cause summary.
 
 ### A. Subsystem Quick Reference
 
-| Subsystem                       | Collect                                   | Key files                                                                  |
-| ------------------------------- | ----------------------------------------- | -------------------------------------------------------------------------- |
-| **CLI** (`ao start/stop/spawn`) | Version, install method, OS, which binary | `backend/internal/cli/`, `backend/cmd/ao/main.go`                          |
-| **Daemon / HTTP API**           | `ao status`, port, daemon.log             | `backend/internal/daemon/daemon.go`, `backend/internal/httpd/controllers/` |
-| **Sessions / Lifecycle**        | Session ID, spawn config, runtime, state  | `backend/internal/session_manager/manager.go`                              |
-| **Runtime (tmux / ConPTY)**     | tmux version, `tmux ls` (macOS/Linux)     | `backend/internal/adapters/runtime/`                                       |
-| **Terminal mux**                | Runtime type, shell, attach behavior      | `backend/internal/terminal/`                                               |
-| **Agent harness**               | Harness name + version                    | `backend/internal/adapters/agent/<harness>/`                               |
-| **Storage**                     | DB state, migrations                      | `backend/internal/storage/sqlite/`, `~/.ao/data/ao.db`                     |
-| **Hooks**                       | Hook event, agent, payload                | `backend/internal/cli/hooks.go`                                            |
-| **Frontend (Electron/React)**   | Screenshot, viewport, daemon connectivity | `frontend/src/`                                                            |
+| Subsystem                       | Collect                                                                                    | Key files                                                                  |
+| ------------------------------- | ------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------- |
+| **CLI** (`ao start/stop/spawn`) | Version, install method, OS, which binary                                                  | `backend/internal/cli/`, `backend/cmd/ao/main.go`                          |
+| **Daemon / HTTP API**           | `ao status`, port, daemon.log                                                              | `backend/internal/daemon/daemon.go`, `backend/internal/httpd/controllers/` |
+| **Sessions / Lifecycle**        | Session ID, spawn config, runtime, state                                                   | `backend/internal/session_manager/manager.go`                              |
+| **Runtime (tmux / ConPTY)**     | tmux version, `tmux -S "${AO_DATA_DIR:-$HOME/.ao/data}/run/tmux/default" ls` (macOS/Linux) | `backend/internal/adapters/runtime/`                                       |
+| **Terminal mux**                | Runtime type, shell, attach behavior                                                       | `backend/internal/terminal/`                                               |
+| **Agent harness**               | Harness name + version                                                                     | `backend/internal/adapters/agent/<harness>/`                               |
+| **Storage**                     | DB state, migrations                                                                       | `backend/internal/storage/sqlite/`, `~/.ao/data/ao.db`                     |
+| **Hooks**                       | Hook event, agent, payload                                                                 | `backend/internal/cli/hooks.go`                                            |
+| **Frontend (Electron/React)**   | Screenshot, viewport, daemon connectivity                                                  | `frontend/src/`                                                            |
 
 **Misrouting patterns:**
 

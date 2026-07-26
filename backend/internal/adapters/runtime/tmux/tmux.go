@@ -42,8 +42,15 @@ var getenv = os.Getenv
 // Options configures a tmux Runtime. Every field has a sensible default (see
 // New), so the zero value is usable.
 type Options struct {
-	Binary     string        // default "tmux" (resolved via exec.LookPath)
-	Shell      string        // default $SHELL else /bin/sh
+	Binary string // default "tmux" (resolved via exec.LookPath)
+	Shell  string // default $SHELL else /bin/sh
+	// DataDir is AO's data directory (config.Config.DataDir). It anchors the
+	// tmux socket under AO-owned state -- see SocketPath and issue #160. Left
+	// empty (tests, embedded use) the Runtime passes no -S and tmux picks its
+	// own default socket; production wiring always supplies it, and
+	// runtimeselect.New takes it as a required argument so a caller cannot
+	// forget.
+	DataDir    string
 	Timeout    time.Duration // default 5s
 	ChunkSize  int           // default 16*1024
 	EnterDelay time.Duration // pause after pasting a non-empty message before pressing Enter; default defaultEnterDelay. Conpty already does this (ptyInputEnterDelay); tmux lacked it, so a large multiline paste could absorb the trailing Enter and leave the prompt unsubmitted (issue #2342).
@@ -53,8 +60,16 @@ type Options struct {
 // Runtime runs agent sessions inside tmux sessions, driving them via the tmux
 // CLI. It implements ports.Runtime.
 type Runtime struct {
-	binary       string
-	shell        string
+	binary string
+	shell  string
+	// socket is the AO-owned tmux socket every invocation targets via -S.
+	// Empty means "let tmux choose" (see Options.DataDir).
+	socket string
+	// legacySocket is tmux's own default socket path, consulted only as a
+	// transitional fallback for sessions that predate the move off /tmp. It is
+	// empty whenever socket is, and its whole code path costs nothing once the
+	// legacy socket file is gone. See socketFor.
+	legacySocket string
 	timeout      time.Duration
 	chunkSize    int
 	enterDelay   time.Duration
@@ -62,6 +77,68 @@ type Runtime struct {
 	runner       runner
 	reapSessions func(ctx context.Context, pids []int, grace time.Duration)
 }
+
+// SocketPath returns the tmux socket AO owns for a given data dir. A runtime
+// session handle is app state, so it belongs under the data dir with the rest
+// of it rather than on tmux's default /tmp/tmux-$UID/default, where a routine
+// operator `/tmp` sweep -- or tmpfs pressure -- silently orphans every live
+// session (issue #160). An empty dataDir yields an empty path, meaning "use
+// tmux's default socket".
+func SocketPath(dataDir string) string {
+	if dataDir == "" {
+		return ""
+	}
+	return filepath.Join(dataDir, "run", "tmux", "default")
+}
+
+// legacySocketPath mirrors tmux's own default-socket resolution -- $TMUX_TMPDIR
+// if set, else /tmp -- so the transitional fallback looks exactly where the
+// pre-#160 daemon's sessions actually live.
+//
+// tmux does NOT consult $TMPDIR here, and this must not either: macOS sets
+// TMPDIR to a per-user /var/folders path for GUI-launched processes, so an
+// extra TMPDIR branch would send the fallback somewhere tmux never wrote,
+// report every live pre-existing session as dead, and hand the fleet to the
+// reaper -- precisely the harm the fallback exists to prevent. Verified on
+// tmux 3.5a: with TMPDIR set and TMUX_TMPDIR unset the socket is still created
+// at /tmp/tmux-$UID/default.
+func legacySocketPath() string {
+	dir := getenv("TMUX_TMPDIR")
+	if dir == "" {
+		dir = "/tmp"
+	}
+	return filepath.Join(dir, tmuxSocketDirName(os.Geteuid()), "default")
+}
+
+// tmuxSocketDirName is tmux's per-user socket directory name, "tmux-<euid>".
+func tmuxSocketDirName(uid int) string {
+	return "tmux-" + strconv.Itoa(uid)
+}
+
+// ensureSocketDir creates the socket's parent directory, which tmux requires to
+// exist before it will bind. 0700 matches tmux's own /tmp/tmux-$UID; the
+// explicit Chmod tightens a directory that an earlier umask left looser, so the
+// permission holds regardless of how the path came to exist.
+func ensureSocketDir(socket string) error {
+	if socket == "" {
+		return nil
+	}
+	dir := filepath.Dir(socket)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("tmux runtime: create socket dir %s: %w", dir, err)
+	}
+	//nolint:gosec // G302 targets files; this is the socket directory, and 0700 is exactly tmux's own /tmp/tmux-$UID mode.
+	if err := os.Chmod(dir, 0o700); err != nil {
+		return fmt.Errorf("tmux runtime: secure socket dir %s: %w", dir, err)
+	}
+	return nil
+}
+
+// Socket reports the tmux socket this Runtime talks to, or "" when it uses
+// tmux's default. The daemon logs it at startup so an operator can attach by
+// hand (`tmux -S <socket> attach -t <session>`), which is no longer possible
+// with a bare `tmux attach` now that AO's sessions live off the default socket.
+func (r *Runtime) Socket() string { return r.socket }
 
 var _ ports.Runtime = (*Runtime)(nil)
 var _ ports.Attacher = (*Runtime)(nil)
@@ -170,9 +247,16 @@ func New(opts Options) *Runtime {
 	if reapGrace <= 0 {
 		reapGrace = defaultReapGrace
 	}
+	socket := SocketPath(opts.DataDir)
+	legacySocket := ""
+	if socket != "" {
+		legacySocket = legacySocketPath()
+	}
 	return &Runtime{
 		binary:       binary,
 		shell:        shellPath,
+		socket:       socket,
+		legacySocket: legacySocket,
 		timeout:      timeout,
 		chunkSize:    chunkSize,
 		enterDelay:   enterDelay,
@@ -199,9 +283,16 @@ func (r *Runtime) Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.Ru
 		return ports.RuntimeHandle{}, err
 	}
 
+	// New sessions always land on AO's own socket; only pre-existing ones can be
+	// on the legacy socket, so Create targets r.socket directly and passes it to
+	// its follow-up commands rather than re-resolving per call.
+	if err := ensureSocketDir(r.socket); err != nil {
+		return ports.RuntimeHandle{}, err
+	}
+
 	launchCmd := buildLaunchCommand(cfg)
 	args := newSessionArgs(id, cfg.WorkspacePath, r.shell, launchCmd)
-	if _, err := r.run(ctx, args...); err != nil {
+	if _, err := r.runOn(ctx, r.socket, args...); err != nil {
 		return ports.RuntimeHandle{}, fmt.Errorf("tmux runtime: create session %s: %w", id, err)
 	}
 	if err := r.verifyPaneWorkingDirectory(ctx, id, cfg.WorkspacePath); err != nil {
@@ -211,14 +302,14 @@ func (r *Runtime) Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.Ru
 
 	// Hide the status bar in the embedded terminal: it clutters the view and
 	// was not designed for the in-browser display context.
-	if _, err := r.run(ctx, setStatusOffArgs(id)...); err != nil {
+	if _, err := r.runOn(ctx, r.socket, setStatusOffArgs(id)...); err != nil {
 		_ = r.Destroy(context.Background(), ports.RuntimeHandle{ID: id})
 		return ports.RuntimeHandle{}, fmt.Errorf("tmux runtime: set status %s: %w", id, err)
 	}
 
 	// Enable mouse mode so the embedded terminal's SGR wheel reports scroll the
 	// pane (see setMouseOnArgs). Without it, wheel scrolling silently no-ops.
-	if _, err := r.run(ctx, setMouseOnArgs(id)...); err != nil {
+	if _, err := r.runOn(ctx, r.socket, setMouseOnArgs(id)...); err != nil {
 		_ = r.Destroy(context.Background(), ports.RuntimeHandle{ID: id})
 		return ports.RuntimeHandle{}, fmt.Errorf("tmux runtime: set mouse %s: %w", id, err)
 	}
@@ -226,13 +317,13 @@ func (r *Runtime) Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.Ru
 	// Size the shared window to the largest attached client, not the most recent
 	// one, so a small secondary viewer (e.g. the phone) can't strip down a larger
 	// client's view (see setWindowSizeLargestArgs).
-	if _, err := r.run(ctx, setWindowSizeLargestArgs(id)...); err != nil {
+	if _, err := r.runOn(ctx, r.socket, setWindowSizeLargestArgs(id)...); err != nil {
 		_ = r.Destroy(context.Background(), ports.RuntimeHandle{ID: id})
 		return ports.RuntimeHandle{}, fmt.Errorf("tmux runtime: set window-size %s: %w", id, err)
 	}
 
 	handle := ports.RuntimeHandle{ID: id}
-	alive, err := r.IsAlive(ctx, handle)
+	alive, err := r.hasSessionOn(ctx, r.socket, id)
 	if err != nil {
 		_ = r.Destroy(context.Background(), handle)
 		return ports.RuntimeHandle{}, fmt.Errorf("tmux runtime: verify session %s: %w", id, err)
@@ -245,7 +336,7 @@ func (r *Runtime) Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.Ru
 }
 
 func (r *Runtime) verifyPaneWorkingDirectory(ctx context.Context, id, want string) error {
-	out, err := r.run(ctx, paneCurrentPathArgs(id)...)
+	out, err := r.runOn(ctx, r.socket, paneCurrentPathArgs(id)...)
 	if err != nil {
 		return fmt.Errorf("tmux runtime: verify working directory %s: %w", id, err)
 	}
@@ -268,12 +359,16 @@ func (r *Runtime) Destroy(ctx context.Context, handle ports.RuntimeHandle) error
 	if err != nil {
 		return err
 	}
+	// Resolve the hosting socket once so the pane listing and the kill target
+	// cannot disagree (see socketFor).
+	socket := r.socketFor(ctx, id)
+
 	// Capture pane session ids while the session still exists; a missing
 	// session lists no panes and reaps nothing. Best-effort: failures here must
 	// not block the kill-session below.
-	sessionIDs := r.paneSessionIDs(ctx, id)
+	sessionIDs := r.paneSessionIDs(ctx, socket, id)
 
-	out, err := r.run(ctx, killSessionArgs(id)...)
+	out, err := r.runOn(ctx, socket, killSessionArgs(id)...)
 	// Reap regardless of the kill-session result: orphaned children outlive the
 	// session, so they must be cleaned up even when the session was already
 	// gone (a benign double-kill).
@@ -294,8 +389,8 @@ func (r *Runtime) Destroy(ctx context.Context, handle ports.RuntimeHandle) error
 // the handle killSessionsByPID uses to reap the pane's descendants. Best-effort:
 // any error (including a missing session) or unparseable line yields no ids,
 // and pids <= 1 are skipped so we never signal init or the "current session".
-func (r *Runtime) paneSessionIDs(ctx context.Context, id string) []int {
-	out, err := r.run(ctx, listPanePIDsArgs(id)...)
+func (r *Runtime) paneSessionIDs(ctx context.Context, socket, id string) []int {
+	out, err := r.runOn(ctx, socket, listPanePIDsArgs(id)...)
 	if err != nil {
 		return nil
 	}
@@ -321,15 +416,8 @@ func (r *Runtime) IsAlive(ctx context.Context, handle ports.RuntimeHandle) (bool
 	if err != nil {
 		return false, err
 	}
-	out, err := r.run(ctx, hasSessionArgs(id)...)
-	if err != nil {
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) && sessionMissingOutput(string(out)) {
-			return false, nil
-		}
-		return false, fmt.Errorf("tmux runtime: probe session %s: %w", id, err)
-	}
-	return true, nil
+	_, alive, err := r.resolveSession(ctx, id)
+	return alive, err
 }
 
 // IsRunningCommand reports whether the pane still has a launched child process.
@@ -341,7 +429,7 @@ func (r *Runtime) IsRunningCommand(ctx context.Context, handle ports.RuntimeHand
 	if err != nil {
 		return false, err
 	}
-	out, err := r.run(ctx, paneProcessArgs(id)...)
+	out, err := r.runFor(ctx, id, paneProcessArgs(id)...)
 	if err != nil {
 		return false, fmt.Errorf("tmux runtime: inspect pane process %s: %w", id, err)
 	}
@@ -376,10 +464,13 @@ func (r *Runtime) SendMessage(ctx context.Context, handle ports.RuntimeHandle, m
 	if err != nil {
 		return err
 	}
+	// Resolve the hosting socket once: every chunk and the trailing Enter must
+	// land in the same pane, and re-resolving per chunk would also re-probe.
+	socket := r.socketFor(ctx, id)
 	enterCtx := ctx
 	if message != "" {
 		for _, chunk := range chunks(message, r.chunkSize) {
-			if _, err := r.run(ctx, sendKeysLiteralArgs(id, chunk)...); err != nil {
+			if _, err := r.runOn(ctx, socket, sendKeysLiteralArgs(id, chunk)...); err != nil {
 				return fmt.Errorf("tmux runtime: send message %s: %w", id, err)
 			}
 		}
@@ -404,7 +495,7 @@ func (r *Runtime) SendMessage(ctx context.Context, handle ports.RuntimeHandle, m
 			}
 		}
 	}
-	if _, err := r.run(enterCtx, sendEnterArgs(id)...); err != nil {
+	if _, err := r.runOn(enterCtx, socket, sendEnterArgs(id)...); err != nil {
 		return fmt.Errorf("tmux runtime: send enter %s: %w", id, err)
 	}
 	return nil
@@ -417,7 +508,7 @@ func (r *Runtime) Interrupt(ctx context.Context, handle ports.RuntimeHandle) err
 	if err != nil {
 		return err
 	}
-	if _, err := r.run(ctx, sendInterruptArgs(id)...); err != nil {
+	if _, err := r.runFor(ctx, id, sendInterruptArgs(id)...); err != nil {
 		return fmt.Errorf("tmux runtime: interrupt session %s: %w", id, err)
 	}
 	return nil
@@ -433,7 +524,7 @@ func (r *Runtime) GetOutput(ctx context.Context, handle ports.RuntimeHandle, lin
 	if lines <= 0 {
 		return "", errors.New("tmux runtime: lines must be positive")
 	}
-	out, err := r.run(ctx, capturePaneArgs(id, lines)...)
+	out, err := r.runFor(ctx, id, capturePaneArgs(id, lines)...)
 	if err != nil {
 		return "", fmt.Errorf("tmux runtime: capture output %s: %w", id, err)
 	}
@@ -444,7 +535,7 @@ func (r *Runtime) GetOutput(ctx context.Context, handle ports.RuntimeHandle, lin
 // local PTY, sized rows x cols from birth when known. ctx cancellation closes
 // the PTY.
 func (r *Runtime) Attach(ctx context.Context, handle ports.RuntimeHandle, rows, cols uint16) (ports.Stream, error) {
-	argv, err := r.attachCommand(handle)
+	argv, err := r.attachCommand(ctx, handle)
 	if err != nil {
 		return nil, err
 	}
@@ -469,12 +560,12 @@ func (r *Runtime) Attach(ctx context.Context, handle ports.RuntimeHandle, rows, 
 // difference for the still-correct box-drawing case. AO already treats the
 // PTY byte stream as UTF-8 end to end, so forcing the flag is always
 // correct here regardless of the daemon's own environment.
-func (r *Runtime) attachCommand(handle ports.RuntimeHandle) ([]string, error) {
+func (r *Runtime) attachCommand(ctx context.Context, handle ports.RuntimeHandle) ([]string, error) {
 	id, err := handleID(handle)
 	if err != nil {
 		return nil, err
 	}
-	return []string{r.binary, "-u", "attach-session", "-t", id}, nil
+	return r.tmuxArgv(r.socketFor(ctx, id), "-u", "attach-session", "-t", id), nil
 }
 
 func attachEnv(base []string) []string {
@@ -488,11 +579,27 @@ func attachEnv(base []string) []string {
 	return append(env, "TERM=xterm-256color")
 }
 
-// run wraps runner.Run with a per-call timeout context.
-func (r *Runtime) run(ctx context.Context, args ...string) ([]byte, error) {
+// tmuxArgv builds the full argv for a tmux invocation on socket. It is the one
+// place the socket flag is applied, so no command builder in commands.go and no
+// future call site has to remember it -- and none can silently fall back to
+// tmux's default /tmp socket (issue #160).
+func (r *Runtime) tmuxArgv(socket string, args ...string) []string {
+	argv := make([]string, 0, len(args)+3)
+	argv = append(argv, r.binary)
+	if socket != "" {
+		argv = append(argv, "-S", socket)
+	}
+	return append(argv, args...)
+}
+
+// runOn wraps runner.Run with a per-call timeout context, targeting an explicit
+// socket. Callers that act on an existing session should use runFor instead so
+// the transitional legacy socket is honored.
+func (r *Runtime) runOn(ctx context.Context, socket string, args ...string) ([]byte, error) {
 	cmdCtx, cancel := context.WithTimeout(ctx, r.timeout)
 	defer cancel()
-	out, err := r.runner.Run(cmdCtx, nil, r.binary, args...)
+	argv := r.tmuxArgv(socket, args...)
+	out, err := r.runner.Run(cmdCtx, nil, argv[0], argv[1:]...)
 	if cmdCtx.Err() != nil {
 		return out, cmdCtx.Err()
 	}
@@ -500,6 +607,84 @@ func (r *Runtime) run(ctx context.Context, args ...string) ([]byte, error) {
 		return out, commandError{err: err, output: strings.TrimSpace(string(out))}
 	}
 	return out, nil
+}
+
+// runFor runs a session-targeted tmux command on whichever socket actually
+// hosts the session.
+func (r *Runtime) runFor(ctx context.Context, id string, args ...string) ([]byte, error) {
+	return r.runOn(ctx, r.socketFor(ctx, id), args...)
+}
+
+// socketFor resolves the socket hosting session id, preferring AO's own and
+// falling back to tmux's default only for sessions that predate the move off
+// /tmp (issue #160).
+//
+// Changing the socket path does not migrate a tmux server already running on
+// the old one: without this fallback, upgrading under a live fleet would make
+// every running session look dead to IsAlive, and the reaper would act on
+// them. The fallback is self-retiring -- once the legacy socket file is gone
+// (its server drained or /tmp swept) the stat below short-circuits and no
+// extra probe is ever issued, which is also the state in which this function
+// and legacySocketPath can be deleted.
+func (r *Runtime) socketFor(ctx context.Context, id string) string {
+	if !r.legacySocketPresent() {
+		return r.socket
+	}
+	socket, _, _ := r.resolveSession(ctx, id)
+	return socket
+}
+
+// legacySocketPresent reports whether the transitional fallback is still live.
+// Once the legacy socket file is gone the whole fallback short-circuits on this
+// single stat, issuing no extra tmux invocations.
+func (r *Runtime) legacySocketPresent() bool {
+	if r.socket == "" || r.legacySocket == "" {
+		return false
+	}
+	_, err := os.Stat(r.legacySocket)
+	return err == nil
+}
+
+// resolveSession reports which socket hosts id and whether the session is alive
+// there. socketFor and IsAlive are the two views of this one probe, so a
+// liveness check costs a single has-session in the steady state instead of
+// resolving and then re-probing the socket it just resolved.
+func (r *Runtime) resolveSession(ctx context.Context, id string) (string, bool, error) {
+	alive, err := r.hasSessionOn(ctx, r.socket, id)
+	if err != nil {
+		// A transient probe failure is not evidence the session lives
+		// elsewhere. Falling back here could send a kill-session to a
+		// same-named session on the legacy socket, so stay on the primary and
+		// let the caller surface the error.
+		return r.socket, false, err
+	}
+	if alive || !r.legacySocketPresent() {
+		return r.socket, alive, nil
+	}
+	legacyAlive, legacyErr := r.hasSessionOn(ctx, r.legacySocket, id)
+	if legacyErr != nil {
+		return r.socket, false, legacyErr
+	}
+	if legacyAlive {
+		return r.legacySocket, true, nil
+	}
+	return r.socket, false, nil
+}
+
+// hasSessionOn probes one socket for a session. Exit 0 means alive; a non-zero
+// exit whose output says the session or server is missing is a definitive
+// false. Any other failure is a probe error, never proof of death -- callers
+// (IsAlive feeding the reaper) must not kill a session on a transient error.
+func (r *Runtime) hasSessionOn(ctx context.Context, socket, id string) (bool, error) {
+	out, err := r.runOn(ctx, socket, hasSessionArgs(id)...)
+	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && sessionMissingOutput(string(out)) {
+			return false, nil
+		}
+		return false, fmt.Errorf("tmux runtime: probe session %s: %w", id, err)
+	}
+	return true, nil
 }
 
 // -- session name helpers --

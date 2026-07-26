@@ -178,6 +178,22 @@ server does not disappear when the last session exits. It intentionally has no
 `ExecStop`: a tidy `tmux kill-server` is a fleet kill. Its stop-job hardening
 protects ordinary systemd stop/restart jobs, not direct process kills.
 
+The server lives on `$AO_DATA_DIR/run/tmux/default`, not tmux's default
+`/tmp/tmux-$UID/default`. A session handle is app state, and a routine operator
+`/tmp` sweep — the kind disk pressure forces — would otherwise orphan the whole
+live fleet (issue #160). Neither unit hardcodes the resolved path: both derive
+`-S` from their own `AO_DATA_DIR`, so only the `/run/tmux/default` suffix — the
+layout of `tmux.SocketPath(AO_DATA_DIR)` in the Go adapter — is written out on
+the systemd side. `ops/ao-systemd-units.test.mjs` asserts that every `-S` in
+both units is derived and that the two units pin the same `AO_DATA_DIR`.
+
+**Overriding `AO_DATA_DIR` means editing both units.** `ao-tmux.service` owns
+the socket that `ao.service`'s daemon then connects to, so a drop-in
+(`systemctl --user edit …`) applied to only one of them splits the pair: the
+daemon uses one socket while the ownership gate probes another, and the gate
+protects nothing. Apply the same override to `ao.service` and
+`ao-tmux.service` together.
+
 `ops/ao-tmux-claim.timer` periodically asks systemd to start `ao-tmux.service`.
 Most ticks are no-ops. The timer matters after a legacy or crashed tmux server
 frees the socket: the next server should be born under `ao-tmux.service`, not
@@ -193,21 +209,70 @@ loopback shutdown path.
 Manual restart verification:
 
 ```bash
+AO_TMUX_SOCKET="${AO_DATA_DIR:-$HOME/.ao/data}/run/tmux/default"
 systemctl --user status ao.service ao-tmux.service
 ao status
 ao session ls
-tmux list-sessions
+tmux -S "$AO_TMUX_SOCKET" list-sessions
 systemctl --user restart ao.service
 ao status
 ao session ls
-tmux list-sessions
+tmux -S "$AO_TMUX_SOCKET" list-sessions
 ```
+
+A bare `tmux list-sessions` no longer shows AO sessions; always pass `-S`. The
+daemon logs the resolved socket at startup under `tmux runtime socket`.
 
 Expected result: the daemon comes back ready, existing tmux sessions are still
 listed, and AO reattaches to live sessions instead of marking them dead after the
 reaper window. A daemon with zero connected Electron/browser clients should stay
 up; the supervisor only auto-stops an app-owned daemon after a client has
 connected and later disconnected.
+
+### Migrating off the legacy `/tmp` socket
+
+Moving the socket does not migrate a tmux server already running on the old one,
+so hosts that ran a pre-#160 daemon carry two servers for a while. Both sides
+tolerate that deliberately: the runtime adapter falls back to tmux's default
+socket for sessions it cannot find on AO's, and `ao.service`'s ownership gate
+accepts a legacy-socket server so the deploy that moves the socket cannot brick
+the daemon (`deploy.sh` restarts `ao.service` but cannot restart
+`ao-tmux.service`, which sets `RefuseManualStop=yes`).
+
+Sequence on a live host:
+
+1. Deploy as usual. Existing panes keep running on `/tmp/tmux-$UID/default` and
+   stay visible to AO through the fallback; new sessions land on
+   `$AO_DATA_DIR/run/tmux/default`.
+2. Get a server onto AO's socket under `ao-tmux.service` rather than lazily
+   under the daemon — a host reboot is the clean way, since the unit refuses a
+   manual stop. Until that happens the AO-socket server is forked by the daemon
+   rather than owned by `ao-tmux.service`. `ops/deploy.sh` restarts
+   `ao.service` unconditionally and that is still the supported deploy path:
+   `KillMode=process` limits the stop job to the daemon's own PID, and tmux
+   daemonizes away from it, so the restart is not expected to take the panes
+   with it. The unit ownership is defence in depth for the cases
+   `KillMode=process` does not cover, which is why the reboot is still worth
+   doing rather than deferring indefinitely. Confirm with:
+
+   ```bash
+   systemctl --user show ao-tmux.service -p MainPID -p ExecMainStatus
+   tmux -S "${AO_DATA_DIR:-$HOME/.ao/data}/run/tmux/default" list-sessions
+   ```
+
+3. Once no AO session remains on the legacy socket, retire it. `exit-empty` was
+   pinned `off` on that server, so it will not exit on its own:
+
+   ```bash
+   tmux list-sessions        # must be empty of AO sessions
+   tmux kill-server          # default socket only; AO's -S socket is untouched
+   ```
+
+4. With the legacy socket file gone, the adapter's fallback short-circuits on a
+   single `stat` and issues no extra probes. At that point `socketFor` and
+   `legacySocketPath` in
+   `backend/internal/adapters/runtime/tmux/tmux.go`, and the bare
+   `tmux list-sessions` branch of `ao.service`'s gate, can all be deleted.
 
 Residual risks: a tmux server crash, `tmux kill-server`, `systemctl --user kill`,
 host shutdown, direct PID signals, OOM selection, or user-manager teardown can
