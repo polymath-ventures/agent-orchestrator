@@ -95,15 +95,38 @@ Non-negotiable. Violating any of these is a bug in your behavior.
    worktree YOU created under the repo-local agent worktree directory:
 
    ```bash
+   MAIN_REPO_ROOT="$(
+     git worktree list --porcelain |
+       awk '$1 == "worktree" { print substr($0, 10); exit }'
+   )"
+   MAIN_REPO_ROOT="$(cd "$MAIN_REPO_ROOT" && pwd -P)"
+   test "$(git -C "$MAIN_REPO_ROOT" rev-parse --is-inside-work-tree)" = true || {
+     echo "Cannot resolve the registered main checkout: $MAIN_REPO_ROOT" >&2
+     exit 1
+   }
    DEFAULT_BRANCH_REF="$(git symbolic-ref --quiet refs/remotes/origin/HEAD 2>/dev/null || echo refs/remotes/origin/main)"
    DEFAULT_BRANCH="${DEFAULT_BRANCH_REF#refs/remotes/origin/}"
-   git fetch origin "$DEFAULT_BRANCH"
-   git worktree add .claude/worktrees/<slug> -b <branch> "origin/$DEFAULT_BRANCH"
+   TASK_WORKTREE="$MAIN_REPO_ROOT/.claude/worktrees/<slug>"
+   WORK_ITEM_KEY=<bead-id-or-gh:#N>
+   git -C "$MAIN_REPO_ROOT" fetch origin "$DEFAULT_BRANCH"
+   git -C "$MAIN_REPO_ROOT" worktree add "$TASK_WORKTREE" -b <branch> "origin/$DEFAULT_BRANCH" || {
+     echo "Task worktree creation failed; the session anchor remains untouched" >&2
+     exit 1
+   }
+   TASK_WORKTREE="$(cd "$TASK_WORKTREE" && pwd -P)" || {
+     echo "Cannot canonicalize the created task worktree" >&2
+     exit 1
+   }
+   TASK_GIT_DIR="$(git -C "$TASK_WORKTREE" rev-parse --absolute-git-dir)" || exit 1
+   printf 'format=polypowers-worktree-owner-v1\ntask=%s\npath=%s\n' \
+     "$WORK_ITEM_KEY" "$TASK_WORKTREE" \
+     >"$TASK_GIT_DIR/polypowers-worktree-owner"
    ```
 
-   Run this from the main repo root, never inside another worktree, then install
-   deps. Fetch and branch from the remote ref even when the local default branch
-   appears clean; a clean local branch can still be stale.
+   Resolve and target the registered main checkout as above even when the
+   session was launched inside another worktree, then install dependencies in
+   the new task checkout. Fetch and branch from the remote ref even when the
+   local default branch appears clean; a clean local branch can still be stale.
    `.claude/worktrees/` is the shared convention for Claude, Codex,
    Gemini, and other agents; the `.claude` path name is historical, not a
    Claude-only boundary. Do not place working copies under `.git/worktrees/` —
@@ -115,12 +138,23 @@ Non-negotiable. Violating any of these is a bug in your behavior.
    The `cleanup-merge` lifecycle is the one narrow exception: it may
    fast-forward the worktree that already owns the default branch only after
    confirming that checkout is clean, and it must never switch that checkout's
-   branch. Fetch-only sync of refs is always fine. A Codex-supplied detached
-   worktree may itself have been created
-   from a stale local branch before session-start logic ran. Never reset or move
-   a supplied worktree that may contain active work; use it only as launch
-   context and create the required task worktree from the freshly fetched
-   remote ref as above.
+   branch. Fetch-only sync of refs is always fine. A launcher- or
+   harness-supplied worktree is the resumable session anchor, regardless of
+   client or whether it is detached. It may have been created from stale local
+   state before session-start logic ran. Never remove the session anchor, or
+   reset, move, or adopt that supplied worktree as the disposable task
+   worktree; use it only as launch context and create the required task worktree
+   from the freshly fetched remote ref as above.
+
+   The final lines of that block are not optional. They record lifecycle
+   ownership in the new worktree's git directory as `polypowers-worktree-owner`,
+   and `cleanup-merge` will not automatically remove a worktree that lacks it —
+   nor will it ever backfill one, because provenance has to be recorded at
+   creation to mean anything. Set `WORK_ITEM_KEY` to the canonical work-item key:
+   the Beads id when the repo uses Beads, otherwise `gh:#N`. A plausible path,
+   branch name, current checkout, or files already written there are never
+   ownership proof. Omit the marker and you have minted a worktree that must be
+   cleaned up by hand, forever.
 
 3. **Test gates.** Fast loop per commit. Before push: full CI (build, format, and tests), then rebase against the default branch — clean → push
    (`--force-with-lease` if rewritten); conflicted → park. Never push a stale
