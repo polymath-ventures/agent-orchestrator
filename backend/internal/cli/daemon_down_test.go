@@ -93,13 +93,47 @@ func TestDoctorSuppressesTheDaemonDownMessagesTheCLIProduces(t *testing.T) {
 	}
 }
 
-// The marker is the single copy of the sentence: doctor must match it rather
-// than hold its own transcription.
-func TestDaemonDownMarkerIsNotDuplicated(t *testing.T) {
-	if !strings.Contains(daemonDownError("").Error(), daemonDownMarker) {
-		t.Fatal("daemonDownError does not use daemonDownMarker")
+// The recogniser and the builder are the same fact. This pins them together:
+// every shape the builder can produce must be recognised, and doctor must go
+// through the recogniser rather than hold its own transcription.
+func TestDaemonDownMessageIsRecognisedByItsOwnRecogniser(t *testing.T) {
+	for _, detail := range []string{"", "stale run-file at /home/u/.ao/running.json"} {
+		msg := daemonDownError(detail).Error()
+		if !isDaemonDownMessage(msg) {
+			t.Fatalf("recogniser missed a message its own builder produced: %q", msg)
+		}
+		if !isExpectedHookRestartWindowMiss("ts session=s1 ao hooks codex stop: " + msg) {
+			t.Fatalf("doctor does not suppress a message the builder produced: %q", msg)
+		}
 	}
-	if !isExpectedHookRestartWindowMiss(daemonDownError("").Error()) {
-		t.Fatal("doctor's filter does not match the marker the message is built from")
+}
+
+// Log lines written by a daemon from before this change still carry the marker
+// in the same position, so existing hooks.log history stays suppressed rather
+// than turning into a wall of new warnings on upgrade.
+func TestLegacyDaemonDownLinesStaySuppressed(t *testing.T) {
+	for _, line := range []string{
+		"2026-07-01T00:00:00Z session=s1 ao hooks codex stop: AO daemon is not running — start it with `ao start`",
+		"2026-07-01T00:00:00Z session=s2 ao hooks claude-code stop: AO daemon is not running (stale run-file at /tmp/ao.json) — start it with `ao start`",
+	} {
+		if !isExpectedHookRestartWindowMiss(line) {
+			t.Fatalf("upgrade turned a suppressed legacy line into a warning: %q", line)
+		}
+	}
+}
+
+// The marker is an ordinary English phrase, and hook failure lines carry
+// user-controlled data such as the working directory. Matching it anywhere
+// would let a path or an agent's own output masquerade as a daemon-down
+// failure and silently suppress a real warning.
+func TestQuotedMarkerIsNotMistakenForADaemonDownFailure(t *testing.T) {
+	for _, line := range []string{
+		"2026-07-26T00:00:00Z session=s1 ao hooks codex stop: codex usage: no main rollout for cwd /tmp/AO daemon is not running; using fallback",
+		"2026-07-26T00:00:00Z session=s1 ao hooks codex stop: agent said \"AO daemon is not running\" earlier but the call failed with EPIPE",
+		"2026-07-26T00:00:00Z session=s1 ao hooks codex stop: connection refused",
+	} {
+		if isExpectedHookRestartWindowMiss(line) {
+			t.Fatalf("suppressed a real hook failure that merely quotes the marker: %q", line)
+		}
 	}
 }

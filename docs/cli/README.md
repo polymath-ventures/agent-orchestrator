@@ -6,7 +6,9 @@ surface and the `running.json` handshake. It must not open SQLite directly or
 call runtime, workspace, tracker, or agent adapters in-process.
 
 When using the CLI directly from a shell, make sure the daemon is running first
-with `ao start` or by opening the desktop app. Product commands such as
+— `ao daemon`, `systemctl --user start ao.service` on a systemd deployment, or
+by opening the desktop app. `ao start` does NOT start a daemon: it fetches and
+opens the desktop app, which then starts one of its own. Product commands such as
 `ao agent ls` and `ao spawn` call the loopback daemon and will fail with a
 "daemon is not running" error if no `running.json` points at a live process. From
 a source checkout, build and run the local binary explicitly, for example:
@@ -26,13 +28,13 @@ Every product command resolves to a daemon HTTP route. Run `ao <command>
 
 | Command                       | Purpose                                                                                                                                                                                                                |
 | ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ao start`                    | Start the daemon in the background and wait for `/readyz`.                                                                                                                                                             |
+| `ao start`                    | Fetch (if needed) and open the Agent Orchestrator desktop app. Starts no daemon itself; the app starts its own.                                                                                                        |
 | `ao stop`                     | Gracefully stop the daemon after verifying daemon identity; uses `systemctl --user stop ao.service` when that unit owns the PID, otherwise token-bearing loopback `POST /shutdown`.                                    |
 | `ao status` / `--json`        | Report daemon state from `running.json`, process liveness, `/healthz`, and `/readyz`.                                                                                                                                  |
 | `ao doctor` / `--json`        | Check config, data directory, DB-file presence, daemon state, live-session activity (sessions stuck in the active state without finishing a turn), `git`, and (on Darwin/Linux) `tmux`; on Windows conpty is built in. |
 | `ao completion <shell>`       | Generate completions for `bash`, `zsh`, `fish`, or `powershell`.                                                                                                                                                       |
 | `ao version` / `ao --version` | Print build metadata.                                                                                                                                                                                                  |
-| `ao daemon`                   | Hidden internal daemon entrypoint used by `ao start`.                                                                                                                                                                  |
+| `ao daemon`                   | Run the daemon in the foreground. Hidden, but it is the entrypoint the desktop app and `ao.service` both launch, and the one to run by hand.                                                                           |
 
 ### Product commands
 
@@ -201,7 +203,8 @@ export AO_PORT=3037
 
 /tmp/ao status --json
 /tmp/ao doctor
-/tmp/ao start
+# `ao start` opens the desktop app and starts no daemon; run the daemon itself.
+/tmp/ao daemon &
 /tmp/ao status --json
 /tmp/ao stop
 /tmp/ao status --json

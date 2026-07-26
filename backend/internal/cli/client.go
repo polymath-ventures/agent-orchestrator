@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
@@ -123,6 +124,20 @@ func daemonDownError(detail string) error {
 		return fmt.Errorf("%s — %s", daemonDownMarker, daemonStartHint)
 	}
 	return fmt.Errorf("%s (%s) — %s", daemonDownMarker, detail, daemonStartHint)
+}
+
+// isDaemonDownMessage reports whether text carries a daemon-down failure
+// produced by daemonDownError. It requires the marker in the position the
+// message actually puts it — immediately followed by the detail parenthesis or
+// the hint separator — so a line that merely quotes the phrase, such as a
+// user-controlled path or an agent's own output, is not mistaken for one.
+//
+// It lives beside the builder deliberately: the recogniser and the message are
+// the same fact, and TestDaemonDownMessageIsRecognisedByItsOwnRecogniser pins
+// them together.
+func isDaemonDownMessage(text string) bool {
+	return strings.Contains(text, daemonDownMarker+" (") ||
+		strings.Contains(text, daemonDownMarker+" — ")
 }
 
 // daemonURL resolves the loopback URL for a daemon route, failing with a clear

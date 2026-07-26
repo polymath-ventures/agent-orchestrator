@@ -390,12 +390,12 @@ func checkHooksLog(dataDir string, now time.Time) doctorCheck {
 }
 
 // isExpectedHookRestartWindowMiss reports whether a hook-delivery failure is
-// just a hook that fired while the daemon was down. It matches daemonDownMarker
-// — the constant the message itself is built from — rather than a second copy
-// of the sentence, so editing the message can no longer silently break the
+// just a hook that fired while the daemon was down. It defers to the recogniser
+// that lives beside the message builder rather than holding a second copy of
+// the sentence, so editing the message can no longer silently break the
 // suppression and flood doctor with restart-window noise.
 func isExpectedHookRestartWindowMiss(line string) bool {
-	return strings.Contains(line, daemonDownMarker)
+	return isDaemonDownMessage(line)
 }
 
 func (c *commandContext) checkHarness(ctx context.Context, harness harnessProbe) doctorCheck {
