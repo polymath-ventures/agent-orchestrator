@@ -411,7 +411,8 @@ func (r *Runtime) IsAlive(ctx context.Context, handle ports.RuntimeHandle) (bool
 	if err != nil {
 		return false, err
 	}
-	return r.hasSessionOn(ctx, r.socketFor(ctx, id), id)
+	_, alive, err := r.resolveSession(ctx, id)
+	return alive, err
 }
 
 // IsRunningCommand reports whether the pane still has a launched child process.
@@ -621,27 +622,48 @@ func (r *Runtime) runFor(ctx context.Context, id string, args ...string) ([]byte
 // extra probe is ever issued, which is also the state in which this function
 // and legacySocketPath can be deleted.
 func (r *Runtime) socketFor(ctx context.Context, id string) string {
+	if !r.legacySocketPresent() {
+		return r.socket
+	}
+	socket, _, _ := r.resolveSession(ctx, id)
+	return socket
+}
+
+// legacySocketPresent reports whether the transitional fallback is still live.
+// Once the legacy socket file is gone the whole fallback short-circuits on this
+// single stat, issuing no extra tmux invocations.
+func (r *Runtime) legacySocketPresent() bool {
 	if r.socket == "" || r.legacySocket == "" {
-		return r.socket
+		return false
 	}
-	if _, err := os.Stat(r.legacySocket); err != nil {
-		return r.socket
-	}
+	_, err := os.Stat(r.legacySocket)
+	return err == nil
+}
+
+// resolveSession reports which socket hosts id and whether the session is alive
+// there. socketFor and IsAlive are the two views of this one probe, so a
+// liveness check costs a single has-session in the steady state instead of
+// resolving and then re-probing the socket it just resolved.
+func (r *Runtime) resolveSession(ctx context.Context, id string) (string, bool, error) {
 	alive, err := r.hasSessionOn(ctx, r.socket, id)
 	if err != nil {
 		// A transient probe failure is not evidence the session lives
 		// elsewhere. Falling back here could send a kill-session to a
 		// same-named session on the legacy socket, so stay on the primary and
 		// let the caller surface the error.
-		return r.socket
+		return r.socket, false, err
 	}
-	if alive {
-		return r.socket
+	if alive || !r.legacySocketPresent() {
+		return r.socket, alive, nil
 	}
-	if legacyAlive, legacyErr := r.hasSessionOn(ctx, r.legacySocket, id); legacyErr == nil && legacyAlive {
-		return r.legacySocket
+	legacyAlive, legacyErr := r.hasSessionOn(ctx, r.legacySocket, id)
+	if legacyErr != nil {
+		return r.socket, false, legacyErr
 	}
-	return r.socket
+	if legacyAlive {
+		return r.legacySocket, true, nil
+	}
+	return r.socket, false, nil
 }
 
 // hasSessionOn probes one socket for a session. Exit 0 means alive; a non-zero

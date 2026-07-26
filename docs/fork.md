@@ -237,9 +237,14 @@ Sequence on a live host:
    `$AO_DATA_DIR/run/tmux/default`.
 2. Get a server onto AO's socket under `ao-tmux.service` rather than lazily
    under the daemon — a host reboot is the clean way, since the unit refuses a
-   manual stop. Until that happens the AO-socket server is a child of
-   `ao.service`, so avoid `systemctl --user restart ao.service` with live new
-   sessions. Confirm with:
+   manual stop. Until that happens the AO-socket server is forked by the daemon
+   rather than owned by `ao-tmux.service`. `ops/deploy.sh` restarts
+   `ao.service` unconditionally and that is still the supported deploy path:
+   `KillMode=process` limits the stop job to the daemon's own PID, and tmux
+   daemonizes away from it, so the restart is not expected to take the panes
+   with it. The unit ownership is defence in depth for the cases
+   `KillMode=process` does not cover, which is why the reboot is still worth
+   doing rather than deferring indefinitely. Confirm with:
 
    ```bash
    systemctl --user show ao-tmux.service -p MainPID -p ExecMainStatus

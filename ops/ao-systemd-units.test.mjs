@@ -24,8 +24,13 @@ test("ao.service is a persistent headless daemon that does not kill the tmux fle
 	// ...and it must still accept a server on the legacy default socket, because
 	// deploy.sh restarts ao.service but cannot restart ao-tmux.service
 	// (RefuseManualStop=yes). Without this the socket move bricks the daemon on
-	// the deploy that introduces it.
-	assert.match(text, /^ExecStartPre=.*[^S] list-sessions/m);
+	// the deploy that introduces it. Match the branch's own distinguishing text:
+	// a "socket-less list-sessions" regex cannot work, because the character
+	// before " list-sessions" in the -S form is the "t" of "default".
+	assert.match(
+		text,
+		/if tmux list-sessions >\/dev\/null 2>&1; then echo "ao\.service: no server on AO tmux socket yet/,
+	);
 	// Data dir must be ~/.ao/data — NEVER the ~/.ao root: the root is the
 	// legacy layout, and pointing the daemon there resurrects a decommissioned
 	// deployment's database wholesale (the 2026-07-21 incident).

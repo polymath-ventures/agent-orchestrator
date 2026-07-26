@@ -287,6 +287,47 @@ func TestSocketForDoesNotFallBackOnTransientPrimaryFailure(t *testing.T) {
 	}
 }
 
+// TestIsAliveProbesOnce — IsAlive is on the reaper's hot path (once per running
+// session per tick). It and socketFor are two views of one probe, so resolving
+// the socket must not cost a probe that IsAlive then repeats.
+func TestIsAliveProbesOnce(t *testing.T) {
+	dataDir := t.TempDir()
+	legacy := filepath.Join(t.TempDir(), "default")
+	if err := os.WriteFile(legacy, nil, 0o600); err != nil {
+		t.Fatalf("seed legacy socket: %v", err)
+	}
+
+	t.Run("alive on primary", func(t *testing.T) {
+		r, fr := newSocketTestRuntime(t, dataDir)
+		r.legacySocket = legacy
+
+		alive, err := r.IsAlive(context.Background(), ports.RuntimeHandle{ID: "sess-1"})
+		if err != nil || !alive {
+			t.Fatalf("IsAlive = %v, %v; want true, nil", alive, err)
+		}
+		if len(fr.calls) != 1 {
+			t.Fatalf("probes = %d, want 1", len(fr.calls))
+		}
+	})
+
+	t.Run("gone from both is a definitive dead", func(t *testing.T) {
+		r, fr := newSocketTestRuntime(t, dataDir)
+		r.legacySocket = legacy
+		fr.outputs = [][]byte{[]byte("can't find session: sess-1"), []byte("can't find session: sess-1")}
+		fr.errs = []error{commandExitError(t, "1"), commandExitError(t, "1")}
+
+		// (false, nil) — not an error — or the reaper would treat a dead
+		// session as a failed probe and never terminate the row.
+		alive, err := r.IsAlive(context.Background(), ports.RuntimeHandle{ID: "sess-1"})
+		if alive || err != nil {
+			t.Fatalf("IsAlive = %v, %v; want false, nil", alive, err)
+		}
+		if len(fr.calls) != 2 {
+			t.Fatalf("probes = %d, want 2 (primary then legacy)", len(fr.calls))
+		}
+	})
+}
+
 // TestSendMessageResolvesTheSocketOnce — every chunk and the trailing Enter
 // must reach the same pane, and re-resolving per chunk doubles the tmux
 // invocations on the message hot path.
