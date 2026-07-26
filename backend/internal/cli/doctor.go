@@ -209,7 +209,7 @@ func checkStore(dataDir string) doctorCheck {
 	case errors.Is(err, fs.ErrNotExist):
 		return doctorCheck{
 			Level: doctorWarn, Section: doctorSectionCore, Name: "sqlite",
-			Message: "database not created yet; run `ao start` to initialize and migrate it",
+			Message: "database not created yet; " + daemonStartHint + " — the daemon creates and migrates it at startup",
 		}
 	default:
 		return doctorCheck{Level: doctorFail, Section: doctorSectionCore, Name: "sqlite", Message: err.Error()}
@@ -389,8 +389,21 @@ func checkHooksLog(dataDir string, now time.Time) doctorCheck {
 	}
 }
 
+// isExpectedHookRestartWindowMiss reports whether a hook-delivery failure is
+// just a hook that fired while the daemon was down. It extracts the line's
+// cause using the writer's own format and asks the recogniser that lives beside
+// the message builder, so it holds neither a copy of the sentence nor a copy of
+// the log format — editing either can no longer silently break the suppression
+// and flood doctor with restart-window noise.
+//
+// Anchoring at the START of the cause is safe because the only hook path that
+// can fail with a daemon-down error passes it through unwrapped (hooks.go's
+// activity POST); the paths that wrap with %w read files and can never produce
+// one. A future call site that wraps a daemon call would need this relaxed —
+// and TestQuotedMarkerIsNotMistakenForADaemonDownFailure records what relaxing
+// it would cost.
 func isExpectedHookRestartWindowMiss(line string) bool {
-	return strings.Contains(line, "AO daemon is not running") && strings.Contains(line, "start it with `ao start`")
+	return isDaemonDownMessage(hookFailureCause(line))
 }
 
 func (c *commandContext) checkHarness(ctx context.Context, harness harnessProbe) doctorCheck {

@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/spf13/cobra"
 
@@ -260,7 +261,7 @@ func (c *commandContext) emitSessionStartContext(agent, event, sessionID string)
 // agent: stderr for the agent's hook runner, plus a best-effort append to
 // $AO_DATA_DIR/hooks.log so the failure can be diagnosed after the fact.
 func (c *commandContext) reportHookFailure(agent, event, sessionID string, cause error) {
-	msg := fmt.Sprintf("ao hooks %s %s: %v", agent, event, cause)
+	msg := fmt.Sprintf("%s%s %s: %v", hookFailureTag, bareToken(agent), bareToken(event), cause)
 	_, _ = fmt.Fprintln(c.deps.Err, msg)
 	dataDir := strings.TrimSpace(os.Getenv("AO_DATA_DIR"))
 	if dataDir == "" {
@@ -268,6 +269,55 @@ func (c *commandContext) reportHookFailure(agent, event, sessionID string, cause
 	}
 	line := fmt.Sprintf("%s session=%s %s\n", time.Now().UTC().Format(time.RFC3339), sessionID, msg)
 	appendHooksLog(dataDir, line)
+}
+
+// hookFailureTag is the token reportHookFailure writes before the agent/event
+// pair. It is the anchor a reader uses to find where the cause begins.
+const hookFailureTag = "ao hooks "
+
+// bareToken keeps the hooks.log line's "<agent> <event>: <cause>" shape
+// parseable by construction. Both fields are echoed argv, and one carrying a
+// space or the ": " separator would move where the cause appears to begin —
+// which is how a real failure could be mistaken for a suppressed daemon-down
+// one. Sanitising here, where the line is written, is why the reader needs no
+// validation gate on the hook path itself; a hook must never fail the agent, so
+// rejecting an invocation over punctuation would be the worse trade.
+func bareToken(s string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsSpace(r) || r == ':' {
+			return '-'
+		}
+		return r
+	}, s)
+}
+
+// hookFailureCause returns the error text from a hooks.log line written by
+// reportHookFailure, or "" when the line is not one of them.
+//
+// The line is "<ts> session=<id> ao hooks <agent> <event>: <cause>", and agent
+// and event are bare tokens, so the first ": " after the tag begins the cause.
+// This lives next to the writer on purpose: the format is one fact, and a
+// reader that re-derives it elsewhere is the drift this file's callers already
+// had to fix once.
+func hookFailureCause(line string) string {
+	tag := strings.Index(line, hookFailureTag)
+	if tag < 0 {
+		return ""
+	}
+	// "<agent> <event>: <cause>". Requiring exactly two bare tokens before the
+	// separator is what makes the split unambiguous: an argument that carries
+	// its own ": " cannot shift where the cause appears to begin, so no
+	// validation gate is needed on the hook path itself — and a hook must never
+	// fail the agent, so a gate there would be the worse trade.
+	_, rest, ok := strings.Cut(line[tag+len(hookFailureTag):], " ")
+	if !ok {
+		return ""
+	}
+	event, cause, ok := strings.Cut(rest, ": ")
+	if !ok || strings.Contains(event, " ") {
+		return ""
+	}
+	return cause
 }
 
 // appendHooksLog appends one line to the hooks log, truncating first when the

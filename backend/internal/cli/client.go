@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
@@ -99,6 +100,46 @@ func (c *commandContext) postLoopbackJSON(ctx context.Context, path string, body
 	return c.doJSONPath(ctx, http.MethodPost, path, body, nil)
 }
 
+// daemonDownMarker identifies the daemon-down class of CLI failure. It is the
+// single copy of that sentence: `ao doctor`'s restart-window suppression
+// matches this constant instead of holding its own transcription of the
+// message, so the two cannot drift apart the way they did when the hint text
+// changed.
+const daemonDownMarker = "AO daemon is not running"
+
+// daemonStartHint names actions that actually start a daemon.
+//
+// It deliberately does NOT name `ao start`, which despite its name starts no
+// daemon: it fetches and opens the Electron desktop app (see start.go). Both
+// listed actions are always accurate, which is why the hint is a constant
+// rather than something probed per environment — a probe would run a
+// subprocess on the hottest error path in the product to say something the
+// operator can already tell apart at a glance.
+const daemonStartHint = "start it with `ao daemon`, or `systemctl --user start ao.service` on a systemd deployment"
+
+// daemonDownError builds the daemon-down failure. detail, when non-empty, is
+// parenthesised between the marker and the hint.
+func daemonDownError(detail string) error {
+	if detail == "" {
+		return fmt.Errorf("%s — %s", daemonDownMarker, daemonStartHint)
+	}
+	return fmt.Errorf("%s (%s) — %s", daemonDownMarker, detail, daemonStartHint)
+}
+
+// isDaemonDownMessage reports whether text IS a daemon-down failure produced by
+// daemonDownError — it must start with the marker, immediately followed by the
+// detail parenthesis or the hint separator. Anchoring at the start is what
+// keeps a message that merely quotes the phrase, such as a user-controlled path
+// or an agent's own output, from being mistaken for one.
+//
+// It lives beside the builder deliberately: the recogniser and the message are
+// the same fact, and TestDaemonDownMessageIsRecognisedByItsOwnRecogniser pins
+// them together.
+func isDaemonDownMessage(text string) bool {
+	return strings.HasPrefix(text, daemonDownMarker+" (") ||
+		strings.HasPrefix(text, daemonDownMarker+" — ")
+}
+
 // daemonURL resolves the loopback URL for a daemon route, failing with a clear
 // "not running" message rather than a connection-refused dump when the run-file
 // is missing or stale. Every caller that talks to the daemon goes through here,
@@ -113,10 +154,10 @@ func (c *commandContext) daemonURL(path string) (string, error) {
 		return "", err
 	}
 	if info == nil {
-		return "", fmt.Errorf("AO daemon is not running — start it with `ao start`")
+		return "", daemonDownError("")
 	}
 	if !c.deps.ProcessAlive(info.PID) {
-		return "", fmt.Errorf("AO daemon is not running (stale run-file at %s) — start it with `ao start`", cfg.RunFilePath)
+		return "", daemonDownError("stale run-file at " + cfg.RunFilePath)
 	}
 	return fmt.Sprintf("http://%s:%d%s", config.LoopbackHost, info.Port, path), nil
 }
