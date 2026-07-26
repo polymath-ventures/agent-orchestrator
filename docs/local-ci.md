@@ -64,7 +64,7 @@ by that startup prune. Cleanup covers these Agent CI workdir areas:
 - `runner`
 
 By default, paths must be older than 14 days before they are selected. Recent
-runs and caches are preserved.
+runs and caches are preserved, including caches with recent descendant files.
 
 Paused or intentionally detached retry state is preserved indefinitely when a
 run directory contains Agent CI's `signals/paused` marker. Abort or resolve
@@ -83,6 +83,10 @@ npm run agent-ci:clean -- --force --docker-root-helper
 The helper mounts only the resolved Agent CI workdir and removes the already
 selected relative paths from inside that mount. Do not key cleanup behavior on
 the host account name.
+
+Agent CI also writes run logs and result metadata under
+`${XDG_STATE_HOME:-$HOME/.local/state}/agent-ci/logs`. That state directory is
+outside `AGENT_CI_WORKING_DIR`; Agent CI's own state-log cleanup handles it.
 
 ## Upstream Candidate
 

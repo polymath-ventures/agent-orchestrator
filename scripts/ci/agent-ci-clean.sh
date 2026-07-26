@@ -9,7 +9,7 @@ older_than_days=14
 docker_root_helper=false
 
 usage() {
-	cat >&2 <<'EOF'
+	cat <<'EOF'
 usage: npm run agent-ci:clean -- [--dry-run] [--force] [--older-than DAYS] [--docker-root-helper]
 
 Prunes stale @redwoodjs/agent-ci state from AGENT_CI_WORKING_DIR, defaulting to
@@ -43,7 +43,7 @@ while [ "$#" -gt 0 ]; do
 			;;
 		*)
 			echo "error: unknown argument: $1" >&2
-			usage
+			usage >&2
 			exit 2
 			;;
 	esac
@@ -61,7 +61,10 @@ need git
 need find
 
 root="$(git rev-parse --show-toplevel)"
-repo_slug="$(basename "$(dirname "$(git rev-parse --git-common-dir)")")"
+cd "$root"
+
+repo_root="$(cd "$(git rev-parse --git-common-dir)/.." && pwd -P)"
+repo_slug="$(basename "$repo_root")"
 default_cache_home="${XDG_CACHE_HOME:-$HOME/.cache}"
 raw_workdir="${AGENT_CI_WORKING_DIR:-$default_cache_home/agent-ci/$repo_slug}"
 
@@ -73,7 +76,17 @@ case "$raw_workdir" in
 		;;
 esac
 
-workdir="$(mkdir -p "$raw_workdir" && cd "$raw_workdir" && pwd -P)"
+if [ ! -d "$raw_workdir" ]; then
+	if [ "$mode" = "dry-run" ]; then
+		printf 'agent-ci workdir: %s\n' "$raw_workdir"
+		printf 'mode: %s; stale threshold: %s days\n' "$mode" "$older_than_days"
+		printf '\nagent-ci workdir does not exist; nothing to clean\n'
+		exit 0
+	fi
+	mkdir -p "$raw_workdir"
+fi
+
+workdir="$(cd "$raw_workdir" && pwd -P)"
 
 case "$workdir" in
 	""|"/"|"/tmp"|"/tmp/"*|"/var/tmp"|"/var/tmp/"*)
@@ -126,7 +139,9 @@ consider_run() {
 consider_cache_dir() {
 	local path="$1"
 	[ -e "$path" ] || return 0
-	if is_stale "$path"; then
+	if find "$path" -mindepth 0 -mmin "-$cutoff_minutes" -print -quit | grep -q .; then
+		preserved+=("$path (recent cache)")
+	elif is_stale "$path"; then
 		selected+=("$path")
 	else
 		preserved+=("$path (recent cache)")

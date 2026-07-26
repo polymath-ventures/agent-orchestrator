@@ -18,7 +18,8 @@ need npx
 root="$(git rev-parse --show-toplevel)"
 cd "$root"
 
-repo_slug="$(basename "$(dirname "$(git rev-parse --git-common-dir)")")"
+repo_root="$(cd "$(git rev-parse --git-common-dir)/.." && pwd -P)"
+repo_slug="$(basename "$repo_root")"
 default_cache_home="${XDG_CACHE_HOME:-$HOME/.cache}"
 export AGENT_CI_WORKING_DIR="${AGENT_CI_WORKING_DIR:-$default_cache_home/agent-ci/$repo_slug}"
 mkdir -p "$AGENT_CI_WORKING_DIR"
