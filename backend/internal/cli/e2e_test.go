@@ -255,6 +255,11 @@ func TestE2E_Lifecycle(t *testing.T) {
 	out, _ := e.run(t, "status", "--json")
 	mustContain(t, out, `"state": "ready"`)
 	mustContain(t, out, fmt.Sprintf(`"port": %d`, e.port))
+	// The whole wire: the daemon stamps its own provenance, the CLI decodes it,
+	// and `status --json` surfaces it. The server always sends a non-empty value
+	// (an unstamped build sends "unknown"), so this holds regardless of whether
+	// the test binary was built inside a VCS checkout.
+	mustContain(t, out, `"buildRevision"`)
 
 	// the daemon (not the CLI) has created + migrated the store
 	if _, err := os.Stat(filepath.Join(e.dataDir, "ao.db")); err != nil {
@@ -266,6 +271,7 @@ func TestE2E_Lifecycle(t *testing.T) {
 	// /healthz identity
 	body := httpGet(t, e.port, "/healthz")
 	mustContain(t, body, "agent-orchestrator-daemon")
+	mustContain(t, body, `"buildRevision"`)
 
 	if out, code := e.run(t, "stop"); code != 0 || !strings.Contains(out, "stopped") {
 		t.Fatalf("stop: exit %d, out %s", code, out)

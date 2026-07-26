@@ -31,15 +31,19 @@ const (
 )
 
 type daemonStatus struct {
-	State         daemonState   `json:"state"`
-	PID           int           `json:"pid,omitempty"`
-	Port          int           `json:"port,omitempty"`
-	StartedAt     *time.Time    `json:"startedAt,omitempty"`
-	Uptime        string        `json:"uptime,omitempty"`
-	RunFile       string        `json:"runFile"`
-	DataDir       string        `json:"dataDir"`
-	Health        string        `json:"health,omitempty"`
-	Ready         string        `json:"ready,omitempty"`
+	State     daemonState `json:"state"`
+	PID       int         `json:"pid,omitempty"`
+	Port      int         `json:"port,omitempty"`
+	StartedAt *time.Time  `json:"startedAt,omitempty"`
+	Uptime    string      `json:"uptime,omitempty"`
+	RunFile   string      `json:"runFile"`
+	DataDir   string      `json:"dataDir"`
+	Health    string      `json:"health,omitempty"`
+	Ready     string      `json:"ready,omitempty"`
+	// BuildRevision is whatever the running daemon reported, verbatim — a
+	// commit sha, a `-dirty` variant, or "unknown". It stays empty only when no
+	// daemon answered, or when one answered that predates the field.
+	BuildRevision string        `json:"buildRevision,omitempty"`
 	Fleet         string        `json:"fleet,omitempty"`
 	Quotas        []statusQuota `json:"quotas,omitempty"`
 	Error         string        `json:"error,omitempty"`
@@ -69,6 +73,7 @@ type probeResult struct {
 	PID              int    `json:"pid"`
 	ExecutablePath   string `json:"executablePath,omitempty"`
 	WorkingDirectory string `json:"workingDirectory,omitempty"`
+	BuildRevision    string `json:"buildRevision,omitempty"`
 }
 
 func newStatusCommand(ctx *commandContext) *cobra.Command {
@@ -133,6 +138,7 @@ func (c *commandContext) inspectDaemon(ctx context.Context) (daemonStatus, error
 	}
 	st.owned = true
 	st.Health = health.Status
+	st.BuildRevision = health.BuildRevision
 	if health.Status != "ok" {
 		st.State = stateUnhealthy
 		return st, nil
@@ -290,6 +296,11 @@ func writeStatus(cmd *cobra.Command, st daemonStatus) error {
 	}
 	if st.Ready != "" {
 		if _, err := fmt.Fprintf(out, "  readyz: %s\n", st.Ready); err != nil {
+			return err
+		}
+	}
+	if st.BuildRevision != "" {
+		if _, err := fmt.Fprintf(out, "  build: %s\n", st.BuildRevision); err != nil {
 			return err
 		}
 	}
