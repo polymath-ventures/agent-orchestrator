@@ -644,8 +644,7 @@ func TestShutdownSkipsStopWorkOnlyWhenDaemonIsProvenAbsent(t *testing.T) {
 func TestShutdownStopsWorkWhenDaemonStateIsIndeterminate(t *testing.T) {
 	// "stale" is in this list deliberately: `ao` reports it both for a run file
 	// pointing at a dead process AND for a live process whose ownership probe
-	// failed, so it is not proof that nothing is running. The stop-work attempt
-	// is what settles it (see TestShutdownContinuesWhenStaleGatingProvesNothingRuns).
+	// failed, so it is not proof that nothing is running and cannot skip the gate.
 	for _, state := range []string{"unhealthy", "not_ready", "stale", "", "some-future-state"} {
 		t.Run("state="+state, func(t *testing.T) {
 			h := newFakeHost(t)

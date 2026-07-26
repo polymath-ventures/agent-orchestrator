@@ -306,8 +306,10 @@ definitions lift into `ao`'s command tree and this binary goes away.
 
 Rules the implementation keeps:
 
-- It couples only to `ao`'s public CLI and to `systemctl --user` for the units
-  `ao` does not manage (`ao-tmux.service`, `ao-web.service`). It never imports
+- It couples only to `ao`'s public CLI and to `systemctl --user` for the
+  service-unit operations `ao` has no commands for at all — starting a unit and
+  reporting unit state, across `ao-tmux.service`, `ao.service`, and
+  `ao-web.service`. It never imports
   daemon or `ao` CLI internals, never opens the run file or the shutdown token,
   and never calls the daemon HTTP API. A change that needs new behavior is an
   upstream `ao` proposal, not an `aong` feature.
