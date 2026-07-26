@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/runtimeselect"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/tmux"
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/daemon/supervisor"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -111,7 +112,13 @@ func Run() error {
 	// attach Stream and liveness; the CDC broadcaster feeds the session-state channel. The manager
 	// is handed to httpd, which mounts it at /mux. Raw PTY bytes never flow
 	// through the CDC change_log -- only session-state events do.
-	runtimeAdapter := runtimeselect.New(log)
+	runtimeAdapter := runtimeselect.New(cfg.DataDir, log)
+	if tmuxRuntime, ok := runtimeAdapter.(*tmux.Runtime); ok {
+		// Sessions live on AO's own socket, not tmux's default, so a bare
+		// `tmux attach` no longer finds them (issue #160). Log the path so an
+		// operator can attach by hand: tmux -S <socket> attach -t <session>.
+		log.Info("tmux runtime socket", "socket", tmuxRuntime.Socket())
+	}
 	termMgr := terminal.NewManager(runtimeAdapter, cdcPipe.Broadcaster, log)
 	defer termMgr.Close()
 

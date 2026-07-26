@@ -98,7 +98,7 @@ func TestEveryTmuxInvocationCarriesSocketPath(t *testing.T) {
 		},
 		{
 			name:    "IsRunningCommand",
-			outputs: [][]byte{[]byte("1234 sh\n")},
+			outputs: [][]byte{[]byte("1234\n")},
 			run: func(t *testing.T, r *Runtime) {
 				if _, err := r.IsRunningCommand(context.Background(), ports.RuntimeHandle{ID: "sess-1"}, "claude"); err != nil {
 					t.Fatalf("IsRunningCommand: %v", err)

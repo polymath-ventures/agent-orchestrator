@@ -29,10 +29,16 @@ var _ Runtime = (*tmux.Runtime)(nil)
 var _ Runtime = (*conpty.Runtime)(nil)
 
 // New returns the per-platform runtime: tmux on Darwin/Linux, conpty on Windows.
+//
+// dataDir is AO's data directory (config.Config.DataDir). tmux anchors its
+// session socket there so a /tmp sweep cannot orphan live sessions (issue
+// #160); conpty has no socket and ignores it. It is a required argument rather
+// than an option field precisely so a future caller cannot omit it and silently
+// send sessions back to tmux's default /tmp socket.
 // log is accepted for signature stability with callers but is currently unused.
-func New(_ *slog.Logger) Runtime {
+func New(dataDir string, _ *slog.Logger) Runtime {
 	if runtime.GOOS != "windows" {
-		return tmux.New(tmux.Options{})
+		return tmux.New(tmux.Options{DataDir: dataDir})
 	}
 	return conpty.New(conpty.Options{})
 }

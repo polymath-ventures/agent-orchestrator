@@ -841,6 +841,30 @@ flowchart TD
 
 ```
 
+### tmux socket location
+
+The tmux runtime talks to its own socket at `$AO_DATA_DIR/run/tmux/default`
+(default `~/.ao/data/run/tmux/default`), passed as `-S <socket>` on every tmux
+invocation. A session handle is app state, so it lives with the rest of AO's
+state rather than on tmux's default `/tmp/tmux-$UID/default`, where a routine
+operator `/tmp` sweep — or tmpfs pressure — would orphan every live session
+(issue #160). The socket directory is created `0700`, matching tmux's own.
+
+Two consequences:
+
+- **Attaching by hand needs the socket.** `tmux attach -t <session>` no longer
+  finds AO sessions; use `tmux -S ~/.ao/data/run/tmux/default attach -t
+<session>`. The daemon logs the resolved path at startup (`tmux runtime
+socket`).
+- **Transitional fallback.** Changing the path does not migrate a tmux server
+  already running on the old socket. For sessions that predate this change, the
+  runtime falls back to tmux's default socket (`$TMUX_TMPDIR`, else `$TMPDIR`,
+  else `/tmp`) when the session is not found on AO's own. The fallback probes
+  only while that legacy socket file still exists, so it costs nothing once the
+  pre-existing sessions have drained — at which point `socketFor` and
+  `legacySocketPath` in `backend/internal/adapters/runtime/tmux/tmux.go` can be
+  deleted.
+
 ### Attach Flow
 
 ```mermaid

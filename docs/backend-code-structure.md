@@ -702,7 +702,7 @@ graph LR
 - `AO_REQUEST_TIMEOUT` — Per-request timeout (default: 60s)
 - `AO_SHUTDOWN_TIMEOUT` — Graceful shutdown cap (default: 10s)
 - `AO_RUN_FILE` — PID/port handshake (default: ~/.ao/running.json)
-- `AO_DATA_DIR` — SQLite data directory (default: ~/.ao/data)
+- `AO_DATA_DIR` — Data directory: SQLite state plus the tmux runtime socket at `run/tmux/default` (default: ~/.ao/data)
 - `AO_AGENT` — Compatibility agent adapter (default: claude-code)
 - `GITHUB_TOKEN` — GitHub authentication
 
