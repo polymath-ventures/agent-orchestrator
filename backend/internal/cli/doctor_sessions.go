@@ -44,7 +44,7 @@ import (
 // case ran eight.
 const wedgedSessionStuckFor = 4 * time.Hour
 
-// checkWedgedSessions warns about live sessions that have gone silent.
+// checkWedgedSessions warns about sessions stuck in the active state.
 //
 // It cannot fail doctor. An unreachable daemon means the signal is unavailable,
 // not that the machine is unhealthy — and the `daemon` check already reports a
@@ -72,7 +72,7 @@ func (c *commandContext) checkWedgedSessions(ctx context.Context) doctorCheck {
 	}
 
 	now := c.deps.Now()
-	var silent []string
+	var stuckSessions []string
 	for _, session := range res.Sessions {
 		// The `active=true` query already excludes terminated sessions. This
 		// keeps the check's own output correct if that server-side scoping ever
@@ -100,14 +100,14 @@ func (c *commandContext) checkWedgedSessions(ctx context.Context) doctorCheck {
 		if stuck < wedgedSessionStuckFor {
 			continue
 		}
-		silent = append(silent, fmt.Sprintf("%s (active for %s with no state change)", session.ID, formatUptime(stuck)))
+		stuckSessions = append(stuckSessions, fmt.Sprintf("%s (active for %s with no state change)", session.ID, formatUptime(stuck)))
 	}
 
-	if len(silent) == 0 {
+	if len(stuckSessions) == 0 {
 		return report(doctorPass, fmt.Sprintf("no session has been continuously active for over %s", wedgedSessionStuckFor))
 	}
-	sort.Strings(silent)
+	sort.Strings(stuckSessions)
 	return report(doctorWarn, fmt.Sprintf(
 		"%d session(s) have been continuously active for over %s without finishing a turn — they may be wedged: %s; inspect with `ao session get <id>` and end one with `ao session kill <id>`",
-		len(silent), wedgedSessionStuckFor, strings.Join(silent, ", ")))
+		len(stuckSessions), wedgedSessionStuckFor, strings.Join(stuckSessions, ", ")))
 }

@@ -47,8 +47,9 @@ leaked `curl` never leaves active.
 
 ### New Capabilities
 
-- `doctor-wedged-sessions`: `ao doctor` surfaces sessions that have gone silent,
-  derived from AO's own activity records rather than from process inspection.
+- `doctor-wedged-sessions`: `ao doctor` surfaces sessions stuck in the active
+  state without finishing a turn, derived from AO's own activity records rather
+  than from process inspection.
 
 ### Modified Capabilities
 

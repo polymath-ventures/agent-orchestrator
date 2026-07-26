@@ -1,6 +1,6 @@
 ## ADDED Requirements
 
-### Requirement: Doctor warns when an active session has gone silent
+### Requirement: Doctor warns when a session is stuck in the active state
 
 `ao doctor` SHALL report a check that warns when a session the daemon records as
 **active** has been in that state, with no transition to any other state, for longer than a fixed threshold.
@@ -34,7 +34,7 @@ defeat the check. Terminated sessions SHALL NOT warn at any age.
 - **WHEN** a session is terminated and its last recorded activity is older than the threshold
 - **THEN** the check does not warn about it
 
-#### Scenario: Several silent sessions are all reported
+#### Scenario: Every stuck session is reported
 
 - **WHEN** more than one active session is past the threshold
 - **THEN** every one of them is named in the warning

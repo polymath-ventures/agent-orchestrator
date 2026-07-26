@@ -77,7 +77,7 @@ wrapped in the same `probeTimeout` doctor uses for its other daemon reads.
 ### A session with no activity timestamp is skipped, not warned about
 
 Silence is measured from a starting point. A session that has never recorded
-activity has no such point, and treating "never" as "infinitely silent" would
+activity has no such point, and treating "never" as "infinitely long" would
 warn on every freshly created session before its first hook lands. Skipping is
 the honest reading.
 
@@ -91,9 +91,9 @@ would turn one problem into two.
 ### Accuracy depends on daemon uptime, and that is acknowledged rather than defended
 
 Daemon downtime silently drops activity hooks; `ao doctor` already filters those
-misses as restart-window noise. So a long daemon outage can make a healthy
-session look silent. Two things make this acceptable rather than a reason to add
-machinery: the threshold is hours, far longer than a restart window, and #181's
+misses as restart-window noise. So an outage that swallows the transition out of
+`active` can leave a healthy session looking stuck. Two things make this
+acceptable rather than a reason to add machinery: the threshold is hours, far longer than a restart window, and #181's
 persistent-daemon work removes the routine source of those outages. Building a
 correction for it here would be a second handler for a cause being fixed
 elsewhere.
