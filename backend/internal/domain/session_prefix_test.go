@@ -133,8 +133,10 @@ func TestDeriveSessionPrefixResolvesCollisions(t *testing.T) {
 	}
 }
 
-// The point of the change: a prefix is unique among projects by construction, so
-// no amount of contention produces a duplicate.
+// The point of the change: contention resolves to a fresh prefix every time,
+// well past the handful of candidates the name itself offers. The guarantee is
+// bounded by the capped prefix space — see the exhaustion test below for the
+// other side of that boundary.
 func TestDeriveSessionPrefixIsUniqueUnderContention(t *testing.T) {
 	var taken []string
 	seen := map[string]bool{}
@@ -148,6 +150,34 @@ func TestDeriveSessionPrefixIsUniqueUnderContention(t *testing.T) {
 		}
 		seen[got] = true
 		taken = append(taken, got)
+	}
+}
+
+// The bounded side of the uniqueness contract. With every prefix the rule can
+// produce already taken, derivation still returns a usable value rather than a
+// blank or a failure — a duplicate an operator can retype beats a project that
+// cannot be registered. This pins the deliberate terminal behavior so a future
+// change cannot quietly turn it into an empty string.
+func TestDeriveSessionPrefixDegradesToADuplicateWhenTheSpaceIsExhausted(t *testing.T) {
+	alphabet := []rune(prefixTokenAlphabet)
+	taken := make([]string, 0, len(alphabet)*len(alphabet)*len(alphabet)+2)
+	for _, a := range alphabet {
+		for _, b := range alphabet {
+			for _, c := range alphabet {
+				taken = append(taken, string([]rune{a, b, c}))
+			}
+		}
+	}
+	// The name-drawn candidates are shorter than the sweep's fixed width, so they
+	// are not in the block above and must be taken explicitly.
+	taken = append(taken, "cc", "coa")
+
+	got := DeriveSessionPrefix("Coach Claw", "coachclaw", taken)
+	if got == "" {
+		t.Fatalf("exhausted space derived an empty prefix; a blank prefix is the state this rule exists to remove")
+	}
+	if n := utf8.RuneCountInString(got); n > MaxSessionPrefixRunes {
+		t.Fatalf("exhausted space derived %q with %d runes, want at most %d", got, n, MaxSessionPrefixRunes)
 	}
 }
 

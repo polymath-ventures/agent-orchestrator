@@ -23,7 +23,8 @@ const MaxSessionPrefixRunes = 3
 const prefixTokenAlphabet = "abcdefghijklmnopqrstuvwxyz0123456789"
 
 // DeriveSessionPrefix returns a project's session prefix, derived from its name
-// and distinct from every prefix in taken.
+// and distinct from every prefix in taken whenever a distinct one exists — see
+// the bound below.
 //
 // It exists because the prefix heads every session name, and the name is the
 // only project cue once names propagate into a harness's own flat, cross-project
@@ -39,12 +40,13 @@ const prefixTokenAlphabet = "abcdefghijklmnopqrstuvwxyz0123456789"
 // property rather than an aspiration: it returns a free token whenever one
 // exists.
 //
-// The cap bounds that guarantee. Three characters over this alphabet is a finite
-// space, so uniqueness holds up to the number of prefixes the cap can represent
-// and no further. Past that the last candidate is returned even though it
-// duplicates — deliberately, because the caller's alternative is refusing to
-// create the project, and a duplicate prefix an operator can retype beats a
-// project that cannot be registered.
+// The cap bounds that guarantee, precisely: the sweep walks the fixed-width
+// three-character tokens over prefixTokenAlphabet, so uniqueness holds while any
+// of those len(prefixTokenAlphabet)^MaxSessionPrefixRunes tokens is free. Once
+// every one is taken, the last candidate is returned even though it duplicates —
+// deliberately, because the caller's alternative is refusing to create the
+// project, and a duplicate prefix an operator can retype beats a project that
+// cannot be registered.
 //
 // A name with no usable characters derives from projectID instead, and inputs
 // with nothing usable at all derive a token seeded by those inputs. Neither path

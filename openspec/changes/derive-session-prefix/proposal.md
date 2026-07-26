@@ -27,7 +27,9 @@ is worse than a meaningless-but-unique token would be.
 - The derived prefix is **checked against prefixes already in use by other
   projects**. A collision lengthens from the name's own characters first, then
   falls back to the smallest free numeric suffix that still fits in three
-  characters (`cc` → `coa` → `cc2`). The stored prefix is unique by construction.
+  characters (`cc` → `coa` → `cc2`). The stored prefix is unique whenever the
+  capped prefix space still has a free value, which the project count would have
+  to exhaust to break.
 - A name yielding no usable characters derives a deterministic token from the
   project id instead. This path deliberately produces a _distinct_ token rather
   than a shared literal — a shared default is the defect being fixed — and never

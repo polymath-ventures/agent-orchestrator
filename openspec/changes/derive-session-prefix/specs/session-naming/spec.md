@@ -10,8 +10,9 @@ SHALL derive one from the project's name and persist it on the project, so the
 stored value is the one the operator sees and can edit.
 
 Derivation SHALL be stated in one place and SHALL be deterministic: the same
-project name evaluated against the same set of prefixes already in use SHALL yield
-the same prefix.
+project name and project id, evaluated against the same set of prefixes already
+in use, SHALL yield the same prefix. The id participates because it is what the
+rule falls back to when the name yields nothing usable.
 
 A derived prefix SHALL be at most three characters. The prefix identifies the
 project at a glance while the work item number carries the identifying detail, so
@@ -49,25 +50,27 @@ accepts one. Derivation fills a blank; it never overrides a choice.
 
 #### Scenario: The same name derives the same prefix
 
-- **WHEN** derivation runs twice for the same project name against the same set of
-  prefixes already in use
+- **WHEN** derivation runs twice for the same project name and project id against
+  the same set of prefixes already in use
 - **THEN** both runs yield the same prefix
 
 ### Requirement: A derived session prefix is unique among projects
 
 A derived prefix SHALL be checked against the prefixes already in use by other
-projects, and a collision SHALL yield a distinct prefix rather than a duplicate.
+projects, and a collision SHALL yield a distinct prefix rather than a duplicate
+whenever a distinct prefix within the cap is still free.
 
 Collision resolution SHALL first lengthen the candidate using further characters
 from the project's own name, and SHALL fall back to the smallest unused numeric
 suffix that keeps the prefix within the three-character cap only when the name
 offers no distinguishing characters.
 
-The three-character cap bounds how many distinct prefixes can exist, so
-uniqueness SHALL hold for every project count the cap can represent. Beyond that
-bound the system SHALL still create the project rather than fail it, because a
-project that cannot be registered is a worse outcome than a prefix an operator
-can retype.
+The three-character cap makes the prefix space finite, which bounds that
+guarantee: uniqueness SHALL hold while any prefix the derivation can produce
+within the cap is still free. Once none is, the system SHALL still create the
+project — accepting a duplicate prefix — rather than fail it, because a project
+that cannot be registered is a worse outcome than a prefix an operator can
+retype.
 
 When a project's name yields no usable characters, the system SHALL derive a
 distinct token from the project's id instead. This path SHALL NOT emit a value
