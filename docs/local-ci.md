@@ -46,7 +46,10 @@ The cleanup command prunes only stale state under the resolved
 goal is to keep durable Agent CI state out of temporary host storage rather than
 paper over the old default.
 
-Cleanup covers these Agent CI workdir areas:
+Agent CI already prunes many stale run workspaces and dependency snapshots when
+a run starts. This explicit cleanup command is a dry-run-visible backstop for
+abandoned workdirs, interrupted hosts, and cache families that are not covered
+by that startup prune. Cleanup covers these Agent CI workdir areas:
 
 - `runs/*`
 - `cache/toolcache`
@@ -55,15 +58,17 @@ Cleanup covers these Agent CI workdir areas:
 - `cache/yarn-cache`
 - `cache/bun-cache`
 - `cache/playwright`
+- `cache/remote-workflows`
+- `cache/dtu`
 - `cache/node-modules-v2`
-- `diagnostics`, `_diag`, and `runner-diagnostics`
+- `runner`
 
 By default, paths must be older than 14 days before they are selected. Recent
 runs and caches are preserved.
 
 Paused or intentionally detached retry state is preserved indefinitely when a
-run directory contains a marker such as `signals/paused`, `detached.json`,
-`paused`, or `.paused`. Abort or resolve that retry state before pruning it.
+run directory contains Agent CI's `signals/paused` marker. Abort or resolve
+that retry state before pruning it.
 
 Files written by runner containers may appear on the host as UID/GID `1001`
 and may display as `jt:coachclaw` on this machine. Treat that as numeric

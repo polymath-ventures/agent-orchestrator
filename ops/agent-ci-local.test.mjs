@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, utimesSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, utimesSync } from "node:fs";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -16,6 +16,7 @@ test("package scripts expose the repo-owned agent-ci entrypoints", () => {
 
 test("agent-ci wrapper defaults durable state outside /tmp and honors overrides", () => {
 	const src = read("scripts/ci/agent-ci.sh");
+	assert.match(src, /git rev-parse --git-common-dir/);
 	assert.match(src, /AGENT_CI_WORKING_DIR="\$\{AGENT_CI_WORKING_DIR:-\$default_cache_home\/agent-ci\/\$repo_slug\}"/);
 	assert.match(src, /default_cache_home="\$\{XDG_CACHE_HOME:-\$HOME\/\.cache\}"/);
 	assert.doesNotMatch(src, /AGENT_CI_WORKING_DIR=.*\/tmp/);
@@ -25,10 +26,38 @@ test("agent-ci wrapper defaults durable state outside /tmp and honors overrides"
 test("agent-ci cleanup is dry-run by default and refuses tmp roots", () => {
 	const src = read("scripts/ci/agent-ci-clean.sh");
 	assert.match(src, /mode=dry-run/);
-	assert.match(src, /\/tmp/);
-	assert.match(src, /refusing to clean unsafe agent-ci workdir/);
+	assert.match(src, /git rev-parse --git-common-dir/);
 	assert.match(src, /--docker-root-helper/);
-	assert.match(src, /docker run --rm -v "\$workdir:\/workdir"/);
+	assert.match(src, /docker run --rm --network none -v "\$workdir:\/workdir" alpine:3\.20@sha256:/);
+
+	const refused = "/tmp/ao-agent-ci-clean-refuse-behavior";
+	rmSync(refused, { recursive: true, force: true });
+	const result = spawnSync("bash", ["scripts/ci/agent-ci-clean.sh", "--dry-run"], {
+		cwd: root,
+		env: { ...process.env, AGENT_CI_WORKING_DIR: refused },
+		encoding: "utf8",
+	});
+
+	assert.equal(result.status, 2);
+	assert.match(result.stderr, /refusing to clean unsafe agent-ci workdir/);
+	assert.equal(existsSync(refused), false, "refused /tmp workdir must not be created");
+});
+
+test("agent-ci cleanup default cache slug is stable across task worktrees", () => {
+	const cacheHome = mkdtempSync(join(root, ".cache-test-agent-ci-clean-home-"));
+	try {
+		const result = spawnSync("bash", ["scripts/ci/agent-ci-clean.sh", "--dry-run"], {
+			cwd: root,
+			env: { ...process.env, XDG_CACHE_HOME: cacheHome, AGENT_CI_WORKING_DIR: "" },
+			encoding: "utf8",
+		});
+
+		assert.equal(result.status, 0, result.stderr);
+		assert.match(result.stdout, /\/agent-ci\/agent-orchestrator\n/);
+		assert.doesNotMatch(result.stdout, /\/agent-ci\/issue-169-agent-ci-workdir\n/);
+	} finally {
+		rmSync(cacheHome, { recursive: true, force: true });
+	}
 });
 
 test("agent-ci cleanup selects stale state while preserving paused and recent runs", () => {
@@ -61,6 +90,30 @@ test("agent-ci cleanup selects stale state while preserving paused and recent ru
 		assert.match(result.stdout, /agent-ci-2-j1 \(recent\)/);
 		assert.match(result.stdout, /agent-ci-3-j1 \(paused retry state\)/);
 		assert.ok(statSync(staleRun).isDirectory(), "dry-run must not delete stale run");
+	} finally {
+		rmSync(workdir, { recursive: true, force: true });
+	}
+});
+
+test("agent-ci cleanup does not treat detached metadata as paused state", () => {
+	const workdir = mkdtempSync(join(root, ".cache-test-agent-ci-clean-"));
+	try {
+		const detachedRun = join(workdir, "runs", "agent-ci-detached-j1");
+		mkdirSync(join(detachedRun, "detached.json"), { recursive: true });
+
+		const old = new Date(Date.now() - 16 * 24 * 60 * 60 * 1000);
+		utimesSync(detachedRun, old, old);
+
+		const result = spawnSync("bash", ["scripts/ci/agent-ci-clean.sh", "--dry-run", "--older-than", "14"], {
+			cwd: root,
+			env: { ...process.env, AGENT_CI_WORKING_DIR: workdir },
+			encoding: "utf8",
+		});
+
+		assert.equal(result.status, 0, result.stderr);
+		assert.match(result.stdout, /selected for cleanup:/);
+		assert.match(result.stdout, /agent-ci-detached-j1/);
+		assert.doesNotMatch(result.stdout, /agent-ci-detached-j1 \(paused retry state\)/);
 	} finally {
 		rmSync(workdir, { recursive: true, force: true });
 	}

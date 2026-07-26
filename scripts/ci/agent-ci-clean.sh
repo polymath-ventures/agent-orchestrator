@@ -28,8 +28,8 @@ while [ "$#" -gt 0 ]; do
 			;;
 		--older-than)
 			shift
-			if [ "$#" -eq 0 ] || ! [[ "$1" =~ ^[0-9]+$ ]]; then
-				echo "error: --older-than requires a day count" >&2
+			if [ "$#" -eq 0 ] || ! [[ "$1" =~ ^[0-9]+$ ]] || [ "$1" -lt 1 ]; then
+				echo "error: --older-than requires a day count of at least 1" >&2
 				exit 2
 			fi
 			older_than_days="$1"
@@ -61,10 +61,19 @@ need git
 need find
 
 root="$(git rev-parse --show-toplevel)"
-repo_slug="$(basename "$root")"
+repo_slug="$(basename "$(dirname "$(git rev-parse --git-common-dir)")")"
 default_cache_home="${XDG_CACHE_HOME:-$HOME/.cache}"
-workdir="${AGENT_CI_WORKING_DIR:-$default_cache_home/agent-ci/$repo_slug}"
-workdir="$(mkdir -p "$workdir" && cd "$workdir" && pwd -P)"
+raw_workdir="${AGENT_CI_WORKING_DIR:-$default_cache_home/agent-ci/$repo_slug}"
+
+case "$raw_workdir" in
+	""|"/"|"/tmp"|"/tmp/"*|"/var/tmp"|"/var/tmp/"*)
+		echo "error: refusing to clean unsafe agent-ci workdir: $raw_workdir" >&2
+		echo "set AGENT_CI_WORKING_DIR to the repo-approved cache location first" >&2
+		exit 2
+		;;
+esac
+
+workdir="$(mkdir -p "$raw_workdir" && cd "$raw_workdir" && pwd -P)"
 
 case "$workdir" in
 	""|"/"|"/tmp"|"/tmp/"*|"/var/tmp"|"/var/tmp/"*)
@@ -77,13 +86,14 @@ esac
 cutoff_minutes=$((older_than_days * 24 * 60))
 selected=()
 preserved=()
+failed=()
 
 is_stale() {
 	[ "$(find "$1" -mindepth 0 -maxdepth 0 -mmin "+$cutoff_minutes" -print)" = "$1" ]
 }
 
 has_pause_marker() {
-	[ -e "$1/signals/paused" ] || [ -e "$1/detached.json" ] || [ -e "$1/paused" ] || [ -e "$1/.paused" ]
+	[ -e "$1/signals/paused" ]
 }
 
 docker_container_exists() {
@@ -97,7 +107,7 @@ remove_with_docker_root_helper() {
 	[ "$rel" != "$path" ] || return 1
 	[ -n "$rel" ] || return 1
 	command -v docker >/dev/null 2>&1 || return 1
-	docker run --rm -v "$workdir:/workdir" alpine:3.20 sh -c 'cd /workdir && rm -rf -- "$@"' sh "$rel"
+	docker run --rm --network none -v "$workdir:/workdir" alpine:3.20@sha256:c64c687cbea9300178b30c95835354e34c4e4febc4badfe27102879de0483b5e sh -c 'cd /workdir && rm -rf -- "$@"' sh "$rel"
 }
 
 consider_run() {
@@ -123,6 +133,9 @@ consider_cache_dir() {
 	fi
 }
 
+# Agent CI already prunes many stale run workspaces when a run starts. Keeping a
+# manual, older-threshold pass here gives operators a dry-run-visible backstop
+# for abandoned workdirs and interrupted hosts.
 if [ -d "$workdir/runs" ]; then
 	while IFS= read -r run_dir; do
 		consider_run "$run_dir"
@@ -136,10 +149,10 @@ for rel in \
 	cache/yarn-cache \
 	cache/bun-cache \
 	cache/playwright \
+	cache/remote-workflows \
+	cache/dtu \
 	cache/node-modules-v2 \
-	diagnostics \
-	_diag \
-	runner-diagnostics; do
+	runner; do
 	consider_cache_dir "$workdir/$rel"
 done
 
@@ -177,5 +190,11 @@ for path in "${selected[@]}"; do
 
 	echo "warning: normal removal failed for $path" >&2
 	echo "hint: if files are UID/GID-mapped from runner containers (for example numeric 1001), re-run with --docker-root-helper to remove only the selected relative path mounted under the agent-ci workdir." >&2
-	exit 1
+	failed+=("$path")
 done
+
+if [ "${#failed[@]}" -gt 0 ]; then
+	printf '\nfailed to delete:\n' >&2
+	printf '  %s\n' "${failed[@]}" >&2
+	exit 1
+fi
