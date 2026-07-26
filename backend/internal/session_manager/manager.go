@@ -920,6 +920,7 @@ func (m *Manager) createSessionWorkspace(ctx context.Context, project domain.Pro
 		if err := m.store.UpsertSessionWorktree(ctx, domain.SessionWorktreeRecord{
 			SessionID:    id,
 			RepoName:     wt.RepoName,
+			RepoPath:     wt.RepoPath,
 			Branch:       wt.Branch,
 			BaseSHA:      wt.BaseSHA,
 			WorktreePath: wt.Path,
@@ -2088,6 +2089,7 @@ func (m *Manager) saveAndTeardownOne(ctx context.Context, rec domain.SessionReco
 	row := domain.SessionWorktreeRecord{
 		SessionID:    rec.ID,
 		RepoName:     domain.RootWorkspaceRepoName,
+		RepoPath:     rec.Metadata.WorkspaceRepoPath,
 		Branch:       rec.Metadata.Branch,
 		WorktreePath: rec.Metadata.WorkspacePath,
 		PreservedRef: ref,
@@ -2500,7 +2502,10 @@ func (m *Manager) sessionWorktreeRowsToRepoInfos(ctx context.Context, project do
 	}
 	out := make([]ports.WorkspaceRepoInfo, 0, len(rows))
 	for _, row := range rows {
-		repoPath := repoPaths[row.RepoName]
+		repoPath := row.RepoPath
+		if repoPath == "" {
+			repoPath = repoPaths[row.RepoName]
+		}
 		if repoPath == "" {
 			return nil, fmt.Errorf("session worktree row %q no longer matches workspace registry", row.RepoName)
 		}
@@ -2527,6 +2532,7 @@ func (m *Manager) saveAndTeardownWorkspaceProject(ctx context.Context, rec domai
 		if err := m.store.UpsertSessionWorktree(ctx, domain.SessionWorktreeRecord{
 			SessionID:    rec.ID,
 			RepoName:     row.RepoName,
+			RepoPath:     row.RepoPath,
 			Branch:       row.Branch,
 			BaseSHA:      row.BaseSHA,
 			WorktreePath: row.Path,
@@ -2592,6 +2598,7 @@ func (m *Manager) upsertWorkspaceProjectRowState(ctx context.Context, row ports.
 	return m.store.UpsertSessionWorktree(ctx, domain.SessionWorktreeRecord{
 		SessionID:    row.SessionID,
 		RepoName:     row.RepoName,
+		RepoPath:     row.RepoPath,
 		Branch:       row.Branch,
 		BaseSHA:      row.BaseSHA,
 		WorktreePath: row.Path,

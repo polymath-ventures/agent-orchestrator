@@ -31,7 +31,7 @@ func (q *Queries) DeleteWorkspaceReposByProject(ctx context.Context, projectID d
 }
 
 const getSessionWorktree = `-- name: GetSessionWorktree :one
-SELECT session_id, repo_name, branch, base_sha, worktree_path, preserved_ref, state
+SELECT session_id, repo_name, repo_path, branch, base_sha, worktree_path, preserved_ref, state
 FROM session_worktrees
 WHERE session_id = ? AND repo_name = ?
 `
@@ -41,12 +41,24 @@ type GetSessionWorktreeParams struct {
 	RepoName  string
 }
 
-func (q *Queries) GetSessionWorktree(ctx context.Context, arg GetSessionWorktreeParams) (SessionWorktree, error) {
+type GetSessionWorktreeRow struct {
+	SessionID    domain.SessionID
+	RepoName     string
+	RepoPath     string
+	Branch       string
+	BaseSha      string
+	WorktreePath string
+	PreservedRef string
+	State        string
+}
+
+func (q *Queries) GetSessionWorktree(ctx context.Context, arg GetSessionWorktreeParams) (GetSessionWorktreeRow, error) {
 	row := q.db.QueryRowContext(ctx, getSessionWorktree, arg.SessionID, arg.RepoName)
-	var i SessionWorktree
+	var i GetSessionWorktreeRow
 	err := row.Scan(
 		&i.SessionID,
 		&i.RepoName,
+		&i.RepoPath,
 		&i.Branch,
 		&i.BaseSha,
 		&i.WorktreePath,
@@ -57,24 +69,36 @@ func (q *Queries) GetSessionWorktree(ctx context.Context, arg GetSessionWorktree
 }
 
 const listSessionWorktrees = `-- name: ListSessionWorktrees :many
-SELECT session_id, repo_name, branch, base_sha, worktree_path, preserved_ref, state
+SELECT session_id, repo_name, repo_path, branch, base_sha, worktree_path, preserved_ref, state
 FROM session_worktrees
 WHERE session_id = ?
 ORDER BY CASE WHEN repo_name = '__root__' THEN 0 ELSE 1 END, repo_name
 `
 
-func (q *Queries) ListSessionWorktrees(ctx context.Context, sessionID domain.SessionID) ([]SessionWorktree, error) {
+type ListSessionWorktreesRow struct {
+	SessionID    domain.SessionID
+	RepoName     string
+	RepoPath     string
+	Branch       string
+	BaseSha      string
+	WorktreePath string
+	PreservedRef string
+	State        string
+}
+
+func (q *Queries) ListSessionWorktrees(ctx context.Context, sessionID domain.SessionID) ([]ListSessionWorktreesRow, error) {
 	rows, err := q.db.QueryContext(ctx, listSessionWorktrees, sessionID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []SessionWorktree{}
+	items := []ListSessionWorktreesRow{}
 	for rows.Next() {
-		var i SessionWorktree
+		var i ListSessionWorktreesRow
 		if err := rows.Scan(
 			&i.SessionID,
 			&i.RepoName,
+			&i.RepoPath,
 			&i.Branch,
 			&i.BaseSha,
 			&i.WorktreePath,
@@ -131,9 +155,10 @@ func (q *Queries) ListWorkspaceRepos(ctx context.Context, projectID domain.Proje
 }
 
 const upsertSessionWorktree = `-- name: UpsertSessionWorktree :exec
-INSERT INTO session_worktrees (session_id, repo_name, branch, base_sha, worktree_path, preserved_ref, state)
-VALUES (?, ?, ?, ?, ?, ?, ?)
+INSERT INTO session_worktrees (session_id, repo_name, repo_path, branch, base_sha, worktree_path, preserved_ref, state)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (session_id, repo_name) DO UPDATE SET
+    repo_path = excluded.repo_path,
     branch = excluded.branch,
     base_sha = excluded.base_sha,
     worktree_path = excluded.worktree_path,
@@ -144,6 +169,7 @@ ON CONFLICT (session_id, repo_name) DO UPDATE SET
 type UpsertSessionWorktreeParams struct {
 	SessionID    domain.SessionID
 	RepoName     string
+	RepoPath     string
 	Branch       string
 	BaseSha      string
 	WorktreePath string
@@ -155,6 +181,7 @@ func (q *Queries) UpsertSessionWorktree(ctx context.Context, arg UpsertSessionWo
 	_, err := q.db.ExecContext(ctx, upsertSessionWorktree,
 		arg.SessionID,
 		arg.RepoName,
+		arg.RepoPath,
 		arg.Branch,
 		arg.BaseSha,
 		arg.WorktreePath,

@@ -27,6 +27,7 @@ func (s *Store) UpsertSessionWorktree(ctx context.Context, row domain.SessionWor
 	return s.qw.UpsertSessionWorktree(ctx, gen.UpsertSessionWorktreeParams{
 		SessionID:    row.SessionID,
 		RepoName:     row.RepoName,
+		RepoPath:     row.RepoPath,
 		Branch:       row.Branch,
 		BaseSha:      row.BaseSHA,
 		WorktreePath: row.WorktreePath,
@@ -44,7 +45,7 @@ func (s *Store) GetSessionWorktree(ctx context.Context, sessionID domain.Session
 	if err != nil {
 		return domain.SessionWorktreeRecord{}, false, fmt.Errorf("get session worktree %s/%s: %w", sessionID, repoName, err)
 	}
-	return sessionWorktreeFromGen(row), true, nil
+	return sessionWorktreeFromGet(row), true, nil
 }
 
 // ListSessionWorktrees returns every repo worktree for a session, root first.
@@ -55,7 +56,7 @@ func (s *Store) ListSessionWorktrees(ctx context.Context, sessionID domain.Sessi
 	}
 	out := make([]domain.SessionWorktreeRecord, 0, len(rows))
 	for _, row := range rows {
-		out = append(out, sessionWorktreeFromGen(row))
+		out = append(out, sessionWorktreeFromList(row))
 	}
 	return out, nil
 }
@@ -67,10 +68,26 @@ func (s *Store) DeleteSessionWorktrees(ctx context.Context, sessionID domain.Ses
 	return s.qw.DeleteSessionWorktrees(ctx, sessionID)
 }
 
-func sessionWorktreeFromGen(row gen.SessionWorktree) domain.SessionWorktreeRecord {
+func sessionWorktreeFromGet(row gen.GetSessionWorktreeRow) domain.SessionWorktreeRecord {
 	return domain.SessionWorktreeRecord{
 		SessionID:    row.SessionID,
 		RepoName:     row.RepoName,
+		RepoPath:     row.RepoPath,
+		Branch:       row.Branch,
+		BaseSHA:      row.BaseSha,
+		WorktreePath: row.WorktreePath,
+		PreservedRef: row.PreservedRef,
+		// ponytail: state is read back from the DB but no caller uses it;
+		// it is unused multi-repo scaffolding (see UpsertSessionWorktree above).
+		State: row.State,
+	}
+}
+
+func sessionWorktreeFromList(row gen.ListSessionWorktreesRow) domain.SessionWorktreeRecord {
+	return domain.SessionWorktreeRecord{
+		SessionID:    row.SessionID,
+		RepoName:     row.RepoName,
+		RepoPath:     row.RepoPath,
 		Branch:       row.Branch,
 		BaseSHA:      row.BaseSha,
 		WorktreePath: row.WorktreePath,
