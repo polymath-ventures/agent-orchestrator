@@ -91,14 +91,19 @@ func SocketPath(dataDir string) string {
 	return filepath.Join(dataDir, "run", "tmux", "default")
 }
 
-// legacySocketPath mirrors tmux's own default-socket resolution ($TMUX_TMPDIR,
-// else $TMPDIR, else /tmp), so the transitional fallback looks exactly where
-// the pre-#160 daemon's sessions actually live.
+// legacySocketPath mirrors tmux's own default-socket resolution -- $TMUX_TMPDIR
+// if set, else /tmp -- so the transitional fallback looks exactly where the
+// pre-#160 daemon's sessions actually live.
+//
+// tmux does NOT consult $TMPDIR here, and this must not either: macOS sets
+// TMPDIR to a per-user /var/folders path for GUI-launched processes, so an
+// extra TMPDIR branch would send the fallback somewhere tmux never wrote,
+// report every live pre-existing session as dead, and hand the fleet to the
+// reaper -- precisely the harm the fallback exists to prevent. Verified on
+// tmux 3.5a: with TMPDIR set and TMUX_TMPDIR unset the socket is still created
+// at /tmp/tmux-$UID/default.
 func legacySocketPath() string {
 	dir := getenv("TMUX_TMPDIR")
-	if dir == "" {
-		dir = getenv("TMPDIR")
-	}
 	if dir == "" {
 		dir = "/tmp"
 	}

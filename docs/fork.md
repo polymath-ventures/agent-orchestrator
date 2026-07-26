@@ -200,7 +200,7 @@ loopback shutdown path.
 Manual restart verification:
 
 ```bash
-AO_TMUX_SOCKET="$HOME/.ao/data/run/tmux/default"
+AO_TMUX_SOCKET="${AO_DATA_DIR:-$HOME/.ao/data}/run/tmux/default"
 systemctl --user status ao.service ao-tmux.service
 ao status
 ao session ls
@@ -248,7 +248,7 @@ Sequence on a live host:
 
    ```bash
    systemctl --user show ao-tmux.service -p MainPID -p ExecMainStatus
-   tmux -S "$HOME/.ao/data/run/tmux/default" list-sessions
+   tmux -S "${AO_DATA_DIR:-$HOME/.ao/data}/run/tmux/default" list-sessions
    ```
 
 3. Once no AO session remains on the legacy socket, retire it. `exit-empty` was

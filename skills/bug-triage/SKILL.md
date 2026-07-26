@@ -355,17 +355,17 @@ any priority/confidence stated in the body), root cause summary.
 
 ### A. Subsystem Quick Reference
 
-| Subsystem                       | Collect                                                                  | Key files                                                                  |
-| ------------------------------- | ------------------------------------------------------------------------ | -------------------------------------------------------------------------- |
-| **CLI** (`ao start/stop/spawn`) | Version, install method, OS, which binary                                | `backend/internal/cli/`, `backend/cmd/ao/main.go`                          |
-| **Daemon / HTTP API**           | `ao status`, port, daemon.log                                            | `backend/internal/daemon/daemon.go`, `backend/internal/httpd/controllers/` |
-| **Sessions / Lifecycle**        | Session ID, spawn config, runtime, state                                 | `backend/internal/session_manager/manager.go`                              |
-| **Runtime (tmux / ConPTY)**     | tmux version, `tmux -S "$AO_DATA_DIR/run/tmux/default" ls` (macOS/Linux) | `backend/internal/adapters/runtime/`                                       |
-| **Terminal mux**                | Runtime type, shell, attach behavior                                     | `backend/internal/terminal/`                                               |
-| **Agent harness**               | Harness name + version                                                   | `backend/internal/adapters/agent/<harness>/`                               |
-| **Storage**                     | DB state, migrations                                                     | `backend/internal/storage/sqlite/`, `~/.ao/data/ao.db`                     |
-| **Hooks**                       | Hook event, agent, payload                                               | `backend/internal/cli/hooks.go`                                            |
-| **Frontend (Electron/React)**   | Screenshot, viewport, daemon connectivity                                | `frontend/src/`                                                            |
+| Subsystem                       | Collect                                                                                    | Key files                                                                  |
+| ------------------------------- | ------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------- |
+| **CLI** (`ao start/stop/spawn`) | Version, install method, OS, which binary                                                  | `backend/internal/cli/`, `backend/cmd/ao/main.go`                          |
+| **Daemon / HTTP API**           | `ao status`, port, daemon.log                                                              | `backend/internal/daemon/daemon.go`, `backend/internal/httpd/controllers/` |
+| **Sessions / Lifecycle**        | Session ID, spawn config, runtime, state                                                   | `backend/internal/session_manager/manager.go`                              |
+| **Runtime (tmux / ConPTY)**     | tmux version, `tmux -S "${AO_DATA_DIR:-$HOME/.ao/data}/run/tmux/default" ls` (macOS/Linux) | `backend/internal/adapters/runtime/`                                       |
+| **Terminal mux**                | Runtime type, shell, attach behavior                                                       | `backend/internal/terminal/`                                               |
+| **Agent harness**               | Harness name + version                                                                     | `backend/internal/adapters/agent/<harness>/`                               |
+| **Storage**                     | DB state, migrations                                                                       | `backend/internal/storage/sqlite/`, `~/.ao/data/ao.db`                     |
+| **Hooks**                       | Hook event, agent, payload                                                                 | `backend/internal/cli/hooks.go`                                            |
+| **Frontend (Electron/React)**   | Screenshot, viewport, daemon connectivity                                                  | `frontend/src/`                                                            |
 
 **Misrouting patterns:**
 

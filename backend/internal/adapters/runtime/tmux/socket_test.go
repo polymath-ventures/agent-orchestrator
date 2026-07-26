@@ -356,8 +356,8 @@ func TestSendMessageResolvesTheSocketOnce(t *testing.T) {
 }
 
 // TestLegacySocketPathMatchesTmuxDefault pins the transitional path to tmux's
-// own resolution ($TMUX_TMPDIR, else $TMPDIR, else /tmp) so the fallback finds
-// the server AO used to talk to.
+// own resolution -- $TMUX_TMPDIR if set, else /tmp -- so the fallback finds the
+// server AO used to talk to.
 func TestLegacySocketPathMatchesTmuxDefault(t *testing.T) {
 	uid := os.Geteuid()
 
@@ -367,9 +367,14 @@ func TestLegacySocketPathMatchesTmuxDefault(t *testing.T) {
 		t.Fatalf("legacySocketPath = %q, want %q", got, want)
 	}
 
+	// TMPDIR must be ignored. tmux does not consult it (verified on 3.5a: with
+	// TMPDIR set and TMUX_TMPDIR unset, the socket is still created under
+	// /tmp), and macOS sets TMPDIR to /var/folders/... for GUI-launched
+	// processes -- honoring it would point the fallback at a path tmux never
+	// wrote and get every live legacy session reaped.
 	t.Setenv("TMPDIR", "/var/folders/x")
-	if got, want := legacySocketPath(), filepath.Join("/var/folders/x", tmuxSocketDirName(uid), "default"); got != want {
-		t.Fatalf("legacySocketPath with TMPDIR = %q, want %q", got, want)
+	if got, want := legacySocketPath(), filepath.Join("/tmp", tmuxSocketDirName(uid), "default"); got != want {
+		t.Fatalf("legacySocketPath with TMPDIR set = %q, want %q (TMPDIR must be ignored)", got, want)
 	}
 
 	t.Setenv("TMUX_TMPDIR", "/run/user/1002")

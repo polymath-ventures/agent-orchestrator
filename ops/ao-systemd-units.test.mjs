@@ -20,7 +20,7 @@ test("ao.service is a persistent headless daemon that does not kill the tmux fle
 	// The ownership gate must probe the socket the daemon actually uses
 	// (AO_DATA_DIR/run/tmux/default, issue #160). Probing tmux's default socket
 	// would pass while protecting nothing.
-	assert.match(text, /^ExecStartPre=.*tmux -S %h\/\.ao\/data\/run\/tmux\/default list-sessions/m);
+	assert.match(text, /^ExecStartPre=.*tmux -S "\$AO_DATA_DIR\/run\/tmux\/default" list-sessions/m);
 	// ...and it must still accept a server on the legacy default socket, because
 	// deploy.sh restarts ao.service but cannot restart ao-tmux.service
 	// (RefuseManualStop=yes). Without this the socket move bricks the daemon on
@@ -46,11 +46,11 @@ test("ao-tmux.service owns AO's tmux socket and refuses stop-job fleet kills", a
 	// The server this unit owns must be on the socket the daemon uses, not
 	// tmux's default one (issue #160) — otherwise the daemon lazily forks its
 	// own server into ao.service's cgroup and a routine restart kills the fleet.
-	assert.match(text, /^ExecStart=.*tmux -S %h\/\.ao\/data\/run\/tmux\/default start-server.*exit-empty off/m);
+	assert.match(text, /^ExecStart=.*tmux -S \$\{AO_DATA_DIR\}\/run\/tmux\/default start-server.*exit-empty off/m);
 	// tmux will not bind a socket whose directory is missing; 0700 matches
 	// tmux's own /tmp/tmux-$UID.
-	assert.match(text, /^ExecStartPre=.*install -d -m 700 %h\/\.ao\/data\/run\/tmux$/m);
-	assert.match(text, /^ExecCondition=.*tmux -S %h\/\.ao\/data\/run\/tmux\/default list-sessions/m);
+	assert.match(text, /^ExecStartPre=.*install -d -m 700 \$\{AO_DATA_DIR\}\/run\/tmux$/m);
+	assert.match(text, /^ExecCondition=.*tmux -S "\$AO_DATA_DIR\/run\/tmux\/default" list-sessions/m);
 	assert.doesNotMatch(text, /^ExecStop=/m);
 	assert.match(text, /^KillMode=process$/m);
 	assert.match(text, /^KillSignal=SIGCONT$/m);
@@ -96,17 +96,38 @@ test("ao-config-drift service is a oneshot that runs the drift-check runner and 
 	assert.match(timer, /^WantedBy=timers\.target$/m);
 });
 
-test("the units' tmux socket path matches AO_DATA_DIR + the adapter's layout", async () => {
+test("both units derive the tmux socket from one AO_DATA_DIR, never a hardcoded copy", async () => {
 	const ao = await unit("./ao.service");
 	const aoTmux = await unit("./ao-tmux.service");
 
-	// backend/internal/adapters/runtime/tmux.SocketPath: <dataDir>/run/tmux/default.
-	const dataDir = ao.match(/^Environment=AO_DATA_DIR=(.+)$/m)?.[1];
-	assert.ok(dataDir, "ao.service must pin AO_DATA_DIR");
-	const socket = `${dataDir}/run/tmux/default`;
+	// One fact, one place. Hardcoding the resolved path in the units means a
+	// drop-in overriding AO_DATA_DIR moves the daemon's socket while the
+	// ownership gate keeps probing the old one — the gate then protects nothing.
+	for (const [name, text] of [
+		["ao.service", ao],
+		["ao-tmux.service", aoTmux],
+	]) {
+		assert.doesNotMatch(
+			text,
+			/-S\s+"?(%h|\/home|~)[^"\s]*\/run\/tmux\/default/,
+			`${name} must derive the tmux socket from AO_DATA_DIR, not hardcode a path`,
+		);
+		assert.match(
+			text,
+			/-S\s+"?(\$\{AO_DATA_DIR\}|\$AO_DATA_DIR)\/run\/tmux\/default/,
+			`${name} must reference $AO_DATA_DIR/run/tmux/default`,
+		);
+	}
 
-	// Two copies of one fact live across the Go/systemd boundary; this is the
-	// check that keeps them agreeing.
-	assert.ok(aoTmux.includes(`tmux -S ${socket} start-server`), `ao-tmux.service must start its server on ${socket}`);
-	assert.ok(ao.includes(`tmux -S ${socket} list-sessions`), `ao.service must gate on ${socket}`);
+	// Both units must agree on the data dir itself, since ao-tmux.service owns
+	// the socket ao.service's daemon then connects to.
+	const dataDir = (t) => t.match(/^Environment=AO_DATA_DIR=(.+)$/m)?.[1];
+	assert.ok(dataDir(ao), "ao.service must pin AO_DATA_DIR");
+	assert.equal(dataDir(aoTmux), dataDir(ao), "ao-tmux.service must pin the same AO_DATA_DIR as ao.service");
+
+	// "/run/tmux/default" is the one systemd-side copy of the layout in
+	// backend/internal/adapters/runtime/tmux.SocketPath(<dataDir>).
+	const layout = "/run/tmux/default";
+	assert.ok(aoTmux.includes(`start-server`) && aoTmux.includes(layout));
+	assert.ok(ao.includes(layout));
 });

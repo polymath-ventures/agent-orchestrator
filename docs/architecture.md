@@ -858,8 +858,9 @@ Two consequences:
 socket`).
 - **Transitional fallback.** Changing the path does not migrate a tmux server
   already running on the old socket. For sessions that predate this change, the
-  runtime falls back to tmux's default socket (`$TMUX_TMPDIR`, else `$TMPDIR`,
-  else `/tmp`) when the session is not found on AO's own. The fallback probes
+  runtime falls back to tmux's default socket (`$TMUX_TMPDIR` if set, else
+  `/tmp` — tmux does not consult `$TMPDIR`) when the session is not found on
+  AO's own. The fallback probes
   only while that legacy socket file still exists, so it costs nothing once the
   pre-existing sessions have drained — at which point `socketFor` and
   `legacySocketPath` in `backend/internal/adapters/runtime/tmux/tmux.go` can be
