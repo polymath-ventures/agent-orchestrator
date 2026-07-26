@@ -257,7 +257,7 @@ func TestE2E_Lifecycle(t *testing.T) {
 	out, _ := e.run(t, "status", "--json")
 	mustContain(t, out, `"state": "ready"`)
 	mustContain(t, out, fmt.Sprintf(`"port": %d`, e.port))
-	statusRevision := mustBuildProvenance(t, out)
+	statusProvenance := mustBuildProvenance(t, out)
 
 	// the daemon (not the CLI) has created + migrated the store
 	if _, err := os.Stat(filepath.Join(e.dataDir, "ao.db")); err != nil {
@@ -277,9 +277,9 @@ func TestE2E_Lifecycle(t *testing.T) {
 	// keep a key-presence assertion green while deployed provenance stopped
 	// meaning anything, which is the exact regression this field exists to
 	// prevent.
-	probeRevision := mustBuildProvenance(t, body)
-	if statusRevision != probeRevision {
-		t.Fatalf("status reported build revision %q but the probe reported %q", statusRevision, probeRevision)
+	probeProvenance := mustBuildProvenance(t, body)
+	if statusProvenance != probeProvenance {
+		t.Fatalf("status reported provenance %+v but the probe reported %+v", statusProvenance, probeProvenance)
 	}
 
 	if out, code := e.run(t, "stop"); code != 0 || !strings.Contains(out, "stopped") {
@@ -382,15 +382,27 @@ func TestE2E_Completion(t *testing.T) {
 
 func httpClient() *http.Client { return &http.Client{Timeout: 3 * time.Second} }
 
-// buildRevisionPattern is the daemon's whole contract for the field: a real
-// 40-hex commit, or the explicit unknown sentinel. Anything else means the
-// value has stopped being usable as provenance.
-var buildRevisionPattern = regexp.MustCompile(`^(unknown|[0-9a-f]{40})$`)
+// buildRevisionPattern is deliberately stricter here than the daemon's general
+// contract, which also permits the "unknown" sentinel for a build carrying no
+// VCS stamp. This suite builds its own binary from the checkout it runs in, so
+// "unknown" means stamping was lost — precisely the regression that would leave
+// every deployed daemon unable to say what it is. Accepting it here would make
+// this assertion unable to fail for the reason it exists. The sentinel path is
+// covered deliberately in the unit tests, where it can be constructed.
+var buildRevisionPattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
+
+// buildProvenance is the pair the daemon reports about its own binary. Compared
+// as a whole so a consumer cannot pass along the revision while dropping or
+// inverting the modified flag.
+type buildProvenance struct {
+	revision string
+	modified bool
+}
 
 // mustBuildProvenance pulls buildRevision/buildModified out of a JSON payload
 // and fails unless both are usable. It slices the JSON object out of the
 // surrounding text because the CLI helper returns combined output.
-func mustBuildProvenance(t *testing.T, payload string) string {
+func mustBuildProvenance(t *testing.T, payload string) buildProvenance {
 	t.Helper()
 	start, end := strings.Index(payload, "{"), strings.LastIndex(payload, "}")
 	if start < 0 || end < start {
@@ -404,14 +416,16 @@ func mustBuildProvenance(t *testing.T, payload string) string {
 		t.Fatalf("decode provenance: %v\npayload:\n%s", err, payload)
 	}
 	if !buildRevisionPattern.MatchString(decoded.BuildRevision) {
-		t.Fatalf("buildRevision = %q, want a 40-hex commit or \"unknown\"", decoded.BuildRevision)
+		t.Fatalf("buildRevision = %q, want the 40-hex commit this suite built its binary from; "+
+			"%q means the toolchain produced an unstamped build (no VCS metadata reachable, or -buildvcs=false), "+
+			"which would leave a deployed daemon unable to report what it is", decoded.BuildRevision, "unknown")
 	}
 	// A pointer, so an omitted key fails here instead of decoding into a
 	// confident "this build was clean".
 	if decoded.BuildModified == nil {
 		t.Fatalf("buildModified absent; silence must not read as a clean build:\n%s", payload)
 	}
-	return decoded.BuildRevision
+	return buildProvenance{revision: decoded.BuildRevision, modified: *decoded.BuildModified}
 }
 
 func httpGet(t *testing.T, port int, path string) string {
