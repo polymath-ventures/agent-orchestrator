@@ -61,9 +61,9 @@ func ExitCode(err error) int {
 	if errors.As(err, &ue) {
 		return 2
 	}
-	var exitCoder interface{ ExitCode() int }
-	if errors.As(err, &exitCoder) {
-		return exitCoder.ExitCode()
+	var pe passthroughError
+	if errors.As(err, &pe) {
+		return pe.ExitCode()
 	}
 	return 1
 }
@@ -187,6 +187,9 @@ func routeInvocation(args []string) (invocationRoute, []string, bool) {
 
 	if args[0] == "help" {
 		if len(args) == 1 {
+			return routeCobra, args, verbose
+		}
+		if strings.HasPrefix(args[1], "-") {
 			return routeCobra, args, verbose
 		}
 		if isAONGOverride(args[1]) {

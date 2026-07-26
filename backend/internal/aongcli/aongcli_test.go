@@ -1189,6 +1189,16 @@ func TestRuntimeFailureExitsOne(t *testing.T) {
 	}
 }
 
+func TestOverrideRuntimeFailureDoesNotPreserveChildExitCode(t *testing.T) {
+	h := newFakeHost(t)
+	h.respond = func(recordedCall) ([]byte, error) { return nil, exitCodeError(7) }
+
+	_, _, err := run(t, h, "resume")
+	if ExitCode(err) != 1 {
+		t.Fatalf("ExitCode(%v) = %d, want override runtime failure exit 1", err, ExitCode(err))
+	}
+}
+
 func TestSuccessExitsZero(t *testing.T) {
 	h := newFakeHost(t)
 	_, _, err := run(t, h, "resume")
@@ -1200,7 +1210,7 @@ func TestSuccessExitsZero(t *testing.T) {
 // Making the root runnable (so an unknown verb is misuse) must not break the
 // ordinary help and version paths.
 func TestHelpAndVersionPathsStillSucceed(t *testing.T) {
-	for _, args := range [][]string{{}, {"--help"}, {"--version"}, {"help"}, {"help", "status"}} {
+	for _, args := range [][]string{{}, {"--help"}, {"--version"}, {"help"}, {"help", "-h"}, {"help", "--help"}, {"help", "status"}} {
 		t.Run(strings.Join(append([]string{"aong"}, args...), " "), func(t *testing.T) {
 			h := newFakeHost(t)
 			out, _, err := run(t, h, args...)
