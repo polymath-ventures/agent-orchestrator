@@ -5,6 +5,17 @@ import net from "node:net";
 // immediately (proven against the real daemon with a write-free held
 // connection). A heartbeat adds nothing for a Unix domain socket or named
 // pipe and is omitted deliberately.
+//
+// HANDSHAKE_TOKEN does not change that. It is written exactly once, on connect,
+// as an identity proof — not a heartbeat and not a keepalive. Nothing is ever
+// written again for the life of the connection, and the daemon never expects
+// anything more. The token exists because the connection alone is too weak a
+// credential: without it, any transient probe of the socket would count as a
+// live supervisor client and its close would schedule a daemon shutdown. The
+// daemon only counts a connection once it has read these exact bytes; see
+// HandshakeToken in backend/internal/daemon/supervisor/supervisor.go, which is
+// the source of truth for the value.
+export const HANDSHAKE_TOKEN = "ao-supervisor/1\n";
 
 const BACKOFF_INIT_MS = 200;
 const BACKOFF_MAX_MS = 2_000;
@@ -74,6 +85,12 @@ export function connectSupervisor(addr: string, opts?: { log?: (msg: string) => 
 				s.destroy();
 				return;
 			}
+			// Write the handshake before anything else: until the daemon has read
+			// these bytes the connection does not count as a live client, so any
+			// delay here is a window in which a frontend death goes unnoticed.
+			// Re-sent on every reconnect, since each new connection must prove
+			// itself again.
+			s.write(HANDSHAKE_TOKEN);
 			connected = true;
 			log("supervisor-link: connected");
 			// Reset backoff on successful connection.

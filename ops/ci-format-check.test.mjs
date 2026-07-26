@@ -6,7 +6,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, writeFileSync, rmSync, readFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync, rmSync, readFileSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -70,6 +70,49 @@ test("format-check gate passes when nothing changed", () => {
 		// the empty-array guard makes this a clean pass, not an error.
 		const r = runGate(dir);
 		assert.equal(r.status, 0, `expected zero exit\nstdout:${r.stdout}\nstderr:${r.stderr}`);
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test("format-check skips a changed file that a later rename removed", () => {
+	const dir = setupRepo();
+	try {
+		// Reproduce the real shape: the file must be in the COMMITTED changed set
+		// (base...HEAD) and then be renamed away uncommitted. That needs a base ref,
+		// so point origin/main at the baseline commit. Without it the gate skips the
+		// committed diff entirely and the missing-path case never arises.
+		const base = git(dir, "rev-parse", "HEAD").trim();
+		git(dir, "update-ref", "refs/remotes/origin/main", base);
+		git(dir, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main");
+
+		writeFileSync(join(dir, "added.md"), "# Added\n\nBody\n"); // prettier-clean
+		git(dir, "add", "added.md");
+		git(dir, "commit", "-qm", "add a file on the branch");
+
+		// Now rename it away without committing: base...HEAD still lists added.md.
+		git(dir, "mv", "added.md", "renamed.md");
+
+		const r = runGate(dir);
+		assert.ok(
+			!/No files matching the pattern/.test(r.stdout + r.stderr),
+			`gate passed a nonexistent path to Prettier\nstdout:${r.stdout}\nstderr:${r.stderr}`,
+		);
+		assert.equal(r.status, 0, `expected zero exit\nstdout:${r.stdout}\nstderr:${r.stderr}`);
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test("format-check still checks a dangling symlink the branch changed", () => {
+	const dir = setupRepo();
+	try {
+		// -e alone calls a dangling symlink nonexistent, but remote Prettier still
+		// rejects it. Skipping it locally would break the CI parity this gate is for.
+		symlinkSync("missing-target.md", join(dir, "link.md"));
+		git(dir, "add", "link.md");
+		const r = runGate(dir);
+		assert.notEqual(r.status, 0, `expected a nonzero exit\nstdout:${r.stdout}\nstderr:${r.stderr}`);
 	} finally {
 		rmSync(dir, { recursive: true, force: true });
 	}
