@@ -187,7 +187,7 @@ func (c *commandContext) runDoctor(ctx context.Context) []doctorCheck {
 	for _, harness := range doctorHarnesses {
 		checks = append(checks, c.checkHarness(ctx, harness))
 	}
-	checks = append(checks, c.checkCodexLaunchFlags(ctx), c.checkAgentProcesses(ctx), c.checkGitHubToken(ctx))
+	checks = append(checks, c.checkCodexLaunchFlags(ctx), c.checkGitHubToken(ctx))
 	return checks
 }
 

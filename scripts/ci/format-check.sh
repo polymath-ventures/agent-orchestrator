@@ -46,9 +46,16 @@ tmp="$(mktemp)"
 trap 'rm -f "$tmp"' EXIT
 changed_files >"$tmp"
 
+# Skip paths that no longer exist in the working tree. The committed set
+# (base...HEAD) legitimately lists a file that a LATER uncommitted change
+# renamed or removed, and Prettier treats a missing path as an error rather
+# than a no-op — so without this the gate fails on any branch that renames a
+# file it also added. --diff-filter=d only excludes deletions within each diff,
+# which does not cover that cross-set case.
 files=()
 n=0
 while IFS= read -r -d '' f; do
+	[ -e "$f" ] || continue
 	files+=("$f")
 	n=$((n + 1))
 done <"$tmp"
