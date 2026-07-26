@@ -50,6 +50,9 @@ func TestWorkspaceIntegrationCreateRestoreDestroy(t *testing.T) {
 	if _, err := os.Stat(info.Path); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("path after destroy stat err = %v, want not exist", err)
 	}
+	if err := ws.Destroy(ctx, info); err != nil {
+		t.Fatalf("second destroy after path removal: %v", err)
+	}
 
 	restored, err = ws.Restore(ctx, cfg)
 	if err != nil {
@@ -152,6 +155,172 @@ func TestWorkspaceIntegrationDestroyDirtyWorktree(t *testing.T) {
 	}
 	if _, err := os.Stat(info.Path); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("path after destroy stat err = %v, want not exist", err)
+	}
+}
+
+func TestWorkspaceIntegrationDestroyRefusesMismatchedRepoPath(t *testing.T) {
+	git := requireGit(t)
+	tmp := t.TempDir()
+	parentRepo := setupOriginClone(t, git, filepath.Join(tmp, "parent"))
+	childRepo := setupOriginClone(t, git, filepath.Join(tmp, "child"))
+	root := filepath.Join(tmp, "managed")
+	ws, err := New(Options{Binary: git, ManagedRoot: root, RepoResolver: StaticRepoResolver{"proj": parentRepo}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	ctx := context.Background()
+	info, err := ws.Create(ctx, ports.WorkspaceConfig{
+		ProjectID: "proj",
+		SessionID: "child",
+		Branch:    "feature/child",
+		RepoPath:  childRepo,
+	})
+	if err != nil {
+		t.Fatalf("create child worktree: %v", err)
+	}
+
+	wip := filepath.Join(info.Path, "wip.txt")
+	if err := os.WriteFile(wip, []byte("uncommitted\n"), 0o600); err != nil {
+		t.Fatalf("write wip: %v", err)
+	}
+	mismatched := info
+	mismatched.RepoPath = parentRepo
+
+	err = ws.Destroy(ctx, mismatched)
+	if err == nil {
+		t.Fatal("Destroy with mismatched RepoPath succeeded; want refusal")
+	}
+	if !errors.Is(err, ports.ErrWorkspaceRepoMismatch) {
+		t.Fatalf("Destroy error = %v, want ports.ErrWorkspaceRepoMismatch", err)
+	}
+	if errors.Is(err, ports.ErrWorkspaceDirty) {
+		t.Fatalf("Destroy error = %v, want repo-mismatch refusal before dirty classification", err)
+	}
+	if _, statErr := os.Stat(wip); statErr != nil {
+		t.Fatalf("dirty child worktree was not preserved: %v", statErr)
+	}
+	records, err := ws.listRecords(ctx, childRepo)
+	if err != nil {
+		t.Fatalf("list child records: %v", err)
+	}
+	if _, ok := findWorktree(records, info.Path); !ok {
+		t.Fatalf("child repo no longer registers worktree %q after refused Destroy", info.Path)
+	}
+}
+
+func TestWorkspaceIntegrationDestroyRemovesNestedUnregisteredResidue(t *testing.T) {
+	git := requireGit(t)
+	tmp := t.TempDir()
+	parentRepo := setupOriginClone(t, git, filepath.Join(tmp, "parent"))
+	childRepo := setupOriginClone(t, git, filepath.Join(tmp, "child"))
+	root := filepath.Join(tmp, "managed")
+	ws, err := New(Options{Binary: git, ManagedRoot: root, RepoResolver: StaticRepoResolver{"proj": parentRepo}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	ctx := context.Background()
+	rootInfo, err := ws.Create(ctx, ports.WorkspaceConfig{ProjectID: "proj", SessionID: "root", Branch: "feature/root"})
+	if err != nil {
+		t.Fatalf("create root worktree: %v", err)
+	}
+	residue := filepath.Join(rootInfo.Path, "services", "api")
+	if err := os.MkdirAll(residue, 0o750); err != nil {
+		t.Fatalf("mkdir residue: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(residue, "leftover.txt"), []byte("residue\n"), 0o600); err != nil {
+		t.Fatalf("write residue: %v", err)
+	}
+
+	err = ws.Destroy(ctx, ports.WorkspaceInfo{
+		Path:      residue,
+		ProjectID: "proj",
+		SessionID: "child",
+		Branch:    "feature/child",
+		RepoPath:  childRepo,
+	})
+	if err != nil {
+		t.Fatalf("Destroy nested unregistered residue: %v", err)
+	}
+	if _, err := os.Stat(residue); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("residue stat err = %v, want not exist", err)
+	}
+	if err := ws.Destroy(ctx, rootInfo); err != nil {
+		t.Fatalf("destroy root: %v", err)
+	}
+}
+
+func TestWorkspaceIntegrationDestroyRemovesPlainUnregisteredResidue(t *testing.T) {
+	git := requireGit(t)
+	tmp := t.TempDir()
+	repo := setupOriginClone(t, git, tmp)
+	root := filepath.Join(tmp, "managed")
+	ws, err := New(Options{Binary: git, ManagedRoot: root, RepoResolver: StaticRepoResolver{"proj": repo}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	ctx := context.Background()
+	residue := filepath.Join(ws.managedRoot, "proj", "residue")
+	if err := os.MkdirAll(residue, 0o750); err != nil {
+		t.Fatalf("mkdir residue: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(residue, "leftover.txt"), []byte("residue\n"), 0o600); err != nil {
+		t.Fatalf("write residue: %v", err)
+	}
+
+	err = ws.Destroy(ctx, ports.WorkspaceInfo{
+		Path:      residue,
+		ProjectID: "proj",
+		SessionID: "residue",
+		Branch:    "feature/residue",
+	})
+	if err != nil {
+		t.Fatalf("Destroy plain unregistered residue: %v", err)
+	}
+	if _, err := os.Stat(residue); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("residue stat err = %v, want not exist", err)
+	}
+}
+
+func TestWorkspaceIntegrationForceDestroyRefusesMismatchedRepoPath(t *testing.T) {
+	git := requireGit(t)
+	tmp := t.TempDir()
+	parentRepo := setupOriginClone(t, git, filepath.Join(tmp, "parent"))
+	childRepo := setupOriginClone(t, git, filepath.Join(tmp, "child"))
+	root := filepath.Join(tmp, "managed")
+	ws, err := New(Options{Binary: git, ManagedRoot: root, RepoResolver: StaticRepoResolver{"proj": parentRepo}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	ctx := context.Background()
+	info, err := ws.Create(ctx, ports.WorkspaceConfig{
+		ProjectID: "proj",
+		SessionID: "child",
+		Branch:    "feature/force-child",
+		RepoPath:  childRepo,
+	})
+	if err != nil {
+		t.Fatalf("create child worktree: %v", err)
+	}
+	wip := filepath.Join(info.Path, "wip.txt")
+	if err := os.WriteFile(wip, []byte("uncommitted\n"), 0o600); err != nil {
+		t.Fatalf("write wip: %v", err)
+	}
+	mismatched := info
+	mismatched.RepoPath = parentRepo
+
+	err = ws.ForceDestroy(ctx, mismatched)
+	if !errors.Is(err, ports.ErrWorkspaceRepoMismatch) {
+		t.Fatalf("ForceDestroy error = %v, want ports.ErrWorkspaceRepoMismatch", err)
+	}
+	if _, statErr := os.Stat(wip); statErr != nil {
+		t.Fatalf("dirty child worktree was not preserved: %v", statErr)
+	}
+	records, err := ws.listRecords(ctx, childRepo)
+	if err != nil {
+		t.Fatalf("list child records: %v", err)
+	}
+	if _, ok := findWorktree(records, info.Path); !ok {
+		t.Fatalf("child repo no longer registers worktree %q after refused ForceDestroy", info.Path)
 	}
 }
 

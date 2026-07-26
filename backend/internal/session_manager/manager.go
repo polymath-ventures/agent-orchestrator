@@ -2944,6 +2944,9 @@ func cleanupSkipReason(err error) string {
 	if errors.Is(err, ErrProjectNotResolvable) {
 		return "project is archived or unregistered — remove worktree manually"
 	}
+	if errors.Is(err, ports.ErrWorkspaceRepoMismatch) {
+		return "workspace belongs to a different repo — remove worktree manually"
+	}
 	return "workspace teardown failed"
 }
 

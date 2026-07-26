@@ -181,6 +181,11 @@ var (
 	// this state after path-safety checks, while real preserve failures remain
 	// fatal.
 	ErrWorkspaceStale = errors.New("workspace: stale managed worktree")
+	// ErrWorkspaceRepoMismatch reports teardown was given a repo that differs
+	// from the live git repo owning the managed worktree path. Destructive
+	// cleanup refuses the path in this state because the other repo may hold
+	// uncommitted contents there.
+	ErrWorkspaceRepoMismatch = errors.New("workspace: worktree is owned by a different repo")
 	// ErrPreservedConflict is returned by ApplyPreserved when replaying a
 	// preserved ref onto the worktree produces merge conflicts. The ref is
 	// kept intact (never deleted on conflict); the working tree is left with
