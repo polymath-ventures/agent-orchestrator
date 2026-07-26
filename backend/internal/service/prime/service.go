@@ -3,6 +3,8 @@ package prime
 
 import (
 	"context"
+	"errors"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
@@ -19,6 +21,11 @@ type PromptAssembler interface {
 	RoleSystemPrompt(ctx context.Context, kind domain.SessionKind, projectID domain.ProjectID) (string, error)
 }
 
+// SettingsReconciler makes the persisted Prime lifecycle settings true.
+type SettingsReconciler interface {
+	SetAndReconcilePrimeSettings(ctx context.Context, settings domain.PrimeSettings) error
+}
+
 // SettingsView is the wire-ready settings read model.
 type SettingsView struct {
 	Settings domain.PrimeSettings `json:"settings"`
@@ -26,23 +33,40 @@ type SettingsView struct {
 
 // Service implements fleet Prime settings and prompt inspection.
 type Service struct {
-	store     Store
-	prompts   PromptAssembler
-	onChanged func()
+	store                    Store
+	prompts                  PromptAssembler
+	settingsReconciler       SettingsReconciler
+	settingsReconcileTimeout time.Duration
+	onChanged                func()
 }
 
 // Deps captures Service collaborators.
 type Deps struct {
 	Store   Store
 	Prompts PromptAssembler
+	// SettingsReconciler runs after a successful settings write and returns only
+	// once the daemon's Prime lifecycle matches the persisted settings.
+	SettingsReconciler SettingsReconciler
+	// SettingsReconcileTimeout bounds SettingsReconciler. Zero uses the
+	// production default.
+	SettingsReconcileTimeout time.Duration
 	// OnSettingsChanged is invoked after settings are persisted, so the Prime
 	// supervisor reconciles immediately instead of on its next tick. Optional.
+	//
+	// Deprecated: production should provide SettingsReconciler so SetSettings
+	// does not return before lifecycle convergence.
 	OnSettingsChanged func()
 }
 
 // New builds a Service.
 func New(d Deps) *Service {
-	return &Service{store: d.Store, prompts: d.Prompts, onChanged: d.OnSettingsChanged}
+	return &Service{
+		store:                    d.Store,
+		prompts:                  d.Prompts,
+		settingsReconciler:       d.SettingsReconciler,
+		settingsReconcileTimeout: d.SettingsReconcileTimeout,
+		onChanged:                d.OnSettingsChanged,
+	}
 }
 
 // GetSettings returns the persisted fleet Prime settings with defaults.
@@ -69,6 +93,12 @@ func (s *Service) SetSettings(ctx context.Context, settings domain.PrimeSettings
 	if err := settings.ValidateDisplayNameForWrite(); err != nil {
 		return SettingsView{}, apierr.Invalid("DISPLAY_NAME_UNSAFE", err.Error(), nil)
 	}
+	if s.settingsReconciler != nil {
+		if err := s.setAndReconcileSettings(ctx, settings); err != nil {
+			return SettingsView{}, err
+		}
+		return s.view(settings), nil
+	}
 	if err := s.store.SetPrimeSettings(ctx, settings); err != nil {
 		return SettingsView{}, err
 	}
@@ -80,6 +110,25 @@ func (s *Service) SetSettings(ctx context.Context, settings domain.PrimeSettings
 		s.onChanged()
 	}
 	return s.view(settings), nil
+}
+
+const defaultSettingsReconcileTimeout = 30 * time.Second
+
+func (s *Service) setAndReconcileSettings(ctx context.Context, settings domain.PrimeSettings) error {
+	timeout := s.settingsReconcileTimeout
+	if timeout <= 0 {
+		timeout = defaultSettingsReconcileTimeout
+	}
+	reconcileCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	if err := s.settingsReconciler.SetAndReconcilePrimeSettings(reconcileCtx, settings); err != nil {
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(reconcileCtx.Err(), context.DeadlineExceeded) {
+			return apierr.Internal("PRIME_RECONCILE_TIMEOUT", "Prime settings did not converge before the reconcile timeout")
+		}
+		return err
+	}
+	return nil
 }
 
 // Prompt returns the projectless fleet Prime system prompt.

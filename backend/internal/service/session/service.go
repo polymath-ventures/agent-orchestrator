@@ -32,6 +32,7 @@ type Store interface {
 	ListPRComments(ctx context.Context, prURL string) ([]domain.PullRequestComment, error)
 	GetProject(ctx context.Context, id string) (domain.ProjectRecord, bool, error)
 	GetPrimeSettings(ctx context.Context) (domain.PrimeSettings, error)
+	SetPrimeSettings(ctx context.Context, settings domain.PrimeSettings) error
 }
 
 // ListFilter captures API-facing session list query filters.
@@ -355,7 +356,10 @@ func (s *Service) ReconcileRole(ctx context.Context, target domain.RoleTarget, o
 	}
 	unlock := s.lockRole(target)
 	defer unlock()
+	return s.reconcileRoleLocked(ctx, target, opts)
+}
 
+func (s *Service) reconcileRoleLocked(ctx context.Context, target domain.RoleTarget, opts ReconcileOptions) (domain.Session, error) {
 	existing, err := s.activeRoleSessions(ctx, target)
 	if err != nil {
 		return domain.Session{}, err
@@ -433,6 +437,53 @@ func (s *Service) ReconcileRole(ctx context.Context, target domain.RoleTarget, o
 		return domain.Session{}, err
 	}
 	return sess, nil
+}
+
+// ReconcilePrimeToSettings makes the persisted fleet Prime settings true before
+// returning. It is the synchronous settings-save path: callers have already
+// committed the settings row, so this method reads that row under the same
+// Prime role lock used by spawn and retire. Concurrent saves are therefore
+// totally ordered at the lifecycle boundary, and the last pass observes the
+// final desired state.
+func (s *Service) ReconcilePrimeToSettings(ctx context.Context) error {
+	target := domain.PrimeTarget()
+	unlock := s.lockRole(target)
+	defer unlock()
+
+	settings, err := s.store.GetPrimeSettings(ctx)
+	if err != nil {
+		return err
+	}
+	if !settings.WithDefaults().Enabled {
+		_, err := s.retireActivePrimeLocked(ctx)
+		return err
+	}
+	_, err = s.reconcileRoleLocked(ctx, target, ReconcileOptions{})
+	return err
+}
+
+// SetAndReconcilePrimeSettings persists the new Prime settings and makes that
+// same desired state true under one Prime role lock. This is the settings-save
+// path: the write and the lifecycle pass are one ordered critical section, so a
+// later concurrent save cannot land in the database before an earlier save has
+// returned success for a stale lifecycle state.
+func (s *Service) SetAndReconcilePrimeSettings(ctx context.Context, settings domain.PrimeSettings) error {
+	target := domain.PrimeTarget()
+	unlock, err := s.lockRoleContext(ctx, target)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+
+	if err := s.store.SetPrimeSettings(ctx, settings); err != nil {
+		return err
+	}
+	if !settings.WithDefaults().Enabled {
+		_, err := s.retireActivePrimeLocked(ctx)
+		return err
+	}
+	_, err = s.reconcileRoleLocked(ctx, target, ReconcileOptions{})
+	return err
 }
 
 // planRole resolves the per-role spawn configuration and replacement check.
@@ -548,7 +599,10 @@ func (s *Service) ActivePrime(ctx context.Context) (domain.Session, bool, error)
 func (s *Service) RetireActivePrime(ctx context.Context) (bool, error) {
 	unlock := s.lockRole(domain.PrimeTarget())
 	defer unlock()
+	return s.retireActivePrimeLocked(ctx)
+}
 
+func (s *Service) retireActivePrimeLocked(ctx context.Context) (bool, error) {
 	existing, err := s.activePrimeSessions(ctx)
 	if err != nil {
 		return false, err
@@ -713,6 +767,40 @@ func (s *Service) lockRole(target domain.RoleTarget) func() {
 
 	mu.Lock()
 	return mu.Unlock
+}
+
+func (s *Service) lockRoleContext(ctx context.Context, target domain.RoleTarget) (func(), error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	key := target.Key()
+	s.orchestratorLocksMu.Lock()
+	if s.orchestratorLocks == nil {
+		s.orchestratorLocks = make(map[string]*sync.Mutex)
+	}
+	mu := s.orchestratorLocks[key]
+	if mu == nil {
+		mu = &sync.Mutex{}
+		s.orchestratorLocks[key] = mu
+	}
+	s.orchestratorLocksMu.Unlock()
+
+	locked := make(chan struct{})
+	go func() {
+		mu.Lock()
+		close(locked)
+	}()
+
+	select {
+	case <-locked:
+		return mu.Unlock, nil
+	case <-ctx.Done():
+		go func() {
+			<-locked
+			mu.Unlock()
+		}()
+		return nil, ctx.Err()
+	}
 }
 
 // Restore relaunches a terminated session and returns the API-facing read model.

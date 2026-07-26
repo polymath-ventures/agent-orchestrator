@@ -58,6 +58,36 @@ func TestRelaunchPrimeSurfacesReconcileFailure(t *testing.T) {
 	}
 }
 
+func TestPrimeSettingsReconcilerSignalsSupervisorAndWaits(t *testing.T) {
+	rec := newPrimeReconciler()
+	sessions := &fakePrimeSettingsSessions{}
+	reconciler := &primeSettingsReconciler{reconciler: rec, sessions: sessions}
+
+	settings := domain.PrimeSettings{Enabled: true, Harness: domain.HarnessClaudeCode}.WithDefaults()
+	if err := reconciler.SetAndReconcilePrimeSettings(context.Background(), settings); err != nil {
+		t.Fatalf("SetAndReconcilePrimeSettings: %v", err)
+	}
+	if sessions.calls != 1 {
+		t.Fatalf("settings reconcile calls = %d, want 1", sessions.calls)
+	}
+	if !sessions.settings.Enabled || sessions.settings.Harness != domain.HarnessClaudeCode {
+		t.Fatalf("settings = %+v, want the Prime settings forwarded", sessions.settings)
+	}
+	if !rec.drain(context.Background()) {
+		t.Fatal("settings reconcile must signal the supervisor so budget-paused state is cleared")
+	}
+}
+
+func TestPrimeSettingsReconcilerSurfacesFailure(t *testing.T) {
+	rec := newPrimeReconciler()
+	sessions := &fakePrimeSettingsSessions{err: errors.New("boom")}
+	reconciler := &primeSettingsReconciler{reconciler: rec, sessions: sessions}
+
+	if err := reconciler.SetAndReconcilePrimeSettings(context.Background(), domain.PrimeSettings{}); err == nil {
+		t.Fatal("SetAndReconcilePrimeSettings() = nil error, want the settings reconcile failure surfaced")
+	}
+}
+
 // Repeated presses coalesce into a single pending reconciliation instead of
 // queueing a spawn per press.
 func TestPrimeReconcilerCoalescesRequests(t *testing.T) {
@@ -72,6 +102,18 @@ func TestPrimeReconcilerCoalescesRequests(t *testing.T) {
 	if rec.drain(context.Background()) {
 		t.Fatal("requests must coalesce; a second pending request would spawn twice")
 	}
+}
+
+type fakePrimeSettingsSessions struct {
+	calls    int
+	err      error
+	settings domain.PrimeSettings
+}
+
+func (f *fakePrimeSettingsSessions) SetAndReconcilePrimeSettings(_ context.Context, settings domain.PrimeSettings) error {
+	f.calls++
+	f.settings = settings
+	return f.err
 }
 
 // A nil reconciler is a no-op door, so the supervisor still runs when no

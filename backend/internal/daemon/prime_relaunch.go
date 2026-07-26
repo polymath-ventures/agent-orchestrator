@@ -13,6 +13,10 @@ type primeReconcileSessions interface {
 	ReconcileRole(ctx context.Context, target domain.RoleTarget, opts sessionsvc.ReconcileOptions) (domain.Session, error)
 }
 
+type primeSettingsSessions interface {
+	SetAndReconcilePrimeSettings(ctx context.Context, settings domain.PrimeSettings) error
+}
+
 // primeRelauncher implements the explicit user-initiated Prime relaunch.
 //
 // It does two things that the supervisor's automatic path deliberately will
@@ -36,4 +40,17 @@ func (p *primeRelauncher) RelaunchPrime(ctx context.Context) (domain.Session, er
 	// created regardless of which caller wins.
 	p.reconciler.RequestRelaunch()
 	return p.sessions.ReconcileRole(ctx, domain.PrimeTarget(), sessionsvc.ReconcileOptions{})
+}
+
+type primeSettingsReconciler struct {
+	reconciler *PrimeReconciler
+	sessions   primeSettingsSessions
+}
+
+func (p *primeSettingsReconciler) SetAndReconcilePrimeSettings(ctx context.Context, settings domain.PrimeSettings) error {
+	if p == nil || p.sessions == nil {
+		return errors.New("prime settings reconciliation is not available: reconciliation is not wired")
+	}
+	p.reconciler.RequestRelaunch()
+	return p.sessions.SetAndReconcilePrimeSettings(ctx, settings)
 }

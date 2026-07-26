@@ -231,11 +231,9 @@ func Run() error {
 
 	srv, err := httpd.NewWithDeps(cfg, log, termMgr, httpd.APIDeps{
 		Prime: primesvc.New(primesvc.Deps{
-			Store:   store,
-			Prompts: sessMgr,
-			// A settings save is an explicit user action, so it clears any
-			// budget-paused replacement state and reconciles immediately.
-			OnSettingsChanged: primeReconciler.RequestRelaunch,
+			Store:              store,
+			Prompts:            sessMgr,
+			SettingsReconciler: &primeSettingsReconciler{reconciler: primeReconciler, sessions: sessionSvc},
 		}),
 		PrimeRelaunch:      &primeRelauncher{reconciler: primeReconciler, sessions: sessionSvc},
 		Projects:           projectSvc,
