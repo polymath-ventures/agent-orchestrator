@@ -70,8 +70,13 @@ restart_and_verify() {
   # environment. stdout carries only the port, so any non-numeric output is a
   # failure explanation worth surfacing rather than discarding.
   local run_file="${AO_RUN_FILE:-$HOME/.ao/running.json}" port="" probe="" last_err=""
+  # Streams stay separate: stdout is the port and nothing else, stderr carries
+  # the diagnosis or the legacy-rollback warning. Merging them would make a
+  # successful-but-warning probe indistinguishable from a failed one.
+  local probe_err="$DEPLOY_ROOT/.healthz-probe.err"
+  mkdir -p "$DEPLOY_ROOT"
   for _ in $(seq 1 30); do
-    probe="$(python3 - "$run_file" "$BIN_TARGET" "$expected_sha" "$provenance_required" <<'PY' 2>&1 || true
+    probe="$(python3 - "$run_file" "$BIN_TARGET" "$expected_sha" "$provenance_required" <<'PY' 2>"$probe_err" || true
 import json, sys, urllib.request
 
 run_file, bin_target, expected = sys.argv[1], sys.argv[2], sys.argv[3]
@@ -94,6 +99,14 @@ if health.get("executablePath") != bin_target:
 # provenance was never recorded, and the wrong commit send an operator to three
 # different places.
 revision = health.get("buildRevision")
+modified = health.get("buildModified")
+
+# Checked first and unconditionally: a daemon that says its tree was dirty is
+# refused even on the relaxed rollback path. The relaxation below exists for
+# artifacts that cannot ANSWER, never for ones that answer badly.
+if modified is True:
+    die("responder reports a modified build; the deployed tree was not clean")
+
 if revision is None:
     if provenance_required:
         die("responder predates buildRevision; it cannot prove which commit it is")
@@ -102,16 +115,24 @@ elif revision == "unknown":
     die("responder reports an unstamped build (no VCS metadata at build time, or -buildvcs=false); it cannot prove which commit it is")
 elif revision != expected:
     die(f"responder was built from {revision}, not the expected {expected}")
-elif health.get("buildModified") is not False:
-    die(f"responder does not report a clean build of {revision} (buildModified={health.get('buildModified')!r})")
+elif modified is not False:
+    die(f"responder does not report a clean build of {revision} (buildModified={modified!r})")
 
 print(run["port"])
 PY
 )"
-    # Only a bare port means every check passed; anything else is diagnostic.
+    # Only a bare port on stdout means every check passed.
     case "$probe" in
-      ''|*[!0-9]*) last_err="$probe" ;;
-      *) port="$probe"; break ;;
+      ''|*[!0-9]*)
+        last_err="$(cat "$probe_err" 2>/dev/null || true)"
+        ;;
+      *)
+        port="$probe"
+        # A relaxed rollback announces itself here. Log it rather than let an
+        # unverified provenance pass in silence.
+        if [ -s "$probe_err" ]; then log "$(cat "$probe_err")"; fi
+        break
+        ;;
     esac
     sleep 2
   done
