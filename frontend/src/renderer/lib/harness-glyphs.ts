@@ -108,33 +108,41 @@ type HarnessGlyphEntry = {
 
 const DEFAULT_MARK_SCALE = 72;
 
-const HARNESS_GLYPHS: Record<string, HarnessGlyphEntry> = {
-	"claude-code": { label: "Claude Code", tile: "#D97757", paths: CLAUDE_MARK, markScale: 82 },
-	codex: { label: "Codex", tile: CODEX_TILE, paths: CODEX_MARK, markScale: 78 },
-	"codex-fugu": { label: "Codex Fugu", tile: CODEX_TILE, paths: CODEX_MARK, markScale: 78, pip: "#22D3EE" },
-	copilot: { label: "GitHub Copilot", tile: "#1F2328", paths: GITHUBCOPILOT_MARK, markScale: 74 },
-	cursor: { label: "Cursor", tile: "#111113", paths: CURSOR_MARK, markScale: 70 },
-	opencode: { label: "opencode", tile: "#111113", paths: OPENCODE_MARK, markScale: 70 },
-	goose: { label: "Goose", tile: "#111113", paths: GOOSE_MARK },
-	grok: { label: "Grok Build", tile: "#111113", paths: GROK_MARK, markScale: 68 },
-	cline: { label: "Cline", tile: "#18181B", paths: CLINE_MARK },
-	devin: { label: "Devin", tile: "#1B2733", paths: DEVIN_MARK },
-	qwen: { label: "Qwen Code", tile: "#6950EF", paths: QWEN_MARK, markScale: 70 },
-	kilocode: { label: "Kilo Code", tile: "#5B21B6", paths: KILOCODE_MARK },
-	kiro: { label: "Kiro", tile: "#7C4DFF", paths: KIRO_MARK, markScale: 70 },
-	amp: { label: "Amp", tile: "#005AF0", paths: AMP_MARK, markScale: 70 },
-	kimi: { label: "Kimi", tile: "#0F1012", paths: KIMI_MARK },
-	vibe: { label: "Mistral Vibe", tile: "#FA520F", paths: MISTRAL_MARK },
-	aider: { label: "Aider", monogram: "Ai" },
-	auggie: { label: "Auggie", monogram: "Au" },
-	continue: { label: "Continue", monogram: "Cn" },
-	crush: { label: "Crush", monogram: "Cr" },
-	droid: { label: "Droid", monogram: "Dr" },
-	agy: { label: "Agy", monogram: "Ag" },
-	autohand: { label: "Autohand", monogram: "Ah" },
-	pi: { label: "Pi", monogram: "Pi" },
-	fake: { label: "Fake", monogram: "Fk" },
-};
+/**
+ * A Map, not an object literal: a plain object answers for every key on
+ * `Object.prototype`, so a harness id of "constructor" or "toString" would
+ * resolve to a truthy non-entry and yield a chip with no label — silently
+ * stripping the accessible name the whole indicator depends on.
+ */
+const HARNESS_GLYPHS = new Map<string, HarnessGlyphEntry>(
+	Object.entries({
+		"claude-code": { label: "Claude Code", tile: "#D97757", paths: CLAUDE_MARK, markScale: 82 },
+		codex: { label: "Codex", tile: CODEX_TILE, paths: CODEX_MARK, markScale: 78 },
+		"codex-fugu": { label: "Codex Fugu", tile: CODEX_TILE, paths: CODEX_MARK, markScale: 78, pip: "#22D3EE" },
+		copilot: { label: "GitHub Copilot", tile: "#1F2328", paths: GITHUBCOPILOT_MARK, markScale: 74 },
+		cursor: { label: "Cursor", tile: "#111113", paths: CURSOR_MARK, markScale: 70 },
+		opencode: { label: "opencode", tile: "#111113", paths: OPENCODE_MARK, markScale: 70 },
+		goose: { label: "Goose", tile: "#111113", paths: GOOSE_MARK },
+		grok: { label: "Grok Build", tile: "#111113", paths: GROK_MARK, markScale: 68 },
+		cline: { label: "Cline", tile: "#18181B", paths: CLINE_MARK },
+		devin: { label: "Devin", tile: "#1B2733", paths: DEVIN_MARK },
+		qwen: { label: "Qwen Code", tile: "#6950EF", paths: QWEN_MARK, markScale: 70 },
+		kilocode: { label: "Kilo Code", tile: "#5B21B6", paths: KILOCODE_MARK },
+		kiro: { label: "Kiro", tile: "#7C4DFF", paths: KIRO_MARK, markScale: 70 },
+		amp: { label: "Amp", tile: "#005AF0", paths: AMP_MARK, markScale: 70 },
+		kimi: { label: "Kimi", tile: "#0F1012", paths: KIMI_MARK },
+		vibe: { label: "Mistral Vibe", tile: "#FA520F", paths: MISTRAL_MARK },
+		aider: { label: "Aider", monogram: "Ai" },
+		auggie: { label: "Auggie", monogram: "Au" },
+		continue: { label: "Continue", monogram: "Cn" },
+		crush: { label: "Crush", monogram: "Cr" },
+		droid: { label: "Droid", monogram: "Dr" },
+		agy: { label: "Agy", monogram: "Ag" },
+		autohand: { label: "Autohand", monogram: "Ah" },
+		pi: { label: "Pi", monogram: "Pi" },
+		fake: { label: "Fake", monogram: "Fk" },
+	} satisfies Record<string, HarnessGlyphEntry>),
+);
 
 export type HarnessGlyphView = {
 	/** Human-readable harness name, used as the indicator's accessible name. */
@@ -154,13 +162,14 @@ export type HarnessGlyphView = {
 const NO_PATHS: readonly string[] = [];
 
 /**
- * Split a harness id into its words: "codex-fugu" -> ["codex", "fugu"].
- *
- * Tolerates a missing id. `provider` is typed non-optional, but a session that
- * arrives mid-migration or from a hand-rolled fixture can still carry nothing,
- * and a blank sidebar row is a worse failure than a generic indicator.
+ * What the resolver accepts. `WorkspaceSession.provider` is typed non-optional,
+ * but the resolver's whole contract is that it answers for anything — so the
+ * signature says so rather than making callers cast a missing value away.
  */
-function harnessWords(harness: string): string[] {
+type MaybeHarness = string | null | undefined;
+
+/** Split a harness id into its words: "codex-fugu" -> ["codex", "fugu"]. */
+function harnessWords(harness: MaybeHarness): string[] {
 	return typeof harness === "string" ? harness.split(/[^a-z0-9]+/i).filter(Boolean) : [];
 }
 
@@ -169,7 +178,7 @@ function harnessWords(harness: string): string[] {
  * becomes "Brand New Agent". Keeps an unknown harness announceable rather than
  * leaving assistive technology with a raw adapter id.
  */
-function deriveLabel(harness: string): string {
+function deriveLabel(harness: MaybeHarness): string {
 	const words = harnessWords(harness);
 	if (words.length === 0) return "Unknown harness";
 	return words.map((word) => word.charAt(0).toUpperCase() + word.slice(1)).join(" ");
@@ -182,7 +191,7 @@ function deriveLabel(harness: string): string {
  * daemon after this file was written still gets an indicator, with no frontend
  * change and no empty slot in the row.
  */
-function deriveMonogram(harness: string): string {
+function deriveMonogram(harness: MaybeHarness): string {
 	const words = harnessWords(harness);
 	if (words.length === 0) return "??";
 	// Initials read as initials ("BN"); a single word reads as a truncation ("Wo").
@@ -196,8 +205,8 @@ function deriveMonogram(harness: string): string {
  * absent from the table resolves to the neutral fallback rather than to
  * nothing, so an unrecognised harness never leaves a blank slot in the row.
  */
-export function getHarnessGlyphView(harness: string): HarnessGlyphView {
-	const entry = HARNESS_GLYPHS[harness];
+export function getHarnessGlyphView(harness: MaybeHarness): HarnessGlyphView {
+	const entry = typeof harness === "string" ? HARNESS_GLYPHS.get(harness) : undefined;
 	if (!entry) {
 		return {
 			label: deriveLabel(harness),

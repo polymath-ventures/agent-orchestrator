@@ -243,12 +243,16 @@ afterEach(() => {
 
 describe("Sidebar harness indicator", () => {
 	// The session name deliberately omits the harness (see the session-naming
-	// spec), so the sidebar is where the harness becomes visible instead.
-	it("names each session's harness without touching the session name", () => {
+	// spec), so the sidebar is where the harness becomes visible instead. The
+	// row already owns an aria-label, which drops its descendants from the name
+	// computation — so the harness rides on the row's DESCRIPTION, and the chip
+	// itself is decorative. A chip that labelled itself would never be spoken.
+	it("describes each session's harness without touching the row's name", () => {
 		renderSidebar({ workspaces: [{ ...workspace, sessions: [session] }] });
 
-		expect(screen.getByRole("img", { name: "Claude Code" })).toBeInTheDocument();
-		expect(screen.getByRole("button", { name: "Open fix login" })).toHaveTextContent("fix login");
+		const row = screen.getByRole("button", { name: "Open fix login" });
+		expect(row).toHaveAccessibleDescription("Claude Code");
+		expect(row).toHaveTextContent("fix login");
 	});
 
 	it("distinguishes sessions running different harnesses", () => {
@@ -258,8 +262,10 @@ describe("Sidebar harness indicator", () => {
 			workspaces: [{ ...workspace, sessions: [session, primeSession] }],
 		});
 
-		expect(screen.getByRole("img", { name: "Claude Code" })).toBeInTheDocument();
-		expect(screen.getAllByRole("img", { name: "Codex" }).length).toBeGreaterThan(0);
+		expect(screen.getByRole("button", { name: "Open fix login" })).toHaveAccessibleDescription("Claude Code");
+		for (const row of screen.getAllByRole("button", { name: "Open AO Prime" })) {
+			expect(row).toHaveAccessibleDescription("Codex");
+		}
 	});
 
 	it("still shows an indicator for a harness with no published mark", () => {
@@ -267,27 +273,39 @@ describe("Sidebar harness indicator", () => {
 			workspaces: [{ ...workspace, sessions: [{ ...session, provider: "aider" }] }],
 		});
 
-		expect(screen.getByRole("img", { name: "Aider" })).toHaveTextContent("Ai");
+		expect(screen.getByRole("button", { name: "Open fix login" })).toHaveAccessibleDescription("Aider");
+		expect(document.body.querySelector("[data-harness-glyph]")).toHaveTextContent("Ai");
 	});
 
-	// The indicator is chrome: it must not become another thing that can knock
-	// the name out of its row at the sidebar's narrow widths.
-	it("keeps the name in its own truncating slot beside the indicator", () => {
+	// The dot and the glyph are one marker pair that owns its own internal
+	// spacing. As bare siblings they collected the row's gap twice — costing the
+	// name 22px instead of 13px — and in the Prime row, whose marker slot is not
+	// a flex container, they collapsed against each other with no gap at all.
+	it("keeps the markers in a single fixed-width slot that owns its spacing", () => {
 		renderSidebar({
 			workspaces: [{ ...workspace, sessions: [{ ...session, title: "a very long session name that must truncate" }] }],
 		});
 
+		const markers = document.body.querySelector("[data-session-markers]");
+		const glyph = document.body.querySelector("[data-harness-glyph]");
 		const name = screen.getByText("a very long session name that must truncate");
-		const glyph = screen.getByRole("img", { name: "Claude Code" });
 		const row = screen.getByRole("button", { name: /Open a very long session name/ });
 
-		expect(row).toContainElement(glyph);
-		expect(row).toContainElement(name);
-		// The name keeps the only flexing slot in the row and still truncates;
-		// the glyph is fixed-width, so it can never take width from the name.
+		expect(row).toContainElement(markers as HTMLElement);
+		expect(markers).toContainElement(glyph as HTMLElement);
+		// One slot, so the row's gap is paid once; the pair spaces itself.
+		expect(markers).toHaveClass("inline-flex", "shrink-0", "items-center");
+		// The name keeps the row's only flexing slot and truncates rather than wrapping.
 		expect(name).toHaveClass("truncate");
 		expect(name.parentElement).toHaveClass("min-w-0", "flex-1");
-		expect(glyph).toHaveClass("shrink-0");
+	});
+
+	it("gives the Prime row the same self-spaced marker pair", () => {
+		renderSidebar({ primeVisible: true, primeSession });
+
+		const markers = document.body.querySelector("[data-session-markers]");
+		expect(markers).toHaveClass("inline-flex", "items-center");
+		expect(markers).toContainElement(document.body.querySelector("[data-harness-glyph]") as HTMLElement);
 	});
 });
 

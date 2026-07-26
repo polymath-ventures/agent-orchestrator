@@ -2,10 +2,12 @@
 
 ### Requirement: The sidebar shows each session's harness beside its status dot
 
-Every session row in the AO sidebar SHALL render a harness indicator positioned
-between the row's status dot and the session name. The indicator SHALL be
-weighted like the status dot rather than like the name: it is a fixed-size,
-non-reflowing mark, not a text label.
+Every session row in the AO sidebar SHALL render a harness indicator adjacent to
+the row's status dot. The status dot and the harness indicator SHALL occupy a
+single fixed-width slot that owns the spacing between them, so the pair renders
+identically regardless of where a given row variant places it. The indicator
+SHALL be weighted like the status dot rather than like the name: it is a
+fixed-size, non-reflowing mark, not a text label.
 
 The indicator SHALL be derived from the harness already carried on the session
 read model. Adding this indicator SHALL NOT introduce a new API field, a daemon
@@ -14,7 +16,12 @@ change, or a new session property.
 #### Scenario: A session row renders its harness indicator
 
 - **WHEN** the sidebar renders a session row for a session whose harness is `claude-code`
-- **THEN** the row renders a harness indicator for Claude Code between the status dot and the session name
+- **THEN** the row renders a harness indicator for Claude Code in the same marker slot as the status dot
+
+#### Scenario: The marker pair owns its own spacing
+
+- **WHEN** the sidebar renders any session row variant
+- **THEN** the status dot and the harness indicator sit in one fixed-width slot that supplies the gap between them, rather than relying on the surrounding row's spacing
 
 #### Scenario: Every sidebar session row carries an indicator
 
@@ -57,15 +64,21 @@ nothing at all for an unrecognised harness.
 - **WHEN** the sidebar renders one session on `codex` and another on `codex-fugu`
 - **THEN** the two rows render visually distinguishable indicators
 
-### Requirement: The harness indicator carries an accessible name
+### Requirement: The harness is exposed to assistive technology and on hover
 
-The indicator SHALL expose the harness's display name to assistive technology
-and on hover, so that the harness is never conveyed by colour or shape alone.
+The harness's display name SHALL reach assistive technology through the row
+control that contains the indicator, and SHALL be shown on hover, so that the
+harness is never conveyed by colour or shape alone.
 
-#### Scenario: The indicator is announced by name
+The indicator graphic itself SHALL NOT attempt to carry the accessible name.
+Each sidebar row is a control with its own accessible name, and a named
+control's descendants are excluded from that name — a self-labelling graphic
+would therefore never be announced at all.
 
-- **WHEN** assistive technology reaches a session row's harness indicator
-- **THEN** the indicator exposes an accessible name identifying the harness
+#### Scenario: The row announces its harness
+
+- **WHEN** assistive technology reaches a session row
+- **THEN** the row exposes the harness's display name in addition to its own accessible name, and the row's accessible name is unchanged by the indicator
 
 #### Scenario: The indicator names the harness on hover
 
@@ -77,9 +90,9 @@ and on hover, so that the harness is never conveyed by colour or shape alone.
 Adding the harness indicator SHALL NOT change any session's name string.
 
 The indicator SHALL keep the sidebar row layout stable: it occupies a fixed
-inline slot that does not wrap, does not grow with the harness's name length,
-and does not change how the session name truncates at the sidebar's narrow
-widths.
+inline slot that does not wrap and does not grow with the harness's name length.
+The session name SHALL keep the row's only flexible slot and SHALL truncate
+rather than wrap or overflow, at every sidebar width.
 
 #### Scenario: Session names are unchanged
 
@@ -90,6 +103,11 @@ widths.
 
 - **WHEN** a session whose name overflows is rendered at the sidebar's narrow width
 - **THEN** the name truncates within the row and the row does not wrap or overflow its container
+
+#### Scenario: The indicator costs the name only its own slot
+
+- **WHEN** the marker slot is rendered in a session row
+- **THEN** it consumes the surrounding row's spacing once rather than once per marker
 
 ### Requirement: The indicator renders correctly in web mode in both themes
 

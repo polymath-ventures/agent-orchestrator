@@ -27,8 +27,9 @@ does not re-open them.
   without reading the name or opening the session.
 - Cover the whole harness roster, with a defined appearance for harnesses that
   have no brand mark and for harness values the mapping has never seen.
-- Keep the indicator at status-dot weight: it must not compete with the name or
-  cost the name any horizontal space it has today.
+- Keep the indicator at status-dot weight: it must not compete with the name,
+  and its cost to the name must be bounded to its own slot — one chip width plus
+  one row gap, never more.
 
 **Non-Goals:**
 
@@ -121,20 +122,59 @@ table rather than relying on that derivation, because deriving them collides:
 derivation remains the total fallback; the table only disambiguates the cases we
 already know about.
 
-### Accessible name on the indicator, not on the row
+### The row describes the harness; the chip is decorative
 
-The chip carries its own `title` and `aria-label` naming the harness. The row's
-existing `aria-label` ("Open <title>") is untouched, so the harness is
-additional information rather than a change to how the row is announced.
+The chip is `aria-hidden` and carries only `title` for the hover case. The row
+control points `aria-describedby` at a visually hidden label naming the harness.
+
+The first attempt had this backwards — `role="img"` plus `aria-label` on the
+chip — and it would have shipped an indicator that assistive technology never
+announced. Every sidebar row is a control with its own `aria-label` ("Open
+&lt;title&gt;"), and a control with an explicit label drops its descendants from
+the accessible-name computation, so a self-labelling chip inside it is simply
+not reachable. Testing-library's `getByRole` still found it, which is what made
+the mistake look correct.
+
+Describing rather than renaming keeps the row's accessible name unchanged
+("Open &lt;title&gt;" still identifies what the row opens) and adds the harness
+as a description, which is the semantically right slot for "which tool is
+running this" and is announced after the name.
+
+### The marker pair is an element, not a fragment
+
+`SessionMarkers` renders a real `inline-flex` span owning a 7px internal gap,
+rather than emitting the dot and the chip as bare siblings.
+
+As a fragment the pair collected the row's own 9px gap twice, costing the name
+22px instead of the chip's 13px; and in the Prime row — whose marker slot is a
+plain span rather than a flex container — the dot and chip collapsed against
+each other with no gap at all. Owning the spacing makes the pair render
+identically wherever a row variant places it, which is also why the spec now
+says the indicator is _adjacent to_ the status dot rather than _between_ the dot
+and the name: the Prime row places its marker slot after the name.
+
+### The variant pip sits inside the chip
+
+`codex-fugu`'s pip is positioned within the chip's bounds, separated from the
+mark by the chip's own tile.
+
+The first attempt hung the pip off the chip's corner with a ring in the sidebar
+surface colour, which is only correct on a resting row — on hovered and active
+rows, whose backgrounds are interactive overlays on that surface, the ring
+became a visible halo of the wrong colour. A pip that sits on the chip depends
+on nothing outside the chip, so there is no row state for it to guess wrong.
 
 ## Risks / Trade-offs
 
 - **[Brand marks drift as products rebrand]** → Geometry lives in one module
   with attribution; a rebrand is a single-file edit, not a dependency bump.
-- **[Adding a fixed 13px slot costs the name horizontal space]** → The slot is
-  fixed-width and non-growing, and the name already truncates rather than
-  wrapping. Verified at the narrow sidebar width that truncation behaviour is
-  unchanged, not merely that it still truncates.
+- **[Adding a fixed 13px slot costs the name horizontal space]** → Accepted, and
+  stated plainly rather than wished away: an indicator cannot be added for free.
+  The cost is bounded to the chip plus one row gap — the marker pair owns its
+  internal spacing precisely so the row's gap is not paid twice — and the name
+  keeps the row's only flexible slot, so it truncates rather than wrapping or
+  overflowing. The spec asserts that invariant, not an "unchanged truncation"
+  claim, which was never achievable.
 - **[Many harnesses are black-branded, so several chips look alike at 13px]** →
   Accepted. The accessible name and hover title carry the exact identity, and
   the indicator's job is to separate the harnesses the operator actually runs

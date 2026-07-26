@@ -10,23 +10,28 @@ import { cn } from "../lib/utils";
  * muddies the identity it carries), so this is where the harness becomes
  * visible. It is chrome, not content: fixed width, never wrapping, and it
  * takes no space from the name beyond its own slot.
+ *
+ * The chip is deliberately `aria-hidden`. Every row it sits in is a control
+ * carrying its own `aria-label`, and a labelled control drops its descendants
+ * from the accessible-name computation — a chip that labelled itself would
+ * simply never be announced. The row describes the harness instead
+ * (`SessionMarkers` in Sidebar.tsx), and `title` covers the hover case.
  */
 export function HarnessGlyph({ harness, className }: { harness: string; className?: string }) {
 	const view = getHarnessGlyphView(harness);
 	return (
 		<span
-			aria-label={view.label}
+			aria-hidden="true"
 			className={cn(
-				"relative inline-flex size-[13px] shrink-0 items-center justify-center rounded-[26%] leading-none",
+				"relative inline-flex size-[13px] shrink-0 items-center justify-center overflow-hidden rounded-[26%] leading-none",
 				className,
 			)}
-			role="img"
+			data-harness-glyph=""
 			style={{ background: view.tile }}
 			title={view.label}
 		>
 			{view.paths.length > 0 ? (
 				<svg
-					aria-hidden="true"
 					clipRule="evenodd"
 					fill="#fff"
 					fillRule="evenodd"
@@ -40,16 +45,15 @@ export function HarnessGlyph({ harness, className }: { harness: string; classNam
 					))}
 				</svg>
 			) : (
-				<span aria-hidden="true" className="text-[6px] font-bold tracking-tight text-white">
-					{view.monogram}
-				</span>
+				<span className="text-[6px] font-bold tracking-tight text-white">{view.monogram}</span>
 			)}
 			{view.pip ? (
-				// A variant sharing another harness's mark (codex-fugu over codex). The
-				// ring punches the pip out of whatever surface the row sits on.
+				// A variant sharing another harness's mark (codex-fugu over codex). It
+				// sits inside the chip, separated from the mark by the chip's own tile,
+				// so it reads identically on a hovered or active row — an outward ring
+				// would have to guess the row's current background and get it wrong.
 				<span
-					aria-hidden="true"
-					className="absolute -right-px -bottom-px size-1 rounded-full ring-[1.5px] ring-sidebar"
+					className="absolute right-0 bottom-0 size-[4px] rounded-full"
 					data-harness-pip=""
 					style={{ background: view.pip }}
 				/>

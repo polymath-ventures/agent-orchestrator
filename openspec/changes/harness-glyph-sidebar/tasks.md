@@ -17,4 +17,4 @@
 
 - [x] 3.1 Run the frontend test suite and typecheck.
 - [x] 3.2 Drive the running web supervisor in a browser and confirm the indicator renders in both themes and at a narrow sidebar width; capture a screenshot for the PR.
-- [ ] 3.3 Run `npm run ci-local` and resolve anything it reports before pushing.
+- [x] 3.3 Run `npm run ci-local` and resolve anything it reports before pushing.

@@ -74,11 +74,24 @@ describe("getHarnessGlyphView", () => {
 	});
 
 	it("never returns an empty indicator for an empty or missing harness", () => {
-		for (const provider of ["", undefined]) {
-			const view = getHarnessGlyphView(provider as string);
+		for (const provider of ["", undefined, null]) {
+			const view = getHarnessGlyphView(provider);
 			expect(view.tile).toBe(NEUTRAL_HARNESS_TILE);
 			expect(view.monogram).not.toHaveLength(0);
 			expect(view.label).not.toHaveLength(0);
+		}
+	});
+
+	// A plain-object lookup table answers for every key on Object.prototype, so
+	// "constructor" would resolve to a truthy non-entry and strip the label the
+	// indicator's accessible name depends on.
+	it("does not resolve inherited Object.prototype keys as harnesses", () => {
+		for (const key of ["constructor", "toString", "hasOwnProperty", "__proto__", "valueOf"]) {
+			const view = getHarnessGlyphView(key);
+			expect(view.label, `${key} must not leak a prototype member`).not.toHaveLength(0);
+			expect(view.tile).toBe(NEUTRAL_HARNESS_TILE);
+			expect(view.monogram).not.toHaveLength(0);
+			expect(view.paths).toHaveLength(0);
 		}
 	});
 });
