@@ -176,6 +176,30 @@ func TestResolveAOFallsBackToPath(t *testing.T) {
 	}
 }
 
+func TestResolveAONonExecutableSiblingDoesNotDisplacePath(t *testing.T) {
+	h := newFakeHost(t)
+	// A file that merely shares the name — a stray artifact, a half-written
+	// download — must not beat a working ao on PATH.
+	sibling := filepath.Join(filepath.Dir(h.exePath), aoBinaryName())
+	if err := os.Chmod(sibling, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	onPath := filepath.Join(t.TempDir(), aoBinaryName())
+	if err := os.WriteFile(onPath, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	h.lookPath[aoBinaryName()] = onPath
+
+	c := &commandContext{deps: h.deps(&bytes.Buffer{}, &bytes.Buffer{}).withDefaults()}
+	got, err := c.resolveAO()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != onPath {
+		t.Fatalf("resolveAO() = %q, want the executable on PATH %q", got, onPath)
+	}
+}
+
 func TestResolveAOMissingNamesBothLocations(t *testing.T) {
 	h := newFakeHost(t)
 	siblingDir := t.TempDir()
@@ -230,7 +254,10 @@ func TestDetectEnvironmentSystemd(t *testing.T) {
 	h := systemdHost(t, "ao.service")
 	c := &commandContext{deps: h.deps(&bytes.Buffer{}, &bytes.Buffer{}).withDefaults()}
 
-	env := c.detectEnvironment(context.Background())
+	env, err := c.detectEnvironment(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
 	if env.Kind != envSystemd {
 		t.Fatalf("Kind = %q, want %q", env.Kind, envSystemd)
 	}
@@ -243,7 +270,10 @@ func TestDetectEnvironmentPlainWithoutSystemctl(t *testing.T) {
 	h := newFakeHost(t)
 	c := &commandContext{deps: h.deps(&bytes.Buffer{}, &bytes.Buffer{}).withDefaults()}
 
-	env := c.detectEnvironment(context.Background())
+	env, err := c.detectEnvironment(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
 	if env.Kind != envPlain {
 		t.Fatalf("Kind = %q, want %q", env.Kind, envPlain)
 	}
@@ -256,8 +286,76 @@ func TestDetectEnvironmentPlainWhenNoUnitsLoaded(t *testing.T) {
 	h := systemdHost(t) // systemctl present, nothing loaded
 	c := &commandContext{deps: h.deps(&bytes.Buffer{}, &bytes.Buffer{}).withDefaults()}
 
-	if env := c.detectEnvironment(context.Background()); env.Kind != envPlain {
+	env, err := c.detectEnvironment(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if env.Kind != envPlain {
 		t.Fatalf("Kind = %q, want %q", env.Kind, envPlain)
+	}
+}
+
+// A probe that could not be answered is not evidence that AO is absent. A
+// missing user bus or a permission failure on a real systemd host would
+// otherwise silently look identical to a laptop with no units at all.
+func TestDetectEnvironmentReportsProbeFailureInsteadOfPlain(t *testing.T) {
+	h := newFakeHost(t)
+	h.lookPath["systemctl"] = "/usr/bin/systemctl"
+	h.respond = func(recordedCall) ([]byte, error) {
+		return []byte("Failed to connect to bus\n"), errors.New("exit status 1")
+	}
+	c := &commandContext{deps: h.deps(&bytes.Buffer{}, &bytes.Buffer{}).withDefaults()}
+
+	env, err := c.detectEnvironment(context.Background())
+	if err == nil {
+		t.Fatalf("probe failure was swallowed; env = %+v", env)
+	}
+	if env.Kind == envPlain {
+		t.Fatal("probe failure was classified as a plain environment")
+	}
+	if !strings.Contains(err.Error(), "Failed to connect to bus") {
+		t.Fatalf("error %q does not include systemctl's own output", err)
+	}
+}
+
+func TestStartFailsLoudlyOnProbeFailure(t *testing.T) {
+	h := newFakeHost(t)
+	h.lookPath["systemctl"] = "/usr/bin/systemctl"
+	h.respond = func(recordedCall) ([]byte, error) {
+		return []byte("Failed to connect to bus\n"), errors.New("exit status 1")
+	}
+
+	_, _, err := run(t, h, "start")
+	if err == nil {
+		t.Fatal("expected start to fail when the unit probe fails")
+	}
+	if strings.Contains(err.Error(), "no AO service units") {
+		t.Fatalf("probe failure was reported as an absent deployment: %v", err)
+	}
+}
+
+func TestStatusReportsProbeFailureWithoutFailing(t *testing.T) {
+	h := newFakeHost(t)
+	h.lookPath["systemctl"] = "/usr/bin/systemctl"
+	h.respond = func(call recordedCall) ([]byte, error) {
+		if filepath.Base(call.name) == aoBinaryName() {
+			return []byte("AO daemon: ready\n"), nil
+		}
+		return []byte("Failed to connect to bus\n"), errors.New("exit status 1")
+	}
+
+	out, _, err := run(t, h, "status")
+	if err != nil {
+		t.Fatalf("status failed on a systemd probe failure: %v", err)
+	}
+	if !strings.Contains(out, "AO daemon: ready") {
+		t.Fatalf("status dropped the daemon state:\n%s", out)
+	}
+	if !strings.Contains(out, "environment: unknown") {
+		t.Fatalf("status did not surface the probe failure:\n%s", out)
+	}
+	if strings.Contains(out, "environment: plain") {
+		t.Fatalf("status reported a probe failure as a plain environment:\n%s", out)
 	}
 }
 
@@ -448,26 +546,66 @@ func TestShutdownAbortsWhenStopWorkFails(t *testing.T) {
 	}
 }
 
-func TestShutdownSkipsStopWorkWhenDaemonNotReady(t *testing.T) {
-	h := newFakeHost(t)
-	h.respond = func(call recordedCall) ([]byte, error) {
-		if len(call.args) >= 2 && call.args[0] == "status" {
-			return []byte(`{"state":"stopped"}`), nil
-		}
-		return nil, nil
-	}
+// Only a state that PROVES no live daemon exists may skip stop-work.
+func TestShutdownSkipsStopWorkOnlyWhenDaemonIsProvenAbsent(t *testing.T) {
+	for _, state := range []string{"stopped", "stale"} {
+		t.Run(state, func(t *testing.T) {
+			h := newFakeHost(t)
+			h.respond = func(call recordedCall) ([]byte, error) {
+				if len(call.args) >= 2 && call.args[0] == "status" {
+					return []byte(`{"state":"` + state + `"}`), nil
+				}
+				return nil, nil
+			}
 
-	if _, _, err := run(t, h, "shutdown"); err != nil {
-		t.Fatal(err)
+			if _, _, err := run(t, h, "shutdown"); err != nil {
+				t.Fatal(err)
+			}
+			got := h.aoArgv()
+			for _, line := range got {
+				if strings.Contains(line, "pause") {
+					t.Fatalf("gated the fleet with no daemon: %v", got)
+				}
+			}
+			if got[len(got)-1] != aoBinaryName()+" stop" {
+				t.Fatalf("ao calls = %v, want the last to be `ao stop`", got)
+			}
+		})
 	}
-	got := h.aoArgv()
-	for _, line := range got {
-		if strings.Contains(line, "pause") {
-			t.Fatalf("gated the fleet with no reachable daemon: %v", got)
-		}
-	}
-	if got[len(got)-1] != aoBinaryName()+" stop" {
-		t.Fatalf("ao calls = %v, want the last to be `ao stop`", got)
+}
+
+// A daemon whose health or readiness probe is currently failing is still a live
+// daemon with live agents. Treating "not ready" as "nothing to stop" would stop
+// the daemon out from under running work — the exact state shutdown prevents.
+func TestShutdownStopsWorkWhenDaemonStateIsIndeterminate(t *testing.T) {
+	for _, state := range []string{"unhealthy", "not_ready", "", "some-future-state"} {
+		t.Run("state="+state, func(t *testing.T) {
+			h := newFakeHost(t)
+			h.respond = func(call recordedCall) ([]byte, error) {
+				if len(call.args) >= 2 && call.args[0] == "status" {
+					return []byte(`{"state":"` + state + `"}`), nil
+				}
+				return nil, nil
+			}
+
+			if _, _, err := run(t, h, "shutdown"); err != nil {
+				t.Fatal(err)
+			}
+			want := []string{
+				aoBinaryName() + " status --json",
+				aoBinaryName() + " pause --all --hard",
+				aoBinaryName() + " stop",
+			}
+			got := h.aoArgv()
+			if len(got) != len(want) {
+				t.Fatalf("ao calls = %v, want %v", got, want)
+			}
+			for i := range want {
+				if got[i] != want[i] {
+					t.Fatalf("ao calls = %v, want %v", got, want)
+				}
+			}
+		})
 	}
 }
 
@@ -543,6 +681,7 @@ func TestUsageErrorsExitTwo(t *testing.T) {
 	for _, args := range [][]string{
 		{"status", "--nope"},
 		{"drain", "unexpected-arg"},
+		{"typo"}, // an unknown verb is misuse, not a runtime failure
 	} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
 			h := newFakeHost(t)

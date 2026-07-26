@@ -28,9 +28,15 @@ func (c *commandContext) resolveAO() (string, error) {
 
 	exe, err := c.deps.Executable()
 	if err == nil {
+		// Resolve symlinks so an aong installed as a link into a release
+		// directory looks for its sibling in the release directory, not in the
+		// bin directory holding the link.
+		if resolved, linkErr := filepath.EvalSymlinks(exe); linkErr == nil {
+			exe = resolved
+		}
 		dir := filepath.Dir(exe)
 		candidate := filepath.Join(dir, aoBinaryName())
-		if info, statErr := os.Stat(candidate); statErr == nil && info.Mode().IsRegular() {
+		if isExecutableFile(candidate) {
 			return candidate, nil
 		}
 		searched = append(searched, dir)
@@ -42,6 +48,22 @@ func (c *commandContext) resolveAO() (string, error) {
 	searched = append(searched, "PATH")
 
 	return "", fmt.Errorf("%s executable not found (searched %s)", aoBinaryName(), strings.Join(searched, ", "))
+}
+
+// isExecutableFile reports whether path is a regular file this process could
+// exec. A sibling that merely has the right name — a stray data file, a
+// half-written download — must not beat a working `ao` on PATH.
+func isExecutableFile(path string) bool {
+	info, err := os.Stat(path)
+	if err != nil || !info.Mode().IsRegular() {
+		return false
+	}
+	if runtime.GOOS == "windows" {
+		// Windows has no exec bit; the .exe extension is the marker, and
+		// aoBinaryName already supplies it.
+		return true
+	}
+	return info.Mode().Perm()&0o111 != 0
 }
 
 // runAO invokes `ao` and returns its combined output. A failure is reported

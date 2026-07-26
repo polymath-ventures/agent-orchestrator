@@ -2,6 +2,7 @@ package aongcli
 
 import (
 	"context"
+	"fmt"
 	"strings"
 )
 
@@ -31,50 +32,54 @@ type environment struct {
 // about. Asking systemd is asking the component that owns the fact; probing for
 // unit files on disk would both miss package-installed units and see units that
 // were never loaded.
-func (c *commandContext) detectEnvironment(ctx context.Context) environment {
-	systemctl, err := c.deps.LookPath("systemctl")
-	if err != nil {
-		return environment{Kind: envPlain}
+//
+// A probe that fails is reported, never silently downgraded to "plain": a
+// missing user bus or a permission failure on a real systemd host would
+// otherwise make the whole deployment look absent, which is the difference
+// between "there is nothing to start here" and "I could not ask".
+func (c *commandContext) detectEnvironment(ctx context.Context) (environment, error) {
+	systemctl := c.findSystemctl()
+	if systemctl == "" {
+		return environment{Kind: envPlain}, nil
 	}
 
 	var loaded []string
 	for _, unit := range aoUnits {
-		if c.unitLoadState(ctx, systemctl, unit) == "not-found" {
+		state, err := c.unitProperty(ctx, systemctl, unit, "LoadState")
+		if err != nil {
+			return environment{}, err
+		}
+		if state == "not-found" {
 			continue
 		}
 		loaded = append(loaded, unit)
 	}
 	if len(loaded) == 0 {
-		return environment{Kind: envPlain}
+		return environment{Kind: envPlain}, nil
 	}
-	return environment{Kind: envSystemd, LoadedUnits: loaded, systemctl: systemctl}
+	return environment{Kind: envSystemd, LoadedUnits: loaded, systemctl: systemctl}, nil
 }
 
-// unitLoadState returns the unit's LoadState, or "not-found" when systemd
-// cannot report one — an unreadable answer is indistinguishable from an absent
-// unit for our purposes, and treating it as present would make `aong start`
-// fail on a unit that does not exist.
-func (c *commandContext) unitLoadState(ctx context.Context, systemctl, unit string) string {
-	out, err := c.deps.RunCommand(ctx, systemctl, "--user", "show", unit, "-P", "LoadState")
+// findSystemctl returns systemctl's path, or "" when there is none. A host
+// without systemctl is not an error — it is the `plain` environment — so the
+// lookup failure is deliberately not propagated. This is the only probe failure
+// that is safe to read as an answer, because "no service manager" is itself the
+// answer.
+func (c *commandContext) findSystemctl() string {
+	path, err := c.deps.LookPath("systemctl")
 	if err != nil {
-		return "not-found"
+		return ""
 	}
-	state := strings.TrimSpace(string(out))
-	if state == "" {
-		return "not-found"
-	}
-	return state
+	return path
 }
 
-// unitActiveState returns the unit's ActiveState for reporting, or "unknown".
-func (c *commandContext) unitActiveState(ctx context.Context, systemctl, unit string) string {
-	out, err := c.deps.RunCommand(ctx, systemctl, "--user", "show", unit, "-P", "ActiveState")
+// unitProperty reads one systemd unit property. `systemctl show` reports
+// LoadState=not-found for a unit that does not exist and still exits 0, so a
+// non-zero exit is a real probe failure rather than an absent unit.
+func (c *commandContext) unitProperty(ctx context.Context, systemctl, unit, property string) (string, error) {
+	out, err := c.deps.RunCommand(ctx, systemctl, "--user", "show", unit, "-P", property)
 	if err != nil {
-		return "unknown"
+		return "", fmt.Errorf("systemctl --user show %s -P %s: %w%s", unit, property, err, indentedOutput(out))
 	}
-	state := strings.TrimSpace(string(out))
-	if state == "" {
-		return "unknown"
-	}
-	return state
+	return strings.TrimSpace(string(out)), nil
 }

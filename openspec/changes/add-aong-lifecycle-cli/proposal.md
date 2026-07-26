@@ -19,7 +19,10 @@ adopt the model later.
 ## What Changes
 
 - Add a second Go binary, `aong`, at `backend/cmd/aong`, built with Cobra like
-  `ao`, shipped alongside `ao` in release artifacts.
+  `ao`, and installed alongside `ao` by this fork's deploy path
+  (`ops/deploy.sh`). The Electron desktop packaging is deliberately left
+  unchanged: the desktop app is exactly the `plain` environment where `aong`
+  has nothing to manage.
 - `aong` couples **only** to `ao`'s public CLI surface (it shells out to the
   `ao` executable) and to `systemctl --user` for units `ao` does not know about
   (`ao-tmux`, `ao-web`). It never imports `backend/internal/...` daemon or CLI
@@ -69,8 +72,9 @@ adopt the model later.
 - **New**: `backend/cmd/aong/main.go` and a new `backend/internal/aongcli`
   package (Cobra commands, environment detection, `ao`/`systemctl` invocation
   seam for tests).
-- **Build/release**: the release build must produce the `aong` binary next to
-  `ao`.
+- **Deploy**: `ops/deploy.sh` builds `aong` and installs it next to `ao`, and
+  rolls both back together. Electron packaging (`frontend/scripts/build-daemon.mjs`,
+  Forge `extraResource`) is unchanged.
 - **Docs**: `docs/fork.md` gains a short section describing `aong`, the verb
   set, and which environments are verified versus untested.
 - **Unchanged**: `backend/internal/cli` (all `ao` commands), `ops/*.service`,

@@ -31,7 +31,10 @@ func newStartCommand(ctx *commandContext) *cobra.Command {
 
 func (c *commandContext) runStart(ctx context.Context, cmd *cobra.Command) error {
 	out := cmd.OutOrStdout()
-	env := c.detectEnvironment(ctx)
+	env, err := c.detectEnvironment(ctx)
+	if err != nil {
+		return err
+	}
 	if env.Kind != envSystemd {
 		return fmt.Errorf("no AO service units found on this host (environment: %s); "+
 			"start the daemon with `ao daemon`, or open the desktop app with `ao start`", env.Kind)
@@ -66,7 +69,14 @@ func (c *commandContext) runStatus(ctx context.Context, cmd *cobra.Command) erro
 	if err := c.echoAO(ctx, out, "status"); err != nil {
 		return err
 	}
-	env := c.detectEnvironment(ctx)
+	env, err := c.detectEnvironment(ctx)
+	if err != nil {
+		// status is a read-only report and must still describe the daemon it
+		// just queried, so a systemd probe failure is reported in place of the
+		// environment rather than swallowed or turned into a failed command.
+		_, printErr := fmt.Fprintf(out, "environment: unknown (%s)\n", err)
+		return printErr
+	}
 	if _, err := fmt.Fprintf(out, "environment: %s\n", env.Kind); err != nil {
 		return err
 	}
@@ -77,7 +87,11 @@ func (c *commandContext) runStatus(ctx context.Context, cmd *cobra.Command) erro
 		return err
 	}
 	for _, unit := range env.LoadedUnits {
-		if _, err := fmt.Fprintf(out, "  %s: %s\n", unit, c.unitActiveState(ctx, env.systemctl, unit)); err != nil {
+		active, err := c.unitProperty(ctx, env.systemctl, unit, "ActiveState")
+		if err != nil {
+			active = "unknown"
+		}
+		if _, err := fmt.Fprintf(out, "  %s: %s\n", unit, active); err != nil {
 			return err
 		}
 	}
@@ -168,25 +182,33 @@ func newShutdownCommand(ctx *commandContext) *cobra.Command {
 
 func (c *commandContext) runShutdown(ctx context.Context, cmd *cobra.Command) error {
 	out := cmd.OutOrStdout()
-	ready, err := c.daemonReady(ctx)
+	absent, err := c.daemonAbsent(ctx)
 	if err != nil {
 		return err
 	}
-	if ready {
-		if err := c.echoAO(ctx, out, "pause", "--all", "--hard"); err != nil {
+	if absent {
+		if _, err := fmt.Fprintln(out, "No daemon to gate; skipping stop-work."); err != nil {
 			return err
 		}
-	} else if _, err := fmt.Fprintln(out, "Daemon is not ready; skipping stop-work."); err != nil {
+	} else if err := c.echoAO(ctx, out, "pause", "--all", "--hard"); err != nil {
 		return err
 	}
 	return c.echoAO(ctx, out, "stop")
 }
 
-// daemonReady reads the daemon state `ao status` already reports. A failure to
-// determine it is an error rather than an assumed "not ready": guessing wrong
-// in that direction would stop the daemon while work is still live, which is
-// the exact state shutdown exists to prevent.
-func (c *commandContext) daemonReady(ctx context.Context) (bool, error) {
+// daemonAbsent reports whether `ao status` proves there is no live AO daemon to
+// gate. Only "stopped" and "stale" prove that: stale means the run file points
+// at a dead process, or at a live process that failed the ownership probe and
+// therefore is not our daemon (`ao stop` refuses that case anyway).
+//
+// Every other state — including "unhealthy" and "not_ready", which a transient
+// probe failure produces against a perfectly live daemon — is treated as
+// present, so shutdown attempts the stop-work and aborts if it fails. The
+// question this gate answers deliberately is not "is the daemon healthy" but
+// "is it certain there is no work to stop": guessing wrong in the other
+// direction stops the daemon while agents are still running, which is the exact
+// state shutdown exists to prevent.
+func (c *commandContext) daemonAbsent(ctx context.Context) (bool, error) {
 	out, err := c.runAO(ctx, "status", "--json")
 	if err != nil {
 		return false, err
@@ -197,5 +219,5 @@ func (c *commandContext) daemonReady(ctx context.Context) (bool, error) {
 	if err := json.Unmarshal(out, &status); err != nil {
 		return false, fmt.Errorf("parse `ao status --json`: %w", err)
 	}
-	return status.State == "ready", nil
+	return status.State == "stopped" || status.State == "stale", nil
 }

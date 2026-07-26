@@ -43,7 +43,8 @@ test("deploy.sh keeps its load-bearing invariants", async () => {
 	// binaries.
 	assert.match(text, /go build -trimpath -o "\$rel\/bin\/aong" \.\/cmd\/aong/);
 	assert.match(text, /install -m 755 "\$rel\/bin\/aong"/);
-	// Rolling back to a release that predates aong must remove the installed
-	// porcelain rather than leave it driving an older ao.
-	assert.match(text, /rm -f "\$AONG_BIN_TARGET"/);
+	// Rollback restores the outgoing release's aong when it has one, and must
+	// never delete an installed binary it did not place there.
+	assert.match(text, /install -m 755 "\$prev\/bin\/aong"/);
+	assert.doesNotMatch(text, /rm -f "\$AONG_BIN_TARGET"/);
 });

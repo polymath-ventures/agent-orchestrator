@@ -10,13 +10,20 @@ storage directly, and SHALL NOT re-implement behavior `ao` already provides.
 
 `aong` SHALL locate the `ao` executable next to its own binary first and fall
 back to `PATH`, so a co-installed pair is never split by a stale `ao` earlier on
-`PATH`. When no `ao` executable can be found, `aong` SHALL fail with a message
-naming both locations it searched.
+`PATH`. A sibling SHALL only be preferred when it is an executable file, so a
+file that merely shares the name cannot displace a working `ao` on `PATH`. When
+no `ao` executable can be found, `aong` SHALL fail with a message naming both
+locations it searched.
 
 #### Scenario: Sibling ao is preferred over PATH
 
 - **WHEN** an `ao` executable exists in the same directory as the running `aong` binary and a different `ao` also exists on `PATH`
 - **THEN** `aong` invokes the sibling executable
+
+#### Scenario: A non-executable sibling does not displace PATH
+
+- **WHEN** a file named `ao` exists beside the `aong` binary but is not executable, and an executable `ao` is on `PATH`
+- **THEN** `aong` invokes the `PATH` executable
 
 #### Scenario: Falls back to PATH when no sibling exists
 
@@ -42,6 +49,11 @@ deployment layout. The environment SHALL be classified as `systemd` when
 manager; otherwise it SHALL be classified as `plain`. Commands whose behavior
 depends on the environment SHALL report which environment was detected.
 
+A failed probe SHALL NOT be reported as `plain`. Only an answer from the service
+manager that a unit is absent counts as absent; a probe that could not be
+answered SHALL be surfaced as a probe failure, so "there is nothing to manage
+here" is never confused with "I could not ask".
+
 #### Scenario: systemd environment detected from loaded units
 
 - **WHEN** `systemctl` is available and at least one AO user unit is loaded
@@ -54,8 +66,13 @@ depends on the environment SHALL report which environment was detected.
 
 #### Scenario: systemctl present but no AO units means plain environment
 
-- **WHEN** `systemctl` is available but no AO user unit is loaded
+- **WHEN** `systemctl` is available but the service manager reports every AO user unit as not-found
 - **THEN** the detected environment is `plain`
+
+#### Scenario: A failed probe is reported, not classified as plain
+
+- **WHEN** `systemctl` is available but the unit probe fails to return an answer
+- **THEN** the environment is not reported as `plain`, and the probe failure is surfaced
 
 ### Requirement: aong start starts the local AO services
 
@@ -102,6 +119,11 @@ fact `ao status` already reports. `aong status` SHALL be read-only.
 
 - **WHEN** `aong status` runs in a `plain` environment
 - **THEN** the output reports the detected environment and contains no service-unit section
+
+#### Scenario: A failed unit probe is reported without failing the command
+
+- **WHEN** `aong status` runs and the service-manager probe fails
+- **THEN** the daemon state is still reported, the environment is reported as unknown with the probe failure, and the command does not fail
 
 #### Scenario: Status still reports when the daemon is down
 
@@ -166,9 +188,13 @@ sessions.
 `aong shutdown` SHALL be the single verb that stops everything: it SHALL first
 perform `stop-work`, then `stop`. If stopping work fails, `aong shutdown` SHALL
 NOT proceed to stop the daemon, so the operator is never left with live work and
-no supervisor. When the daemon is not reachable, `aong shutdown` SHALL skip the
-stop-work step — there is no daemon to gate — and proceed to `stop`, which
-reconciles daemon state idempotently.
+no supervisor.
+
+`aong shutdown` SHALL skip the stop-work step ONLY when the reported daemon
+state proves there is no live daemon to gate. Any state that leaves a live
+daemon possible — including a daemon whose health or readiness probe is
+currently failing — SHALL be treated as work-bearing, so stop-work is attempted
+and a failure aborts the shutdown.
 
 #### Scenario: Work is stopped before the daemon
 
@@ -180,10 +206,15 @@ reconciles daemon state idempotently.
 - **WHEN** `aong shutdown` runs and the stop-work step fails
 - **THEN** the daemon is not stopped and the command fails reporting the stop-work failure
 
-#### Scenario: Unreachable daemon skips stop-work
+#### Scenario: A daemon proven absent skips stop-work
 
-- **WHEN** `aong shutdown` runs and the daemon is not ready
+- **WHEN** `aong shutdown` runs and the reported daemon state proves no live daemon exists
 - **THEN** no fleet pause command is invoked and `ao stop` is invoked
+
+#### Scenario: An unhealthy or not-ready daemon still has its work stopped
+
+- **WHEN** `aong shutdown` runs and the daemon is reported as unhealthy or not ready
+- **THEN** `ao pause --all --hard` is invoked before `ao stop`
 
 ### Requirement: aong follows AO's CLI exit-code convention
 

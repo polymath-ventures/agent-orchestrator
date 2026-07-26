@@ -124,14 +124,15 @@ rollback() {
   log "Rolling back to $prev"
   ln -sfn "$prev" "$CURRENT"
   install -m 755 "$prev/bin/ao" "$BIN_TARGET"
-  # aong resolves ao as its sibling, so the pair must roll back together. A
-  # release that predates aong has no binary to restore; drop the installed one
-  # rather than leave a newer porcelain driving an older ao.
+  # aong resolves ao as its sibling, so the pair rolls back together when the
+  # outgoing release has one. A release predating aong has nothing to restore;
+  # say so and leave the installed binary alone. Deleting it would be a
+  # destructive surprise on a path this script does not own exclusively, and
+  # aong only composes ao verbs that predate it, so the skew is inert.
   if [ -f "$prev/bin/aong" ]; then
     install -m 755 "$prev/bin/aong" "$AONG_BIN_TARGET"
   else
-    rm -f "$AONG_BIN_TARGET"
-    log "NOTE: $prev predates aong; removed $AONG_BIN_TARGET."
+    log "NOTE: $prev predates aong; left $AONG_BIN_TARGET untouched."
   fi
   sync_units "$prev"
   cat "$prev/REVISION" > "$LAST_FILE"

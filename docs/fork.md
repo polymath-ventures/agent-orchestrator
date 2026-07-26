@@ -311,10 +311,14 @@ Rules the implementation keeps:
   daemon or `ao` CLI internals, never opens the run file or the shutdown token,
   and never calls the daemon HTTP API. A change that needs new behavior is an
   upstream `ao` proposal, not an `aong` feature.
-- It resolves `ao` beside its own binary before falling back to `PATH`, so the
-  pair that was built together stays together. `ops/deploy.sh` builds and
-  installs both, and a rollback to a release predating `aong` removes the
-  installed `aong` rather than leaving it driving an older `ao`.
+- It resolves an executable `ao` beside its own binary before falling back to
+  `PATH`, so the pair that was built together stays together. `ops/deploy.sh`
+  builds and installs both and rolls both back together; a rollback to a release
+  predating `aong` says so and leaves the installed binary alone rather than
+  deleting a path it did not place there.
+- `aong` is distributed by `ops/deploy.sh` only. The Electron desktop packaging
+  is deliberately unchanged — the desktop app is exactly the `plain` environment
+  where `aong` has no services to manage.
 - There is no `aong pause`. `ao` has no capability that gates new work while
   leaving live workers alone — its soft pause _is_ the drain — so a `pause`
   distinct from `drain` would have to either lie or grow new daemon behavior in

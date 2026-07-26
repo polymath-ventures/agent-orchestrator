@@ -39,6 +39,6 @@
 
 ## 8. Build, docs, and verification
 
-- [x] 8.1 Ensure the release build produces `aong` beside `ao`; update the build/release workflow and any packaging list that enumerates binaries.
+- [x] 8.1 Make `ops/deploy.sh` build `aong` and install it beside `ao`, and roll both back together; leave Electron packaging unchanged, since the desktop app is the `plain` environment `aong` cannot manage.
 - [x] 8.2 Document `aong` in `docs/fork.md`: the verb set, the porcelain rule, and which environments are verified versus untested.
 - [x] 8.3 Run `npm run ci-local` green, then exercise the built binary on this host: `aong status` against the live fleet and `aong start` in a no-`systemctl` environment, recording the exact commands and output in the PR.
