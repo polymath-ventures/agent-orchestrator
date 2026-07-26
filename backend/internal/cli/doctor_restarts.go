@@ -36,15 +36,15 @@ const (
 // `0::/system.slice/ao.service`). Anchored so a directory that merely contains
 // the text — say `not-a.service.d` — cannot pose as a unit.
 //
-// The alphabet is systemd's own, including `:` and `\xNN` escapes; leaving
-// those out would silently miss a real unit and report the check unavailable.
-// A `:` inside the name is safe here because the cgroup line is split on its
-// first two colons before this runs, so the path — colons and all — survives
-// intact. A backslash is only accepted as a well-formed `\xNN` escape, because
-// that is the only form systemd emits: allowing a bare backslash would accept
-// a malformed name and send `systemctl show` after a unit that cannot exist,
-// which answers 0 and reports a healthy PASS.
-var systemdServiceUnitRE = regexp.MustCompile(`^(?:[A-Za-z0-9_.@:-]|\\x[0-9A-Fa-f]{2})+\.service$`)
+// The alphabet is systemd's own. systemd.unit(5): a unit name "must consist of
+// one or more valid characters (ASCII letters, digits, ":", "-", "_", ".", and
+// "\")", plus "@" for instance names. A LITERAL backslash is therefore valid —
+// `\xNN` is the escaping convention `unit_name_escape()` produces, not a
+// validity rule, so requiring that form here would reject real units and report
+// the check unavailable for a daemon that is running perfectly well. A ":" is
+// safe because the cgroup line is split on its first two colons before this
+// runs, so the path — colons and all — survives intact.
+var systemdServiceUnitRE = regexp.MustCompile(`^[A-Za-z0-9_.@:\\-]+\.service$`)
 
 // checkDaemonRestarts surfaces systemd restart churn for the unit that actually
 // owns the daemon. The unit is derived from the daemon pid's cgroup rather than
@@ -141,6 +141,7 @@ func (c *commandContext) daemonSystemdUnit(pid int) (unit string, userScope bool
 		// text cannot pose as a unit.
 		var components []string
 		for _, component := range strings.Split(cgroupPath, "/") {
+			component = cgroupUnescape(component)
 			if systemdServiceUnitRE.MatchString(component) {
 				components = append(components, component)
 			}
@@ -162,4 +163,14 @@ func (c *commandContext) daemonSystemdUnit(pid int) (unit string, userScope bool
 		return "", false, fmt.Errorf("no systemd service unit in %s", path)
 	}
 	return unit, userScope, nil
+}
+
+// cgroupUnescape reverses systemd's cgroup-filename escaping, which prefixes a
+// single `_` to any name that starts with `_` or would collide with a kernel
+// controller filename. systemd's own cg_unescape() is exactly this: strip one
+// leading underscore if present. Without it, a unit named `_ao.service` appears
+// on the cgroup path as `__ao.service` and doctor would ask systemd about a
+// unit that does not exist — which answers 0 and reports a healthy PASS.
+func cgroupUnescape(component string) string {
+	return strings.TrimPrefix(component, "_")
 }

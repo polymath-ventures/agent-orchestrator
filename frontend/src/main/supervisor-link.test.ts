@@ -70,17 +70,23 @@ describe("readAtLeast", () => {
 
 		const client = net.connect(addr);
 		const conn = await withTimeout(connectionPromise, 3_000, "readAtLeast: server did not accept");
-		const received = readAtLeast(conn, HANDSHAKE_TOKEN.length);
+		// try/finally, so a regression that never resolves still tears the sockets
+		// down. Otherwise afterEach blocks on server.close() with a live
+		// connection and the real failure is buried under a hook timeout.
+		try {
+			const received = readAtLeast(conn, HANDSHAKE_TOKEN.length);
 
-		// Deliberately split mid-token, with a gap, so a one-chunk read resolves short.
-		const split = 6;
-		client.write(HANDSHAKE_TOKEN.slice(0, split));
-		await new Promise<void>((r) => setTimeout(r, 50));
-		client.write(HANDSHAKE_TOKEN.slice(split));
+			// Deliberately split mid-token, with a gap, so a one-chunk read resolves short.
+			const split = 6;
+			client.write(HANDSHAKE_TOKEN.slice(0, split));
+			await new Promise<void>((r) => setTimeout(r, 50));
+			client.write(HANDSHAKE_TOKEN.slice(split));
 
-		expect(await withTimeout(received, 3_000, "readAtLeast: never assembled the full token")).toBe(HANDSHAKE_TOKEN);
-		client.destroy();
-		conn.destroy();
+			expect(await withTimeout(received, 3_000, "readAtLeast: never assembled the full token")).toBe(HANDSHAKE_TOKEN);
+		} finally {
+			client.destroy();
+			conn.destroy();
+		}
 	});
 
 	const servers: net.Server[] = [];

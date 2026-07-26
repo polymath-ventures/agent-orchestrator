@@ -487,29 +487,57 @@ func TestDoctorDaemonRestartsQuotesUnitInJournalHint(t *testing.T) {
 	}
 }
 
-// TestDoctorDaemonRestartsRejectsMalformedEscapes: systemd emits `\xNN` and
-// nothing else, so a bare backslash is not a unit name. Accepting one would
-// send `systemctl show` after a unit that cannot exist — and systemctl answers
-// 0 for a unit it does not know, so the check would report a healthy PASS
-// instead of admitting it could not identify the unit.
-func TestDoctorDaemonRestartsRejectsMalformedEscapes(t *testing.T) {
+// TestDoctorDaemonRestartsAcceptsLiteralBackslashUnits pins that a LITERAL
+// backslash is a valid systemd unit-name character. systemd.unit(5) lists it
+// among the valid characters; `\xNN` is the escaping convention
+// unit_name_escape() emits, not a validity rule. A previous tightening required
+// the escaped form and so rejected real units, reporting the check unavailable
+// for a daemon that was running fine. This test exists to stop that recurring.
+func TestDoctorDaemonRestartsAcceptsLiteralBackslashUnits(t *testing.T) {
 	for _, unit := range []string{`ao\garbage.service`, `ao\x2.service`, `ao\xZZ.service`} {
 		t.Run(unit, func(t *testing.T) {
 			cfg := setConfigEnv(t)
 			srv := doctorDaemonServer(t)
+			rec := &doctorProbeRecorder{}
 			c, _ := doctorLiveDaemonContext(t, cfg, srv,
 				map[string]string{"git": "/bin/git", "systemctl": "/bin/systemctl"},
-				func(_ context.Context, name string, args ...string) ([]byte, error) {
-					if filepath.Base(name) == "git" {
-						return []byte("git version 2.43.0\n"), nil
-					}
-					t.Errorf("systemctl was probed for a malformed unit name: %s %v", name, args)
-					return nil, fmt.Errorf("unexpected command %s", name)
-				},
+				scopedSystemctlFake(t, rec, unit, "0", false),
 			)
 			c.deps.ProcRoot = writeProcCgroup(t, doctorFakeDaemonPID, "0::/system.slice/"+unit+"\n")
 
-			assertDoctorUnavailable(t, "daemon-restarts", findDoctorCheck(t, c.runDoctor(context.Background()), "daemon-restarts"))
+			check := findDoctorCheck(t, c.runDoctor(context.Background()), "daemon-restarts")
+			if check.Level != doctorPass || !strings.Contains(check.Message, unit) {
+				t.Fatalf("daemon-restarts = %+v, want PASS naming the unit %q", check, unit)
+			}
+		})
+	}
+}
+
+// TestDoctorDaemonRestartsUnescapesCgroupNames covers systemd's cgroup-filename
+// escaping: a name starting with `_`, or colliding with a controller filename,
+// is written with one extra leading underscore. Reading it back without
+// reversing that asks systemd about a unit that does not exist — and systemctl
+// answers 0 for an unknown unit, so doctor would report a healthy PASS.
+func TestDoctorDaemonRestartsUnescapesCgroupNames(t *testing.T) {
+	for _, tc := range []struct{ onCgroup, wantUnit string }{
+		{"__ao.service", "_ao.service"},
+		{"_cpu.service", "cpu.service"},
+		{"ao.service", "ao.service"},
+	} {
+		t.Run(tc.onCgroup, func(t *testing.T) {
+			cfg := setConfigEnv(t)
+			srv := doctorDaemonServer(t)
+			rec := &doctorProbeRecorder{}
+			c, _ := doctorLiveDaemonContext(t, cfg, srv,
+				map[string]string{"git": "/bin/git", "systemctl": "/bin/systemctl"},
+				scopedSystemctlFake(t, rec, tc.wantUnit, "0", false),
+			)
+			c.deps.ProcRoot = writeProcCgroup(t, doctorFakeDaemonPID, "0::/system.slice/"+tc.onCgroup+"\n")
+
+			check := findDoctorCheck(t, c.runDoctor(context.Background()), "daemon-restarts")
+			if check.Level != doctorPass || !strings.Contains(check.Message, tc.wantUnit) {
+				t.Fatalf("daemon-restarts = %+v, want PASS naming the unescaped unit %q", check, tc.wantUnit)
+			}
 		})
 	}
 }
