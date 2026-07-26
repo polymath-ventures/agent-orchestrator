@@ -66,6 +66,12 @@ cd "$root"
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 source "$script_dir/agent-ci-workdir.sh"
 
+if [ -z "${AGENT_CI_WORKING_DIR:-}" ] && [ -e /.dockerenv ]; then
+	echo "error: in-container Agent CI workdir resolution is owned by @redwoodjs/agent-ci" >&2
+	echo "set AGENT_CI_WORKING_DIR explicitly before running agent-ci cleanup in a container" >&2
+	exit 2
+fi
+
 raw_workdir="${AGENT_CI_WORKING_DIR:-$(agent_ci_default_workdir)}"
 
 case "$raw_workdir" in
@@ -98,14 +104,6 @@ selected=()
 preserved=()
 failed=()
 uncovered=()
-tmp_files=()
-
-cleanup_tmp_files() {
-	for tmp in "${tmp_files[@]}"; do
-		[ -n "$tmp" ] && [ -e "$tmp" ] && rm -f -- "$tmp"
-	done
-}
-trap cleanup_tmp_files EXIT
 
 is_stale() {
 	[ "$(find "$1" -mindepth 0 -maxdepth 0 -mmin "+$cutoff_minutes" -print)" = "$1" ]
@@ -153,12 +151,13 @@ consider_cache_dir() {
 # manual, older-threshold pass here gives operators a dry-run-visible backstop
 # for abandoned workdirs and interrupted hosts.
 if [ -d "$workdir/runs" ]; then
-	run_list="$(mktemp)"
-	tmp_files+=("$run_list")
-	find "$workdir/runs" -mindepth 1 -maxdepth 1 -type d | sort >"$run_list"
 	while IFS= read -r run_dir; do
 		consider_run "$run_dir"
-	done <"$run_list"
+	done < <(find "$workdir/runs" -mindepth 1 -maxdepth 1 -type d | sort)
+
+	while IFS= read -r run_entry; do
+		uncovered+=("$run_entry")
+	done < <(find "$workdir/runs" -mindepth 1 -maxdepth 1 ! -type d | sort)
 fi
 
 covered_cache_dirs=(

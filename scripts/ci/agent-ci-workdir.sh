@@ -13,11 +13,6 @@ agent_ci_repo_slug() {
 }
 
 agent_ci_default_workdir() {
-	if [ -e /.dockerenv ]; then
-		printf '%s/.agent-ci\n' "$(git rev-parse --show-toplevel)"
-		return
-	fi
-
 	local default_cache_home="${XDG_CACHE_HOME:-$HOME/.cache}"
 	printf '%s/agent-ci/%s\n' "$default_cache_home" "$(agent_ci_repo_slug)"
 }
