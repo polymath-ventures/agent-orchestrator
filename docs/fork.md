@@ -323,9 +323,15 @@ Rules the implementation keeps:
   leaving live workers alone — its soft pause _is_ the drain — so a `pause`
   distinct from `drain` would have to either lie or grow new daemon behavior in
   the porcelain.
-- `aong shutdown` stops work before the daemon and refuses to stop the daemon if
-  stopping work failed. Live agents with no supervisor is worse than a shutdown
-  the operator can retry.
+- `aong shutdown` stops work before the daemon, and refuses to stop the daemon
+  whenever stopping work failed — unconditionally, with no state that licenses
+  an exception. Live agents with no supervisor is worse than a shutdown the
+  operator can retry, and a shutdown that reports success in that state is worse
+  still. Only `ao status`'s `stopped` (no run file at all) proves there is
+  nothing to gate; `stale`, `unhealthy`, and `not_ready` are all reported for
+  live daemons too. When shutdown refuses, its error names `aong stop`, which
+  reconciles a daemon that is already gone without claiming to have stopped
+  work.
 
 Environment support:
 

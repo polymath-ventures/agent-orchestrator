@@ -192,15 +192,16 @@ NOT proceed to stop the daemon, so the operator is never left with live work and
 no supervisor.
 
 `aong shutdown` SHALL skip the stop-work step ONLY when the reported daemon
-state proves there is no live daemon to gate. Any state that leaves a live
-daemon possible — including a daemon whose health or readiness probe is
-currently failing, and any state `aong` does not recognise — SHALL be treated as
-work-bearing, so stop-work is attempted and a failure aborts the shutdown.
+state proves there is nothing to gate. Any state that leaves a live daemon
+possible — including a daemon whose health or readiness probe is currently
+failing, an ambiguous state, and any state `aong` does not recognise — SHALL be
+treated as work-bearing, so stop-work is attempted and a failure aborts the
+shutdown. There SHALL be no state for which a failed stop-work still stops the
+daemon, because `aong shutdown` must never exit successfully while a daemon it
+could not reach may still be running.
 
-Where the reported state means no daemon `ao` owns is answering, a failed
-stop-work SHALL be treated as evidence that there was nothing to gate: the
-failure SHALL be reported and the shutdown SHALL proceed to stop the daemon, so
-a host whose run file no longer describes a live daemon can still be reconciled.
+Because refusing must not be a dead end, the failure SHALL name the verb that
+reconciles a daemon that is already gone.
 
 #### Scenario: Work is stopped before the daemon
 
@@ -227,10 +228,15 @@ a host whose run file no longer describes a live daemon can still be reconciled.
 - **WHEN** `aong shutdown` runs and the reported daemon state is empty or not one `aong` recognises
 - **THEN** `ao pause --all --hard` is invoked before `ao stop`
 
-#### Scenario: A stale run file can still be reconciled
+#### Scenario: An ambiguous state does not license stopping the daemon anyway
 
-- **WHEN** `aong shutdown` runs against a stale daemon state and the stop-work attempt fails
-- **THEN** the failure is reported, `ao stop` is still invoked, and the command succeeds
+- **WHEN** `aong shutdown` runs against an ambiguous daemon state and the stop-work attempt fails
+- **THEN** `ao stop` is not invoked and the command fails
+
+#### Scenario: The failure names the way forward
+
+- **WHEN** `aong shutdown` fails because work could not be stopped
+- **THEN** the error reports the underlying failure and names the verb that stops a daemon without stopping work
 
 ### Requirement: aong follows AO's CLI exit-code convention
 

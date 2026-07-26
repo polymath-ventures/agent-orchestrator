@@ -11,9 +11,9 @@ daemon, and there is no verb that stops everything.
 Everything needed to fix this is already on `ao`'s public CLI: `ao pause --all
 [--hard]`, `ao resume --all`, `ao stop` (which already detects `ao.service` and
 delegates to `systemctl`), and `ao status` (which already reports fleet pause
-state). The gap is composition and naming, not capability. The only pieces `ao`
-genuinely does not know about are the sibling units `ao-tmux.service` and
-`ao-web.service`.
+state). The gap is composition and naming, not capability. The one thing `ao`
+has no commands for at all is the service-unit layer — starting a unit and
+reporting unit state — which is why `systemctl --user` appears here.
 
 This fork's fleet runs those three user units; upstream's users run the desktop
 app. `aong` has to be honest on both, so environment detection is a requirement
@@ -102,16 +102,34 @@ So `aong` has `drain`, `stop-work`, and `resume`, and no `pause`.
 If a true non-draining pause is wanted later, it is a daemon capability and an
 upstream proposal, not an `aong` feature.
 
-### `aong shutdown` checks daemon reachability before stopping work
+### `aong shutdown` skips the gate only for a daemon proven absent
 
-`stop-work` against a daemon that is not running fails, which would make
-`shutdown` fail on the very common "already mostly down" case. Reading
-`ao status --json`'s `state` first and skipping the stop-work step when the
-daemon is not `ready` keeps the verb idempotent. This is one field read from a
-command `ao` already exposes, not a second source of truth.
+`stop-work` against a daemon that is not running fails, so shutdown reads
+`ao status --json`'s `state` first. But only one state may license skipping the
+gate: `stopped`, which means there is no run file at all. Every other label is
+ambiguous. `stale` is reported both for a run file pointing at a dead process
+and for a live process that failed the ownership probe; `unhealthy` and
+`not_ready` are what a transient probe failure produces against a perfectly live
+daemon. None of them prove there is no work.
 
-Ordering is strict: if stop-work fails, the daemon is not stopped. Leaving live
-work with no supervisor is worse than a failed shutdown the operator can retry.
+Three earlier shapes of this gate were tried and rejected in review, and they
+fail in a way worth recording so the fourth is not undone later:
+
+1. Gate only when `ready` — a transient probe failure turned a live daemon into
+   `unhealthy` and shutdown stopped it with agents running.
+2. Treat `stale` as proof of absence — the ownership-mismatch form of `stale`
+   can sit in front of a live daemon.
+3. Treat a **failed** stop-work as proof of absence when the state is `stale` —
+   this looked like it resolved (1) and (2) together, but `ao stop` deletes a
+   stale run file and reports success, so shutdown could exit 0 while a daemon
+   it never reached kept running.
+
+Ordering is therefore strict and unconditional: if stop-work fails, the daemon
+is not stopped and the command fails. Live work with no supervisor is worse than
+a failed shutdown the operator can retry, and a shutdown that _claims_ success
+in that state is worse still. So the operator is not left stuck, the failure
+names `aong stop` — the verb that reconciles a daemon that is already gone
+without pretending to have stopped any work.
 
 ### Testing seam
 
@@ -126,8 +144,9 @@ recorded argv.
 ## Risks / Trade-offs
 
 - **A second binary is a second thing to install, document, and keep in sync**
-  → Ship it in the same release artifact as `ao`, resolve `ao` sibling-first so
-  a split install is detected rather than silently tolerated, and keep the
+  → Install it alongside `ao` from the same deploy path, resolve `ao`
+  sibling-first so a split install is detected rather than silently tolerated,
+  and keep the
   command bodies thin enough that upstream adoption deletes the binary rather
   than forking it.
 - **Shelling out loses typed errors and structured output** → Accepted

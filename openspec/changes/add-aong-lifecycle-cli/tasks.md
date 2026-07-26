@@ -29,8 +29,8 @@
 ## 6. Daemon verbs
 
 - [x] 6.1 Failing tests for `aong stop`: invokes `ao stop`, invokes no session-termination command, and its output states that agent sessions keep running and names `aong shutdown`.
-- [x] 6.2 Failing tests for `aong shutdown`: ready daemon → `ao pause --all --hard` before `ao stop`; failed stop-work → `ao stop` never invoked and the command fails; non-ready daemon → no fleet pause invoked, `ao stop` invoked.
-- [x] 6.3 Implement `aong stop` and `aong shutdown`, reading daemon readiness from `ao status --json`'s `state` field.
+- [x] 6.2 Failing tests for `aong shutdown`: any state short of proven-absent → `ao pause --all --hard` before `ao stop`; failed stop-work → `ao stop` never invoked, the command fails, and the error names `aong stop`; a daemon proven absent (`stopped`) → no fleet pause invoked, `ao stop` invoked.
+- [x] 6.3 Implement `aong stop` and `aong shutdown`, treating only `ao status --json`'s `stopped` state as proof there is nothing to gate.
 
 ## 7. Start verb
 

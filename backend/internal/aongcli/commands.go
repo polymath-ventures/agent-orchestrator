@@ -183,53 +183,49 @@ func newShutdownCommand(ctx *commandContext) *cobra.Command {
 // runShutdown stops work, then the daemon.
 //
 // The only interesting question is when it is safe NOT to stop work first, and
-// `ao`'s daemon state alone cannot answer it: "stopped" means there is no run
-// file, "stale" covers BOTH a run file pointing at a dead process and a live
-// process that failed the ownership probe, and "unhealthy"/"not_ready" are what
-// a transient probe failure produces against a perfectly live daemon.
+// `ao`'s daemon state can answer exactly one case honestly: "stopped" means
+// there is no run file, so there is nothing to gate. Every other label is
+// ambiguous — "stale" covers both a run file pointing at a dead process and a
+// live process that failed the ownership probe, and "unhealthy"/"not_ready" are
+// what a transient probe failure produces against a perfectly live daemon — so
+// none of them may license skipping the gate.
 //
-// So shutdown does not try to decide from the state label. It attempts the
-// stop-work whenever anything might be reachable, and treats the attempt's own
-// failure as the evidence: for a state where no owned daemon is answering
-// ("stale"), a failed stop-work means there was nothing to gate and shutdown
-// continues so the operator can still clear the stale run file. For every other
-// state a failed stop-work aborts, because live agents with no supervisor is
-// worse than a shutdown you can retry.
+// A failed stop-work therefore always aborts. It is tempting to make an
+// exception for the ambiguous states so a host whose daemon is already gone can
+// still be reconciled, but every such exception ends in the same place: `ao
+// stop` deletes a stale run file and reports success, so shutdown would exit 0
+// while a live daemon it could not reach kept running. Refusing, and naming the
+// verb that does reconcile a stale run file, is the honest answer — `aong stop`
+// is right there, and it does not claim to have stopped any work.
 func (c *commandContext) runShutdown(ctx context.Context, cmd *cobra.Command) error {
 	out := cmd.OutOrStdout()
-	state, err := c.daemonState(ctx)
+	absent, err := c.daemonAbsent(ctx)
 	if err != nil {
 		return err
 	}
-	if state == "stopped" {
+	if absent {
 		if _, err := fmt.Fprintln(out, "No daemon to gate; skipping stop-work."); err != nil {
 			return err
 		}
 	} else if err := c.echoAO(ctx, out, "pause", "--all", "--hard"); err != nil {
-		if state != "stale" {
-			return err
-		}
-		// The run file does not describe a daemon we own, and the stop-work
-		// attempt confirmed nothing answered. Say so and continue to `ao stop`,
-		// which is what reconciles a stale run file.
-		if _, err := fmt.Fprintf(out, "Could not gate work (daemon state: stale): %v\nContinuing to stop the daemon.\n", err); err != nil {
-			return err
-		}
+		return fmt.Errorf("%w\n\nWork was not stopped, so the daemon is still running. "+
+			"If the daemon is already gone, `aong stop` reconciles a stale run file", err)
 	}
 	return c.echoAO(ctx, out, "stop")
 }
 
-// daemonState reads the daemon state `ao status` already reports.
-func (c *commandContext) daemonState(ctx context.Context) (string, error) {
+// daemonAbsent reports whether `ao status` proves there is nothing to gate.
+// Only "stopped" proves it; see runShutdown for why no other state may.
+func (c *commandContext) daemonAbsent(ctx context.Context) (bool, error) {
 	out, err := c.runAO(ctx, "status", "--json")
 	if err != nil {
-		return "", err
+		return false, err
 	}
 	var status struct {
 		State string `json:"state"`
 	}
 	if err := json.Unmarshal(out, &status); err != nil {
-		return "", fmt.Errorf("parse `ao status --json`: %w", err)
+		return false, fmt.Errorf("parse `ao status --json`: %w", err)
 	}
-	return status.State, nil
+	return status.State == "stopped", nil
 }

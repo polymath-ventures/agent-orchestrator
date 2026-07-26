@@ -24,10 +24,11 @@ adopt the model later.
   unchanged: the desktop app is exactly the `plain` environment where `aong`
   has nothing to manage.
 - `aong` couples **only** to `ao`'s public CLI surface (it shells out to the
-  `ao` executable) and to `systemctl --user` for units `ao` does not know about
-  (`ao-tmux`, `ao-web`). It never imports `backend/internal/...` daemon or CLI
-  packages and never re-implements shutdown tokens, run-file handling, or
-  systemd MainPID detection.
+  `ao` executable) and to `systemctl --user` for the service-unit operations
+  `ao` has no commands for at all — starting units and reporting unit state. It
+  never imports `backend/internal/...` daemon or CLI packages and never
+  re-implements shutdown tokens, run-file handling, or systemd MainPID
+  detection.
 - Verb set, each a thin composition with help text that states plainly what
   survives:
   - `aong start` — start the local AO services.

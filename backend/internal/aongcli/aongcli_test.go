@@ -553,8 +553,12 @@ func TestShutdownStopsWorkBeforeDaemon(t *testing.T) {
 	}
 }
 
+// A failed stop-work never stops the daemon — for ANY state except a daemon
+// proven absent. "stale" is in the list deliberately: `ao stop` would delete the
+// stale run file and report success, so continuing would let shutdown exit 0
+// while a live daemon it could not reach kept running.
 func TestShutdownAbortsWhenStopWorkFails(t *testing.T) {
-	for _, state := range []string{"ready", "unhealthy", "not_ready", "some-future-state"} {
+	for _, state := range []string{"ready", "unhealthy", "not_ready", "stale", "some-future-state"} {
 		t.Run(state, func(t *testing.T) {
 			h := newFakeHost(t)
 			h.respond = func(call recordedCall) ([]byte, error) {
@@ -579,13 +583,10 @@ func TestShutdownAbortsWhenStopWorkFails(t *testing.T) {
 	}
 }
 
-// A stale run file is the common "already mostly down" case. The state label
-// alone cannot say whether anything is running, so shutdown asks by trying: a
-// stop-work that fails against a state where no owned daemon is answering
-// proves there was nothing to gate, and `ao stop` — which is what reconciles a
-// stale run file — must still run. Otherwise shutdown can never complete on a
-// host with a dead daemon.
-func TestShutdownContinuesWhenStaleGatingProvesNothingRuns(t *testing.T) {
+// Refusing must not be a dead end: the error has to name the verb that does
+// reconcile a stale run file, or an operator whose daemon is already gone has
+// no way forward from shutdown's message alone.
+func TestShutdownFailureNamesTheRecoveryVerb(t *testing.T) {
 	h := newFakeHost(t)
 	h.respond = func(call recordedCall) ([]byte, error) {
 		switch {
@@ -597,26 +598,15 @@ func TestShutdownContinuesWhenStaleGatingProvesNothingRuns(t *testing.T) {
 		return nil, nil
 	}
 
-	out, _, err := run(t, h, "shutdown")
-	if err != nil {
-		t.Fatalf("shutdown could not complete against a stale run file: %v", err)
+	_, _, err := run(t, h, "shutdown")
+	if err == nil {
+		t.Fatal("expected shutdown to fail when work could not be stopped")
 	}
-	want := []string{
-		aoBinaryName() + " status --json",
-		aoBinaryName() + " pause --all --hard",
-		aoBinaryName() + " stop",
+	if !strings.Contains(err.Error(), "aong stop") {
+		t.Fatalf("error %q does not name the recovery verb", err)
 	}
-	got := h.aoArgv()
-	if len(got) != len(want) {
-		t.Fatalf("ao calls = %v, want %v", got, want)
-	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("ao calls = %v, want %v", got, want)
-		}
-	}
-	if !strings.Contains(out, "Could not gate work") {
-		t.Fatalf("shutdown continued silently past a failed stop-work:\n%s", out)
+	if !strings.Contains(err.Error(), "connection refused") {
+		t.Fatalf("error %q drops ao's own output", err)
 	}
 }
 
