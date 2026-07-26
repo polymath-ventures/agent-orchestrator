@@ -390,12 +390,20 @@ func checkHooksLog(dataDir string, now time.Time) doctorCheck {
 }
 
 // isExpectedHookRestartWindowMiss reports whether a hook-delivery failure is
-// just a hook that fired while the daemon was down. It defers to the recogniser
-// that lives beside the message builder rather than holding a second copy of
-// the sentence, so editing the message can no longer silently break the
-// suppression and flood doctor with restart-window noise.
+// just a hook that fired while the daemon was down. It extracts the line's
+// cause using the writer's own format and asks the recogniser that lives beside
+// the message builder, so it holds neither a copy of the sentence nor a copy of
+// the log format — editing either can no longer silently break the suppression
+// and flood doctor with restart-window noise.
+//
+// Anchoring at the START of the cause is safe because the only hook path that
+// can fail with a daemon-down error passes it through unwrapped (hooks.go's
+// activity POST); the paths that wrap with %w read files and can never produce
+// one. A future call site that wraps a daemon call would need this relaxed —
+// and TestQuotedMarkerIsNotMistakenForADaemonDownFailure records what relaxing
+// it would cost.
 func isExpectedHookRestartWindowMiss(line string) bool {
-	return isDaemonDownMessage(line)
+	return isDaemonDownMessage(hookFailureCause(line))
 }
 
 func (c *commandContext) checkHarness(ctx context.Context, harness harnessProbe) doctorCheck {

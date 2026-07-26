@@ -260,7 +260,7 @@ func (c *commandContext) emitSessionStartContext(agent, event, sessionID string)
 // agent: stderr for the agent's hook runner, plus a best-effort append to
 // $AO_DATA_DIR/hooks.log so the failure can be diagnosed after the fact.
 func (c *commandContext) reportHookFailure(agent, event, sessionID string, cause error) {
-	msg := fmt.Sprintf("ao hooks %s %s: %v", agent, event, cause)
+	msg := fmt.Sprintf("%s%s %s: %v", hookFailureTag, agent, event, cause)
 	_, _ = fmt.Fprintln(c.deps.Err, msg)
 	dataDir := strings.TrimSpace(os.Getenv("AO_DATA_DIR"))
 	if dataDir == "" {
@@ -268,6 +268,30 @@ func (c *commandContext) reportHookFailure(agent, event, sessionID string, cause
 	}
 	line := fmt.Sprintf("%s session=%s %s\n", time.Now().UTC().Format(time.RFC3339), sessionID, msg)
 	appendHooksLog(dataDir, line)
+}
+
+// hookFailureTag is the token reportHookFailure writes before the agent/event
+// pair. It is the anchor a reader uses to find where the cause begins.
+const hookFailureTag = "ao hooks "
+
+// hookFailureCause returns the error text from a hooks.log line written by
+// reportHookFailure, or "" when the line is not one of them.
+//
+// The line is "<ts> session=<id> ao hooks <agent> <event>: <cause>", and agent
+// and event are bare tokens, so the first ": " after the tag begins the cause.
+// This lives next to the writer on purpose: the format is one fact, and a
+// reader that re-derives it elsewhere is the drift this file's callers already
+// had to fix once.
+func hookFailureCause(line string) string {
+	tag := strings.Index(line, hookFailureTag)
+	if tag < 0 {
+		return ""
+	}
+	sep := strings.Index(line[tag:], ": ")
+	if sep < 0 {
+		return ""
+	}
+	return line[tag+sep+len(": "):]
 }
 
 // appendHooksLog appends one line to the hooks log, truncating first when the

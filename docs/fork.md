@@ -60,7 +60,7 @@ Start the daemon with the same tailnet origin in its CORS allowlist. Keep the
 packaged Electron origin when overriding the list:
 
 ```bash
-AO_ALLOWED_ORIGINS=app://renderer,https://ao.tailnet-name.ts.net ao start
+AO_ALLOWED_ORIGINS=app://renderer,https://ao.tailnet-name.ts.net ao daemon
 ```
 
 If the daemon allowlist is missing the tailnet origin, proxied daemon responses

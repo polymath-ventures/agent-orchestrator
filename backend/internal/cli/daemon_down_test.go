@@ -130,6 +130,12 @@ func TestQuotedMarkerIsNotMistakenForADaemonDownFailure(t *testing.T) {
 	for _, line := range []string{
 		"2026-07-26T00:00:00Z session=s1 ao hooks codex stop: codex usage: no main rollout for cwd /tmp/AO daemon is not running; using fallback",
 		"2026-07-26T00:00:00Z session=s1 ao hooks codex stop: agent said \"AO daemon is not running\" earlier but the call failed with EPIPE",
+		// The marker followed by the message's own delimiters, but not at the
+		// start of the cause: still a real failure, still must warn.
+		"2026-07-26T00:00:00Z session=s1 ao hooks codex stop: write context: AO daemon is not running (stale) — nope",
+		"2026-07-26T00:00:00Z session=s1 ao hooks codex stop: cwd /tmp/AO daemon is not running — x/y is unreadable",
+		// Not a hook-failure line at all.
+		"AO daemon is not running — start it with `ao daemon`",
 		"2026-07-26T00:00:00Z session=s1 ao hooks codex stop: connection refused",
 	} {
 		if isExpectedHookRestartWindowMiss(line) {
