@@ -8,10 +8,10 @@
 
 ## 2. Sidebar rendering
 
-- [x] 2.1 Write failing tests asserting a sidebar session row renders a harness indicator between the status dot and the name, that it carries an accessible name, and that the rendered session name string is unchanged.
-- [x] 2.2 Add the `HarnessGlyph` component rendering the 13px chip with `title` and `aria-label`, leaving the row's own `aria-label` untouched.
-- [x] 2.3 Render the glyph beside `SessionDot` at every sidebar row variant that shows a session.
-- [x] 2.4 Confirm the fixed-width slot does not change name truncation at the narrow sidebar width.
+- [x] 2.1 Write failing tests asserting a sidebar session row renders a harness indicator in the same marker slot as the status dot, that the row exposes the harness through its accessible description, and that the rendered session name string is unchanged.
+- [x] 2.2 Add the `HarnessGlyph` component rendering the 13px chip as `aria-hidden` with `title` for hover, and point the row's `aria-describedby` at a hidden harness label — a labelled row control drops its descendants from the accessible name, so the chip cannot carry it. Leave the row's own `aria-label` untouched.
+- [x] 2.3 Pair the glyph with `SessionDot` in one self-spacing `inline-flex` marker slot, used at every sidebar row variant that shows a session.
+- [x] 2.4 Confirm the marker slot costs the row's gap once rather than twice, and that the name keeps the row's only flexible slot and still truncates at the narrow sidebar width.
 
 ## 3. Verification
 
