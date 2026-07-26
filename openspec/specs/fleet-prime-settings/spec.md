@@ -91,13 +91,13 @@ orchestrator sessions SHALL continue to require a project.
 
 ### Requirement: Prime configuration is fleet-owned
 
-The system SHALL resolve Prime harness, model, effort, instructions/rules, rules
-file, display name, and wake policy from fleet Prime settings. Project-level
-Prime fields SHALL NOT control newly spawned Prime sessions.
+The system SHALL resolve Prime harness, model, effort, permission mode, instructions/rules,
+rules file, display name, and wake policy from fleet Prime settings.
+Project-level Prime fields SHALL NOT control newly spawned Prime sessions.
 
 #### Scenario: New Prime uses fleet settings
 
-- **WHEN** fleet Prime settings specify a harness/model/effort and display name
+- **WHEN** fleet Prime settings specify a harness/model/effort, permission mode, and display name
 - **THEN** the next Prime spawn uses those fleet-scoped values
 - **AND** project config Prime fields are ignored for that spawn
 
@@ -114,13 +114,14 @@ Settings UI SHALL expose an Enable Prime toggle and editable Prime configuration
 backed by the same API. The enablement control SHALL describe Prime as
 supervising the fleet globally rather than as being supervised globally. Prime
 settings UI SHALL label runtime selection as Harness, SHALL use the shared
-harness-aware model and effort picker behavior, and SHALL present wake interval
-as numeric minutes while saving the existing duration-string contract.
+harness-aware model and effort picker behavior, SHALL expose permission mode,
+and SHALL present wake interval as numeric minutes while saving the existing
+duration-string contract.
 
 #### Scenario: API and CLI share persisted settings
 
-- **WHEN** an operator enables Prime through the CLI
-- **THEN** the global Settings UI reads Prime as enabled from the daemon API
+- **WHEN** an operator enables Prime through the CLI with a permission mode
+- **THEN** the global Settings UI reads Prime as enabled with that permission mode from the daemon API
 - **AND** disabling Prime through the UI makes the CLI report disabled
 
 #### Scenario: Global Settings controls Prime
@@ -133,6 +134,12 @@ as numeric minutes while saving the existing duration-string contract.
 
 - **WHEN** the operator edits Prime harness, model, or effort in global Settings
 - **THEN** the UI uses the same known-model dropdown, effort options, custom model entry path, and custom model warning used by other role model selectors
+
+#### Scenario: Prime permission mode is editable
+
+- **WHEN** the operator edits Prime permission mode in global Settings or with `ao prime enable --permission` / `ao prime set --permission`
+- **THEN** the saved Prime settings update `agentConfig.permissions`
+- **AND** the setting uses the same permission-mode vocabulary as project role settings
 
 #### Scenario: Prime wake interval is edited in minutes
 
