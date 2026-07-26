@@ -486,3 +486,50 @@ func TestDoctorDaemonRestartsQuotesUnitInJournalHint(t *testing.T) {
 		t.Fatalf("journal hint in %q does not quote the unit; a shell would eat the escape", check.Message)
 	}
 }
+
+// TestDoctorDaemonRestartsRejectsMalformedEscapes: systemd emits `\xNN` and
+// nothing else, so a bare backslash is not a unit name. Accepting one would
+// send `systemctl show` after a unit that cannot exist — and systemctl answers
+// 0 for a unit it does not know, so the check would report a healthy PASS
+// instead of admitting it could not identify the unit.
+func TestDoctorDaemonRestartsRejectsMalformedEscapes(t *testing.T) {
+	for _, unit := range []string{`ao\garbage.service`, `ao\x2.service`, `ao\xZZ.service`} {
+		t.Run(unit, func(t *testing.T) {
+			cfg := setConfigEnv(t)
+			srv := doctorDaemonServer(t)
+			c, _ := doctorLiveDaemonContext(t, cfg, srv,
+				map[string]string{"git": "/bin/git", "systemctl": "/bin/systemctl"},
+				func(_ context.Context, name string, args ...string) ([]byte, error) {
+					if filepath.Base(name) == "git" {
+						return []byte("git version 2.43.0\n"), nil
+					}
+					t.Errorf("systemctl was probed for a malformed unit name: %s %v", name, args)
+					return nil, fmt.Errorf("unexpected command %s", name)
+				},
+			)
+			c.deps.ProcRoot = writeProcCgroup(t, doctorFakeDaemonPID, "0::/system.slice/"+unit+"\n")
+
+			assertDoctorUnavailable(t, "daemon-restarts", findDoctorCheck(t, c.runDoctor(context.Background()), "daemon-restarts"))
+		})
+	}
+}
+
+// TestDoctorDaemonRestartsAcceptsWellFormedEscapes is the other half: a real
+// `\xNN` escape must still be recognized, or tightening the pattern would
+// silently break the units it exists to match.
+func TestDoctorDaemonRestartsAcceptsWellFormedEscapes(t *testing.T) {
+	cfg := setConfigEnv(t)
+	srv := doctorDaemonServer(t)
+	rec := &doctorProbeRecorder{}
+	const unit = `ao\x2dworker:main.service`
+	c, _ := doctorLiveDaemonContext(t, cfg, srv,
+		map[string]string{"git": "/bin/git", "systemctl": "/bin/systemctl"},
+		scopedSystemctlFake(t, rec, unit, "0", false),
+	)
+	c.deps.ProcRoot = writeProcCgroup(t, doctorFakeDaemonPID, "0::/system.slice/"+unit+"\n")
+
+	check := findDoctorCheck(t, c.runDoctor(context.Background()), "daemon-restarts")
+	if check.Level != doctorPass || !strings.Contains(check.Message, unit) {
+		t.Fatalf("daemon-restarts = %+v, want PASS naming the escaped unit %q", check, unit)
+	}
+}

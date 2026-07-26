@@ -36,12 +36,15 @@ const (
 // `0::/system.slice/ao.service`). Anchored so a directory that merely contains
 // the text — say `not-a.service.d` — cannot pose as a unit.
 //
-// The class covers systemd's own unit-name alphabet, including `:` and the
-// backslash of `\xNN` escapes; leaving those out would silently miss a real
-// unit and report the check unavailable. A `:` inside the name is safe here
-// because the cgroup line is split on its first two colons before this runs,
-// so the path — colons and all — survives intact.
-var systemdServiceUnitRE = regexp.MustCompile(`^[A-Za-z0-9_.@:\\-]+\.service$`)
+// The alphabet is systemd's own, including `:` and `\xNN` escapes; leaving
+// those out would silently miss a real unit and report the check unavailable.
+// A `:` inside the name is safe here because the cgroup line is split on its
+// first two colons before this runs, so the path — colons and all — survives
+// intact. A backslash is only accepted as a well-formed `\xNN` escape, because
+// that is the only form systemd emits: allowing a bare backslash would accept
+// a malformed name and send `systemctl show` after a unit that cannot exist,
+// which answers 0 and reports a healthy PASS.
+var systemdServiceUnitRE = regexp.MustCompile(`^(?:[A-Za-z0-9_.@:-]|\\x[0-9A-Fa-f]{2})+\.service$`)
 
 // checkDaemonRestarts surfaces systemd restart churn for the unit that actually
 // owns the daemon. The unit is derived from the daemon pid's cgroup rather than
