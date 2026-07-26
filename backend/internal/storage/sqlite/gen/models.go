@@ -247,6 +247,7 @@ type SessionWorktree struct {
 	WorktreePath string
 	PreservedRef string
 	State        string
+	RepoPath     string
 }
 
 type ShellTerminal struct {

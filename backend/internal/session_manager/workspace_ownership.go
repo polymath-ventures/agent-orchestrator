@@ -131,13 +131,10 @@ func (m *Manager) destroyUncoveredChildWorktrees(ctx context.Context, rec domain
 				// better than a worktree yanked out from under a running agent.
 				//
 				// Clearing rather than keeping the rows for a later retry is
-				// deliberate: a session_worktrees row does not carry its own repo
-				// path, so every consumer re-resolves it through the workspace
-				// registry and hard-errors on a repo that was deregistered
-				// meanwhile — kept inventory can wedge Cleanup and
-				// RestoreWithMode on a case that clearing survives. Retention
-				// becomes safe once the row owns its repo path (GH #165); until
-				// then a transient failure here costs a visible directory, not a
+				// deliberate: older session_worktrees rows may not carry their
+				// own repo path, so consumers that need registry resolution can
+				// still hard-error on a repo that was deregistered meanwhile.
+				// A transient failure here costs a visible directory, not a
 				// broken cleanup path.
 				m.logger.Warn("kill: live worktree coverage is incomplete; no child worktrees reclaimed (a child may be held by a live session)",
 					"sessionID", rec.ID, "project", rec.ProjectID)
@@ -160,16 +157,19 @@ func (m *Manager) destroyUncoveredChildWorktrees(ctx context.Context, rec domain
 				return
 			}
 		}
-		repoPath := repoPaths[row.RepoName]
+		repoPath := row.RepoPath
 		if repoPath == "" {
-			// The repo was deregistered after this session spawned, so its
-			// canonical path is unrecoverable. Destroy resolves the repo from
-			// RepoPath and silently falls back to the PROJECT repo when it is
-			// empty, which makes `git worktree remove` fail against the wrong
-			// repo, skips the dirty check, and os.RemoveAll's the directory
-			// anyway — deleting uncommitted work and leaving a dangling
-			// registration in the real repo. Refusing is the only safe move;
-			// the path is logged so an operator can remove it by hand.
+			repoPath = repoPaths[row.RepoName]
+		}
+		if repoPath == "" {
+			// Older rows may not carry the repo path, and the repo was
+			// deregistered after this session spawned. Destroy resolves the
+			// repo from RepoPath and silently falls back to the PROJECT repo
+			// when it is empty, which makes `git worktree remove` fail against
+			// the wrong repo, skips the dirty check, and os.RemoveAll's the
+			// directory anyway — deleting uncommitted work and leaving a
+			// dangling registration in the real repo. Refusing is the only safe
+			// move; the path is logged so an operator can remove it by hand.
 			m.logger.Warn("kill: child worktree left behind: its repo is no longer registered, so it cannot be removed safely",
 				"sessionID", rec.ID, "repo", row.RepoName, "path", row.WorktreePath, "project", rec.ProjectID)
 			continue

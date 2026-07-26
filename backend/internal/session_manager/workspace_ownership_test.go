@@ -636,14 +636,11 @@ func TestKillResolvesChildCoverageFromLiveSessionsReadAfterTeardown(t *testing.T
 	}
 }
 
-// The uncovered child's repo can be DEREGISTERED, and then its canonical repo
-// path is unrecoverable. Kill must not guess: ports.Workspace.Destroy resolves
-// the repo from RepoPath and silently falls back to the PROJECT repo when it is
-// empty, which makes `git worktree remove` fail against the wrong repo, skips
-// the dirty check entirely, and os.RemoveAll's the directory anyway — verified
-// against the real gitworktree adapter, which returned nil while deleting
-// staged work. Leaving the directory for an operator is the only safe move.
-func TestKillLeavesUncoveredChildOfDeregisteredRepoAlone(t *testing.T) {
+// The uncovered child's repo can be DEREGISTERED after spawn. The
+// session_worktrees row still carries the repo path captured at spawn time, so
+// Kill can remove the orphaned child worktree without consulting the current
+// workspace registry or guessing from the project root.
+func TestKillDestroysUncoveredChildOfDeregisteredRepoFromSessionRow(t *testing.T) {
 	m, st, _, ws := newLifecycleManager()
 
 	const canonical = "/ws/mer/orchestrator/mer-orchestrator"
@@ -651,6 +648,53 @@ func TestKillLeavesUncoveredChildOfDeregisteredRepoAlone(t *testing.T) {
 		ID: "mer", Path: "/repos/mer", Kind: domain.ProjectKindWorkspace, Config: testRoleAgents(),
 	}
 	// "web" was deregistered after mer-orch-1 spawned; only "api" remains.
+	st.workspaceRepo["mer"] = []domain.WorkspaceRepoRecord{
+		{ProjectID: "mer", Name: "api", RelativePath: "api"},
+	}
+
+	st.sessions["mer-orch-1"] = domain.SessionRecord{
+		ID: "mer-orch-1", ProjectID: "mer", Kind: domain.KindOrchestrator,
+		Metadata: domain.SessionMetadata{WorkspacePath: canonical, Branch: "ao/mer-orchestrator", RuntimeHandleID: "old-handle"},
+		Activity: domain.Activity{State: domain.ActivityActive},
+	}
+	st.worktrees["mer-orch-1"] = []domain.SessionWorktreeRecord{
+		{SessionID: "mer-orch-1", RepoName: domain.RootWorkspaceRepoName, RepoPath: "/repos/mer", Branch: "ao/mer-orchestrator", WorktreePath: canonical, State: "active"},
+		{SessionID: "mer-orch-1", RepoName: "web", RepoPath: "/repos/mer/web", Branch: "ao/mer-orchestrator", WorktreePath: canonical + "/web", State: "active"},
+	}
+	st.sessions["mer-orch-2"] = domain.SessionRecord{
+		ID: "mer-orch-2", ProjectID: "mer", Kind: domain.KindOrchestrator,
+		Metadata: domain.SessionMetadata{WorkspacePath: canonical, Branch: "ao/mer-orchestrator", RuntimeHandleID: "new-handle"},
+		Activity: domain.Activity{State: domain.ActivityActive},
+	}
+
+	if _, err := m.Kill(ctx, "mer-orch-1"); err != nil {
+		t.Fatalf("Kill err = %v", err)
+	}
+	if ws.destroyed != 1 {
+		t.Fatalf("Destroy ran %d times (%v), want exactly the deregistered child worktree",
+			ws.destroyed, ws.calls)
+	}
+	if got := ws.lastDestroyInfo.Path; got != canonical+"/web" {
+		t.Fatalf("destroyed %q, want the uncovered child %q", got, canonical+"/web")
+	}
+	if got := ws.lastDestroyInfo.RepoPath; got != "/repos/mer/web" {
+		t.Fatalf("destroy repo path = %q, want stored child repo path /repos/mer/web", got)
+	}
+	if !st.sessions["mer-orch-1"].IsTerminated {
+		t.Fatal("the killed row must still be marked terminated")
+	}
+}
+
+// Without a stored repo path, a deregistered child is still unrecoverable.
+// Teardown must refuse to guess because deleting a child worktree against the
+// project repo can skip the child repo's dirty check.
+func TestKillLeavesDeregisteredChildWithoutStoredRepoPathAlone(t *testing.T) {
+	m, st, _, ws := newLifecycleManager()
+
+	const canonical = "/ws/mer/orchestrator/mer-orchestrator"
+	st.projects["mer"] = domain.ProjectRecord{
+		ID: "mer", Path: "/repos/mer", Kind: domain.ProjectKindWorkspace, Config: testRoleAgents(),
+	}
 	st.workspaceRepo["mer"] = []domain.WorkspaceRepoRecord{
 		{ProjectID: "mer", Name: "api", RelativePath: "api"},
 	}
@@ -674,7 +718,7 @@ func TestKillLeavesUncoveredChildOfDeregisteredRepoAlone(t *testing.T) {
 		t.Fatalf("Kill err = %v", err)
 	}
 	if ws.destroyed != 0 {
-		t.Fatalf("Destroy ran %d times (%v); a worktree whose repo is deregistered cannot be removed safely and must be left for an operator",
+		t.Fatalf("Destroy ran %d times (%v); without a stored repo path, a deregistered child must be left for an operator",
 			ws.destroyed, ws.calls)
 	}
 	if !st.sessions["mer-orch-1"].IsTerminated {

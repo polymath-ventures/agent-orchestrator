@@ -59,6 +59,7 @@ type WorkspaceRepoRecord struct {
 type SessionWorktreeRecord struct {
 	SessionID    SessionID
 	RepoName     string
+	RepoPath     string
 	Branch       string
 	BaseSHA      string
 	WorktreePath string
