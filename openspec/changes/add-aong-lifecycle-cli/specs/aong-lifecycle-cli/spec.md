@@ -3,8 +3,9 @@
 ### Requirement: aong is a porcelain over ao's public CLI
 
 `aong` SHALL be a separate binary that drives AO lifecycle exclusively through
-the public `ao` executable and, for service units `ao` does not manage,
-`systemctl --user`. It SHALL NOT import AO daemon or `ao` CLI internal packages,
+the public `ao` executable and, for the service-unit operations `ao` has no
+commands for — starting units and reporting unit state — `systemctl --user`.
+It SHALL NOT import AO daemon or `ao` CLI internal packages,
 SHALL NOT open the run file, the shutdown token, the daemon HTTP API, or AO
 storage directly, and SHALL NOT re-implement behavior `ao` already provides.
 
@@ -193,8 +194,13 @@ no supervisor.
 `aong shutdown` SHALL skip the stop-work step ONLY when the reported daemon
 state proves there is no live daemon to gate. Any state that leaves a live
 daemon possible — including a daemon whose health or readiness probe is
-currently failing — SHALL be treated as work-bearing, so stop-work is attempted
-and a failure aborts the shutdown.
+currently failing, and any state `aong` does not recognise — SHALL be treated as
+work-bearing, so stop-work is attempted and a failure aborts the shutdown.
+
+Where the reported state means no daemon `ao` owns is answering, a failed
+stop-work SHALL be treated as evidence that there was nothing to gate: the
+failure SHALL be reported and the shutdown SHALL proceed to stop the daemon, so
+a host whose run file no longer describes a live daemon can still be reconciled.
 
 #### Scenario: Work is stopped before the daemon
 
@@ -220,6 +226,11 @@ and a failure aborts the shutdown.
 
 - **WHEN** `aong shutdown` runs and the reported daemon state is empty or not one `aong` recognises
 - **THEN** `ao pause --all --hard` is invoked before `ao stop`
+
+#### Scenario: A stale run file can still be reconciled
+
+- **WHEN** `aong shutdown` runs against a stale daemon state and the stop-work attempt fails
+- **THEN** the failure is reported, `ao stop` is still invoked, and the command succeeds
 
 ### Requirement: aong follows AO's CLI exit-code convention
 

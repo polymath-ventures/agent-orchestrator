@@ -2,11 +2,12 @@
 // presents a coherent lifecycle verb set for a web-first deployment.
 //
 // The one rule that keeps this package small: aong never implements behavior
-// `ao` already provides. It shells out to the `ao` executable and, only for the
-// sibling service units `ao` does not manage, to `systemctl --user`. It must not
-// import daemon or `ao` CLI internals, open the run file, or talk to the daemon
-// HTTP API — otherwise it becomes a second lifecycle implementation that can
-// drift from the one it is supposed to be a view of.
+// `ao` already provides. It shells out to the `ao` executable, and uses
+// `systemctl --user` for the service-unit layer — starting units and reporting
+// unit state — which `ao` has no commands for at all. It must not import daemon
+// or `ao` CLI internals, open the run file, or talk to the daemon HTTP API —
+// otherwise it becomes a second lifecycle implementation that can drift from
+// the one it is supposed to be a view of.
 package aongcli
 
 import (
@@ -168,8 +169,8 @@ func newHelpCommand(root *cobra.Command) *cobra.Command {
 		Use:   "help [command]",
 		Short: "Help about any command",
 		RunE: func(_ *cobra.Command, args []string) error {
-			target, _, err := root.Find(args)
-			if err != nil || target == nil || (len(args) > 0 && target == root) {
+			target, remainder, err := root.Find(args)
+			if err != nil || target == nil || len(remainder) > 0 || (len(args) > 0 && target == root) {
 				return usageError{fmt.Errorf("unknown help topic %q", strings.Join(args, " "))}
 			}
 			return target.Help()

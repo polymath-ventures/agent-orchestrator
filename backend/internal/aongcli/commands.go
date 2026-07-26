@@ -180,46 +180,56 @@ func newShutdownCommand(ctx *commandContext) *cobra.Command {
 	}
 }
 
+// runShutdown stops work, then the daemon.
+//
+// The only interesting question is when it is safe NOT to stop work first, and
+// `ao`'s daemon state alone cannot answer it: "stopped" means there is no run
+// file, "stale" covers BOTH a run file pointing at a dead process and a live
+// process that failed the ownership probe, and "unhealthy"/"not_ready" are what
+// a transient probe failure produces against a perfectly live daemon.
+//
+// So shutdown does not try to decide from the state label. It attempts the
+// stop-work whenever anything might be reachable, and treats the attempt's own
+// failure as the evidence: for a state where no owned daemon is answering
+// ("stale"), a failed stop-work means there was nothing to gate and shutdown
+// continues so the operator can still clear the stale run file. For every other
+// state a failed stop-work aborts, because live agents with no supervisor is
+// worse than a shutdown you can retry.
 func (c *commandContext) runShutdown(ctx context.Context, cmd *cobra.Command) error {
 	out := cmd.OutOrStdout()
-	absent, err := c.daemonAbsent(ctx)
+	state, err := c.daemonState(ctx)
 	if err != nil {
 		return err
 	}
-	if absent {
+	if state == "stopped" {
 		if _, err := fmt.Fprintln(out, "No daemon to gate; skipping stop-work."); err != nil {
 			return err
 		}
 	} else if err := c.echoAO(ctx, out, "pause", "--all", "--hard"); err != nil {
-		return err
+		if state != "stale" {
+			return err
+		}
+		// The run file does not describe a daemon we own, and the stop-work
+		// attempt confirmed nothing answered. Say so and continue to `ao stop`,
+		// which is what reconciles a stale run file.
+		if _, err := fmt.Fprintf(out, "Could not gate work (daemon state: stale): %v\nContinuing to stop the daemon.\n", err); err != nil {
+			return err
+		}
 	}
 	return c.echoAO(ctx, out, "stop")
 }
 
-// daemonAbsent reports whether `ao status` proves there is no live AO daemon to
-// gate. Only "stopped" proves that — it means there is no run file at all.
-//
-// Every other state is treated as present. "unhealthy" and "not_ready" are what
-// a transient probe failure produces against a perfectly live daemon, and
-// "stale" is overloaded: `ao` reports it both for a run file pointing at a dead
-// process AND for a live process whose ownership probe failed, so it cannot
-// stand as proof of absence either.
-//
-// The question this gate answers is deliberately not "is the daemon healthy"
-// but "is it certain there is no work to stop". Guessing wrong in the other
-// direction stops the daemon while agents are still running, which is the exact
-// state shutdown exists to prevent, so anything short of certainty fails closed:
-// stop-work is attempted, and a failure aborts the shutdown.
-func (c *commandContext) daemonAbsent(ctx context.Context) (bool, error) {
+// daemonState reads the daemon state `ao status` already reports.
+func (c *commandContext) daemonState(ctx context.Context) (string, error) {
 	out, err := c.runAO(ctx, "status", "--json")
 	if err != nil {
-		return false, err
+		return "", err
 	}
 	var status struct {
 		State string `json:"state"`
 	}
 	if err := json.Unmarshal(out, &status); err != nil {
-		return false, fmt.Errorf("parse `ao status --json`: %w", err)
+		return "", fmt.Errorf("parse `ao status --json`: %w", err)
 	}
-	return status.State == "stopped", nil
+	return status.State, nil
 }

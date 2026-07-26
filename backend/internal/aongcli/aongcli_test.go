@@ -554,24 +554,69 @@ func TestShutdownStopsWorkBeforeDaemon(t *testing.T) {
 }
 
 func TestShutdownAbortsWhenStopWorkFails(t *testing.T) {
+	for _, state := range []string{"ready", "unhealthy", "not_ready", "some-future-state"} {
+		t.Run(state, func(t *testing.T) {
+			h := newFakeHost(t)
+			h.respond = func(call recordedCall) ([]byte, error) {
+				switch {
+				case len(call.args) >= 2 && call.args[0] == "status":
+					return []byte(`{"state":"` + state + `"}`), nil
+				case len(call.args) >= 1 && call.args[0] == "pause":
+					return []byte("terminate failed\n"), errors.New("exit status 1")
+				}
+				return nil, nil
+			}
+
+			if _, _, err := run(t, h, "shutdown"); err == nil {
+				t.Fatal("expected shutdown to fail when stop-work fails")
+			}
+			for _, line := range h.aoArgv() {
+				if line == aoBinaryName()+" stop" {
+					t.Fatalf("stopped the daemon after a failed stop-work: %v", h.aoArgv())
+				}
+			}
+		})
+	}
+}
+
+// A stale run file is the common "already mostly down" case. The state label
+// alone cannot say whether anything is running, so shutdown asks by trying: a
+// stop-work that fails against a state where no owned daemon is answering
+// proves there was nothing to gate, and `ao stop` — which is what reconciles a
+// stale run file — must still run. Otherwise shutdown can never complete on a
+// host with a dead daemon.
+func TestShutdownContinuesWhenStaleGatingProvesNothingRuns(t *testing.T) {
 	h := newFakeHost(t)
 	h.respond = func(call recordedCall) ([]byte, error) {
 		switch {
 		case len(call.args) >= 2 && call.args[0] == "status":
-			return []byte(`{"state":"ready"}`), nil
+			return []byte(`{"state":"stale"}`), nil
 		case len(call.args) >= 1 && call.args[0] == "pause":
-			return []byte("terminate failed\n"), errors.New("exit status 1")
+			return []byte("connection refused\n"), errors.New("exit status 1")
 		}
 		return nil, nil
 	}
 
-	if _, _, err := run(t, h, "shutdown"); err == nil {
-		t.Fatal("expected shutdown to fail when stop-work fails")
+	out, _, err := run(t, h, "shutdown")
+	if err != nil {
+		t.Fatalf("shutdown could not complete against a stale run file: %v", err)
 	}
-	for _, line := range h.aoArgv() {
-		if line == aoBinaryName()+" stop" {
-			t.Fatalf("stopped the daemon after a failed stop-work: %v", h.aoArgv())
+	want := []string{
+		aoBinaryName() + " status --json",
+		aoBinaryName() + " pause --all --hard",
+		aoBinaryName() + " stop",
+	}
+	got := h.aoArgv()
+	if len(got) != len(want) {
+		t.Fatalf("ao calls = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("ao calls = %v, want %v", got, want)
 		}
+	}
+	if !strings.Contains(out, "Could not gate work") {
+		t.Fatalf("shutdown continued silently past a failed stop-work:\n%s", out)
 	}
 }
 
@@ -609,7 +654,8 @@ func TestShutdownSkipsStopWorkOnlyWhenDaemonIsProvenAbsent(t *testing.T) {
 func TestShutdownStopsWorkWhenDaemonStateIsIndeterminate(t *testing.T) {
 	// "stale" is in this list deliberately: `ao` reports it both for a run file
 	// pointing at a dead process AND for a live process whose ownership probe
-	// failed, so it is not proof that nothing is running.
+	// failed, so it is not proof that nothing is running. The stop-work attempt
+	// is what settles it (see TestShutdownContinuesWhenStaleGatingProvesNothingRuns).
 	for _, state := range []string{"unhealthy", "not_ready", "stale", "", "some-future-state"} {
 		t.Run("state="+state, func(t *testing.T) {
 			h := newFakeHost(t)
@@ -713,8 +759,9 @@ func TestUsageErrorsExitTwo(t *testing.T) {
 	for _, args := range [][]string{
 		{"status", "--nope"},
 		{"drain", "unexpected-arg"},
-		{"typo"},         // an unknown verb is misuse, not a runtime failure
-		{"help", "typo"}, // so is asking for help on a verb that does not exist
+		{"typo"},                   // an unknown verb is misuse, not a runtime failure
+		{"help", "typo"},           // so is asking for help on a verb that does not exist
+		{"help", "status", "typo"}, // including an unknown topic trailing a known one
 	} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
 			h := newFakeHost(t)
