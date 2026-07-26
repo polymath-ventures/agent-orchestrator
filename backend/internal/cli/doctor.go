@@ -148,7 +148,7 @@ func (c *commandContext) runDoctor(ctx context.Context) []doctorCheck {
 		)
 	}
 
-	checks = append(checks, checkStore(cfg.DataDir), checkHooksLog(cfg.DataDir, time.Now()))
+	checks = append(checks, checkStore(cfg.DataDir), checkHooksLog(cfg.DataDir, time.Now()), c.checkWedgedSessions(ctx))
 
 	st, err := c.inspectDaemon(ctx)
 	daemonPID := 0
