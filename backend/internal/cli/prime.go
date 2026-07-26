@@ -24,6 +24,7 @@ func newPrimeCommand(ctx *commandContext) *cobra.Command {
 	}
 	cmd.AddCommand(newPrimeSettingsCommand(ctx))
 	cmd.AddCommand(newPrimeEnableCommand(ctx))
+	cmd.AddCommand(newPrimeSetCommand(ctx))
 	cmd.AddCommand(newPrimeDisableCommand(ctx))
 	cmd.AddCommand(newPrimePromptCommand(ctx))
 	return cmd
@@ -64,6 +65,30 @@ func newPrimeEnableCommand(ctx *commandContext) *cobra.Command {
 			}
 			settings := opts.apply(cmd, view.Settings)
 			settings.Enabled = true
+			updated, err := putPrimeSettings(cmd, ctx, settings)
+			if err != nil {
+				return err
+			}
+			printPrimeSettings(cmd, updated)
+			return nil
+		},
+	}
+	opts.bind(cmd)
+	return cmd
+}
+
+func newPrimeSetCommand(ctx *commandContext) *cobra.Command {
+	var opts primeSettingsFlags
+	cmd := &cobra.Command{
+		Use:   "set",
+		Short: "Update fleet Prime settings without changing enablement",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			view, err := getPrimeSettings(cmd, ctx)
+			if err != nil {
+				return err
+			}
+			settings := opts.apply(cmd, view.Settings)
 			updated, err := putPrimeSettings(cmd, ctx, settings)
 			if err != nil {
 				return err
@@ -126,6 +151,7 @@ type primeSettingsFlags struct {
 	agent        string
 	model        string
 	effort       string
+	permission   string
 	rules        string
 	rulesFile    string
 	wakeInterval string
@@ -136,6 +162,7 @@ func (f *primeSettingsFlags) bind(cmd *cobra.Command) {
 	cmd.Flags().StringVar(&f.agent, "agent", "", "Harness for Prime")
 	cmd.Flags().StringVar(&f.model, "model", "", "Model pin for Prime")
 	cmd.Flags().StringVar(&f.effort, "effort", "", "Effort pin for Prime")
+	cmd.Flags().StringVar(&f.permission, "permission", "", "Permission mode: default, accept-edits, auto, bypass-permissions")
 	cmd.Flags().StringVar(&f.rules, "rules", "", "Inline standing instructions for Prime")
 	cmd.Flags().StringVar(&f.rulesFile, "rules-file", "", "File containing standing instructions for Prime")
 	cmd.Flags().StringVar(&f.wakeInterval, "wake-interval", "", "Idle wake interval, e.g. 15m")
@@ -153,6 +180,9 @@ func (f primeSettingsFlags) apply(cmd *cobra.Command, settings domain.PrimeSetti
 	}
 	if cmd.Flags().Changed("effort") {
 		settings.AgentConfig.Effort = domain.Effort(strings.TrimSpace(f.effort))
+	}
+	if cmd.Flags().Changed("permission") {
+		settings.AgentConfig.Permissions = domain.PermissionMode(strings.TrimSpace(f.permission))
 	}
 	if cmd.Flags().Changed("rules") {
 		settings.Rules = strings.TrimSpace(f.rules)
@@ -196,6 +226,10 @@ func printPrimeSettings(cmd *cobra.Command, view primeSettingsView) {
 	if effort == "" {
 		effort = "-"
 	}
-	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Prime enabled=%v name=%q agent=%s model=%s effort=%s wakeInterval=%s\n",
-		s.Enabled, s.DisplayName, agent, model, effort, s.WakeInterval)
+	permission := string(s.AgentConfig.Permissions)
+	if permission == "" {
+		permission = "-"
+	}
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Prime enabled=%v name=%q agent=%s model=%s effort=%s permission=%s wakeInterval=%s\n",
+		s.Enabled, s.DisplayName, agent, model, effort, permission, s.WakeInterval)
 }

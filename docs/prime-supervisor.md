@@ -13,14 +13,15 @@ Prime is disabled by default and is controlled by persisted daemon settings,
 not by a host project. Use global Settings in the desktop app or the CLI:
 
 ```bash
-ao prime enable --agent codex --name "AO Prime" --wake-interval 15m
+ao prime enable --agent codex --permission bypass-permissions --name "AO Prime" --wake-interval 15m
+ao prime set --permission accept-edits
 ao prime settings
 ao prime disable
 ```
 
 The settings are stored under the daemon data directory and include enablement,
-display name, harness, model, effort, inline rules, rules file, wake interval,
-and wake backoff policy. Legacy `AO_PRIME_PROJECT_ID` and
+display name, harness, model, effort, permission mode, inline rules, rules file,
+wake interval, and wake backoff policy. Legacy `AO_PRIME_PROJECT_ID` and
 `AO_PRIME_DISPLAY_NAME` environment variables do not enable Prime, choose a
 project, or appear in Prime settings responses.
 
@@ -62,7 +63,8 @@ The API shape for `PUT /api/v1/prime/settings` is:
 		"agent": "codex",
 		"agentConfig": {
 			"model": "gpt-5.4",
-			"effort": "high"
+			"effort": "high",
+			"permissions": "bypass-permissions"
 		},
 		"rules": "Keep fleet-wide state concise.",
 		"rulesFile": "docs/prime-rules.md",

@@ -61,7 +61,7 @@ func TestPrimeEnable_PutsEnabledSettings(t *testing.T) {
 	writeRunFileFor(t, cfg, srv)
 
 	_, errOut, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }},
-		"prime", "enable", "--name", "Fleet Lead", "--agent", "codex", "--model", "gpt-5-codex", "--effort", "high", "--wake-interval", "20m", "--rules", "Keep watch.")
+		"prime", "enable", "--name", "Fleet Lead", "--agent", "codex", "--model", "gpt-5-codex", "--effort", "high", "--permission", "accept-edits", "--wake-interval", "20m", "--rules", "Keep watch.")
 	if err != nil {
 		t.Fatalf("unexpected error: %v\nstderr=%s", err, errOut)
 	}
@@ -76,16 +76,45 @@ func TestPrimeEnable_PutsEnabledSettings(t *testing.T) {
 			Rules        string `json:"rules"`
 			WakeInterval string `json:"wakeInterval"`
 			AgentConfig  struct {
-				Model  string `json:"model"`
-				Effort string `json:"effort"`
+				Model       string `json:"model"`
+				Effort      string `json:"effort"`
+				Permissions string `json:"permissions"`
 			} `json:"agentConfig"`
 		} `json:"settings"`
 	}
 	if err := json.Unmarshal(capture.body, &body); err != nil {
 		t.Fatalf("decode request: %v", err)
 	}
-	if !body.Settings.Enabled || body.Settings.DisplayName != "Fleet Lead" || body.Settings.Agent != "codex" || body.Settings.AgentConfig.Model != "gpt-5-codex" || body.Settings.AgentConfig.Effort != "high" || body.Settings.Rules != "Keep watch." {
+	if !body.Settings.Enabled || body.Settings.DisplayName != "Fleet Lead" || body.Settings.Agent != "codex" || body.Settings.AgentConfig.Model != "gpt-5-codex" || body.Settings.AgentConfig.Effort != "high" || body.Settings.AgentConfig.Permissions != "accept-edits" || body.Settings.Rules != "Keep watch." {
 		t.Fatalf("request body = %s", string(capture.body))
+	}
+}
+
+func TestPrimeSet_PutsPermissionOnly(t *testing.T) {
+	cfg := setConfigEnv(t)
+	srv, capture := primeServer(t, http.StatusOK, `{"settings":{"enabled":true,"displayName":"AO Prime","agent":"codex","agentConfig":{"permissions":"auto"},"wakeInterval":"15m"}}`)
+	writeRunFileFor(t, cfg, srv)
+
+	_, errOut, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }},
+		"prime", "set", "--permission", "auto")
+	if err != nil {
+		t.Fatalf("unexpected error: %v\nstderr=%s", err, errOut)
+	}
+	if capture.method != http.MethodPut || capture.path != "/api/v1/prime/settings" {
+		t.Fatalf("request = %s %s, want PUT /api/v1/prime/settings", capture.method, capture.path)
+	}
+	var body struct {
+		Settings struct {
+			AgentConfig struct {
+				Permissions string `json:"permissions"`
+			} `json:"agentConfig"`
+		} `json:"settings"`
+	}
+	if err := json.Unmarshal(capture.body, &body); err != nil {
+		t.Fatalf("decode request: %v", err)
+	}
+	if body.Settings.AgentConfig.Permissions != "auto" {
+		t.Fatalf("request body = %s, want permissions auto", string(capture.body))
 	}
 }
 

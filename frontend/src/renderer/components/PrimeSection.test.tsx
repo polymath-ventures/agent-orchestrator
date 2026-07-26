@@ -27,6 +27,11 @@ function renderPrimeSection() {
 	return queryClient;
 }
 
+async function chooseOption(trigger: HTMLElement, optionName: string) {
+	await userEvent.click(trigger);
+	await userEvent.click(await screen.findByRole("option", { name: optionName }));
+}
+
 const modelAvailability: AgentModelAvailabilityResponse = {
 	checkedAt: "2026-07-23T01:02:03Z",
 	harnesses: [
@@ -70,7 +75,7 @@ beforeEach(() => {
 		enabled: false,
 		displayName: "AO Prime",
 		agent: "codex",
-		agentConfig: { model: "gpt-5-codex", effort: "high" },
+		agentConfig: { model: "gpt-5-codex", effort: "high", permissions: "auto" },
 		rules: "Keep watch.",
 		rulesFile: "/etc/ao/prime.md",
 		wakeInterval: "15m",
@@ -119,6 +124,7 @@ describe("PrimeSection", () => {
 		await waitFor(() => expect(screen.getByLabelText("Harness")).toHaveValue("codex"));
 		expect(screen.getByLabelText("Model")).toHaveValue("gpt-5-codex");
 		expect(screen.getByLabelText("Effort")).toHaveValue("high");
+		expect(screen.getByRole("combobox", { name: "Permission mode" })).toHaveTextContent("Auto");
 		expect(screen.getByLabelText("Harness").querySelector('option[value=""]')).toHaveTextContent("Select harness");
 		expect(screen.getByLabelText("Model")).toHaveAttribute("placeholder", "Select model");
 		expect(screen.getByLabelText("Effort").querySelector('option[value=""]')).toHaveTextContent("Select effort");
@@ -263,6 +269,7 @@ describe("PrimeSection", () => {
 		await user.type(screen.getByLabelText("Display name"), "Fleet Lead");
 		await user.clear(screen.getByLabelText("Wake interval minutes"));
 		await user.type(screen.getByLabelText("Wake interval minutes"), "20");
+		await chooseOption(screen.getByRole("combobox", { name: "Permission mode" }), "Accept edits");
 		await user.click(screen.getByRole("button", { name: "Save Prime" }));
 
 		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
@@ -272,6 +279,7 @@ describe("PrimeSection", () => {
 					enabled: true,
 					displayName: "Fleet Lead",
 					agent: "codex",
+					agentConfig: expect.objectContaining({ permissions: "accept-edits" }),
 					wakeInterval: "20m",
 				}),
 			},
