@@ -42,7 +42,7 @@ npm run lint
 npm run frontend:typecheck
 npm run sqlc
 npm run api
-npx @redwoodjs/agent-ci run --all
+npm run agent-ci
 ```
 
 ### Pre-push gate (required before every push)
@@ -68,6 +68,15 @@ automatically on `git push`; bypass a single push with `git push --no-verify`:
 ```bash
 npm run hooks:install
 ```
+
+For the Agent CI runner, use `npm run agent-ci` instead of direct `npx
+@redwoodjs/agent-ci run --all`. The wrapper sets `AGENT_CI_WORKING_DIR` to a
+durable per-account/per-repo cache outside `/tmp`, defaulting to
+`${XDG_CACHE_HOME:-$HOME/.cache}/agent-ci/agent-orchestrator`. Inspect stale
+runner/cache state with `npm run agent-ci:clean -- --dry-run`; only use
+`npm run agent-ci:clean -- --force` after confirming the selected paths are not
+active or intentionally paused retry state. See `docs/local-ci.md` for the full
+cleanup policy, including UID/GID-mapped container-owned files.
 
 Backend-specific checks:
 

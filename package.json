@@ -5,6 +5,8 @@
 		"lint": "(cd backend && go test ./...) && bash scripts/ci/golangci.sh",
 		"format:check": "bash scripts/ci/format-check.sh",
 		"ci-local": "bash scripts/ci/ci-local.sh",
+		"agent-ci": "bash scripts/ci/agent-ci.sh",
+		"agent-ci:clean": "bash scripts/ci/agent-ci-clean.sh",
 		"hooks:install": "git config core.hooksPath .githooks",
 		"frontend:typecheck": "npm --prefix frontend run typecheck",
 		"test:ops": "node --test ops/*.test.mjs",
