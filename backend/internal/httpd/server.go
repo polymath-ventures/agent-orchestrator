@@ -110,7 +110,7 @@ func (s *Server) Run(ctx context.Context) error {
 		PID:           os.Getpid(),
 		Port:          s.boundPort(),
 		StartedAt:     time.Now().UTC(),
-		Owner:         os.Getenv("AO_OWNER"),
+		Owner:         s.cfg.Owner,
 		ShutdownToken: s.shutdownToken,
 	}
 	if err := runfile.Write(s.cfg.RunFilePath, info); err != nil {

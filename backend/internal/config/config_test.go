@@ -265,3 +265,30 @@ func TestLoadAllowedOrigins(t *testing.T) {
 		}
 	})
 }
+
+// The daemon reads Owner to decide whether the frontend-death watchdog is
+// installed at all, so a break in this plumbing silently disables the watchdog
+// for the desktop app — or, worse, leaves it installed on a persistent daemon.
+func TestLoadOwner(t *testing.T) {
+	for _, tc := range []struct {
+		env  string
+		want string
+	}{
+		{"app", OwnerApp},
+		{"persistent", "persistent"},
+		{"", ""},
+		// Not trimmed: an exact-match gate must fail closed on a malformed value.
+		{"  app  ", "  app  "},
+	} {
+		t.Run("AO_OWNER="+tc.env, func(t *testing.T) {
+			t.Setenv("AO_OWNER", tc.env)
+			cfg, err := Load()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.Owner != tc.want {
+				t.Fatalf("Owner = %q, want %q", cfg.Owner, tc.want)
+			}
+		})
+	}
+}

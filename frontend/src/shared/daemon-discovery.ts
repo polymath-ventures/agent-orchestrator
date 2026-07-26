@@ -71,7 +71,7 @@ export type RunFileInfo = {
 	 * decision uses the daemon's durable record, not the current process env.
 	 * "app" = desktop-spawned (re-link on attach); "persistent" = spawned under
 	 * AO_KEEP_DAEMON (stays alive across app quit, never re-linked);
-	 * undefined/empty = headless `ao start` daemon.
+	 * undefined/empty = headless `ao daemon` daemon.
 	 */
 	owner?: string;
 };

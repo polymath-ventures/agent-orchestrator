@@ -492,7 +492,7 @@ function daemonEnv(): NodeJS.ProcessEnv {
 	// link from the daemon's own state (not this Electron process's env, which
 	// differs across launches). A keep-alive daemon is "persistent" (never
 	// re-linked, survives app quit); a normal app-owned daemon is "app";
-	// headless `ao start` sets none (stays unlinked, persistent by default).
+	// headless `ao daemon` sets none (stays unlinked, persistent by default).
 	//
 	// AO_APP_RUN_ID identifies THIS app launch. It is constant for the process
 	// lifetime, so a daemon the supervisor restarts inherits the same id and its
@@ -592,7 +592,7 @@ function daemonIdentityError(launch: DaemonLaunchSpec, probe: DaemonProbe): stri
  *
  * Called unconditionally on the spawn path (we always own that daemon).
  * Called on the attach path only when the daemon is app-owned (owner === "app");
- * headless `ao start` daemons stay unlinked so they remain persistent after
+ * headless `ao daemon` daemons stay unlinked so they remain persistent after
  * app quit.
  */
 function supervisorPipeFromRunFile(rfp: string | null): string {
@@ -727,7 +727,7 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 	if (existing) {
 		setDaemonStatus(existing.status);
 		// Re-link the supervisor only when attaching to an app-owned daemon (one we
-		// previously spawned). Headless `ao start` daemons (owner unset) stay unlinked
+		// previously spawned). Headless `ao daemon` daemons (owner unset) stay unlinked
 		// so they remain persistent after app quit.
 		if (shouldLinkOnAttach(existing.owner)) {
 			establishSupervisorLink();
@@ -957,7 +957,7 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 		// exits for any reason, the OS closes the fd and the daemon detects EOF,
 		// then self-stops after its ~5s grace period. The attach paths link only
 		// when the daemon is app-owned (see establishSupervisorLink +
-		// shouldLinkOnAttach); headless `ao start` daemons stay unlinked so they
+		// shouldLinkOnAttach); headless `ao daemon` daemons stay unlinked so they
 		// remain persistent across app quit.
 		//
 		// AO_KEEP_DAEMON opts out of the link entirely: the daemon is spawned but

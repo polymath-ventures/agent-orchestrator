@@ -21,7 +21,7 @@ export function keepDaemonAlive(env: { AO_KEEP_DAEMON?: string }): boolean {
  * across launches (a cross-launch regression: a daemon spawned keep-alive must
  * stay unlinked even when the app is later reopened without AO_KEEP_DAEMON).
  * Only a normal app-owned daemon ("app") is linked; a keep-alive daemon
- * ("persistent") and headless `ao start` daemons (owner unset/empty) stay
+ * ("persistent") and headless `ao daemon` daemons (owner unset/empty) stay
  * persistent across app quit.
  */
 export function shouldLinkOnAttach(owner: string | undefined): boolean {
