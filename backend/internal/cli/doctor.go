@@ -209,7 +209,7 @@ func checkStore(dataDir string) doctorCheck {
 	case errors.Is(err, fs.ErrNotExist):
 		return doctorCheck{
 			Level: doctorWarn, Section: doctorSectionCore, Name: "sqlite",
-			Message: "database not created yet; run `ao start` to initialize and migrate it",
+			Message: "database not created yet; " + daemonStartHint + " — the daemon creates and migrates it at startup",
 		}
 	default:
 		return doctorCheck{Level: doctorFail, Section: doctorSectionCore, Name: "sqlite", Message: err.Error()}
@@ -389,8 +389,13 @@ func checkHooksLog(dataDir string, now time.Time) doctorCheck {
 	}
 }
 
+// isExpectedHookRestartWindowMiss reports whether a hook-delivery failure is
+// just a hook that fired while the daemon was down. It matches daemonDownMarker
+// — the constant the message itself is built from — rather than a second copy
+// of the sentence, so editing the message can no longer silently break the
+// suppression and flood doctor with restart-window noise.
 func isExpectedHookRestartWindowMiss(line string) bool {
-	return strings.Contains(line, "AO daemon is not running") && strings.Contains(line, "start it with `ao start`")
+	return strings.Contains(line, daemonDownMarker)
 }
 
 func (c *commandContext) checkHarness(ctx context.Context, harness harnessProbe) doctorCheck {

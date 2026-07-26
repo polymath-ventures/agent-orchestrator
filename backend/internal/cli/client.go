@@ -99,6 +99,32 @@ func (c *commandContext) postLoopbackJSON(ctx context.Context, path string, body
 	return c.doJSONPath(ctx, http.MethodPost, path, body, nil)
 }
 
+// daemonDownMarker identifies the daemon-down class of CLI failure. It is the
+// single copy of that sentence: `ao doctor`'s restart-window suppression
+// matches this constant instead of holding its own transcription of the
+// message, so the two cannot drift apart the way they did when the hint text
+// changed.
+const daemonDownMarker = "AO daemon is not running"
+
+// daemonStartHint names actions that actually start a daemon.
+//
+// It deliberately does NOT name `ao start`, which despite its name starts no
+// daemon: it fetches and opens the Electron desktop app (see start.go). Both
+// listed actions are always accurate, which is why the hint is a constant
+// rather than something probed per environment — a probe would run a
+// subprocess on the hottest error path in the product to say something the
+// operator can already tell apart at a glance.
+const daemonStartHint = "start it with `ao daemon`, or `systemctl --user start ao.service` on a systemd deployment"
+
+// daemonDownError builds the daemon-down failure. detail, when non-empty, is
+// parenthesised between the marker and the hint.
+func daemonDownError(detail string) error {
+	if detail == "" {
+		return fmt.Errorf("%s — %s", daemonDownMarker, daemonStartHint)
+	}
+	return fmt.Errorf("%s (%s) — %s", daemonDownMarker, detail, daemonStartHint)
+}
+
 // daemonURL resolves the loopback URL for a daemon route, failing with a clear
 // "not running" message rather than a connection-refused dump when the run-file
 // is missing or stale. Every caller that talks to the daemon goes through here,
@@ -113,10 +139,10 @@ func (c *commandContext) daemonURL(path string) (string, error) {
 		return "", err
 	}
 	if info == nil {
-		return "", fmt.Errorf("AO daemon is not running — start it with `ao start`")
+		return "", daemonDownError("")
 	}
 	if !c.deps.ProcessAlive(info.PID) {
-		return "", fmt.Errorf("AO daemon is not running (stale run-file at %s) — start it with `ao start`", cfg.RunFilePath)
+		return "", daemonDownError("stale run-file at " + cfg.RunFilePath)
 	}
 	return fmt.Sprintf("http://%s:%d%s", config.LoopbackHost, info.Port, path), nil
 }

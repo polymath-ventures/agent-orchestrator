@@ -531,8 +531,8 @@ func TestDoctorHooksLogStates(t *testing.T) {
 	t.Run("restart-window misses pass", func(t *testing.T) {
 		cfg := setConfigEnv(t)
 		writeHooksLogLines(t, cfg.dataDir,
-			time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)+" session=mer-1 ao hooks codex stop: AO daemon is not running — start it with `ao start`",
-			time.Now().Add(-30*time.Minute).UTC().Format(time.RFC3339)+" session=mer-2 ao hooks claude-code stop: AO daemon is not running (stale run-file at /tmp/ao.json) — start it with `ao start`",
+			time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)+" session=mer-1 ao hooks codex stop: "+daemonDownError("").Error(),
+			time.Now().Add(-30*time.Minute).UTC().Format(time.RFC3339)+" session=mer-2 ao hooks claude-code stop: "+daemonDownError("stale run-file at /tmp/ao.json").Error(),
 		)
 		c := doctorContext(t, map[string]string{"git": "/bin/git"}, gitOnly)
 		check := findDoctorCheck(t, c.runDoctor(context.Background()), "hooks-log")
@@ -544,7 +544,7 @@ func TestDoctorHooksLogStates(t *testing.T) {
 	t.Run("mixed restart-window and real failures warn", func(t *testing.T) {
 		cfg := setConfigEnv(t)
 		writeHooksLogLines(t, cfg.dataDir,
-			time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)+" session=mer-1 ao hooks codex stop: AO daemon is not running — start it with `ao start`",
+			time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)+" session=mer-1 ao hooks codex stop: "+daemonDownError("").Error(),
 			time.Now().Add(-30*time.Minute).UTC().Format(time.RFC3339)+" session=mer-2 ao hooks codex stop: connection refused",
 		)
 		c := doctorContext(t, map[string]string{"git": "/bin/git"}, gitOnly)
