@@ -936,6 +936,12 @@ func toAPIError(err error) error {
 	case errors.Is(err, sessionmanager.ErrAwaitingDecision):
 		return apierr.Conflict("SESSION_AWAITING_DECISION",
 			"Session is paused on a permission decision; answer it in the session terminal first", nil)
+	case errors.Is(err, sessionmanager.ErrWorkspaceOwnedByLiveSession):
+		// A live session is running in the workspace this terminated row records.
+		// It is a transient conflict, not a server fault: the row becomes
+		// restorable again once the live owner is gone.
+		return apierr.Conflict("SESSION_WORKSPACE_IN_USE",
+			"Another live session is running in this session's workspace; restore it after that session ends", nil)
 	case errors.Is(err, sessionmanager.ErrIncompleteHandle):
 		return apierr.Conflict("SESSION_INCOMPLETE_HANDLE", "Session is missing runtime or workspace handles", nil)
 	case errors.Is(err, sessionmanager.ErrNotResumable):

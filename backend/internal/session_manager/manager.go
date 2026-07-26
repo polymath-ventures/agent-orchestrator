@@ -97,6 +97,12 @@ var (
 	// speculative entry point refuses the kind rather than mutating fleet state
 	// for a spawn that may never happen.
 	ErrPreflightWorkerUnsupported = errors.New("session: preflight does not support worker spawns")
+	// ErrWorkspaceOwnedByLiveSession means a terminated session's recorded
+	// workspace is currently held by a different LIVE session, so relaunching it
+	// would put two runtimes on one worktree and one branch. Kill and Cleanup
+	// already spare such a workspace; Restore refuses it. The API maps it to a
+	// 409 — the row becomes restorable again the moment the live owner goes away.
+	ErrWorkspaceOwnedByLiveSession = errors.New("session: workspace is owned by a live session")
 )
 
 // SpawnModelSelectionValidator supplies cache-only model and effort verdicts
@@ -1678,7 +1684,8 @@ func (m *Manager) RetireForReplacement(ctx context.Context, id domain.SessionID)
 	// row can share its canonical path/branch with a live replacement, and
 	// retiring the older row must not tear down the worktree the newer one is
 	// running in. Its own runtime is still reaped and the row still terminates —
-	// only the shared workspace is spared.
+	// only the SHARED workspace is spared; a multi-repo child the live owner
+	// does not occupy is still reclaimed below.
 	workspaceOwnedElsewhere := false
 	if rec.Metadata.WorkspacePath != "" || rec.Metadata.Branch != "" {
 		live, liveErr := m.liveSessions(ctx)
@@ -1692,13 +1699,35 @@ func (m *Manager) RetireForReplacement(ctx context.Context, id domain.SessionID)
 		}
 	}
 	if rec.Metadata.WorkspacePath == "" || rec.Metadata.Branch == "" || workspaceOwnedElsewhere {
-		if err := m.store.DeleteSessionWorktrees(ctx, rec.ID); err != nil {
-			return fmt.Errorf("retire replacement %s: clear restore markers: %w", id, err)
+		// A row with no workspace at all has no inventory to reclaim, so its
+		// markers are cleared up front, exactly as before.
+		if !workspaceOwnedElsewhere {
+			if err := m.store.DeleteSessionWorktrees(ctx, rec.ID); err != nil {
+				return fmt.Errorf("retire replacement %s: clear restore markers: %w", id, err)
+			}
 		}
 		handle := runtimeHandle(rec.Metadata)
 		if handle.ID != "" {
 			if err := m.runtime.Destroy(ctx, handle); err != nil {
 				return fmt.Errorf("retire replacement %s: runtime: %w", id, err)
+			}
+		}
+		if workspaceOwnedElsewhere {
+			// Same defect, same remedy as Kill (#144): the live owner holds the
+			// root, but a multi-repo CHILD it does not occupy is held by nobody,
+			// and session_worktrees is the only record of where that child is.
+			// Retiring on a clean replacement is the common path, so clearing
+			// the markers without reclaiming orphans it for good.
+			//
+			// Ordered between the runtime destroy and the marker clear because
+			// both sides are load-bearing: the retiring agent is still running
+			// in that tree until its runtime is destroyed (and a runtime destroy
+			// that fails returns above, reclaiming nothing), and the reclaim
+			// reads the very rows the clear below deletes. This is the ordering
+			// the function's own workspace-teardown path already uses.
+			m.destroyUncoveredChildWorktrees(ctx, rec)
+			if err := m.store.DeleteSessionWorktrees(ctx, rec.ID); err != nil {
+				return fmt.Errorf("retire replacement %s: clear restore markers: %w", id, err)
 			}
 		}
 		if err := m.lcm.MarkTerminated(ctx, id); err != nil {
@@ -1792,6 +1821,23 @@ func (m *Manager) RestoreWithMode(ctx context.Context, id domain.SessionID) (Res
 	}
 	if !rec.IsTerminated {
 		return RestoreResult{}, fmt.Errorf("restore %s: %w", id, ErrNotRestorable)
+	}
+	// The same ownership invariant Kill and Cleanup enforce, on the third
+	// lifecycle operation over the same workspace. Role workspaces are canonical,
+	// so a terminated role row records the very worktree its live replacement is
+	// running in; relaunching it would put two runtimes on one worktree and one
+	// branch. Refusing HERE — before the project load, the workspace restore, and
+	// the runtime create — is what keeps the refusal from creating, restoring, or
+	// launching anything.
+	if rec.Metadata.WorkspacePath != "" || rec.Metadata.Branch != "" {
+		live, liveErr := m.liveSessions(ctx)
+		if liveErr != nil {
+			return RestoreResult{}, fmt.Errorf("restore %s: %w", id, liveErr)
+		}
+		if owner, inUse := workspaceOwnedByLiveSession(rec, live); inUse {
+			return RestoreResult{}, fmt.Errorf("restore %s: workspace %q is held by live session %s: %w",
+				id, rec.Metadata.WorkspacePath, owner, ErrWorkspaceOwnedByLiveSession)
+		}
 	}
 	meta := rec.Metadata
 	project, err := m.loadProject(ctx, rec.ProjectID)

@@ -1,6 +1,7 @@
 package sessionmanager
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -89,12 +90,10 @@ func TestCleanupSucceedsAfterKillOfSessionWithDeregisteredChildRepos(t *testing.
 // failing with "workspace project root worktree row missing".
 //
 // Scoped to exactly that property: leftover rows must not drive per-child
-// Restore calls. Whether the restore itself succeeds is deliberately NOT
-// asserted — RestoreWithMode gates only on rec.IsTerminated and consults
-// neither workspace ownership nor markers, so it will happily relaunch this
-// killed session into the worktree the live replacement still owns. That gap
-// predates this change and is tracked separately in GH #168; pinning "restore
-// succeeds" here would assert the unsafe outcome is correct.
+// Restore calls. The restore itself is now REFUSED (GH #168): mer-orch-2 is
+// live in the canonical worktree, and RestoreWithMode honors the same ownership
+// invariant Kill and Cleanup do rather than relaunching a second runtime into
+// the live replacement's tree.
 func TestRestoreAfterKillOfSessionWithDeregisteredChildReposLeavesNoStrayWorktrees(t *testing.T) {
 	m, st, _, ws := newLifecycleManager()
 
@@ -128,8 +127,11 @@ func TestRestoreAfterKillOfSessionWithDeregisteredChildReposLeavesNoStrayWorktre
 	}
 	ws.calls = nil
 
-	// The outcome is not asserted (see above); only the side effects are.
-	_, _ = m.RestoreWithMode(ctx, "mer-orch-1")
+	// mer-orch-2 still holds the canonical worktree, so the restore is refused
+	// outright rather than relaunching a second runtime into it (GH #168).
+	if _, err := m.RestoreWithMode(ctx, "mer-orch-1"); !errors.Is(err, ErrWorkspaceOwnedByLiveSession) {
+		t.Fatalf("RestoreWithMode err = %v, want ErrWorkspaceOwnedByLiveSession", err)
+	}
 	// No per-child Restore may run: with no resolvable child repos, any attempt
 	// would materialize stray directories before failing on the missing root.
 	for _, call := range ws.calls {
