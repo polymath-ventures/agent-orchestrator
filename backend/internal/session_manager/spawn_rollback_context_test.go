@@ -494,6 +494,113 @@ func TestSpawnRollbackStillRunsAgentWorkspaceCleanupAfterCallerCancellation(t *t
 	}
 }
 
+// cancelOnRuntimeDestroy models the caller going away at the exact moment the
+// runtime is reaped: the destroy itself succeeds — the pane really is gone —
+// and the request context is dead by the time it returns.
+type cancelOnRuntimeDestroy struct {
+	*fakeRuntime
+	cancel context.CancelFunc
+}
+
+func (r *cancelOnRuntimeDestroy) Destroy(ctx context.Context, handle ports.RuntimeHandle) error {
+	err := r.fakeRuntime.Destroy(ctx, handle)
+	r.cancel()
+	return err
+}
+
+// ctxHonoringWorktreeStore fails the restore-marker clear on an
+// already-cancelled context, recording that the markers were left behind.
+type ctxHonoringWorktreeStore struct {
+	*fakeStore
+	deletedLive   int
+	deleteSkipped int
+}
+
+func (s *ctxHonoringWorktreeStore) DeleteSessionWorktrees(ctx context.Context, id domain.SessionID) error {
+	if err := ctx.Err(); err != nil {
+		s.deleteSkipped++
+		return err
+	}
+	s.deletedLive++
+	return s.fakeStore.DeleteSessionWorktrees(ctx, id)
+}
+
+// ctxHonoringLCM fails the terminal-state write on an already-cancelled
+// context, recording that the row was left live.
+type ctxHonoringLCM struct {
+	*fakeLCM
+	terminatedLive   int
+	terminateSkipped int
+}
+
+func (l *ctxHonoringLCM) MarkTerminated(ctx context.Context, id domain.SessionID) error {
+	if err := ctx.Err(); err != nil {
+		l.terminateSkipped++
+		return err
+	}
+	l.terminatedLive++
+	return l.fakeLCM.MarkTerminated(ctx, id)
+}
+
+// Retiring a role row whose workspace a live replacement owns reaps the row's
+// runtime and then does three pieces of bookkeeping: reclaim the multi-repo
+// children nobody occupies, clear the restore markers, and park the row
+// terminated. A disconnected HTTP caller is the ordinary way that context dies,
+// and once the runtime is gone all three steps are cleanup — none of them is
+// the caller's to abandon.
+//
+// Run on the caller's context they fail together, and the row is left LIVE with
+// a dead runtime: on the next boot reconcileLive reads that as crash recovery
+// and stashes and force-destroys the shared root and covered children out from
+// under the live replacement that legitimately owns them. Reporting the failure
+// faithfully does not undo it, so the steps run detached (but bounded) instead.
+func TestRetireForReplacementCleanupSurvivesCallerCancellation(t *testing.T) {
+	base := newFakeStore()
+	st := &ctxHonoringWorktreeStore{fakeStore: base}
+	cctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	rt := &cancelOnRuntimeDestroy{fakeRuntime: &fakeRuntime{}, cancel: cancel}
+	ws := &ctxHonoringWorkspace{fakeWorkspace: &fakeWorkspace{}}
+	lcm := &ctxHonoringLCM{fakeLCM: &fakeLCM{store: base}}
+	m := New(Deps{
+		Runtime: rt, Agents: fakeAgents{}, Workspace: ws, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: lcm,
+		LookPath: func(string) (string, error) { return "/bin/true", nil },
+	})
+	// mer-orch-1 shares its canonical root with the live mer-orch-2 and owns one
+	// child worktree (…/web) the replacement does not occupy.
+	canonical := seedUncoveredChildKill(base)
+
+	if err := m.RetireForReplacement(cctx, "mer-orch-1"); err != nil {
+		t.Fatalf("RetireForReplacement err = %v, want the retire to complete despite the caller going away", err)
+	}
+	if cctx.Err() == nil {
+		t.Fatal("setup: the runtime destroy must have cancelled the caller context")
+	}
+	if rt.destroyed != 1 {
+		t.Fatalf("runtime destroys = %d, want 1 (the precondition for this test)", rt.destroyed)
+	}
+
+	if ws.destroyedLive != 1 {
+		t.Errorf("child worktree destroys that took effect = %d (skipped on cancelled ctx = %d); the uncovered child at %s is orphaned, and clearing its marker below makes it unfindable",
+			ws.destroyedLive, ws.destroySkipped, canonical+"/web")
+	}
+	if st.deletedLive != 1 {
+		t.Errorf("restore-marker clears that took effect = %d (skipped on cancelled ctx = %d); the next boot's RestoreAll can resurrect the retired row into the replacement's worktree",
+			st.deletedLive, st.deleteSkipped)
+	}
+	if lcm.terminatedLive != 1 {
+		t.Errorf("terminal-state writes that took effect = %d (skipped on cancelled ctx = %d); the retired row is still live with a dead runtime",
+			lcm.terminatedLive, lcm.terminateSkipped)
+	}
+	if !base.sessions["mer-orch-1"].IsTerminated {
+		t.Error("the retired row is still live after its runtime was destroyed; the next boot reads that as a crash and tears down the live replacement's shared root")
+	}
+	if rows := base.worktrees["mer-orch-1"]; len(rows) != 0 {
+		t.Errorf("surviving restore markers = %#v, want none", rows)
+	}
+}
+
 // failingDestroyWorkspaceProject reports that the on-disk teardown failed, so
 // the worktrees named by the recorded rows are still there.
 type failingDestroyWorkspaceProject struct {

@@ -3,6 +3,7 @@ package sessionmanager
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 
@@ -859,6 +860,23 @@ func (s *failingWorktreeClearStore) DeleteSessionWorktrees(ctx context.Context, 
 	return s.fakeStore.DeleteSessionWorktrees(ctx, id)
 }
 
+// countingTerminateLCM optionally fails the terminal-state write and always
+// counts the attempts, so a test can tell "termination was never tried" — the
+// defect — from "it was tried and the store refused".
+type countingTerminateLCM struct {
+	*fakeLCM
+	err      error
+	attempts int
+}
+
+func (l *countingTerminateLCM) MarkTerminated(ctx context.Context, id domain.SessionID) error {
+	l.attempts++
+	if l.err != nil {
+		return l.err
+	}
+	return l.fakeLCM.MarkTerminated(ctx, id)
+}
+
 // Once the runtime is destroyed the row MUST end terminated, whatever else
 // fails. The owned-elsewhere arm clears markers AFTER the runtime destroy (the
 // reclaim reads the rows the clear deletes), so a clear that returns early would
@@ -866,33 +884,82 @@ func (s *failingWorktreeClearStore) DeleteSessionWorktrees(ctx context.Context, 
 // that as crash recovery on the next boot and stashes and force-destroys this
 // row's shared root and covered children — underneath the live replacement that
 // legitimately owns them.
-func TestRetireForReplacementTerminatesWhenMarkerClearFailsAfterRuntimeDestroy(t *testing.T) {
-	st := newFakeStore()
-	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
-	rt := &fakeRuntime{}
-	m := New(Deps{
-		Runtime:   rt,
-		Agents:    fakeAgents{},
-		Workspace: &fakeWorkspace{},
-		Store:     &failingWorktreeClearStore{fakeStore: st, err: errors.New("sqlite: database is locked")},
-		Messenger: &fakeMessenger{},
-		Lifecycle: &fakeLCM{store: st},
-		LookPath:  func(string) (string, error) { return "/bin/true", nil },
-	})
-	seedUncoveredChildKill(st)
+//
+// Both post-destroy writes can fail independently, so all four combinations are
+// pinned. Two properties run across them: termination is ATTEMPTED in every one
+// (that is what the errors.Join replaced an early return for), and every failure
+// that happened is still reachable through the join with errors.Is — a join that
+// flattened its causes into a string would satisfy the state assertions and
+// silently lose the diagnosis.
+func TestRetireForReplacementReportsEveryPostDestroyFailure(t *testing.T) {
+	errClear := errors.New("sqlite: database is locked")
+	errTerminate := errors.New("sqlite: disk I/O error")
 
-	err := m.RetireForReplacement(ctx, "mer-orch-1")
-	if err == nil {
-		t.Fatal("RetireForReplacement err = nil, want the marker clear failure surfaced")
+	cases := []struct {
+		name           string
+		clearErr       error
+		terminateErr   error
+		wantTerminated bool
+		wantCauses     []error
+	}{
+		{name: "neither fails", wantTerminated: true},
+		{name: "clear fails", clearErr: errClear, wantTerminated: true, wantCauses: []error{errClear}},
+		{name: "terminate fails", terminateErr: errTerminate, wantCauses: []error{errTerminate}},
+		{name: "both fail", clearErr: errClear, terminateErr: errTerminate, wantCauses: []error{errClear, errTerminate}},
 	}
-	if !strings.Contains(err.Error(), "clear restore markers") {
-		t.Fatalf("err = %v, want the marker clear failure named in it", err)
-	}
-	if rt.destroyed != 1 {
-		t.Fatalf("runtime destroys = %d, want 1 (the precondition for this test)", rt.destroyed)
-	}
-	if !st.sessions["mer-orch-1"].IsTerminated {
-		t.Fatal("the row is still live after its runtime was destroyed; the next boot reads that as a crash and tears down the live replacement's shared root")
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			st := newFakeStore()
+			st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+			rt := &fakeRuntime{}
+			lcm := &countingTerminateLCM{fakeLCM: &fakeLCM{store: st}, err: tc.terminateErr}
+			m := New(Deps{
+				Runtime:   rt,
+				Agents:    fakeAgents{},
+				Workspace: &fakeWorkspace{},
+				Store:     &failingWorktreeClearStore{fakeStore: st, err: tc.clearErr},
+				Messenger: &fakeMessenger{},
+				Lifecycle: lcm,
+				LookPath:  func(string) (string, error) { return "/bin/true", nil },
+			})
+			seedUncoveredChildKill(st)
+
+			err := m.RetireForReplacement(ctx, "mer-orch-1")
+
+			if rt.destroyed != 1 {
+				t.Fatalf("runtime destroys = %d, want 1 (the precondition for every case here)", rt.destroyed)
+			}
+			// The whole point of the join: a failed clear must not skip the
+			// terminal write, and a failed terminal write must still be tried.
+			if lcm.attempts != 1 {
+				t.Errorf("MarkTerminated attempts = %d, want 1; past the runtime destroy the row must always be pushed to terminated", lcm.attempts)
+			}
+			if got := st.sessions["mer-orch-1"].IsTerminated; got != tc.wantTerminated {
+				t.Errorf("row terminated = %v, want %v; a live row whose runtime is dead is read as crash recovery on the next boot", got, tc.wantTerminated)
+			}
+			// Markers survive exactly when their clear failed — the retry's only
+			// record of where the retired row's children are.
+			markersCleared := len(st.worktrees["mer-orch-1"]) == 0
+			if wantCleared := tc.clearErr == nil; markersCleared != wantCleared {
+				t.Errorf("restore markers cleared = %v, want %v (rows = %#v)", markersCleared, wantCleared, st.worktrees["mer-orch-1"])
+			}
+
+			if len(tc.wantCauses) == 0 {
+				if err != nil {
+					t.Fatalf("RetireForReplacement err = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("RetireForReplacement err = nil, want %v surfaced", tc.wantCauses)
+			}
+			for _, cause := range []error{errClear, errTerminate} {
+				want := slices.Contains(tc.wantCauses, cause)
+				if got := errors.Is(err, cause); got != want {
+					t.Errorf("errors.Is(err, %v) = %v, want %v; err = %v", cause, got, want, err)
+				}
+			}
+		})
 	}
 }
 

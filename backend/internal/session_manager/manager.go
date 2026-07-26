@@ -1712,6 +1712,18 @@ func (m *Manager) RetireForReplacement(ctx context.Context, id domain.SessionID)
 				return fmt.Errorf("retire replacement %s: runtime: %w", id, err)
 			}
 		}
+		// Everything below is post-teardown bookkeeping for a runtime that is
+		// already gone, so it runs detached from the caller (bounded) on the
+		// package's one cleanup context. Up to here the caller may still abort:
+		// a cancelled request that never reaps the runtime leaves the row live
+		// and consistent, which is a retry. Once the runtime IS reaped the row
+		// is committed to terminating, and running these steps on a dead caller
+		// context fails all three at once — child reclaim, marker clear, and the
+		// terminal write — which is precisely the live-row-with-a-dead-runtime
+		// state the joined error below exists to prevent, reported faithfully
+		// and left on disk anyway.
+		cleanupCtx, cancelCleanup := cleanupContext(ctx)
+		defer cancelCleanup()
 		var clearErr error
 		if workspaceOwnedElsewhere {
 			// Same defect, same remedy as Kill (#144): the live owner holds the
@@ -1726,8 +1738,8 @@ func (m *Manager) RetireForReplacement(ctx context.Context, id domain.SessionID)
 			// that fails returns above, reclaiming nothing), and the reclaim
 			// reads the very rows the clear below deletes. This is the ordering
 			// the function's own workspace-teardown path already uses.
-			m.destroyUncoveredChildWorktrees(ctx, rec)
-			if err := m.store.DeleteSessionWorktrees(ctx, rec.ID); err != nil {
+			m.destroyUncoveredChildWorktrees(cleanupCtx, rec)
+			if err := m.store.DeleteSessionWorktrees(cleanupCtx, rec.ID); err != nil {
 				clearErr = fmt.Errorf("retire replacement %s: clear restore markers: %w", id, err)
 			}
 		}
@@ -1738,7 +1750,7 @@ func (m *Manager) RetireForReplacement(ctx context.Context, id domain.SessionID)
 		// replacement that legitimately owns them. Returning on the marker-clear
 		// failure alone would leave exactly that row, so both failures are
 		// reported instead and neither is swallowed.
-		if err := m.lcm.MarkTerminated(ctx, id); err != nil {
+		if err := m.lcm.MarkTerminated(cleanupCtx, id); err != nil {
 			return errors.Join(clearErr, fmt.Errorf("retire replacement %s: mark terminated: %w", id, err))
 		}
 		return clearErr

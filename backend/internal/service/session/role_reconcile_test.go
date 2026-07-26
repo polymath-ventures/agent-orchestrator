@@ -2,10 +2,12 @@ package session
 
 import (
 	"context"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	sessionmanager "github.com/aoagents/agent-orchestrator/backend/internal/session_manager"
 
@@ -415,6 +417,15 @@ func TestRestoreSerializesWithRoleReconcileForTheSameTarget(t *testing.T) {
 		restoreDone <- err
 	}()
 	<-handoff.looked // the restore has resolved its row and is about to take the lock
+	// …but "about to" is not an ordering. The handoff fires from INSIDE
+	// GetSession, so releasing the reconcile here would leave the assertion below
+	// racing: on a build with no lock at all the restore can still reach the
+	// manager after the reconcile has cleared reconcileParked, and the test
+	// passes for the wrong reason. Block until the restore goroutine has provably
+	// gone as far as its build allows — parked acquiring the role mutex (locked)
+	// or already through to the manager (unlocked) — so what follows is an
+	// assertion rather than a race won.
+	waitForRestoreToParkOrReachTheManager(t, fc.restoreDuringReconcile.Load)
 
 	close(fc.release)
 	if err := <-reconcileDone; err != nil {
@@ -430,4 +441,71 @@ func TestRestoreSerializesWithRoleReconcileForTheSameTarget(t *testing.T) {
 	if fc.restoreCalls != 1 {
 		t.Fatalf("RestoreWithMode calls = %d, want 1 — the restore must still run, just after the reconcile", fc.restoreCalls)
 	}
+}
+
+// waitForRestoreToParkOrReachTheManager is the barrier the test above needs: it
+// returns once the goroutine running Service.Restore can make no further
+// progress on its own, which is either
+//
+//   - blocked acquiring a mutex inside Restore (it took the role lock and the
+//     reconcile still holds it), or
+//   - reachedManager() — it called through to the manager, which is the defect.
+//
+// testing/synctest is the natural tool for "wait until every other goroutine is
+// stuck" and deliberately does NOT work here: its docs state that locking a
+// sync.Mutex is not durably blocking, because a mutex can be released from
+// outside the bubble. A goroutine parked on the role lock therefore never
+// satisfies synctest.Wait, which blocks forever and hangs the bubble (verified
+// locally on go1.26 — the run panics at the test timeout with the restore
+// goroutine in "sync.Mutex.Lock, synctest bubble 1"). Reading the goroutine
+// stacks is what observes a mutex park directly.
+//
+// The poll only ever waits for a state the correct build reaches immediately; it
+// is a barrier, not a timing assumption. It can time out but never pass early.
+func waitForRestoreToParkOrReachTheManager(t *testing.T, reachedManager func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		if reachedManager() {
+			return
+		}
+		stacks := allGoroutineStacks()
+		if restoreIsBlockedOnAMutex(stacks) {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the Restore goroutine neither reached the manager nor parked on a lock within 30s; goroutine stacks:\n%s", stacks)
+		}
+		time.Sleep(50 * time.Microsecond)
+	}
+}
+
+func allGoroutineStacks() string {
+	for size := 1 << 16; ; size *= 2 {
+		buf := make([]byte, size)
+		if n := runtime.Stack(buf, true); n < size {
+			return string(buf[:n])
+		}
+	}
+}
+
+// restoreIsBlockedOnAMutex reports whether some goroutine is parked acquiring a
+// mutex with Service.Restore on its stack. Between the handoff signal and the
+// manager call, lockRole holds the only mutexes Restore touches, so a park there
+// means the restore is waiting on the role lock.
+func restoreIsBlockedOnAMutex(stacks string) bool {
+	for _, g := range strings.Split(stacks, "\n\n") {
+		if !strings.Contains(g, "session.(*Service).Restore(") {
+			continue
+		}
+		// One of these frames is present on every Go version's rendering of a
+		// goroutine parked in Mutex.Lock; matching the set rather than the
+		// goroutine's state word keeps this off runtime formatting details.
+		for _, frame := range []string{"SemacquireMutex", "(*Mutex).lockSlow", "sync.(*Mutex).Lock"} {
+			if strings.Contains(g, frame) {
+				return true
+			}
+		}
+	}
+	return false
 }
