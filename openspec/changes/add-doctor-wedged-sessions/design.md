@@ -39,19 +39,33 @@ was fetching before it went off to run `ps`. Scraping external state to infer
 something the owning component knows for certain is the defect the removed check
 embodied; reading the record directly is the whole fix.
 
-A concrete consequence worth stating: an agent running a legitimate long-lived
-background server keeps recording activity, so it never warns. The
-process-tree approach could not tell that case from the wedged one at all.
+### What `LastActivityAt` actually measures, and why that is the right signal
 
-### Warn on silence, do not judge the state
+It is not "time since the last signal". Lifecycle deliberately records the
+moment the CURRENT state was entered: `sameActivity` ignores the timestamp so a
+stream of same-state repeats does not rewrite `UpdatedAt` or fan out a CDC
+event. For an active session it therefore measures **how long the agent has
+been active without finishing a turn**.
 
-The check reports how long a live session has been silent and what activity
-state the daemon holds for it, but it does not gate on that state. An idle
-session silent for eight hours and a working session silent for eight hours are
-both worth an operator's eye, and they read differently in the output. Filtering
-on state here would re-introduce a guess — exactly the failure mode of the
-removed check — where reporting the two facts side by side lets the operator
-decide.
+That is a better signal than raw silence, not a worse one. A healthy agent
+transitions active -> idle or waiting_input between turns, so it resets
+constantly. An agent blocked on a leaked `curl` never leaves active, and the
+clock runs. This is the fact the process-tree approach was trying and failing to
+infer.
+
+### Only an ACTIVE session can be wedged
+
+The other states are quiet for good reasons. `idle` means the agent finished.
+`waiting_input` and `blocked` are sticky by design — they mean the agent is
+paused on the _user_, and an operator routinely leaves one of those overnight.
+Warning on them would fire every morning on healthy sessions, and a check that
+cries wolf daily is worse than no check, because the operator stops reading it.
+
+An earlier draft reported the state alongside the duration rather than filtering
+on it, reasoning that filtering would re-introduce a guess. That reasoning was
+wrong: the activity state is the daemon's own record, not an inference. Reading
+it is asking the component that owns the fact — the same principle that makes
+this check right in the first place.
 
 ### The probe is bounded like every other doctor read
 
@@ -89,9 +103,9 @@ elsewhere.
 - **A fixed threshold suits some fleets and not others** → It is a named
   constant with its reasoning recorded, changeable in one place. Make it
   configurable when a real deployment needs a different value, not before.
-- **A false positive after a long daemon outage** → Accepted and documented
-  above; the threshold is much longer than a restart window, and the message
-  reports observed silence rather than asserting the session is broken.
+- **A single legitimate turn longer than the threshold warns** → Accepted. The
+  message says "may be wedged" and names how to inspect; a four-hour turn with
+  no state change is worth an operator's glance either way.
 - **The check adds one daemon request to every `ao doctor` run** → It is a
   single GET on loopback against a listing doctor's own report already depends
   on being reachable.

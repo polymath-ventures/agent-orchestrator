@@ -88,9 +88,11 @@ func liveSession(id string, last time.Time, state string) sessionDTO {
 	return sessionDTO{ID: id, Kind: "worker", Status: "running", Activity: sessionActivity{State: state, LastActivityAt: last}}
 }
 
-// The operator's question is "is this session wedged?", and the fact that
-// answers it is that the agent has done nothing for hours.
-func TestWedgedSessionsWarnsOnSilencePastTheThreshold(t *testing.T) {
+// LastActivityAt records when the CURRENT state was entered, so for an active
+// session it measures how long the agent has been active without finishing a
+// turn. A healthy agent transitions to idle or waiting_input between turns; one
+// blocked on a leaked `curl` never leaves active.
+func TestWedgedSessionsWarnsWhenActiveTooLongWithoutATransition(t *testing.T) {
 	now := time.Date(2026, 7, 26, 12, 0, 0, 0, time.UTC)
 	c, _ := doctorSessionsContext(t, now, []sessionDTO{
 		liveSession("mer-wedged", now.Add(-8*time.Hour), "active"),
@@ -104,16 +106,16 @@ func TestWedgedSessionsWarnsOnSilencePastTheThreshold(t *testing.T) {
 		t.Fatalf("message does not name the silent session: %q", check.Message)
 	}
 	if !strings.Contains(check.Message, "8h") {
-		t.Fatalf("message does not say how long it has been silent: %q", check.Message)
+		t.Fatalf("message does not say how long it has been active: %q", check.Message)
 	}
 	if !strings.Contains(check.Message, "ao session get") {
 		t.Fatalf("message gives the operator no next action: %q", check.Message)
 	}
 }
 
-// idle means the agent stopped; waiting_input and blocked mean it is paused on
-// the user, and an operator legitimately leaves those overnight. Warning on
-// them would make this check noise an operator learns to ignore.
+// idle means the agent finished a turn; waiting_input and blocked mean it is
+// paused on the user, and an operator legitimately leaves those overnight.
+// Warning on them would make this check noise an operator learns to ignore.
 func TestWedgedSessionsIgnoresSessionsThatAreNotActive(t *testing.T) {
 	now := time.Date(2026, 7, 26, 12, 0, 0, 0, time.UTC)
 	c, _ := doctorSessionsContext(t, now, []sessionDTO{
@@ -176,7 +178,8 @@ func TestWedgedSessionsPassesWhenEveryoneIsRecentlyActive(t *testing.T) {
 // live one that matters.
 func TestWedgedSessionsIgnoresTerminatedSessions(t *testing.T) {
 	now := time.Date(2026, 7, 26, 12, 0, 0, 0, time.UTC)
-	dead := liveSession("mer-dead", now.Add(-48*time.Hour), "idle")
+	// active, so the IsTerminated filter is the only thing keeping it out.
+	dead := liveSession("mer-dead", now.Add(-48*time.Hour), "active")
 	dead.IsTerminated = true
 	c, _ := doctorSessionsContext(t, now, []sessionDTO{dead})
 
@@ -225,7 +228,7 @@ func TestWedgedSessionsSkipsSessionsWithNoRecordedActivity(t *testing.T) {
 		t.Fatalf("level = %s, want PASS (%+v)", check.Level, check)
 	}
 	if strings.Contains(check.Message, "mer-fresh") {
-		t.Fatalf("warned about a session with no activity record: %q", check.Message)
+		t.Fatalf("warned about a session with no activity timestamp: %q", check.Message)
 	}
 }
 

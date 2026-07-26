@@ -3,8 +3,8 @@
 ### Requirement: Doctor warns when an active session has gone silent
 
 `ao doctor` SHALL report a check that warns when a session the daemon records as
-**active** has recorded no activity for longer than a fixed silence threshold.
-The warning SHALL name each such session, how long it has been silent, and a
+**active** has been in that state, with no transition to any other state, for longer than a fixed threshold.
+The warning SHALL name each such session, how long it has been in that state, and a
 command the operator can run next, so it is actionable rather than merely
 alarming.
 
@@ -14,19 +14,19 @@ are paused on the user and are routinely left that way for long periods. Warning
 on those would produce recurring noise an operator learns to ignore, which would
 defeat the check. Terminated sessions SHALL NOT warn at any age.
 
-#### Scenario: An active session silent past the threshold warns
+#### Scenario: A session active past the threshold warns
 
-- **WHEN** a session the daemon records as active last recorded activity longer ago than the silence threshold
-- **THEN** the check warns, naming that session, how long it has been silent, and a command to inspect it
+- **WHEN** a session the daemon records as active entered that state longer ago than the threshold, with no transition since
+- **THEN** the check warns, naming that session, how long it has been active, and a command to inspect it
 
 #### Scenario: A recently active session does not warn
 
-- **WHEN** every active session has recorded activity within the silence threshold
+- **WHEN** every active session entered that state within the threshold
 - **THEN** the check passes and names no session
 
 #### Scenario: A session that is not active never warns
 
-- **WHEN** a session recorded as idle, waiting on input, blocked, or exited has been silent far past the threshold
+- **WHEN** a session recorded as idle, waiting on input, blocked, or exited has been in that state far past the threshold
 - **THEN** the check does not warn about it
 
 #### Scenario: A terminated session never warns
@@ -36,13 +36,13 @@ defeat the check. Terminated sessions SHALL NOT warn at any age.
 
 #### Scenario: Several silent sessions are all reported
 
-- **WHEN** more than one active session is silent past the threshold
+- **WHEN** more than one active session is past the threshold
 - **THEN** every one of them is named in the warning
 
 ### Requirement: The signal comes from AO's own activity records
 
-The check SHALL derive silence from the activity the daemon already records for
-each session, read over the existing loopback session listing. It SHALL NOT
+The check SHALL derive the duration from the activity record the daemon already
+keeps for each session, read over the existing loopback session listing. It SHALL NOT
 inspect processes: no process-tree walk, no `ps`, no `tmux`, and no other
 external process-inspection tool. It SHALL NOT introduce any platform-specific
 tool invocation, so it behaves identically on macOS and Linux by construction.
@@ -55,7 +55,7 @@ tool invocation, so it behaves identically on macOS and Linux by construction.
 #### Scenario: A session with no recorded activity at all is not guessed about
 
 - **WHEN** an active session has no recorded activity timestamp
-- **THEN** the check does not warn about it, because silence cannot be measured without a starting point
+- **THEN** the check does not warn about it, because a duration cannot be measured without a starting point
 
 ### Requirement: The check is read-only and cannot fail doctor
 

@@ -18,18 +18,23 @@ surface the heuristic was accumulating.
 
 The operator's real question was never "what process is running" but **"is this
 session wedged?"** — and AO already records the authoritative answer.
-`domain.Activity.LastActivityAt` is the daemon's own record of when a session
-last did anything, and it is already on the session listing the removed check
-was fetching. An agent running a legitimate background server keeps being
-active, so it correctly does not warn; the wedged one has done nothing for eight
-hours, which is exactly the fact that identifies it.
+`domain.Activity.LastActivityAt` is the daemon's own record — deliberately the
+moment the current state was entered, not the last signal received — and it is
+already on the session listing the removed check was fetching. For an active
+session it therefore measures how long the agent has been active WITHOUT
+finishing a turn, which is exactly the wedge signature: a healthy agent
+transitions to idle or waiting_input between turns, while one blocked on a
+leaked `curl` never leaves active.
 
 ## What Changes
 
-- Add a `sessions-idle` check to `ao doctor` that warns when a live,
-  non-terminated session has recorded no activity for longer than a fixed
-  threshold, naming each silent session, how long it has been silent, and the
-  activity state the daemon has for it.
+- Add a `sessions-idle` check to `ao doctor` that warns when a session the
+  daemon records as **active** has been in that state, with no transition to any
+  other, for longer than a fixed threshold — naming each such session, how long
+  it has been stuck, and a command to inspect or end it.
+- Only the active state warns. `idle` means the agent finished a turn;
+  `waiting_input` and `blocked` mean it is paused on the user and are routinely
+  left that way overnight, so warning on them would make the check noise.
 - The signal comes from the daemon's session listing over the existing loopback
   API. The check performs no process inspection: no `ps`, no `tmux`, no
   process-tree walk, and no platform-specific tool invocation, so it works the

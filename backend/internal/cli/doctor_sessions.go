@@ -23,21 +23,26 @@ import (
 // non-interactive `sh -c` enables no job control, so the wrapper, the agent,
 // and every grandchild share one process group.
 //
-// The operator's question was never "what process is running" but "has this
-// agent done anything lately", and the daemon records that for certain. This
+// The operator's question was never "what process is running" but "is this
+// agent still getting anywhere", and the daemon records that for certain. This
 // check reads that record and nothing else: no `ps`, no `tmux`, no process
 // inspection, and therefore no platform-specific behavior to get wrong.
 
-// wedgedSessionSilence is how long a session the daemon believes is ACTIVE may
-// record no activity before doctor mentions it.
+// wedgedSessionStuckFor is how long a session may sit continuously in the
+// active state, with no transition to any other state, before doctor mentions
+// it.
 //
-// It is deliberately hours, not minutes. Activity is recorded per agent hook,
-// so an agent that is really working refreshes it constantly, while daemon
-// downtime silently drops hooks — doctor already suppresses those as
-// restart-window noise. A threshold far longer than any restart window keeps
-// that gap from producing false warnings. The reported case was an agent stuck
-// for eight hours.
-const wedgedSessionSilence = 4 * time.Hour
+// Note what LastActivityAt actually is: lifecycle deliberately records the
+// moment the CURRENT state was entered, not the last signal received
+// (see sameActivity in internal/lifecycle/manager.go — same-state repeats must
+// not rewrite it). So for an active session it measures how long the agent has
+// been active WITHOUT finishing a turn, which is precisely the wedge signature:
+// a healthy agent transitions active -> idle or waiting_input between turns,
+// while one blocked on a leaked `curl` never leaves active.
+//
+// Hours, not minutes, because a single long turn is legitimate. The reported
+// case ran eight.
+const wedgedSessionStuckFor = 4 * time.Hour
 
 // checkWedgedSessions warns about live sessions that have gone silent.
 //
@@ -84,25 +89,25 @@ func (c *commandContext) checkWedgedSessions(ctx context.Context) doctorCheck {
 		if session.Activity.State != string(domain.ActivityActive) {
 			continue
 		}
-		// Silence is measured from a starting point. A session that has never
-		// recorded activity has none, and reading "never" as "infinitely
-		// silent" would warn on every session created before its first hook
-		// lands.
+		// The duration is measured from a starting point. A session with no
+		// recorded activity timestamp has none, and treating "never" as
+		// "infinitely long" would warn on every session created before its
+		// first hook lands.
 		if session.Activity.LastActivityAt.IsZero() {
 			continue
 		}
-		quiet := now.Sub(session.Activity.LastActivityAt)
-		if quiet < wedgedSessionSilence {
+		stuck := now.Sub(session.Activity.LastActivityAt)
+		if stuck < wedgedSessionStuckFor {
 			continue
 		}
-		silent = append(silent, fmt.Sprintf("%s (active, silent %s)", session.ID, formatUptime(quiet)))
+		silent = append(silent, fmt.Sprintf("%s (active for %s with no state change)", session.ID, formatUptime(stuck)))
 	}
 
 	if len(silent) == 0 {
-		return report(doctorPass, fmt.Sprintf("no active session has been silent for over %s", wedgedSessionSilence))
+		return report(doctorPass, fmt.Sprintf("no session has been continuously active for over %s", wedgedSessionStuckFor))
 	}
 	sort.Strings(silent)
 	return report(doctorWarn, fmt.Sprintf(
-		"%d session(s) the daemon believes are active have recorded no activity for over %s — they may be wedged: %s; inspect with `ao session get <id>` and end one with `ao session kill <id>`",
-		len(silent), wedgedSessionSilence, strings.Join(silent, ", ")))
+		"%d session(s) have been continuously active for over %s without finishing a turn — they may be wedged: %s; inspect with `ao session get <id>` and end one with `ao session kill <id>`",
+		len(silent), wedgedSessionStuckFor, strings.Join(silent, ", ")))
 }
