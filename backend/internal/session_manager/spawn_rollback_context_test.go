@@ -528,6 +528,86 @@ func TestKillLetsTheCallerAbandonAgentWorkspaceCleanup(t *testing.T) {
 	}
 }
 
+func TestKillSingleRepoCleanupSurvivesCallerCancellationAfterRuntimeDestroy(t *testing.T) {
+	base := newFakeStore()
+	base.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+	base.sessions["mer-1"] = mkLive("mer-1")
+	st := &ctxHonoringWorktreeStore{fakeStore: base}
+	cctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	rt := &cancelOnRuntimeDestroy{fakeRuntime: &fakeRuntime{}, cancel: cancel}
+	ws := &ctxHonoringWorkspace{fakeWorkspace: &fakeWorkspace{}}
+	lcm := &ctxHonoringLCM{fakeLCM: &fakeLCM{store: base}}
+	m := New(Deps{
+		Runtime: rt, Agents: fakeAgents{}, Workspace: ws, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: lcm,
+		LookPath: func(string) (string, error) { return "/bin/true", nil },
+	})
+
+	if freed, err := m.Kill(cctx, "mer-1"); err != nil || !freed {
+		t.Fatalf("Kill freed=%v err=%v, want successful cleanup despite the caller going away", freed, err)
+	}
+	if cctx.Err() == nil {
+		t.Fatal("setup: the runtime destroy must have cancelled the caller context")
+	}
+	if ws.destroyedLive != 1 {
+		t.Errorf("workspace destroys that took effect = %d (skipped on cancelled ctx = %d); the worktree is still on disk after the runtime is gone",
+			ws.destroyedLive, ws.destroySkipped)
+	}
+	if st.deletedLive != 1 {
+		t.Errorf("restore-marker clears that took effect = %d (skipped on cancelled ctx = %d); the next boot can replay stale restore inventory",
+			st.deletedLive, st.deleteSkipped)
+	}
+	if lcm.terminatedLive != 1 {
+		t.Errorf("terminal-state writes that took effect = %d (skipped on cancelled ctx = %d); the killed row is still live with a dead runtime",
+			lcm.terminatedLive, lcm.terminateSkipped)
+	}
+	if !base.sessions["mer-1"].IsTerminated {
+		t.Error("the killed row is still live after its runtime was destroyed; the next boot reads that as crash recovery")
+	}
+}
+
+func TestKillOwnedElsewhereCleanupSurvivesCallerCancellationAfterRuntimeDestroy(t *testing.T) {
+	base := newFakeStore()
+	st := &ctxHonoringWorktreeStore{fakeStore: base}
+	cctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	rt := &cancelOnRuntimeDestroy{fakeRuntime: &fakeRuntime{}, cancel: cancel}
+	ws := &ctxHonoringWorkspace{fakeWorkspace: &fakeWorkspace{}}
+	lcm := &ctxHonoringLCM{fakeLCM: &fakeLCM{store: base}}
+	m := New(Deps{
+		Runtime: rt, Agents: fakeAgents{}, Workspace: ws, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: lcm,
+		LookPath: func(string) (string, error) { return "/bin/true", nil },
+	})
+	canonical := seedUncoveredChildKill(base)
+
+	if freed, err := m.Kill(cctx, "mer-orch-1"); err != nil || freed {
+		t.Fatalf("Kill freed=%v err=%v, want owned root preserved and cleanup to complete despite the caller going away", freed, err)
+	}
+	if cctx.Err() == nil {
+		t.Fatal("setup: the runtime destroy must have cancelled the caller context")
+	}
+	if ws.destroyedLive != 1 {
+		t.Errorf("child worktree destroys that took effect = %d (skipped on cancelled ctx = %d); the uncovered child at %s is orphaned",
+			ws.destroyedLive, ws.destroySkipped, canonical+"/web")
+	}
+	if st.deletedLive != 1 {
+		t.Errorf("restore-marker clears that took effect = %d (skipped on cancelled ctx = %d); the next boot's RestoreAll can resurrect the killed row into the replacement's worktree",
+			st.deletedLive, st.deleteSkipped)
+	}
+	if lcm.terminatedLive != 1 {
+		t.Errorf("terminal-state writes that took effect = %d (skipped on cancelled ctx = %d); the killed row is still live with a dead runtime",
+			lcm.terminatedLive, lcm.terminateSkipped)
+	}
+	if !base.sessions["mer-orch-1"].IsTerminated {
+		t.Error("the killed row is still live after its runtime was destroyed; the next boot reads that as crash recovery")
+	}
+	if rows := base.worktrees["mer-orch-1"]; len(rows) != 0 {
+		t.Errorf("surviving restore markers = %#v, want none", rows)
+	}
+}
+
 // The complementary half: on the ROLLBACK path the same hook must still run,
 // because rollbackPreparedSpawnWorkspace hands it a detached cleanup context.
 // Together with the Kill test above this pins the split — compensation detaches,
