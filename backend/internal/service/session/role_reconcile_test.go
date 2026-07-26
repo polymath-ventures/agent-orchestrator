@@ -498,11 +498,22 @@ func restoreIsBlockedOnAMutex(stacks string) bool {
 		if !strings.Contains(g, "session.(*Service).Restore(") {
 			continue
 		}
-		// One of these frames is present on every Go version's rendering of a
-		// goroutine parked in Mutex.Lock; matching the set rather than the
-		// goroutine's state word keeps this off runtime formatting details.
-		for _, frame := range []string{"SemacquireMutex", "(*Mutex).lockSlow", "sync.(*Mutex).Lock"} {
-			if strings.Contains(g, frame) {
+		// Only evidence of CONTENTION counts. A bare "sync.(*Mutex).Lock" frame
+		// is not it: that frame is on the stack for the microseconds a goroutine
+		// spends acquiring an UNcontended mutex too, so accepting it would let
+		// the barrier release the parked reconcile while the restore was merely
+		// passing through an unlocked acquisition — and an absent or wrongly
+		// keyed lock would then pass. A goroutine only reaches lockSlow, or the
+		// semaphore wait beneath it, when the mutex is already held.
+		//
+		// The state word in the goroutine header ("[sync.Mutex.Lock]",
+		// "[semacquire]") is the same signal from the runtime's side; either
+		// form is accepted so this does not hinge on one rendering.
+		for _, evidence := range []string{
+			"(*Mutex).lockSlow", "SemacquireMutex", "runtime.semacquire",
+			"[sync.Mutex.Lock", "[semacquire",
+		} {
+			if strings.Contains(g, evidence) {
 				return true
 			}
 		}
