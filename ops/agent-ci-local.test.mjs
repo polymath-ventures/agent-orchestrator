@@ -11,7 +11,7 @@ import {
 	utimesSync,
 	writeFileSync,
 } from "node:fs";
-import { join } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
@@ -26,11 +26,18 @@ test("package scripts expose the repo-owned agent-ci entrypoints", () => {
 
 test("agent-ci wrapper defaults durable state outside /tmp and honors overrides", () => {
 	const src = read("scripts/ci/agent-ci.sh");
-	assert.match(src, /git rev-parse --git-common-dir/);
-	assert.match(src, /AGENT_CI_WORKING_DIR="\$\{AGENT_CI_WORKING_DIR:-\$default_cache_home\/agent-ci\/\$repo_slug\}"/);
-	assert.match(src, /default_cache_home="\$\{XDG_CACHE_HOME:-\$HOME\/\.cache\}"/);
+	assert.match(src, /agent-ci-workdir\.sh/);
+	assert.match(src, /agent_ci_should_export_default_workdir/);
+	assert.match(src, /agent_ci_default_workdir/);
 	assert.doesNotMatch(src, /AGENT_CI_WORKING_DIR=.*\/tmp/);
 	assert.match(src, /set -- run --all/);
+});
+
+test("shared agent-ci workdir resolver owns the default cache rule", () => {
+	const src = read("scripts/ci/agent-ci-workdir.sh");
+	assert.match(src, /git rev-parse --git-common-dir/);
+	assert.match(src, /\/\.agent-ci/);
+	assert.match(src, /XDG_CACHE_HOME:-\$HOME\/\.cache/);
 });
 
 test("agent-ci wrapper uses the repo slug from plain checkouts and subdirectories", () => {
@@ -100,7 +107,7 @@ test("agent-ci wrapper warns when an override points at temporary storage", () =
 test("agent-ci cleanup is dry-run by default and refuses tmp roots", () => {
 	const src = read("scripts/ci/agent-ci-clean.sh");
 	assert.match(src, /mode=dry-run/);
-	assert.match(src, /git rev-parse --git-common-dir/);
+	assert.match(src, /agent-ci-workdir\.sh/);
 	assert.match(src, /--docker-root-helper/);
 	assert.match(src, /docker run --rm --network none -v "\$workdir:\/workdir" alpine:3\.20@sha256:/);
 
@@ -137,6 +144,9 @@ test("agent-ci cleanup force does not create a missing workdir", () => {
 
 test("agent-ci cleanup default cache slug is stable across task worktrees", () => {
 	const cacheHome = mkdtempSync(join(root, ".cache-test-agent-ci-clean-home-"));
+	const commonDir = spawnSync("git", ["rev-parse", "--git-common-dir"], { cwd: root, encoding: "utf8" }).stdout.trim();
+	const expectedSlug = basename(resolve(root, commonDir, ".."));
+	const worktreeSlug = basename(process.cwd());
 	try {
 		const result = spawnSync("bash", ["scripts/ci/agent-ci-clean.sh", "--dry-run"], {
 			cwd: root,
@@ -145,8 +155,8 @@ test("agent-ci cleanup default cache slug is stable across task worktrees", () =
 		});
 
 		assert.equal(result.status, 0, result.stderr);
-		assert.match(result.stdout, /\/agent-ci\/agent-orchestrator\n/);
-		assert.doesNotMatch(result.stdout, /\/agent-ci\/issue-169-agent-ci-workdir\n/);
+		assert.match(result.stdout, new RegExp(`/agent-ci/${expectedSlug}\\n`));
+		assert.doesNotMatch(result.stdout, new RegExp(`/agent-ci/${worktreeSlug}\\n`));
 	} finally {
 		rmSync(cacheHome, { recursive: true, force: true });
 	}
@@ -312,6 +322,31 @@ test("agent-ci cleanup preserves run directories with recent descendant files", 
 		assert.equal(result.status, 0, result.stderr);
 		assert.match(result.stdout, /agent-ci-old-but-active-j1 \(recent\)/);
 		assert.doesNotMatch(result.stdout, /selected for cleanup:[\s\S]*agent-ci-old-but-active-j1/);
+	} finally {
+		rmSync(workdir, { recursive: true, force: true });
+	}
+});
+
+test("agent-ci cleanup reports uncovered workdir entries without deleting them", () => {
+	const workdir = mkdtempSync(join(root, ".cache-test-agent-ci-clean-"));
+	try {
+		const uncoveredTopLevel = join(workdir, "future-runner-state");
+		const uncoveredCache = join(workdir, "cache", "macos-runner");
+		mkdirSync(uncoveredTopLevel, { recursive: true });
+		mkdirSync(uncoveredCache, { recursive: true });
+
+		const result = spawnSync("bash", ["scripts/ci/agent-ci-clean.sh", "--force", "--older-than", "14"], {
+			cwd: root,
+			env: { ...process.env, AGENT_CI_WORKING_DIR: workdir },
+			encoding: "utf8",
+		});
+
+		assert.equal(result.status, 0, result.stderr);
+		assert.match(result.stdout, /not covered by cleanup:/);
+		assert.match(result.stdout, /future-runner-state/);
+		assert.match(result.stdout, /cache\/macos-runner/);
+		assert.ok(statSync(uncoveredTopLevel).isDirectory(), "uncovered top-level state is report-only");
+		assert.ok(statSync(uncoveredCache).isDirectory(), "uncovered cache state is report-only");
 	} finally {
 		rmSync(workdir, { recursive: true, force: true });
 	}

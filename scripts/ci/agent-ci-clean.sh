@@ -63,10 +63,10 @@ need find
 root="$(git rev-parse --show-toplevel)"
 cd "$root"
 
-repo_root="$(cd "$(git rev-parse --git-common-dir)/.." && pwd -P)"
-repo_slug="$(basename "$repo_root")"
-default_cache_home="${XDG_CACHE_HOME:-$HOME/.cache}"
-raw_workdir="${AGENT_CI_WORKING_DIR:-$default_cache_home/agent-ci/$repo_slug}"
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+source "$script_dir/agent-ci-workdir.sh"
+
+raw_workdir="${AGENT_CI_WORKING_DIR:-$(agent_ci_default_workdir)}"
 
 case "$raw_workdir" in
 	""|"/"|"/tmp"|"/tmp/"*|"/var/tmp"|"/var/tmp/"*)
@@ -97,6 +97,15 @@ cutoff_minutes=$((older_than_days * 24 * 60))
 selected=()
 preserved=()
 failed=()
+uncovered=()
+tmp_files=()
+
+cleanup_tmp_files() {
+	for tmp in "${tmp_files[@]}"; do
+		[ -n "$tmp" ] && [ -e "$tmp" ] && rm -f -- "$tmp"
+	done
+}
+trap cleanup_tmp_files EXIT
 
 is_stale() {
 	[ "$(find "$1" -mindepth 0 -maxdepth 0 -mmin "+$cutoff_minutes" -print)" = "$1" ]
@@ -144,24 +153,54 @@ consider_cache_dir() {
 # manual, older-threshold pass here gives operators a dry-run-visible backstop
 # for abandoned workdirs and interrupted hosts.
 if [ -d "$workdir/runs" ]; then
+	run_list="$(mktemp)"
+	tmp_files+=("$run_list")
+	find "$workdir/runs" -mindepth 1 -maxdepth 1 -type d | sort >"$run_list"
 	while IFS= read -r run_dir; do
 		consider_run "$run_dir"
-	done < <(find "$workdir/runs" -mindepth 1 -maxdepth 1 -type d | sort)
+	done <"$run_list"
 fi
 
-for rel in \
-	cache/toolcache \
-	cache/npm-cache \
-	cache/pnpm-store \
-	cache/yarn-cache \
-	cache/bun-cache \
-	cache/playwright \
-	cache/remote-workflows \
-	cache/dtu \
-	cache/node-modules-v2 \
-	runner; do
+covered_cache_dirs=(
+	cache/toolcache
+	cache/npm-cache
+	cache/pnpm-store
+	cache/yarn-cache
+	cache/bun-cache
+	cache/playwright
+	cache/remote-workflows
+	cache/dtu
+	cache/node-modules-v2
+)
+
+for rel in "${covered_cache_dirs[@]}" runner; do
 	consider_cache_dir "$workdir/$rel"
 done
+
+if [ -d "$workdir" ]; then
+	while IFS= read -r top_level; do
+		case "$(basename "$top_level")" in
+			runs|cache|runner)
+				;;
+			*)
+				uncovered+=("$top_level")
+				;;
+		esac
+	done < <(find "$workdir" -mindepth 1 -maxdepth 1 | sort)
+fi
+
+if [ -d "$workdir/cache" ]; then
+	while IFS= read -r cache_child; do
+		covered=false
+		for rel in "${covered_cache_dirs[@]}"; do
+			if [ "$cache_child" = "$workdir/$rel" ]; then
+				covered=true
+				break
+			fi
+		done
+		[ "$covered" = false ] && uncovered+=("$cache_child")
+	done < <(find "$workdir/cache" -mindepth 1 -maxdepth 1 | sort)
+fi
 
 printf 'agent-ci workdir: %s\n' "$workdir"
 printf 'mode: %s; stale threshold: %s days\n' "$mode" "$older_than_days"
@@ -169,6 +208,11 @@ printf 'mode: %s; stale threshold: %s days\n' "$mode" "$older_than_days"
 if [ "${#preserved[@]}" -gt 0 ]; then
 	printf '\npreserved:\n'
 	printf '  %s\n' "${preserved[@]}"
+fi
+
+if [ "${#uncovered[@]}" -gt 0 ]; then
+	printf '\nnot covered by cleanup:\n'
+	printf '  %s\n' "${uncovered[@]}"
 fi
 
 if [ "${#selected[@]}" -eq 0 ]; then

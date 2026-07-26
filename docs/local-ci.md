@@ -46,6 +46,11 @@ The cleanup command prunes only stale state under the resolved
 goal is to keep durable Agent CI state out of temporary host storage rather than
 paper over the old default.
 
+After the first successful wrapper run, remove any legacy `/tmp/agent-ci*`
+trees manually once you have confirmed no active or intentionally paused retry
+state remains there. The repo cleanup command intentionally refuses those
+temporary roots.
+
 Agent CI already prunes many stale run workspaces and dependency snapshots when
 a run starts. This explicit cleanup command is a dry-run-visible backstop for
 abandoned workdirs, interrupted hosts, and cache families that are not covered
@@ -62,6 +67,9 @@ by that startup prune. Cleanup covers these Agent CI workdir areas:
 - `cache/dtu`
 - `cache/node-modules-v2`
 - `runner`
+
+Unexpected top-level workdir entries and unexpected `cache/*` entries are
+reported under `not covered by cleanup` and are never deleted automatically.
 
 By default, paths must be older than 14 days before they are selected. Recent
 runs and caches are preserved, including directories with recent descendant
