@@ -181,9 +181,18 @@ protects ordinary systemd stop/restart jobs, not direct process kills.
 The server lives on `$AO_DATA_DIR/run/tmux/default`, not tmux's default
 `/tmp/tmux-$UID/default`. A session handle is app state, and a routine operator
 `/tmp` sweep — the kind disk pressure forces — would otherwise orphan the whole
-live fleet (issue #160). Both units carry that path literally; it is the
-systemd-side copy of `tmux.SocketPath(AO_DATA_DIR)` in the Go adapter, and
-`ops/ao-systemd-units.test.mjs` asserts the two agree.
+live fleet (issue #160). Neither unit hardcodes the resolved path: both derive
+`-S` from their own `AO_DATA_DIR`, so only the `/run/tmux/default` suffix — the
+layout of `tmux.SocketPath(AO_DATA_DIR)` in the Go adapter — is written out on
+the systemd side. `ops/ao-systemd-units.test.mjs` asserts that every `-S` in
+both units is derived and that the two units pin the same `AO_DATA_DIR`.
+
+**Overriding `AO_DATA_DIR` means editing both units.** `ao-tmux.service` owns
+the socket that `ao.service`'s daemon then connects to, so a drop-in
+(`systemctl --user edit …`) applied to only one of them splits the pair: the
+daemon uses one socket while the ownership gate probes another, and the gate
+protects nothing. Apply the same override to `ao.service` and
+`ao-tmux.service` together.
 
 `ops/ao-tmux-claim.timer` periodically asks systemd to start `ao-tmux.service`.
 Most ticks are no-ops. The timer matters after a legacy or crashed tmux server

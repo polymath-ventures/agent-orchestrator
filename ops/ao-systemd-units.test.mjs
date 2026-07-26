@@ -97,37 +97,42 @@ test("ao-config-drift service is a oneshot that runs the drift-check runner and 
 });
 
 test("both units derive the tmux socket from one AO_DATA_DIR, never a hardcoded copy", async () => {
-	const ao = await unit("./ao.service");
-	const aoTmux = await unit("./ao-tmux.service");
+	const units = [
+		["ao.service", await unit("./ao.service")],
+		["ao-tmux.service", await unit("./ao-tmux.service")],
+	];
 
-	// One fact, one place. Hardcoding the resolved path in the units means a
+	// One fact, one place. Hardcoding the resolved path in a unit means a
 	// drop-in overriding AO_DATA_DIR moves the daemon's socket while the
 	// ownership gate keeps probing the old one — the gate then protects nothing.
-	for (const [name, text] of [
-		["ao.service", ao],
-		["ao-tmux.service", aoTmux],
-	]) {
-		assert.doesNotMatch(
-			text,
-			/-S\s+"?(%h|\/home|~)[^"\s]*\/run\/tmux\/default/,
-			`${name} must derive the tmux socket from AO_DATA_DIR, not hardcode a path`,
-		);
-		assert.match(
-			text,
-			/-S\s+"?(\$\{AO_DATA_DIR\}|\$AO_DATA_DIR)\/run\/tmux\/default/,
-			`${name} must reference $AO_DATA_DIR/run/tmux/default`,
-		);
+	// Check EVERY -S occurrence and EVERY assignment, not just the first: a
+	// single derived reference alongside a hardcoded one would otherwise pass.
+	const dataDirs = new Map();
+	for (const [name, text] of units) {
+		const sockets = [...text.matchAll(/-S\s+("[^"]*"|\S+)/g)].map((m) => m[1].replace(/"/g, ""));
+		assert.ok(sockets.length > 0, `${name} must pass -S to tmux`);
+		for (const socket of sockets) {
+			assert.match(
+				socket,
+				/^(\$\{AO_DATA_DIR\}|\$AO_DATA_DIR)\/run\/tmux\/default$/,
+				`${name}: socket ${socket} must derive from AO_DATA_DIR, not hardcode a path`,
+			);
+		}
+
+		const assignments = [...text.matchAll(/^Environment=AO_DATA_DIR=(.+)$/gm)].map((m) => m[1]);
+		assert.equal(assignments.length, 1, `${name} must pin AO_DATA_DIR exactly once (found ${assignments.length})`);
+		dataDirs.set(name, assignments[0]);
 	}
 
 	// Both units must agree on the data dir itself, since ao-tmux.service owns
-	// the socket ao.service's daemon then connects to.
-	const dataDir = (t) => t.match(/^Environment=AO_DATA_DIR=(.+)$/m)?.[1];
-	assert.ok(dataDir(ao), "ao.service must pin AO_DATA_DIR");
-	assert.equal(dataDir(aoTmux), dataDir(ao), "ao-tmux.service must pin the same AO_DATA_DIR as ao.service");
+	// the socket ao.service's daemon then connects to. An operator overriding
+	// AO_DATA_DIR must edit both units — see docs/fork.md.
+	assert.equal(
+		dataDirs.get("ao-tmux.service"),
+		dataDirs.get("ao.service"),
+		"ao-tmux.service must pin the same AO_DATA_DIR as ao.service",
+	);
 
 	// "/run/tmux/default" is the one systemd-side copy of the layout in
 	// backend/internal/adapters/runtime/tmux.SocketPath(<dataDir>).
-	const layout = "/run/tmux/default";
-	assert.ok(aoTmux.includes(`start-server`) && aoTmux.includes(layout));
-	assert.ok(ao.includes(layout));
 });

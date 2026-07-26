@@ -853,9 +853,9 @@ operator `/tmp` sweep — or tmpfs pressure — would orphan every live session
 Two consequences:
 
 - **Attaching by hand needs the socket.** `tmux attach -t <session>` no longer
-  finds AO sessions; use `tmux -S ~/.ao/data/run/tmux/default attach -t
-<session>`. The daemon logs the resolved path at startup (`tmux runtime
-socket`).
+  finds AO sessions; use
+  `tmux -S "${AO_DATA_DIR:-$HOME/.ao/data}/run/tmux/default" attach -t <session>`. The daemon
+  logs the resolved path at startup (`tmux runtime socket`).
 - **Transitional fallback.** Changing the path does not migrate a tmux server
   already running on the old socket. For sessions that predate this change, the
   runtime falls back to tmux's default socket (`$TMUX_TMPDIR` if set, else
