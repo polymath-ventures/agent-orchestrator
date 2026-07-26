@@ -4,9 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
-	"slices"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -67,38 +67,43 @@ func newStatusCommand(ctx *commandContext) *cobra.Command {
 }
 
 func newDoctorCommand(ctx *commandContext) *cobra.Command {
-	return &cobra.Command{
-		Use:                "doctor [ao-doctor-args...]",
-		Short:              "Run ao doctor plus fork service checks",
-		DisableFlagParsing: true,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return ctx.runDoctor(cmd.Context(), cmd, args)
+	var asJSON bool
+	cmd := &cobra.Command{
+		Use:   "doctor",
+		Short: "Run ao doctor plus fork service checks",
+		Long: "Run ao doctor and add fork-owned service checks for loaded " +
+			"ao-web.service and ao-tmux.service units.",
+		Args: noArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			doctorArgs := []string{"doctor"}
+			if asJSON {
+				doctorArgs = append(doctorArgs, "--json")
+				return ctx.runDoctorJSON(cmd.Context(), cmd, doctorArgs)
+			}
+			return ctx.runDoctorText(cmd.Context(), cmd, doctorArgs)
 		},
 	}
+	cmd.Flags().BoolVar(&asJSON, "json", false, "Output health checks as JSON")
+	return cmd
 }
 
-func (c *commandContext) runDoctor(ctx context.Context, cmd *cobra.Command, args []string) error {
-	doctorArgs := append([]string{"doctor"}, args...)
-	if slices.Contains(args, "--json") {
-		return c.runDoctorJSON(ctx, cmd, doctorArgs)
-	}
-
-	if err := c.runAOPassthrough(ctx, doctorArgs...); err != nil {
-		return err
-	}
-	// Help is entirely owned by `ao doctor`; adding a unit-health footer to
-	// help text is noisy and can make help snapshots brittle.
-	if slices.Contains(args, "--help") || slices.Contains(args, "-h") {
-		return nil
-	}
-
+func (c *commandContext) runDoctorText(ctx context.Context, cmd *cobra.Command, doctorArgs []string) error {
+	aoErr := c.runAOPassthrough(ctx, doctorArgs...)
 	checks, err := c.forkDoctorChecks(ctx)
 	if err != nil {
+		if aoErr != nil {
+			return fmt.Errorf("fork service probe failed after ao doctor failed: %w", err)
+		}
 		return err
 	}
 	if len(checks) == 0 {
-		_, err := fmt.Fprintln(cmd.OutOrStdout(), "fork services: not found")
-		return err
+		if _, err := fmt.Fprintln(cmd.OutOrStdout(), "fork services: not found"); err != nil {
+			return err
+		}
+		if aoErr != nil {
+			return aoErr
+		}
+		return nil
 	}
 	for _, check := range checks {
 		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "fork service %s: %s\n", check.Name, check.Message); err != nil {
@@ -107,7 +112,13 @@ func (c *commandContext) runDoctor(ctx context.Context, cmd *cobra.Command, args
 	}
 	failures := forkDoctorFailures(checks)
 	if len(failures) > 0 {
+		if aoErr != nil {
+			return fmt.Errorf("ao doctor failed and fork service health failed: %s", strings.Join(failures, ", "))
+		}
 		return fmt.Errorf("fork service health failed: %s", strings.Join(failures, ", "))
+	}
+	if aoErr != nil {
+		return aoErr
 	}
 	return nil
 }
@@ -120,7 +131,7 @@ type aongDoctorReport struct {
 
 type aongDoctorCheck struct {
 	Level   string `json:"level"`
-	Section string `json:"section"`
+	Section string `json:"section,omitempty"`
 	Name    string `json:"name"`
 	Message string `json:"message"`
 }
@@ -279,21 +290,41 @@ func newDrainCommand(ctx *commandContext) *cobra.Command {
 }
 
 func newPauseCommand(ctx *commandContext) *cobra.Command {
-	return &cobra.Command{
-		Use:   "pause",
+	var all, hard bool
+	cmd := &cobra.Command{
+		Use:   "pause [project]",
 		Short: "Explain the honest fleet work-control verbs",
-		Args:  noArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			if ctx.verbose {
-				_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "aong: diverges: pause is not an alias for `ao pause`; no ao command will be run")
-			}
-			_, err := fmt.Fprintln(cmd.OutOrStdout(), "`aong pause` is intentionally not an alias. Use `aong drain` to gate new work and drain live workers at idle, or `aong stop-work` to terminate live work now.")
-			if err != nil {
+		Long: "`aong pause` without arguments intentionally does not alias the fleet\n" +
+			"work-control command. Use `aong drain` to gate new work and drain at idle,\n" +
+			"or `aong stop-work` to terminate live work now.\n\n" +
+			"`aong pause <project>` still preserves AO's project-scoped pause.",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 1 && !all && !hard {
+				if err := ctx.echoAO(cmd.Context(), cmd.OutOrStdout(), "pause", args[0]); err != nil {
+					return err
+				}
+				_, err := fmt.Fprintf(cmd.OutOrStdout(), "Project stays paused until `aong resume %s`.\n", args[0])
 				return err
 			}
-			return usageError{fmt.Errorf("pause is not an aong verb; use drain or stop-work")}
+			return printPauseGuidance(ctx, cmd)
 		},
 	}
+	cmd.Flags().BoolVar(&all, "all", false, "Use aong drain or aong stop-work for fleet-wide work control")
+	cmd.Flags().BoolVar(&hard, "hard", false, "Use aong stop-work for immediate fleet-wide termination")
+	_ = cmd.Flags().MarkHidden("all")
+	_ = cmd.Flags().MarkHidden("hard")
+	return cmd
+}
+
+func printPauseGuidance(ctx *commandContext, cmd *cobra.Command) error {
+	if ctx.verbose {
+		_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "aong: diverges: fleet pause is not an alias for `ao pause`; no ao command will be run")
+	}
+	_, err := fmt.Fprintln(cmd.OutOrStdout(), "`aong pause` is intentionally not a fleet alias. Use `aong drain` to gate new work and drain live workers at idle, `aong stop-work` to terminate live work now, or `aong pause <project>` for a project-scoped pause.")
+	if err != nil {
+		return err
+	}
+	return usageError{errors.New("fleet pause is not an aong verb; use drain or stop-work")}
 }
 
 func newStopWorkCommand(ctx *commandContext) *cobra.Command {
@@ -321,10 +352,18 @@ func (c *commandContext) runGating(ctx context.Context, cmd *cobra.Command, args
 
 func newResumeCommand(ctx *commandContext) *cobra.Command {
 	return &cobra.Command{
-		Use:   "resume",
+		Use:   "resume [project]",
 		Short: "Restore fleet-wide intake and spawns",
-		Args:  noArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
+		Args: func(_ *cobra.Command, args []string) error {
+			if len(args) > 1 {
+				return usageError{errors.New("expected at most one project")}
+			}
+			return nil
+		},
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 1 {
+				return ctx.echoAO(cmd.Context(), cmd.OutOrStdout(), "resume", args[0])
+			}
 			return ctx.echoAO(cmd.Context(), cmd.OutOrStdout(), "resume", "--all")
 		},
 	}

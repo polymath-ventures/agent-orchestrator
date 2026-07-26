@@ -1,17 +1,23 @@
 # aong pause
 
-Explain the honest fleet work-control verbs. `aong pause` intentionally does not
-alias `drain`: use `aong drain` to gate and drain at idle, or
-`aong stop-work` to terminate live work now.
+Explain the honest fleet work-control verbs, or pause one project. Bare
+`aong pause` intentionally does not alias `drain`: use `aong drain` to gate and
+drain at idle, or `aong stop-work` to terminate live work now. `aong pause
+<project>` preserves AO's project-scoped pause.
 
 ## Syntax
 
 ```
-aong pause
+aong pause [project]
 ```
 
 ## Examples
 
 ```bash
 aong pause
+```
+
+```bash
+# Pause one project
+aong pause agent-orchestrator
 ```

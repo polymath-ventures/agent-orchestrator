@@ -337,7 +337,7 @@ against upstream. There is no remote-patch script. Branch off `upstream/main`.
   guess:
 
   ```bash
-  ao spawn --project agent-orchestrator --prompt "Fix #<n>: <one-line problem statement>. \
+  aong spawn --project agent-orchestrator --prompt "Fix #<n>: <one-line problem statement>. \
   Root cause: <file:line + mechanism>. Suggested approach: <approach>. Branch off upstream/main. \
   Build with 'cd backend && go build ./... && go test ./...' before opening a PR against AgentWrapper/agent-orchestrator."
   ```

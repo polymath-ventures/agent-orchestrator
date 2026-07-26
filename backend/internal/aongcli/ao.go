@@ -75,6 +75,7 @@ func (c *commandContext) runAO(ctx context.Context, args ...string) ([]byte, err
 	if err != nil {
 		return nil, err
 	}
+	c.explainAO("run", args...)
 	out, err := c.deps.RunCommand(ctx, aoPath, args...)
 	if err != nil {
 		return out, fmt.Errorf("ao %s: %w%s", strings.Join(args, " "), err, indentedOutput(out))
@@ -84,7 +85,6 @@ func (c *commandContext) runAO(ctx context.Context, args ...string) ([]byte, err
 
 // echoAO runs an `ao` command and relays its output verbatim.
 func (c *commandContext) echoAO(ctx context.Context, out io.Writer, args ...string) error {
-	c.explainAO("run", args...)
 	stdout, err := c.runAO(ctx, args...)
 	if err != nil {
 		return err

@@ -71,6 +71,10 @@ actual effect:
 - `aong stop-work` SHALL run `ao pause --all --hard`: terminate all live work
   immediately, including orchestrator and Prime sessions.
 - `aong resume` SHALL run `ao resume --all`, restoring normal intake and spawns.
+- `aong pause <project>` SHALL run `ao pause <project>`, preserving AO's
+  project-scoped pause.
+- `aong resume <project>` SHALL run `ao resume <project>`, preserving AO's
+  project-scoped resume.
 
 `aong drain` and `aong stop-work` SHALL state in their output that the fleet
 remains gated until `aong resume` is run. `aong pause` SHALL be a deliberate
@@ -93,6 +97,16 @@ the available work-control verbs are `aong drain` for gate-and-drain-at-idle and
 - **WHEN** `aong resume` runs
 - **THEN** `ao resume --all` is invoked
 
+#### Scenario: project pause is preserved
+
+- **WHEN** `aong pause my-project` runs
+- **THEN** `ao pause my-project` is invoked
+
+#### Scenario: project resume is preserved
+
+- **WHEN** `aong resume my-project` runs
+- **THEN** `ao resume my-project` is invoked
+
 #### Scenario: Gating verbs name the way back
 
 - **WHEN** `aong drain` or `aong stop-work` completes successfully
@@ -101,6 +115,11 @@ the available work-control verbs are `aong drain` for gate-and-drain-at-idle and
 #### Scenario: pause redirects rather than aliasing
 
 - **WHEN** `aong pause` runs
+- **THEN** no `ao pause` command is invoked, the output points at `aong drain` and `aong stop-work`, and the process exits as command-line misuse
+
+#### Scenario: fleet pause flags redirect rather than aliasing
+
+- **WHEN** `aong pause --all` or `aong pause --all --hard` runs
 - **THEN** no `ao pause` command is invoked, the output points at `aong drain` and `aong stop-work`, and the process exits as command-line misuse
 
 ### Requirement: aong follows AO's CLI exit-code convention
@@ -112,7 +131,7 @@ exit code exactly.
 
 #### Scenario: Misuse exits 2
 
-- **WHEN** `aong` is invoked with an unknown flag before the verb, an unexpected argument to an overridden verb, or help for an overridden verb that does not exist
+- **WHEN** `aong` is invoked with an unknown flag before the verb, an unexpected argument to an overridden verb, or help for a command that does not exist
 - **THEN** the process exits with code 2
 
 #### Scenario: Help and version still succeed
@@ -157,8 +176,8 @@ command.
 
 #### Scenario: Flags after passthrough verb are preserved
 
-- **WHEN** `aong doctor --verbose` runs and `doctor` is not parsed as an `aong` override flag position
-- **THEN** `aong` invokes `ao doctor --verbose`
+- **WHEN** `aong project --verbose` runs and `project` is not parsed as an `aong` override flag position
+- **THEN** `aong` invokes `ao project --verbose`
 
 ### Requirement: aong help describes the complete surface
 
@@ -174,13 +193,13 @@ verb SHALL show `aong`'s own help for that verb.
 
 #### Scenario: Passthrough verb help delegates to ao
 
-- **WHEN** `aong doctor --help` runs for a passthrough command
-- **THEN** `aong` invokes `ao doctor --help`
+- **WHEN** `aong project --help` runs for a passthrough command
+- **THEN** `aong` invokes `ao project --help`
 
 #### Scenario: Override verb help stays local
 
-- **WHEN** `aong drain --help` runs
-- **THEN** `aong` prints its own `drain` help and does not invoke `ao drain --help`
+- **WHEN** `aong drain --help` or `aong doctor --help` runs
+- **THEN** `aong` prints its own override help and does not invoke `ao <verb> --help`
 
 ### Requirement: aong doctor includes fork service health
 
@@ -189,7 +208,9 @@ user service units `ao-web.service` and `ao-tmux.service` when they are loaded
 in the user service manager. The added checks SHALL report each loaded unit's
 active state. A loaded unit that is not active SHALL make `aong doctor` fail
 after preserving `ao doctor` output. Missing units on hosts where they are not
-loaded SHALL be reported as not present and SHALL NOT fail the command.
+loaded SHALL be reported as not present and SHALL NOT fail the command. Plain
+text `aong doctor` SHALL still run the fork service checks when `ao doctor`
+fails, so the fork-owned service state is visible in the same diagnostic run.
 
 #### Scenario: doctor preserves ao doctor output
 
@@ -198,8 +219,13 @@ loaded SHALL be reported as not present and SHALL NOT fail the command.
 
 #### Scenario: doctor json includes fork unit checks
 
-- **WHEN** `aong doctor --json` runs
+- **WHEN** `aong doctor --json` or `aong doctor --json=true` runs
 - **THEN** `aong` invokes `ao doctor --json`, preserves the doctor report JSON shape, and includes fork service checks in that report
+
+#### Scenario: doctor text keeps fork checks when ao doctor fails
+
+- **WHEN** `aong doctor` runs and `ao doctor` fails before fork service checks
+- **THEN** `aong` preserves `ao doctor` output, still reports fork service health, and exits with a failure
 
 #### Scenario: Loaded healthy fork units pass
 

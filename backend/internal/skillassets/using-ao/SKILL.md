@@ -25,13 +25,13 @@ names are misleading on the web-first deployment. Every command is
 | `doctor` | Run health checks plus fork service checks | Diagnosing AO setup problems | [commands/doctor.md](commands/doctor.md) |
 | `drain` | Gate new work and drain workers at idle | Pausing intake without interrupting live turns | [commands/drain.md](commands/drain.md) |
 | `stop-work` | Terminate all live work immediately | Emergency fleet stop | [commands/stop-work.md](commands/stop-work.md) |
-| `resume` | Restore fleet-wide intake and spawns | Returning from drain/stop-work | [commands/resume.md](commands/resume.md) |
+| `resume` | Restore fleet-wide intake and spawns, or resume one project | Returning from drain/stop-work or a project pause | [commands/resume.md](commands/resume.md) |
 | `stop` | Stop the AO daemon only | Stopping supervision while sessions keep running | [commands/stop.md](commands/stop.md) |
 | `shutdown` | Stop live work, then stop the daemon | Full local shutdown | [commands/shutdown.md](commands/shutdown.md) |
-| `pause` | Explain the honest work-control verbs | Recovering from the old misleading verb | [commands/pause.md](commands/pause.md) |
+| `pause` | Explain the honest work-control verbs, or pause one project | Recovering from the old misleading fleet verb | [commands/pause.md](commands/pause.md) |
 | `import` | Import projects from a legacy AO install | Migrating from the old flat-file store | [commands/import.md](commands/import.md) |
-| `version` | Print version information | Checking installed version | - |
-| `completion` | Generate shell completion scripts | Setting up tab completion | - |
+| `version` | Pass through to AO version information (`aong --version` prints aong metadata) | Checking installed version | - |
+| `completion` | Pass through to raw AO shell completion scripts | Setting up tab completion for `ao` | - |
 
 ## Conventions
 
