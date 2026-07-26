@@ -67,9 +67,17 @@ func TestHealthProbesIncludeDaemonIdentity(t *testing.T) {
 			ExecutablePath          string `json:"executablePath"`
 			WorkingDirectory        string `json:"workingDirectory"`
 			StartupWorkingDirectory string `json:"startupWorkingDirectory"`
+			BuildRevision           string `json:"buildRevision"`
 		}
 		if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
 			t.Fatalf("decode %s: %v", path, err)
+		}
+		// Unconditional, unlike executablePath: a caller with no read access to
+		// the binary uses this to tell which source produced the daemon
+		// answering it, and an absent field is indistinguishable from an old
+		// build that never reported one.
+		if body.BuildRevision == "" {
+			t.Errorf("GET %s buildRevision is absent; the responder's provenance is unknowable to any caller that cannot read its binary", path)
 		}
 		if body.ExecutablePath != wantExe {
 			t.Errorf("GET %s executablePath = %q, want %q", path, body.ExecutablePath, wantExe)

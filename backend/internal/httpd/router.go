@@ -324,6 +324,12 @@ func daemonProbePayload(status string, cfg config.Config) map[string]any {
 		"status":  status,
 		"service": daemonmeta.ServiceName,
 		"pid":     os.Getpid(),
+		// Unconditional, unlike the fields below: this is the only thing in the
+		// payload that identifies the *source* the responder was built from, and
+		// a caller that cannot read the binary has nothing else to check it
+		// against. It carries buildRevisionUnknown rather than disappearing when
+		// the build is unstamped.
+		"buildRevision": buildRevision(),
 	}
 	if exe, err := os.Executable(); err == nil && exe != "" {
 		payload["executablePath"] = exe
