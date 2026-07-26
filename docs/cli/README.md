@@ -36,29 +36,29 @@ Every product command resolves to a daemon HTTP route. Run `ao <command>
 
 ### Product commands
 
-| Command                           | Daemon route                                                          |
-| --------------------------------- | --------------------------------------------------------------------- |
-| `ao project add`                  | `POST /api/v1/projects`                                               |
-| `ao project ls`                   | `GET /api/v1/projects`                                                |
-| `ao project get <id>`             | `GET /api/v1/projects/{id}`                                           |
-| `ao project set-config <id>`      | `PUT /api/v1/projects/{id}/config`                                    |
-| `ao project config export <p>`    | `GET /api/v1/projects/{id}`                                           |
-| `ao project config apply <p> <f>` | `GET` + `PUT /api/v1/projects/{id}/config`                            |
-| `ao project config diff <p> <f>`  | `GET /api/v1/projects/{id}`                                           |
-| `ao project rm <id>`              | `DELETE /api/v1/projects/{id}`                                        |
-| `ao role prompt <project> <role>` | `GET /api/v1/projects/{id}/roles/{role}/prompt`                       |
-| `ao prime settings`               | `GET /api/v1/prime/settings`                                          |
-| `ao prime enable` / `disable`     | `GET` + `PUT /api/v1/prime/settings`                                  |
-| `ao prime prompt`                 | `GET /api/v1/prime/prompt`                                            |
-| `ao pause [project] [--hard]`     | `POST /api/v1/projects/{id}/pause` (or `/fleet/pause` with `--all`)   |
-| `ao resume [project]`             | `POST /api/v1/projects/{id}/resume` (or `/fleet/resume` with `--all`) |
-| `ao agent ls`                     | `GET /api/v1/agents`                                                  |
-| `ao agent ls --refresh`           | `POST /api/v1/agents/refresh`                                         |
-| `ao spawn`                        | `POST /api/v1/sessions`                                               |
-| `ao session ls`                   | `GET /api/v1/sessions`                                                |
-| `ao session get <id>`             | `GET /api/v1/sessions/{id}`                                           |
-| `ao session kill <id>`            | `POST /api/v1/sessions/{id}/kill`                                     |
-| `ao session restore <id>`         | `POST /api/v1/sessions/{id}/restore`                                  |
+| Command                               | Daemon route                                                          |
+| ------------------------------------- | --------------------------------------------------------------------- |
+| `ao project add`                      | `POST /api/v1/projects`                                               |
+| `ao project ls`                       | `GET /api/v1/projects`                                                |
+| `ao project get <id>`                 | `GET /api/v1/projects/{id}`                                           |
+| `ao project set-config <id>`          | `PUT /api/v1/projects/{id}/config`                                    |
+| `ao project config export <p>`        | `GET /api/v1/projects/{id}`                                           |
+| `ao project config apply <p> <f>`     | `GET` + `PUT /api/v1/projects/{id}/config`                            |
+| `ao project config diff <p> <f>`      | `GET /api/v1/projects/{id}`                                           |
+| `ao project rm <id>`                  | `DELETE /api/v1/projects/{id}`                                        |
+| `ao role prompt <project> <role>`     | `GET /api/v1/projects/{id}/roles/{role}/prompt`                       |
+| `ao prime settings`                   | `GET /api/v1/prime/settings`                                          |
+| `ao prime enable` / `set` / `disable` | `GET` + `PUT /api/v1/prime/settings`                                  |
+| `ao prime prompt`                     | `GET /api/v1/prime/prompt`                                            |
+| `ao pause [project] [--hard]`         | `POST /api/v1/projects/{id}/pause` (or `/fleet/pause` with `--all`)   |
+| `ao resume [project]`                 | `POST /api/v1/projects/{id}/resume` (or `/fleet/resume` with `--all`) |
+| `ao agent ls`                         | `GET /api/v1/agents`                                                  |
+| `ao agent ls --refresh`               | `POST /api/v1/agents/refresh`                                         |
+| `ao spawn`                            | `POST /api/v1/sessions`                                               |
+| `ao session ls`                       | `GET /api/v1/sessions`                                                |
+| `ao session get <id>`                 | `GET /api/v1/sessions/{id}`                                           |
+| `ao session kill <id>`                | `POST /api/v1/sessions/{id}/kill`                                     |
+| `ao session restore <id>`             | `POST /api/v1/sessions/{id}/restore`                                  |
 
 `project config apply` sends the `configETag` from its read as `If-Match`, so
 concurrent edits fail with `PROJECT_CONFIG_STALE` instead of being overwritten.
