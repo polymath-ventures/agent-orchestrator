@@ -3,12 +3,16 @@ package aongcli
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	aocli "github.com/aoagents/agent-orchestrator/backend/internal/cli"
 )
 
 // recordedCall is one command aong asked the OS to run.
@@ -30,8 +34,10 @@ type fakeHost struct {
 	// respond returns output and error for a call, keyed by the rendered argv
 	// suffix (the binary's base name plus args).
 	respond  func(call recordedCall) ([]byte, error)
+	stream   func(call recordedCall, in io.Reader, out, errOut io.Writer) error
 	lookPath map[string]string
 	exePath  string
+	in       io.Reader
 }
 
 func newFakeHost(t *testing.T) *fakeHost {
@@ -49,7 +55,11 @@ func newFakeHost(t *testing.T) *fakeHost {
 }
 
 func (h *fakeHost) deps(out, errOut *bytes.Buffer) Deps {
+	if h.in == nil {
+		h.in = strings.NewReader("")
+	}
 	return Deps{
+		In:         h.in,
 		Out:        out,
 		Err:        errOut,
 		Executable: func() (string, error) { return h.exePath, nil },
@@ -66,6 +76,14 @@ func (h *fakeHost) deps(out, errOut *bytes.Buffer) Deps {
 				return nil, nil
 			}
 			return h.respond(call)
+		},
+		RunStreamingCommand: func(_ context.Context, name string, args []string, in io.Reader, out io.Writer, errOut io.Writer) error {
+			call := recordedCall{name: name, args: args}
+			h.calls = append(h.calls, call)
+			if h.stream == nil {
+				return nil
+			}
+			return h.stream(call, in, out, errOut)
 		},
 	}
 }
@@ -94,11 +112,14 @@ func (h *fakeHost) aoArgv() []string {
 func run(t *testing.T, h *fakeHost, args ...string) (string, string, error) {
 	t.Helper()
 	var out, errOut bytes.Buffer
-	cmd := NewRootCommand(h.deps(&out, &errOut))
-	cmd.SetArgs(args)
-	err := cmd.Execute()
+	err := executeWithDeps(h.deps(&out, &errOut), args)
 	return out.String(), errOut.String(), err
 }
+
+type exitCodeError int
+
+func (e exitCodeError) Error() string { return fmt.Sprintf("exit status %d", e) }
+func (e exitCodeError) ExitCode() int { return int(e) }
 
 // systemdHost configures the fake host as a systemd deployment where the named
 // units are loaded and every other AO unit is not-found.
@@ -274,6 +295,107 @@ func TestAOFailureSurfacesCommandAndOutput(t *testing.T) {
 	}
 	if len(h.aoArgv()) != 1 {
 		t.Fatalf("retried or substituted a fallback: %v", h.aoArgv())
+	}
+}
+
+// --- passthrough ---------------------------------------------------------
+
+func TestPassthroughForwardsNonOverriddenVerb(t *testing.T) {
+	h := newFakeHost(t)
+	h.in = strings.NewReader("payload")
+	h.stream = func(call recordedCall, in io.Reader, out, errOut io.Writer) error {
+		body, err := io.ReadAll(in)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(body) != "payload" {
+			t.Fatalf("stdin = %q, want payload", body)
+		}
+		_, _ = fmt.Fprint(out, "project ok\n")
+		_, _ = fmt.Fprint(errOut, "project warn\n")
+		return nil
+	}
+
+	out, errOut, err := run(t, h, "project", "list")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := h.aoArgv(); len(got) != 1 || got[0] != aoBinaryName()+" project list" {
+		t.Fatalf("ao calls = %v, want one `ao project list`", got)
+	}
+	if out != "project ok\n" {
+		t.Fatalf("stdout = %q, want streamed ao stdout", out)
+	}
+	if errOut != "project warn\n" {
+		t.Fatalf("stderr = %q, want streamed ao stderr", errOut)
+	}
+}
+
+func TestPassthroughPreservesAOExitCode(t *testing.T) {
+	h := newFakeHost(t)
+	h.stream = func(recordedCall, io.Reader, io.Writer, io.Writer) error {
+		return exitCodeError(7)
+	}
+
+	_, _, err := run(t, h, "project")
+	if got := ExitCode(err); got != 7 {
+		t.Fatalf("ExitCode(%v) = %d, want 7", err, got)
+	}
+}
+
+func TestPassthroughVerboseReportsAOInvocation(t *testing.T) {
+	h := newFakeHost(t)
+
+	_, errOut, err := run(t, h, "--verbose", "project", "list")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(errOut, "ao project list") {
+		t.Fatalf("verbose output %q does not name passthrough invocation", errOut)
+	}
+}
+
+func TestPassthroughKeepsFlagsAfterVerb(t *testing.T) {
+	h := newFakeHost(t)
+
+	if _, _, err := run(t, h, "project", "--verbose"); err != nil {
+		t.Fatal(err)
+	}
+	if got := h.aoArgv(); len(got) != 1 || got[0] != aoBinaryName()+" project --verbose" {
+		t.Fatalf("ao calls = %v, want one `ao project --verbose`", got)
+	}
+}
+
+func TestHelpForPassthroughVerbDelegatesToAO(t *testing.T) {
+	for _, args := range [][]string{{"project", "--help"}, {"help", "project"}} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			h := newFakeHost(t)
+			if _, _, err := run(t, h, args...); err != nil {
+				t.Fatal(err)
+			}
+			if got := h.aoArgv(); len(got) != 1 || got[0] != aoBinaryName()+" project --help" {
+				t.Fatalf("ao calls = %v, want one `ao project --help`", got)
+			}
+		})
+	}
+}
+
+func TestCurrentAOCommandsAreReachableThroughAONG(t *testing.T) {
+	aoRoot := aocli.NewRootCommand(aocli.Deps{Out: &bytes.Buffer{}, Err: &bytes.Buffer{}, In: strings.NewReader("")})
+	for _, aoCmd := range aoRoot.Commands() {
+		if aoCmd.Hidden || isAONGOverride(aoCmd.Name()) {
+			continue
+		}
+		t.Run(aoCmd.Name(), func(t *testing.T) {
+			h := newFakeHost(t)
+			if _, _, err := run(t, h, aoCmd.Name(), "--help"); err != nil {
+				t.Fatal(err)
+			}
+			want := aoBinaryName() + " " + aoCmd.Name() + " --help"
+			if got := h.aoArgv(); len(got) != 1 || got[0] != want {
+				t.Fatalf("ao calls = %v, want [%q]", got, want)
+			}
+		})
 	}
 }
 
@@ -453,6 +575,126 @@ func TestStatusReportsStoppedDaemonWithoutFailing(t *testing.T) {
 	}
 }
 
+// --- doctor --------------------------------------------------------------
+
+func TestDoctorRunsAODoctorAndReportsNoForkUnitsOnPlainHost(t *testing.T) {
+	h := newFakeHost(t)
+	h.stream = func(_ recordedCall, _ io.Reader, out, _ io.Writer) error {
+		_, _ = fmt.Fprint(out, "ao doctor ok\n")
+		return nil
+	}
+
+	out, _, err := run(t, h, "doctor")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := h.aoArgv(); len(got) != 1 || got[0] != aoBinaryName()+" doctor" {
+		t.Fatalf("ao calls = %v, want one `ao doctor`", got)
+	}
+	for _, want := range []string{"ao doctor ok", "fork services: not found"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("doctor output missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestDoctorReportsLoadedForkUnits(t *testing.T) {
+	h := systemdHost(t, "ao-tmux.service", "ao.service", "ao-web.service")
+	h.stream = func(_ recordedCall, _ io.Reader, out, _ io.Writer) error {
+		_, _ = fmt.Fprint(out, "ao doctor ok\n")
+		return nil
+	}
+
+	out, _, err := run(t, h, "doctor")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"fork service ao-web.service: active", "fork service ao-tmux.service: active"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("doctor output missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "fork service ao.service") {
+		t.Fatalf("doctor should not duplicate ao.service health:\n%s", out)
+	}
+}
+
+func TestDoctorFailsLoadedUnhealthyForkUnit(t *testing.T) {
+	h := forkUnitStateHost(t, map[string]string{
+		"ao-tmux.service": "active",
+		"ao-web.service":  "failed",
+	})
+	h.stream = func(_ recordedCall, _ io.Reader, out, _ io.Writer) error {
+		_, _ = fmt.Fprint(out, "ao doctor ok\n")
+		return nil
+	}
+
+	out, _, err := run(t, h, "doctor")
+	if err == nil {
+		t.Fatal("expected doctor to fail on a loaded unhealthy fork unit")
+	}
+	if !strings.Contains(out, "fork service ao-web.service: failed") {
+		t.Fatalf("doctor output does not report failed unit:\n%s", out)
+	}
+}
+
+func TestDoctorJSONAugmentsAOReport(t *testing.T) {
+	h := systemdHost(t, "ao-tmux.service", "ao-web.service")
+	h.stream = func(_ recordedCall, _ io.Reader, out, _ io.Writer) error {
+		_, _ = fmt.Fprint(out, `{"ok":true,"failures":0,"checks":[]}`)
+		return nil
+	}
+
+	out, _, err := run(t, h, "doctor", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var report aongDoctorReport
+	if err := json.Unmarshal([]byte(out), &report); err != nil {
+		t.Fatalf("decode doctor json: %v\nout=%s", err, out)
+	}
+	for _, want := range []string{"ao-web.service", "ao-tmux.service"} {
+		var found bool
+		for _, check := range report.Checks {
+			if check.Name == want && check.Level == "PASS" && check.Section == "Fork services" {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("doctor json missing fork check %q: %+v", want, report.Checks)
+		}
+	}
+	if !report.OK || report.Failures != 0 {
+		t.Fatalf("doctor json = %+v, want ok", report)
+	}
+}
+
+func forkUnitStateHost(t *testing.T, activeStates map[string]string) *fakeHost {
+	t.Helper()
+	h := newFakeHost(t)
+	h.lookPath["systemctl"] = "/usr/bin/systemctl"
+	h.respond = func(call recordedCall) ([]byte, error) {
+		if filepath.Base(call.name) != "systemctl" || len(call.args) < 4 || call.args[1] != "show" {
+			return nil, nil
+		}
+		unit, property := call.args[2], call.args[len(call.args)-1]
+		switch property {
+		case "LoadState":
+			if _, ok := activeStates[unit]; ok {
+				return []byte("loaded\n"), nil
+			}
+			return []byte("not-found\n"), nil
+		case "ActiveState":
+			if state, ok := activeStates[unit]; ok {
+				return []byte(state + "\n"), nil
+			}
+			return []byte("inactive\n"), nil
+		}
+		return nil, nil
+	}
+	return h
+}
+
 // --- work-control verbs --------------------------------------------------
 
 func TestWorkVerbsComposeTheRightAOCommands(t *testing.T) {
@@ -477,6 +719,47 @@ func TestWorkVerbsComposeTheRightAOCommands(t *testing.T) {
 	}
 }
 
+func TestOverrideVerboseReportsComposedAOInvocation(t *testing.T) {
+	h := newFakeHost(t)
+
+	_, errOut, err := run(t, h, "--verbose", "drain")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(errOut, "ao pause --all") {
+		t.Fatalf("verbose output %q does not name composed invocation", errOut)
+	}
+}
+
+func TestFlagsAfterOverrideVerbAreNotStolenByAONG(t *testing.T) {
+	h := newFakeHost(t)
+
+	if _, _, err := run(t, h, "drain", "--verbose"); ExitCode(err) != 2 {
+		t.Fatalf("ExitCode(%v) = %d, want usage exit 2", err, ExitCode(err))
+	}
+	if got := h.aoArgv(); len(got) != 0 {
+		t.Fatalf("bad override args invoked ao: %v", got)
+	}
+}
+
+func TestOverrideHelpStaysLocal(t *testing.T) {
+	for _, args := range [][]string{{"drain", "--help"}, {"help", "drain"}} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			h := newFakeHost(t)
+			out, _, err := run(t, h, args...)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(out, "Gate new work") {
+				t.Fatalf("override help did not render local drain help:\n%s", out)
+			}
+			if got := h.aoArgv(); len(got) != 0 {
+				t.Fatalf("override help delegated to ao: %v", got)
+			}
+		})
+	}
+}
+
 func TestGatingVerbsNameTheWayBack(t *testing.T) {
 	for _, verb := range []string{"drain", "stop-work"} {
 		t.Run(verb, func(t *testing.T) {
@@ -492,15 +775,33 @@ func TestGatingVerbsNameTheWayBack(t *testing.T) {
 	}
 }
 
-func TestNoPauseVerbIsRegistered(t *testing.T) {
-	// `ao` has no gate-without-draining capability, so a `pause` distinct from
-	// `drain` cannot be composed — and aliasing it to drain would restore the
-	// dishonest name this CLI exists to remove.
-	root := NewRootCommand(Deps{Out: &bytes.Buffer{}, Err: &bytes.Buffer{}})
-	for _, sub := range root.Commands() {
-		if sub.Name() == "pause" || sub.HasAlias("pause") {
-			t.Fatalf("aong registers a `pause` verb: %q", sub.Use)
+func TestPauseRedirectsWithoutAliasingDrain(t *testing.T) {
+	// `ao` has no gate-without-draining capability, so `aong pause` must teach
+	// the honest verbs instead of silently aliasing to drain.
+	h := newFakeHost(t)
+	out, _, err := run(t, h, "pause")
+	if ExitCode(err) != 2 {
+		t.Fatalf("ExitCode(%v) = %d, want usage exit 2", err, ExitCode(err))
+	}
+	if got := h.aoArgv(); len(got) != 0 {
+		t.Fatalf("pause invoked ao instead of redirecting: %v", got)
+	}
+	for _, want := range []string{"aong drain", "aong stop-work"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("pause output missing %q:\n%s", want, out)
 		}
+	}
+}
+
+func TestPauseVerboseNamesDivergence(t *testing.T) {
+	h := newFakeHost(t)
+
+	_, errOut, err := run(t, h, "--verbose", "pause")
+	if ExitCode(err) != 2 {
+		t.Fatalf("ExitCode(%v) = %d, want usage exit 2", err, ExitCode(err))
+	}
+	if !strings.Contains(errOut, "diverges") {
+		t.Fatalf("verbose pause output %q does not name divergence", errOut)
 	}
 }
 
@@ -746,10 +1047,9 @@ func TestStartInPlainEnvironmentReportsInsteadOfPretending(t *testing.T) {
 
 func TestUsageErrorsExitTwo(t *testing.T) {
 	for _, args := range [][]string{
+		{"--nope"},
 		{"status", "--nope"},
 		{"drain", "unexpected-arg"},
-		{"typo"},                   // an unknown verb is misuse, not a runtime failure
-		{"help", "typo"},           // so is asking for help on a verb that does not exist
 		{"help", "status", "typo"}, // including an unknown topic trailing a known one
 	} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {

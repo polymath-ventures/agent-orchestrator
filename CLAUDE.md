@@ -435,7 +435,7 @@ go build ./...
 go test ./...
 go test -race ./...
 go vet ./...
-go run ./cmd/ao start
+go run ./cmd/aong --help
 ```
 
 Frontend-specific checks:
@@ -446,7 +446,7 @@ npm run typecheck
 npm run build
 ```
 
-When showing or demoing frontend changes, run `ao preview [url]` from inside
+When showing or demoing frontend changes, run `aong preview [url]` from inside
 the session so the change renders in the desktop browser panel.
 
 ## Distribution

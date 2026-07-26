@@ -1,24 +1,24 @@
-# ao project
+# aong project
 
 Manage projects: register repos, inspect, configure per-project settings, and remove.
 
 ## Syntax
 
 ```
-ao project <subcommand> [args] [flags]
+aong project <subcommand> [args] [flags]
 ```
 
 ## Subcommands
 
 ---
 
-### ao project add
+### aong project add
 
 Register a local git repo as a project so sessions can be spawned in it. The path must be an existing git repository on disk. With `--as-workspace`, the path may be a parent folder containing direct child git repositories; AO initializes/adopts the parent as the root repo and gitignores children.
 
 **Syntax:**
 ```
-ao project add [flags]
+aong project add [flags]
 ```
 
 **Flags:**
@@ -36,23 +36,23 @@ ao project add [flags]
 
 ```bash
 # Register a repo as a project
-ao project add --path /Users/harshit/Downloads/side-quests/agent-orchestrator --name "agent-orchestrator"
+aong project add --path /Users/harshit/Downloads/side-quests/agent-orchestrator --name "agent-orchestrator"
 ```
 
 ```bash
 # Register a workspace (parent folder containing multiple repos)
-ao project add --path /Users/harshit/Downloads/side-quests --as-workspace --name "side-quests"
+aong project add --path /Users/harshit/Downloads/side-quests --as-workspace --name "side-quests"
 ```
 
 ---
 
-### ao project ls
+### aong project ls
 
 List registered projects. Aliases: `ls`, `list`.
 
 **Syntax:**
 ```
-ao project ls [flags]
+aong project ls [flags]
 ```
 
 **Flags:**
@@ -65,18 +65,18 @@ ao project ls [flags]
 
 ```bash
 # List all registered projects
-ao project ls
+aong project ls
 ```
 
 ---
 
-### ao project get
+### aong project get
 
 Fetch one registered project.
 
 **Syntax:**
 ```
-ao project get <id> [flags]
+aong project get <id> [flags]
 ```
 
 **Flags:**
@@ -89,18 +89,18 @@ ao project get <id> [flags]
 
 ```bash
 # Get details for the agent-orchestrator project
-ao project get agent-orchestrator
+aong project get agent-orchestrator
 ```
 
 ---
 
-### ao project rm
+### aong project rm
 
 Remove a registered project. Aliases: `rm`, `remove`, `delete`.
 
 **Syntax:**
 ```
-ao project rm <id> [flags]
+aong project rm <id> [flags]
 ```
 
 **Flags:**
@@ -114,23 +114,23 @@ ao project rm <id> [flags]
 
 ```bash
 # Remove a project (with confirmation)
-ao project rm agent-orchestrator
+aong project rm agent-orchestrator
 ```
 
 ```bash
 # Remove without prompt
-ao project rm agent-orchestrator -y
+aong project rm agent-orchestrator -y
 ```
 
 ---
 
-### ao project set-config
+### aong project set-config
 
 Replace a project's per-project config (branch, session prefix, env, symlinks, post-create, agent model/permissions, per-harness model pins, reviewer pins, role overrides, worker rules, and orchestrator rules). The config is resolved when a session spawns. Set common fields via flags, pass the whole object with `--config-json`, or `--clear` to remove all config.
 
 **Syntax:**
 ```
-ao project set-config <id> [flags]
+aong project set-config <id> [flags]
 ```
 
 **Flags:**
@@ -157,12 +157,12 @@ ao project set-config <id> [flags]
 
 ```bash
 # Set default branch and model for a project
-ao project set-config agent-orchestrator --default-branch main --model claude-opus-4-5
+aong project set-config agent-orchestrator --default-branch main --model claude-opus-4-5
 ```
 
 ```bash
 # Set a per-harness model pin and a reviewer model pin
-ao project set-config agent-orchestrator --config-json '{"agentConfig":{"modelByHarness":{"codex":{"model":"gpt-5-codex","effort":"high"}}},"reviewers":[{"harness":"codex","agentConfig":{"model":"gpt-5-codex"}}]}'
+aong project set-config agent-orchestrator --config-json '{"agentConfig":{"modelByHarness":{"codex":{"model":"gpt-5-codex","effort":"high"}}},"reviewers":[{"harness":"codex","agentConfig":{"model":"gpt-5-codex"}}]}'
 ```
 
 Model availability refresh is advisory and cached. It never probes during
@@ -171,30 +171,30 @@ pinned model and can consume provider quota or billable usage.
 
 ```bash
 # Set an env var and a post-create command
-ao project set-config agent-orchestrator --env "NODE_ENV=development" --post-create "npm install"
+aong project set-config agent-orchestrator --env "NODE_ENV=development" --post-create "npm install"
 ```
 
 ```bash
 # Set worker and orchestrator standing rules
-ao project set-config agent-orchestrator --agent-rules "Run focused tests before reporting done." --orchestrator-rules "Delegate implementation work to worker sessions."
+aong project set-config agent-orchestrator --agent-rules "Run focused tests before reporting done." --orchestrator-rules "Delegate implementation work to worker sessions."
 ```
 
 ```bash
 # Load worker rules from a repo-relative file
-ao project set-config agent-orchestrator --agent-rules-file docs/ao-worker-rules.md
+aong project set-config agent-orchestrator --agent-rules-file docs/ao-worker-rules.md
 ```
 
 ---
 
-### ao project config
+### aong project config
 
 Treat a project's stored config as versionable JSON: export it, apply a partial spec surgically, or diff a spec against live config. Built on the existing project config surface — no new daemon behavior.
 
 **Syntax:**
 ```
-ao project config export <project>
-ao project config apply <project> <file>
-ao project config diff <project> <file>
+aong project config export <project>
+aong project config apply <project> <file>
+aong project config diff <project> <file>
 ```
 
 - **export** prints the project's full stored config (the persisted override set) as canonical JSON (sorted keys, stable formatting). Two exports of unchanged config are byte-identical. An exported config can include `env` values with credentials — treat it as sensitive.
@@ -205,15 +205,15 @@ ao project config diff <project> <file>
 
 ```bash
 # Snapshot a project's config to a versioned file
-ao project config export agent-orchestrator > config/agent-orchestrator.json
+aong project config export agent-orchestrator > config/agent-orchestrator.json
 ```
 
 ```bash
 # Restore only the fields in the file, leaving everything else untouched
-ao project config apply agent-orchestrator config/agent-orchestrator.json
+aong project config apply agent-orchestrator config/agent-orchestrator.json
 ```
 
 ```bash
 # Fail a CI check when live config has drifted from the committed spec
-ao project config diff agent-orchestrator config/agent-orchestrator.json
+aong project config diff agent-orchestrator config/agent-orchestrator.json
 ```

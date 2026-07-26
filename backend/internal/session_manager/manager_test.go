@@ -703,7 +703,7 @@ func TestSend_WrapsCopilotOrchestratorMessageWithDelegationDirective(t *testing.
 	for _, want := range []string{
 		"AO ORCHESTRATOR DIRECTIVE",
 		"Do not implement code changes",
-		"ao spawn --project mer",
+		"aong spawn --project mer",
 		"After spawning or redirecting, report the worker session id and stop",
 		"USER MESSAGE:\nmake the button red",
 	} {
@@ -2885,7 +2885,7 @@ func TestSpawnWorker_AppendsActiveOrchestratorContact(t *testing.T) {
 	systemPrompt := agent.lastLaunch.SystemPrompt
 	for _, want := range []string{
 		"## Orchestrator Coordination",
-		`ao send --session mer-1 --message "<your message>"`,
+		`aong send --session mer-1 --message "<your message>"`,
 		"Message it only for true blockers, cross-session coordination",
 	} {
 		if !strings.Contains(systemPrompt, want) {
@@ -3006,7 +3006,7 @@ func TestSpawnWorker_SkipsTerminatedOrchestratorContact(t *testing.T) {
 		t.Fatal(err)
 	}
 	systemPrompt := agent.lastLaunch.SystemPrompt
-	if strings.Contains(systemPrompt, "## Orchestrator Coordination") || strings.Contains(systemPrompt, "ao send --session mer-1") {
+	if strings.Contains(systemPrompt, "## Orchestrator Coordination") || strings.Contains(systemPrompt, "aong send --session mer-1") {
 		t.Fatalf("terminated orchestrator should not be added to system prompt:\n%s", systemPrompt)
 	}
 }
@@ -3040,7 +3040,7 @@ func TestSpawnOrchestrator_UsesCoordinatorPrompt(t *testing.T) {
 	}
 	for _, old := range []string{
 		"You are the human-facing orchestrator",
-		`ao spawn --project mer --name "<label>" --prompt "<clear worker task>"`,
+		`aong spawn --project mer --name "<label>" --prompt "<clear worker task>"`,
 		"Never edit source files, resolve merge conflicts, run implementation-focused changes",
 	} {
 		if strings.Contains(systemPrompt, old) {
@@ -3858,7 +3858,7 @@ func TestRestore_WorkerPointsAtCurrentOrchestrator(t *testing.T) {
 	if _, err := m.RestoreWithMode(ctx, "mer-1"); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(agent.lastRestore.SystemPrompt, `ao send --session mer-9`) {
+	if !strings.Contains(agent.lastRestore.SystemPrompt, `aong send --session mer-9`) {
 		t.Fatalf("restore system prompt missing current orchestrator contact:\n%s", agent.lastRestore.SystemPrompt)
 	}
 }

@@ -1,24 +1,24 @@
-# ao review
+# aong review
 
 Manage AO code reviews of a worker's PR.
 
 ## Syntax
 
 ```
-ao review <subcommand> [args] [flags]
+aong review <subcommand> [args] [flags]
 ```
 
 ## Subcommands
 
 ---
 
-### ao review submit
+### aong review submit
 
 Record a reviewer's result for a worker's PR.
 
 **Syntax:**
 ```
-ao review submit [worker-session-id] [flags]
+aong review submit [worker-session-id] [flags]
 ```
 
 **Flags:**
@@ -36,10 +36,10 @@ ao review submit [worker-session-id] [flags]
 
 ```bash
 # Submit an approved review for session mer-3
-ao review submit mer-3 --run review-run-1 --verdict approved
+aong review submit mer-3 --run review-run-1 --verdict approved
 ```
 
 ```bash
 # Submit a changes-requested review with a body from stdin
-echo "Please fix the null check on line 42." | ao review submit --session mer-3 --run review-run-1 --verdict changes_requested --body -
+echo "Please fix the null check on line 42." | aong review submit --session mer-3 --run review-run-1 --verdict changes_requested --body -
 ```

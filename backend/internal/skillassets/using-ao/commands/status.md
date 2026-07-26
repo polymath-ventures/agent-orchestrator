@@ -1,27 +1,21 @@
-# ao status
+# aong status
 
-Show AO daemon status. Use this to verify the daemon is up and check which port it is bound to.
+Show AO daemon state, fleet pause state, detected environment, and loaded
+service-unit active states. Use this to verify the web-first deployment is up.
 
 ## Syntax
 
 ```
-ao status [flags]
+aong status
 ```
 
 ## Flags
 
-| Flag | Meaning | Default / Required |
-|---|---|---|
-| `--json` | Output status as JSON | - |
+No flags. `aong status` composes `ao status` and adds service-unit state.
 
 ## Examples
 
 ```bash
 # Check daemon status
-ao status
-```
-
-```bash
-# Get status as JSON (e.g. to check port programmatically)
-ao status --json
+aong status
 ```

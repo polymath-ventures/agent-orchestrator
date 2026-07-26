@@ -1,9 +1,13 @@
 package aongcli
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"slices"
+	"strings"
 
 	"github.com/spf13/cobra"
 )
@@ -62,6 +66,168 @@ func newStatusCommand(ctx *commandContext) *cobra.Command {
 	}
 }
 
+func newDoctorCommand(ctx *commandContext) *cobra.Command {
+	return &cobra.Command{
+		Use:                "doctor [ao-doctor-args...]",
+		Short:              "Run ao doctor plus fork service checks",
+		DisableFlagParsing: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return ctx.runDoctor(cmd.Context(), cmd, args)
+		},
+	}
+}
+
+func (c *commandContext) runDoctor(ctx context.Context, cmd *cobra.Command, args []string) error {
+	doctorArgs := append([]string{"doctor"}, args...)
+	if slices.Contains(args, "--json") {
+		return c.runDoctorJSON(ctx, cmd, doctorArgs)
+	}
+
+	if err := c.runAOPassthrough(ctx, doctorArgs...); err != nil {
+		return err
+	}
+	// Help is entirely owned by `ao doctor`; adding a unit-health footer to
+	// help text is noisy and can make help snapshots brittle.
+	if slices.Contains(args, "--help") || slices.Contains(args, "-h") {
+		return nil
+	}
+
+	checks, err := c.forkDoctorChecks(ctx)
+	if err != nil {
+		return err
+	}
+	if len(checks) == 0 {
+		_, err := fmt.Fprintln(cmd.OutOrStdout(), "fork services: not found")
+		return err
+	}
+	for _, check := range checks {
+		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "fork service %s: %s\n", check.Name, check.Message); err != nil {
+			return err
+		}
+	}
+	failures := forkDoctorFailures(checks)
+	if len(failures) > 0 {
+		return fmt.Errorf("fork service health failed: %s", strings.Join(failures, ", "))
+	}
+	return nil
+}
+
+type aongDoctorReport struct {
+	OK       bool              `json:"ok"`
+	Failures int               `json:"failures"`
+	Checks   []aongDoctorCheck `json:"checks"`
+}
+
+type aongDoctorCheck struct {
+	Level   string `json:"level"`
+	Section string `json:"section"`
+	Name    string `json:"name"`
+	Message string `json:"message"`
+}
+
+func (c *commandContext) runDoctorJSON(ctx context.Context, cmd *cobra.Command, args []string) error {
+	aoPath, err := c.resolveAO()
+	if err != nil {
+		return err
+	}
+	c.explainAO("run", args...)
+	var aoOut, aoErr bytes.Buffer
+	aoErrRun := c.deps.RunStreamingCommand(ctx, aoPath, args, c.deps.In, &aoOut, &aoErr)
+	if aoErr.Len() > 0 {
+		if _, err := io.Copy(cmd.ErrOrStderr(), &aoErr); err != nil {
+			return err
+		}
+	}
+
+	var report aongDoctorReport
+	if err := json.Unmarshal(aoOut.Bytes(), &report); err != nil {
+		if _, copyErr := io.Copy(cmd.OutOrStdout(), &aoOut); copyErr != nil {
+			return copyErr
+		}
+		if aoErrRun != nil {
+			return passthroughError{err: aoErrRun}
+		}
+		return fmt.Errorf("parse `ao doctor --json`: %w", err)
+	}
+	checks, err := c.forkDoctorChecks(ctx)
+	if err != nil {
+		return err
+	}
+	if len(checks) == 0 {
+		checks = append(checks, aongDoctorCheck{
+			Level:   "PASS",
+			Section: "Fork services",
+			Name:    "ao-units",
+			Message: "no loaded ao-web.service or ao-tmux.service units found",
+		})
+	}
+	report.Checks = append(report.Checks, checks...)
+	report.Failures = 0
+	for _, check := range report.Checks {
+		if check.Level == "FAIL" {
+			report.Failures++
+		}
+	}
+	report.OK = report.Failures == 0
+	if err := json.NewEncoder(cmd.OutOrStdout()).Encode(report); err != nil {
+		return err
+	}
+	if report.Failures > 0 {
+		return fmt.Errorf("doctor found %d failing check(s)", report.Failures)
+	}
+	if aoErrRun != nil {
+		return passthroughError{err: aoErrRun}
+	}
+	return nil
+}
+
+func (c *commandContext) forkDoctorChecks(ctx context.Context) ([]aongDoctorCheck, error) {
+	env, err := c.detectEnvironment(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if env.Kind != envSystemd {
+		return nil, nil
+	}
+
+	loaded := map[string]bool{}
+	for _, unit := range env.LoadedUnits {
+		loaded[unit] = true
+	}
+	forkUnits := []string{"ao-web.service", "ao-tmux.service"}
+	var checks []aongDoctorCheck
+	for _, unit := range forkUnits {
+		if !loaded[unit] {
+			continue
+		}
+		active, err := c.unitProperty(ctx, env.systemctl, unit, "ActiveState")
+		if err != nil {
+			return nil, err
+		}
+		level := "PASS"
+		if active != "active" {
+			level = "FAIL"
+		}
+		checks = append(checks, aongDoctorCheck{
+			Level:   level,
+			Section: "Fork services",
+			Name:    unit,
+			Message: active,
+		})
+	}
+	return checks, nil
+}
+
+func forkDoctorFailures(checks []aongDoctorCheck) []string {
+	var failures []string
+	for _, check := range checks {
+		if check.Level == "FAIL" {
+			failures = append(failures, fmt.Sprintf("%s=%s", check.Name, check.Message))
+		}
+	}
+	return failures
+}
+
 func (c *commandContext) runStatus(ctx context.Context, cmd *cobra.Command) error {
 	out := cmd.OutOrStdout()
 	// Daemon state and fleet pause state already come from `ao status`; aong
@@ -108,6 +274,24 @@ func newDrainCommand(ctx *commandContext) *cobra.Command {
 		Args: noArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return ctx.runGating(cmd.Context(), cmd, []string{"pause", "--all"})
+		},
+	}
+}
+
+func newPauseCommand(ctx *commandContext) *cobra.Command {
+	return &cobra.Command{
+		Use:   "pause",
+		Short: "Explain the honest fleet work-control verbs",
+		Args:  noArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if ctx.verbose {
+				_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "aong: diverges: pause is not an alias for `ao pause`; no ao command will be run")
+			}
+			_, err := fmt.Fprintln(cmd.OutOrStdout(), "`aong pause` is intentionally not an alias. Use `aong drain` to gate new work and drain live workers at idle, or `aong stop-work` to terminate live work now.")
+			if err != nil {
+				return err
+			}
+			return usageError{fmt.Errorf("pause is not an aong verb; use drain or stop-work")}
 		},
 	}
 }

@@ -2,6 +2,7 @@ package aongcli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -83,11 +84,46 @@ func (c *commandContext) runAO(ctx context.Context, args ...string) ([]byte, err
 
 // echoAO runs an `ao` command and relays its output verbatim.
 func (c *commandContext) echoAO(ctx context.Context, out io.Writer, args ...string) error {
+	c.explainAO("run", args...)
 	stdout, err := c.runAO(ctx, args...)
 	if err != nil {
 		return err
 	}
 	return relay(out, stdout)
+}
+
+func (c *commandContext) runAOPassthrough(ctx context.Context, args ...string) error {
+	aoPath, err := c.resolveAO()
+	if err != nil {
+		return err
+	}
+	c.explainAO("passthrough", args...)
+	if err := c.deps.RunStreamingCommand(ctx, aoPath, args, c.deps.In, c.deps.Out, c.deps.Err); err != nil {
+		return passthroughError{err: err}
+	}
+	return nil
+}
+
+type passthroughError struct {
+	err error
+}
+
+func (e passthroughError) Error() string { return e.err.Error() }
+func (e passthroughError) Unwrap() error { return e.err }
+func (e passthroughError) Silent() bool  { return true }
+func (e passthroughError) ExitCode() int {
+	var exitCoder interface{ ExitCode() int }
+	if errors.As(e.err, &exitCoder) {
+		return exitCoder.ExitCode()
+	}
+	return 1
+}
+
+func (c *commandContext) explainAO(kind string, args ...string) {
+	if !c.verbose {
+		return
+	}
+	_, _ = fmt.Fprintf(c.deps.Err, "aong: %s: ao %s\n", kind, strings.Join(args, " "))
 }
 
 // relay writes command output through with exactly one trailing newline, so
