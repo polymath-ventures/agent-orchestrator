@@ -63,6 +63,7 @@ import { cn } from "../lib/utils";
 import { useUiStore } from "../stores/ui-store";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { CreateProjectFlow, type CreateProjectInput } from "./CreateProjectFlow";
+import { HarnessGlyph } from "./HarnessGlyph";
 import { QuotaPanel } from "./QuotaPanel";
 import { ResizeHandle } from "./ResizeHandle";
 import { TitlebarNav } from "./TitlebarNav";
@@ -140,6 +141,18 @@ function useSelection() {
 function SessionDot({ session }: { session: WorkspaceSession }) {
 	const dot = getSessionDotView(session);
 	return <span aria-hidden="true" className={cn("mt-px h-1.5 w-1.5 shrink-0 rounded-full", dot.className)} />;
+}
+
+// Status (what the session is doing) and harness (what is running it) are the
+// two things worth knowing without opening a session, so they travel together
+// as one fixed-width marker pair at the head of every row.
+function SessionMarkers({ session }: { session: WorkspaceSession }) {
+	return (
+		<>
+			<SessionDot session={session} />
+			<HarnessGlyph harness={session.provider} />
+		</>
+	);
 }
 
 // Built on shadcn's sidebar primitives (components/ui/sidebar): the provider in
@@ -461,7 +474,7 @@ function PrimeItem({ session, active, onOpen }: { session: WorkspaceSession; act
 					{session.title}
 				</span>
 				<span className="sidebar-expanded-chrome group-data-[collapsible=icon]:hidden">
-					<SessionDot session={session} />
+					<SessionMarkers session={session} />
 				</span>
 			</SidebarMenuButton>
 		</SidebarMenuItem>
@@ -813,7 +826,7 @@ function SessionRow({ session, active, onOpen }: { session: WorkspaceSession; ac
 		return (
 			<SidebarMenuSubItem>
 				<div className="relative flex h-auto w-full items-center gap-2.25 rounded-sm py-1.25 pl-2.5 pr-1.5">
-					<SessionDot session={session} />
+					<SessionMarkers session={session} />
 					<input
 						aria-label={`Rename ${session.title}`}
 						autoFocus
@@ -853,7 +866,7 @@ function SessionRow({ session, active, onOpen }: { session: WorkspaceSession; ac
 				onClick={onOpen}
 				type="button"
 			>
-				<SessionDot session={session} />
+				<SessionMarkers session={session} />
 				<span className="min-w-0 flex-1">
 					<span className={cn("block truncate text-xs", active ? "text-foreground" : "text-muted-foreground")}>
 						{session.title}

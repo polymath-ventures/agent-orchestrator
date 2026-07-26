@@ -241,6 +241,56 @@ afterEach(() => {
 	vi.restoreAllMocks();
 });
 
+describe("Sidebar harness indicator", () => {
+	// The session name deliberately omits the harness (see the session-naming
+	// spec), so the sidebar is where the harness becomes visible instead.
+	it("names each session's harness without touching the session name", () => {
+		renderSidebar({ workspaces: [{ ...workspace, sessions: [session] }] });
+
+		expect(screen.getByRole("img", { name: "Claude Code" })).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Open fix login" })).toHaveTextContent("fix login");
+	});
+
+	it("distinguishes sessions running different harnesses", () => {
+		renderSidebar({
+			primeVisible: true,
+			primeSession,
+			workspaces: [{ ...workspace, sessions: [session, primeSession] }],
+		});
+
+		expect(screen.getByRole("img", { name: "Claude Code" })).toBeInTheDocument();
+		expect(screen.getAllByRole("img", { name: "Codex" }).length).toBeGreaterThan(0);
+	});
+
+	it("still shows an indicator for a harness with no published mark", () => {
+		renderSidebar({
+			workspaces: [{ ...workspace, sessions: [{ ...session, provider: "aider" }] }],
+		});
+
+		expect(screen.getByRole("img", { name: "Aider" })).toHaveTextContent("Ai");
+	});
+
+	// The indicator is chrome: it must not become another thing that can knock
+	// the name out of its row at the sidebar's narrow widths.
+	it("keeps the name in its own truncating slot beside the indicator", () => {
+		renderSidebar({
+			workspaces: [{ ...workspace, sessions: [{ ...session, title: "a very long session name that must truncate" }] }],
+		});
+
+		const name = screen.getByText("a very long session name that must truncate");
+		const glyph = screen.getByRole("img", { name: "Claude Code" });
+		const row = screen.getByRole("button", { name: /Open a very long session name/ });
+
+		expect(row).toContainElement(glyph);
+		expect(row).toContainElement(name);
+		// The name keeps the only flexing slot in the row and still truncates;
+		// the glyph is fixed-width, so it can never take width from the name.
+		expect(name).toHaveClass("truncate");
+		expect(name.parentElement).toHaveClass("min-w-0", "flex-1");
+		expect(glyph).toHaveClass("shrink-0");
+	});
+});
+
 describe("Sidebar", () => {
 	// The regression: Prime used to disappear from the nav the moment its session
 	// row went terminated — exactly when the operator needed it to recover.
