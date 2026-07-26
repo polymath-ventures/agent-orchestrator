@@ -17,20 +17,35 @@ test("ao.service is a persistent headless daemon that does not kill the tmux fle
 	assert.match(text, /^StartLimitIntervalSec=0$/m);
 	assert.doesNotMatch(text, /^Delegate=yes$/m);
 	assert.match(text, /^ExecStartPre=.*command -v tmux/m);
-	assert.match(text, /^ExecStartPre=.*tmux list-sessions/m);
+	// The ownership gate must probe the socket the daemon actually uses
+	// (AO_DATA_DIR/run/tmux/default, issue #160). Probing tmux's default socket
+	// would pass while protecting nothing.
+	assert.match(text, /^ExecStartPre=.*tmux -S %h\/\.ao\/data\/run\/tmux\/default list-sessions/m);
+	// ...and it must still accept a server on the legacy default socket, because
+	// deploy.sh restarts ao.service but cannot restart ao-tmux.service
+	// (RefuseManualStop=yes). Without this the socket move bricks the daemon on
+	// the deploy that introduces it.
+	assert.match(text, /^ExecStartPre=.*[^S] list-sessions/m);
 	// Data dir must be ~/.ao/data — NEVER the ~/.ao root: the root is the
 	// legacy layout, and pointing the daemon there resurrects a decommissioned
 	// deployment's database wholesale (the 2026-07-21 incident).
 	assert.match(text, /^Environment=AO_DATA_DIR=%h\/\.ao\/data$/m);
 });
 
-test("ao-tmux.service owns the default tmux socket and refuses stop-job fleet kills", async () => {
+test("ao-tmux.service owns AO's tmux socket and refuses stop-job fleet kills", async () => {
 	const text = await unit("./ao-tmux.service");
 
 	assert.match(text, /^Before=ao\.service$/m);
 	assert.match(text, /^RefuseManualStop=yes$/m);
 	assert.match(text, /^Type=forking$/m);
-	assert.match(text, /^ExecStart=.*tmux start-server.*exit-empty off/m);
+	// The server this unit owns must be on the socket the daemon uses, not
+	// tmux's default one (issue #160) — otherwise the daemon lazily forks its
+	// own server into ao.service's cgroup and a routine restart kills the fleet.
+	assert.match(text, /^ExecStart=.*tmux -S %h\/\.ao\/data\/run\/tmux\/default start-server.*exit-empty off/m);
+	// tmux will not bind a socket whose directory is missing; 0700 matches
+	// tmux's own /tmp/tmux-$UID.
+	assert.match(text, /^ExecStartPre=.*install -d -m 700 %h\/\.ao\/data\/run\/tmux$/m);
+	assert.match(text, /^ExecCondition=.*tmux -S %h\/\.ao\/data\/run\/tmux\/default list-sessions/m);
 	assert.doesNotMatch(text, /^ExecStop=/m);
 	assert.match(text, /^KillMode=process$/m);
 	assert.match(text, /^KillSignal=SIGCONT$/m);
@@ -74,4 +89,19 @@ test("ao-config-drift service is a oneshot that runs the drift-check runner and 
 	assert.match(timer, /^Unit=ao-config-drift\.service$/m);
 	assert.match(timer, /^\[Install\]$/m);
 	assert.match(timer, /^WantedBy=timers\.target$/m);
+});
+
+test("the units' tmux socket path matches AO_DATA_DIR + the adapter's layout", async () => {
+	const ao = await unit("./ao.service");
+	const aoTmux = await unit("./ao-tmux.service");
+
+	// backend/internal/adapters/runtime/tmux.SocketPath: <dataDir>/run/tmux/default.
+	const dataDir = ao.match(/^Environment=AO_DATA_DIR=(.+)$/m)?.[1];
+	assert.ok(dataDir, "ao.service must pin AO_DATA_DIR");
+	const socket = `${dataDir}/run/tmux/default`;
+
+	// Two copies of one fact live across the Go/systemd boundary; this is the
+	// check that keeps them agreeing.
+	assert.ok(aoTmux.includes(`tmux -S ${socket} start-server`), `ao-tmux.service must start its server on ${socket}`);
+	assert.ok(ao.includes(`tmux -S ${socket} list-sessions`), `ao.service must gate on ${socket}`);
 });

@@ -122,6 +122,7 @@ func ensureSocketDir(socket string) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("tmux runtime: create socket dir %s: %w", dir, err)
 	}
+	//nolint:gosec // G302 targets files; this is the socket directory, and 0700 is exactly tmux's own /tmp/tmux-$UID mode.
 	if err := os.Chmod(dir, 0o700); err != nil {
 		return fmt.Errorf("tmux runtime: secure socket dir %s: %w", dir, err)
 	}
@@ -457,10 +458,13 @@ func (r *Runtime) SendMessage(ctx context.Context, handle ports.RuntimeHandle, m
 	if err != nil {
 		return err
 	}
+	// Resolve the hosting socket once: every chunk and the trailing Enter must
+	// land in the same pane, and re-resolving per chunk would also re-probe.
+	socket := r.socketFor(ctx, id)
 	enterCtx := ctx
 	if message != "" {
 		for _, chunk := range chunks(message, r.chunkSize) {
-			if _, err := r.runFor(ctx, id, sendKeysLiteralArgs(id, chunk)...); err != nil {
+			if _, err := r.runOn(ctx, socket, sendKeysLiteralArgs(id, chunk)...); err != nil {
 				return fmt.Errorf("tmux runtime: send message %s: %w", id, err)
 			}
 		}
@@ -485,7 +489,7 @@ func (r *Runtime) SendMessage(ctx context.Context, handle ports.RuntimeHandle, m
 			}
 		}
 	}
-	if _, err := r.runFor(enterCtx, id, sendEnterArgs(id)...); err != nil {
+	if _, err := r.runOn(enterCtx, socket, sendEnterArgs(id)...); err != nil {
 		return fmt.Errorf("tmux runtime: send enter %s: %w", id, err)
 	}
 	return nil
@@ -623,10 +627,18 @@ func (r *Runtime) socketFor(ctx context.Context, id string) string {
 	if _, err := os.Stat(r.legacySocket); err != nil {
 		return r.socket
 	}
-	if alive, err := r.hasSessionOn(ctx, r.socket, id); err == nil && alive {
+	alive, err := r.hasSessionOn(ctx, r.socket, id)
+	if err != nil {
+		// A transient probe failure is not evidence the session lives
+		// elsewhere. Falling back here could send a kill-session to a
+		// same-named session on the legacy socket, so stay on the primary and
+		// let the caller surface the error.
 		return r.socket
 	}
-	if alive, err := r.hasSessionOn(ctx, r.legacySocket, id); err == nil && alive {
+	if alive {
+		return r.socket
+	}
+	if legacyAlive, legacyErr := r.hasSessionOn(ctx, r.legacySocket, id); legacyErr == nil && legacyAlive {
 		return r.legacySocket
 	}
 	return r.socket

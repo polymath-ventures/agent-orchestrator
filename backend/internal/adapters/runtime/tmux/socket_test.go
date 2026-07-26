@@ -262,6 +262,58 @@ func TestOperationsTargetTheLegacySocketForLegacySessions(t *testing.T) {
 	}
 }
 
+// TestSocketForDoesNotFallBackOnTransientPrimaryFailure — a timed-out or
+// otherwise non-definitive probe on AO's socket says nothing about where the
+// session lives. Falling back on it could route a kill-session at a same-named
+// session on the legacy socket and report success.
+func TestSocketForDoesNotFallBackOnTransientPrimaryFailure(t *testing.T) {
+	dataDir := t.TempDir()
+	legacy := filepath.Join(t.TempDir(), "default")
+	if err := os.WriteFile(legacy, nil, 0o600); err != nil {
+		t.Fatalf("seed legacy socket: %v", err)
+	}
+
+	r, fr := newSocketTestRuntime(t, dataDir)
+	r.legacySocket = legacy
+	// A non-ExitError failure is transient by the adapter's own contract.
+	fr.outputs = [][]byte{[]byte("lost server")}
+	fr.errs = []error{context.DeadlineExceeded}
+
+	if got, want := r.socketFor(context.Background(), "sess-1"), SocketPath(dataDir); got != want {
+		t.Fatalf("socketFor = %q, want %q (must not guess the legacy socket)", got, want)
+	}
+	if len(fr.calls) != 1 {
+		t.Fatalf("probes = %d, want 1 — the legacy socket must not be probed after a transient failure", len(fr.calls))
+	}
+}
+
+// TestSendMessageResolvesTheSocketOnce — every chunk and the trailing Enter
+// must reach the same pane, and re-resolving per chunk doubles the tmux
+// invocations on the message hot path.
+func TestSendMessageResolvesTheSocketOnce(t *testing.T) {
+	dataDir := t.TempDir()
+	legacy := filepath.Join(t.TempDir(), "default")
+	if err := os.WriteFile(legacy, nil, 0o600); err != nil {
+		t.Fatalf("seed legacy socket: %v", err)
+	}
+
+	r, fr := newSocketTestRuntime(t, dataDir)
+	r.legacySocket = legacy
+	r.chunkSize = 4 // force 3 chunks out of a 12-byte message
+
+	if err := r.SendMessage(context.Background(), ports.RuntimeHandle{ID: "sess-1"}, "abcdefghijkl"); err != nil {
+		t.Fatalf("SendMessage: %v", err)
+	}
+	// 1 socket probe + 3 send-keys + 1 Enter.
+	if len(fr.calls) != 5 {
+		var got []string
+		for _, c := range fr.calls {
+			got = append(got, strings.Join(c.args, " "))
+		}
+		t.Fatalf("calls = %d, want 5 (one probe, three chunks, one Enter):\n  %s", len(fr.calls), strings.Join(got, "\n  "))
+	}
+}
+
 // TestLegacySocketPathMatchesTmuxDefault pins the transitional path to tmux's
 // own resolution ($TMUX_TMPDIR, else $TMPDIR, else /tmp) so the fallback finds
 // the server AO used to talk to.
