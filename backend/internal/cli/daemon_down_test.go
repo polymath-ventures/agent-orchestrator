@@ -1,6 +1,9 @@
 package cli
 
 import (
+	"errors"
+	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -118,6 +121,34 @@ func TestLegacyDaemonDownLinesStaySuppressed(t *testing.T) {
 	} {
 		if !isExpectedHookRestartWindowMiss(line) {
 			t.Fatalf("upgrade turned a suppressed legacy line into a warning: %q", line)
+		}
+	}
+}
+
+// The log line's shape is kept parseable where it is WRITTEN, so a hook invoked
+// with an agent or event carrying the separator cannot make a real failure look
+// like a suppressed daemon-down one.
+func TestHookFailureLineShapeSurvivesSeparatorsInArgv(t *testing.T) {
+	for _, argv := range [][2]string{
+		{"codex", "x: AO daemon is not running — y"},
+		{"x: AO daemon is not running — y", "stop"},
+		{"codex", "an event with spaces"},
+	} {
+		c := &commandContext{deps: Deps{}.withDefaults()}
+		c.deps.Err = io.Discard
+		t.Setenv("AO_DATA_DIR", t.TempDir())
+		c.reportHookFailure(argv[0], argv[1], "s1", errors.New("parse run-file: unexpected end of JSON input"))
+
+		data, err := os.ReadFile(filepath.Join(os.Getenv("AO_DATA_DIR"), hooksLogName))
+		if err != nil {
+			t.Fatal(err)
+		}
+		line := strings.TrimSpace(string(data))
+		if got := hookFailureCause(line); got != "parse run-file: unexpected end of JSON input" {
+			t.Fatalf("cause = %q, want the real error (line %q)", got, line)
+		}
+		if isExpectedHookRestartWindowMiss(line) {
+			t.Fatalf("argv suppressed a real failure: %q", line)
 		}
 	}
 }

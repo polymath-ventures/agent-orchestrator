@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/spf13/cobra"
 
@@ -260,7 +261,7 @@ func (c *commandContext) emitSessionStartContext(agent, event, sessionID string)
 // agent: stderr for the agent's hook runner, plus a best-effort append to
 // $AO_DATA_DIR/hooks.log so the failure can be diagnosed after the fact.
 func (c *commandContext) reportHookFailure(agent, event, sessionID string, cause error) {
-	msg := fmt.Sprintf("%s%s %s: %v", hookFailureTag, agent, event, cause)
+	msg := fmt.Sprintf("%s%s %s: %v", hookFailureTag, bareToken(agent), bareToken(event), cause)
 	_, _ = fmt.Fprintln(c.deps.Err, msg)
 	dataDir := strings.TrimSpace(os.Getenv("AO_DATA_DIR"))
 	if dataDir == "" {
@@ -273,6 +274,22 @@ func (c *commandContext) reportHookFailure(agent, event, sessionID string, cause
 // hookFailureTag is the token reportHookFailure writes before the agent/event
 // pair. It is the anchor a reader uses to find where the cause begins.
 const hookFailureTag = "ao hooks "
+
+// bareToken keeps the hooks.log line's "<agent> <event>: <cause>" shape
+// parseable by construction. Both fields are echoed argv, and one carrying a
+// space or the ": " separator would move where the cause appears to begin —
+// which is how a real failure could be mistaken for a suppressed daemon-down
+// one. Sanitising here, where the line is written, is why the reader needs no
+// validation gate on the hook path itself; a hook must never fail the agent, so
+// rejecting an invocation over punctuation would be the worse trade.
+func bareToken(s string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsSpace(r) || r == ':' {
+			return '-'
+		}
+		return r
+	}, s)
+}
 
 // hookFailureCause returns the error text from a hooks.log line written by
 // reportHookFailure, or "" when the line is not one of them.
