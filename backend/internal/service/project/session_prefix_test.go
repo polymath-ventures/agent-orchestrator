@@ -119,6 +119,9 @@ func TestManager_AddSucceedsWhenTheNameYieldsNoUsableCharacters(t *testing.T) {
 }
 
 func TestManager_AddDerivesSessionPrefixForWorkspaceProjects(t *testing.T) {
+	// Workspace registration commits in the child repos, which needs an identity
+	// the CI runner does not carry. Every other workspace test does this first.
+	configureCommitter(t)
 	ctx := context.Background()
 	m := newManager(t)
 
