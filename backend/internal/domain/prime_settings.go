@@ -53,10 +53,13 @@ type PrimeSettings struct {
 //     there is no working prior configuration to escalate away from.
 //
 // Migrating stored empty rows to a persisted "default" would therefore freeze
-// the reported bug in place for exactly the operators who hit it. What the
-// default must not be is invisible, so the spawn path logs once, at INFO, when
-// a Prime is launched with a permission mode that came from here rather than
-// from stored settings.
+// the reported bug in place for exactly the operators who hit it. The default
+// is not hidden either: GET /prime/settings applies the same defaulting, so the
+// mode it reports is the effective mode the next Prime will launch with.
+//
+// Prime is a singleton and this settings record is its single source, so a
+// permission change applies to every subsequent Prime — immediately if the
+// operator relaunches Prime, and otherwise at the next spawn.
 //
 // DefaultPrimeSettings is also the shape a fresh daemon persists, so the
 // default is durable for new installs and applied on read for old ones.
@@ -75,9 +78,9 @@ func DefaultPrimeSettings() PrimeSettings {
 // For AgentConfig.Permissions this emptiness test is the whole contract that
 // makes the unattended default safe (see DefaultPrimeSettings). An operator who
 // wants prompting stores "default" and gets prompting on every subsequent read;
-// only "never configured" resolves to the daemon default. This runs on every
-// settings READ, so it never logs — the spawn path reports the applied default
-// once, where it actually takes effect.
+// only "never configured" resolves to the daemon default. Because this runs on
+// every settings read and write, the mode GET /prime/settings reports is always
+// the effective one the next Prime spawn launches with.
 func (s PrimeSettings) WithDefaults() PrimeSettings {
 	def := DefaultPrimeSettings()
 	if s.DisplayName == "" {

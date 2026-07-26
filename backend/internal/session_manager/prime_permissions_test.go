@@ -24,7 +24,8 @@ import (
 // Deliberately spawns through the real Manager.Spawn and reads the LaunchConfig
 // the agent adapter was handed. Nothing here recomputes the expected mode from
 // settings; the settings row stored below leaves Permissions unset, exactly as
-// an operator who enabled Prime without touching permissions would.
+// an operator who enabled Prime without touching permissions would, and the
+// store applies the default on read the way the real one does.
 func TestSpawn_ProjectlessPrimeLaunchesWithUnattendedPermissions(t *testing.T) {
 	st := newFakeStore()
 	st.prime = domain.PrimeSettings{
@@ -62,95 +63,6 @@ func TestSpawn_ProjectlessPrimeLaunchesWithUnattendedPermissions(t *testing.T) {
 	// either field agrees.
 	if got := agent.lastLaunch.Config.Permissions; got != ports.PermissionModeBypassPermissions {
 		t.Fatalf("launch agent config permission mode = %q, want %q", got, ports.PermissionModeBypassPermissions)
-	}
-}
-
-// primeSpawnManager builds a manager over the supplied stored Prime settings and
-// returns it alongside the buffer its logger writes to.
-func primeSpawnManager(t *testing.T, settings domain.PrimeSettings) (*Manager, *bytes.Buffer) {
-	t.Helper()
-	st := newFakeStore()
-	st.prime = settings
-	logs := &bytes.Buffer{}
-	m := New(Deps{
-		Runtime:   &fakeRuntime{},
-		Agents:    singleAgent{agent: &recordingAgent{}},
-		Workspace: &fakeWorkspace{},
-		Store:     st,
-		Messenger: &fakeMessenger{},
-		Lifecycle: &fakeLCM{store: st},
-		DataDir:   t.TempDir(),
-		LookPath:  func(string) (string, error) { return "/bin/true", nil },
-		Logger:    slog.New(slog.NewTextHandler(logs, nil)),
-	})
-	return m, logs
-}
-
-// The unattended default is applied on READ rather than migrated into stored
-// rows, because an empty stored mode means "never configured" (Prime exposes no
-// CLI flag or UI control for the field) and the behavior it produced was the
-// stall this default exists to end. What it must not be is silent: the operator
-// has to be able to see, from the daemon log, that the Prime now running took
-// its permission mode from the daemon rather than from settings, and how to
-// change it.
-//
-// The signal is emitted where the mode takes effect — the spawn — not inside
-// WithDefaults, which runs on every settings read and would drown the log.
-func TestSpawn_PrimeLogsWhenPermissionModeComesFromTheDaemonDefault(t *testing.T) {
-	m, logs := primeSpawnManager(t, domain.PrimeSettings{
-		Enabled: true, DisplayName: "Fleet Lead", Harness: domain.HarnessCodex,
-	})
-
-	if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{Kind: domain.KindPrime}); err != nil {
-		t.Fatalf("Spawn projectless Prime: %v", err)
-	}
-	got := logs.String()
-	if !strings.Contains(got, "no permission mode stored in Prime settings") {
-		t.Fatalf("logs = %q, want the applied-default notice; an operator cannot otherwise tell the Prime is running unattended by daemon default", got)
-	}
-	if !strings.Contains(got, string(domain.PermissionModeBypassPermissions)) {
-		t.Fatalf("logs = %q, want the applied permission mode named", got)
-	}
-	if !strings.Contains(got, "/prime/settings") {
-		t.Fatalf("logs = %q, want the override route so the notice is actionable", got)
-	}
-}
-
-// The notice describes a default that was APPLIED. An operator who stored a mode
-// explicitly — including the "default" that restores prompting — configured it
-// themselves, and telling them the daemon chose it would be wrong, not merely
-// noisy.
-func TestSpawn_PrimeDoesNotLogTheDefaultNoticeWhenPermissionsAreStored(t *testing.T) {
-	for _, stored := range []domain.PermissionMode{domain.PermissionModeDefault, domain.PermissionModeBypassPermissions} {
-		t.Run(string(stored), func(t *testing.T) {
-			m, logs := primeSpawnManager(t, domain.PrimeSettings{
-				Enabled: true, DisplayName: "Fleet Lead", Harness: domain.HarnessCodex,
-				AgentConfig: domain.AgentConfig{Permissions: stored},
-			})
-
-			if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{Kind: domain.KindPrime}); err != nil {
-				t.Fatalf("Spawn projectless Prime: %v", err)
-			}
-			if got := logs.String(); strings.Contains(got, "no permission mode stored in Prime settings") {
-				t.Fatalf("logs = %q, want no applied-default notice: %q was stored explicitly", got, stored)
-			}
-		})
-	}
-}
-
-// Preflight is a speculative pass over the same preconditions, and a role
-// reconcile runs it and then spawns. Emitting the notice on both would report
-// one launch twice.
-func TestPreflight_PrimeDoesNotLogTheAppliedDefaultNotice(t *testing.T) {
-	m, logs := primeSpawnManager(t, domain.PrimeSettings{
-		Enabled: true, DisplayName: "Fleet Lead", Harness: domain.HarnessCodex,
-	})
-
-	if err := m.Preflight(ctx, ports.SpawnConfig{Kind: domain.KindPrime}); err != nil {
-		t.Fatalf("Preflight projectless Prime: %v", err)
-	}
-	if got := logs.String(); strings.Contains(got, "no permission mode stored in Prime settings") {
-		t.Fatalf("logs = %q, want the notice only from the pass that actually launches", got)
 	}
 }
 

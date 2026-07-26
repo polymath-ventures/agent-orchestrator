@@ -492,23 +492,13 @@ func (m *Manager) preflightSpawn(ctx context.Context, cfg ports.SpawnConfig, pas
 		if err != nil {
 			return spawnPlan{}, fmt.Errorf("spawn: prime settings: %w", err)
 		}
-		storedPermissions := settings.AgentConfig.Permissions
+		// Prime is projectless: these settings are the only source its launch
+		// config has, and WithDefaults is what fills an unset field. The
+		// effective mode is reported by GET /prime/settings, which applies the
+		// same defaulting, so it needs no separate spawn-time disclosure.
 		agentConfig = settings.WithDefaults().AgentConfig
 		if agentConfig.Effort == "" {
 			agentConfig.Effort = target.effort
-		}
-		// Prime is projectless, so its permission mode comes from stored
-		// settings or from nowhere. An empty stored value means the daemon
-		// default is what the harness is about to be launched with — say so, on
-		// the pass that actually launches, so the mode a Prime is running under
-		// is visible in the log without an operator inferring it from source.
-		// Empty-vs-set is exactly the distinction that matters and is read here
-		// before WithDefaults fills it in, so this never mislabels an explicit
-		// choice as the default.
-		if pass == realSpawn && storedPermissions == "" {
-			m.logger.Info("prime: no permission mode stored in Prime settings; launching with the daemon's unattended default",
-				"permissions", agentConfig.Permissions,
-				"override", "PUT /prime/settings with agentConfig.permissions (\"default\" restores prompting)")
 		}
 	} else {
 		agentConfig, err = agentconfig.Effective(cfg.Kind, project.Config, "", cfg.Harness)
@@ -1572,14 +1562,6 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 	// worktree. Its own runtime is still destroyed and the row still terminates;
 	// only the shared workspace is spared.
 	killWorkspaceOwnedElsewhere := false
-	// The live set the child-worktree reclaim below resolves coverage against.
-	// Captured here, where ownership is decided, but *used* only after the
-	// runtime teardown has succeeded: reclaiming a child while the killed
-	// session's agent process is still running would pull the directory out from
-	// under it, and a failed runtime destroy aborts Kill with the session still
-	// live — with the reclaim already done, that would have removed the workspace
-	// of a session that stays up.
-	var liveAtKill []domain.SessionRecord
 	if ws.Path != "" || rec.Metadata.Branch != "" {
 		live, liveErr := m.liveSessions(ctx)
 		if liveErr != nil {
@@ -1589,7 +1571,6 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 			m.logger.Info("kill: workspace still owned by a live session; preserving",
 				"sessionID", rec.ID, "path", ws.Path, "owner", owner)
 			killWorkspaceOwnedElsewhere = true
-			liveAtKill = live
 		}
 	}
 
@@ -1601,11 +1582,11 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 	// leaving the old process alive, which is the opposite of what Kill promises.
 	if killWorkspaceOwnedElsewhere {
 		// The shared root and every child the live owner occupies are left
-		// alone; uncovered children were already reclaimed above. All restore
-		// markers are still cleared below, because keeping any would let
+		// alone; uncovered children are reclaimed below. Restore markers are
+		// cleared below too, because keeping a restorable one would let
 		// RestoreAll resurrect this killed session into the worktree the live
 		// replacement is using (#2319).
-		m.logger.Warn("kill: workspace preserved for a live owner; restore markers cleared",
+		m.logger.Warn("kill: workspace preserved for a live owner",
 			"sessionID", rec.ID, "path", ws.Path, "branch", rec.Metadata.Branch)
 		workspaceProject = false
 	} else if rows, ok, rowErr := m.workspaceProjectRows(ctx, rec); rowErr != nil {
@@ -1620,15 +1601,16 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 			return false, fmt.Errorf("kill %s: runtime: %w", id, err)
 		}
 	}
+	keepWorktreeMarkers := false
 	if killWorkspaceOwnedElsewhere {
 		// The root is owned, but a multi-repo CHILD the live owner does not
 		// occupy is held by nobody. Reclaim it here, while its row still names
-		// it: every marker is cleared below, and nothing else in the system
+		// it: the markers are cleared below, and nothing else in the system
 		// records a per-repo path, so a child left behind now is orphaned for
 		// good (#144). Ordered after the runtime destroy above so the agent
 		// whose worktree this is has already been torn down — a runtime destroy
 		// that fails returns before this point and reclaims nothing.
-		m.destroyUncoveredChildWorktrees(ctx, rec, liveAtKill)
+		keepWorktreeMarkers = m.destroyUncoveredChildWorktrees(ctx, rec)
 	}
 	freed := false
 	if workspaceProject {
@@ -1667,9 +1649,14 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 	// Clear the restore marker so the next boot's RestoreAll cannot resurrect a
 	// killed session (#2319). For workspace projects this must happen after
 	// teardown reads the rows; dirty-preserved rows return above and are left as
-	// non-restorable inventory.
-	if err := m.store.DeleteSessionWorktrees(ctx, id); err != nil {
-		m.logger.Warn("kill: delete restore marker failed", "sessionID", id, "error", err)
+	// non-restorable inventory. keepWorktreeMarkers is the same exception, for
+	// the same reason: the reclaim above found nothing it could safely destroy,
+	// so these already-non-restorable rows are the only remaining record of the
+	// directories and are kept for a later Cleanup to retry.
+	if !keepWorktreeMarkers {
+		if err := m.store.DeleteSessionWorktrees(ctx, id); err != nil {
+			m.logger.Warn("kill: delete restore marker failed", "sessionID", id, "error", err)
+		}
 	}
 	if err := m.lcm.MarkTerminated(ctx, id); err != nil {
 		return false, fmt.Errorf("kill %s: %w", id, err)
@@ -2321,11 +2308,18 @@ func (m *Manager) RestoreAll(ctx context.Context) error {
 func restorableWorktreeRows(rows []domain.SessionWorktreeRecord) []domain.SessionWorktreeRecord {
 	out := make([]domain.SessionWorktreeRecord, 0, len(rows))
 	for _, row := range rows {
-		if row.State == "removed" || legacyRestorableWorktreeRow(row) {
+		if restorableWorktreeRow(row) {
 			out = append(out, row)
 		}
 	}
 	return out
+}
+
+// restorableWorktreeRow reports whether RestoreAll would replay this row, i.e.
+// whether keeping it could bring a terminated session back up. Teardown paths
+// that want to keep rows as inventory consult it to prove they are not.
+func restorableWorktreeRow(row domain.SessionWorktreeRecord) bool {
+	return row.State == "removed" || legacyRestorableWorktreeRow(row)
 }
 
 func legacyRestorableWorktreeRow(row domain.SessionWorktreeRecord) bool {

@@ -36,6 +36,9 @@ type fakeStore struct {
 	upsertWTErr    error
 	// worktrees maps session ID to its saved worktree rows (shutdown-saved marker).
 	worktrees map[domain.SessionID][]domain.SessionWorktreeRecord
+	// getProjectErr, when non-nil, is the error GetProject returns, so a test
+	// can make project-dependent lookups fail transiently.
+	getProjectErr error
 	// listWTErr maps a session ID to an error ListSessionWorktrees returns for
 	// it, so a test can make coverage for ONE session unresolvable.
 	listWTErr map[domain.SessionID]error
@@ -43,6 +46,12 @@ type fakeStore struct {
 	// UpsertSessionWorktree invocation so ordering tests can compare across fakes.
 	sharedLog    *[]string
 	beforeCreate func(domain.SessionRecord)
+	// beforeListAll, when non-nil, runs before each ListAllSessions returns, with
+	// the 1-based call number. It lets a test change the live set BETWEEN two
+	// reads one production call makes, so a check-then-act window can be driven
+	// deterministically instead of raced.
+	beforeListAll func(call int)
+	listAllCalls  int
 }
 
 func newFakeStore() *fakeStore {
@@ -56,14 +65,22 @@ func newFakeStore() *fakeStore {
 	}
 }
 func (f *fakeStore) GetProject(_ context.Context, id string) (domain.ProjectRecord, bool, error) {
+	if err := f.getProjectErr; err != nil {
+		return domain.ProjectRecord{}, false, err
+	}
 	r, ok := f.projects[id]
 	return r, ok, nil
 }
 func (f *fakeStore) GetFleetPaused(context.Context) (bool, error) {
 	return f.fleetPaused, f.fleetPausedErr
 }
+
+// GetPrimeSettings mirrors the real store, which applies WithDefaults before
+// returning (unmarshalPrimeSettings). Returning the raw row instead would let a
+// manager-side "was this field stored?" check pass in tests while being
+// unreachable in production.
 func (f *fakeStore) GetPrimeSettings(context.Context) (domain.PrimeSettings, error) {
-	return f.prime, nil
+	return f.prime.WithDefaults(), nil
 }
 func (f *fakeStore) ListWorkspaceRepos(_ context.Context, projectID string) ([]domain.WorkspaceRepoRecord, error) {
 	return f.workspaceRepo[projectID], nil
@@ -107,6 +124,15 @@ func (f *fakeStore) ListSessions(_ context.Context, p domain.ProjectID) ([]domai
 	return out, nil
 }
 func (f *fakeStore) ListAllSessions(context.Context) ([]domain.SessionRecord, error) {
+	f.mu.Lock()
+	f.listAllCalls++
+	call := f.listAllCalls
+	f.mu.Unlock()
+	// Run the hook unlocked so it can seed sessions through the same plain map
+	// writes every fixture uses.
+	if f.beforeListAll != nil {
+		f.beforeListAll(call)
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	var out []domain.SessionRecord
