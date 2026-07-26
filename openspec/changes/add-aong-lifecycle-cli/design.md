@@ -92,7 +92,7 @@ silently does nothing, which is the exact defect this change exists to remove.
 
 The original sketch had both `aong pause` ("no kills") and `aong drain`
 ("today's soft pause, honestly named"). Those are the same command: `ao pause
---all` *is* the drain. `ao` has no capability that gates new work while leaving
+--all` _is_ the drain. `ao` has no capability that gates new work while leaving
 live workers alone — the fleet-pause spec defines soft pause as gate-plus-drain.
 Shipping a `pause` verb would therefore mean either aliasing `drain` (which
 re-introduces the dishonest name this change removes) or building new daemon

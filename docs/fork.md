@@ -281,3 +281,53 @@ not make tmux itself unkillable. On migration hosts whose tmux server was alread
 spawned by the daemon before these units existed, `KillMode=process` protects
 daemon restarts, but full tmux cgroup ownership moves after reboot, server
 replacement, or socket release.
+
+## Lifecycle: the `aong` porcelain
+
+`ao`'s lifecycle verbs were designed around a desktop client that owns the
+daemon, and they no longer describe what they do on a web-first deployment:
+`ao start` opens the Electron app rather than starting a daemon, `pause` is a
+drain, `pause --hard` is an emergency stop filed as a flag on the
+non-destructive verb, and `stop` stops only the daemon.
+
+`aong` (`backend/cmd/aong`) is a thin porcelain that presents the correct verbs.
+It is deliberately deletable: if upstream adopts the model, the Cobra command
+definitions lift into `ao`'s command tree and this binary goes away.
+
+| Verb             | Composes                 | Effect                                                                    |
+| ---------------- | ------------------------ | ------------------------------------------------------------------------- |
+| `aong start`     | `systemctl --user start` | Starts the AO user units that are installed, in dependency order.         |
+| `aong status`    | `ao status`              | Daemon state and fleet pause state, plus each loaded unit's active state. |
+| `aong drain`     | `ao pause --all`         | Gate new work; live workers finish, then are terminated as they go idle.  |
+| `aong stop-work` | `ao pause --all --hard`  | Terminate all live sessions now, including orchestrators and Prime.       |
+| `aong resume`    | `ao resume --all`        | Restore intake and spawns.                                                |
+| `aong stop`      | `ao stop`                | Stop the daemon. Agent sessions keep running, unsupervised.               |
+| `aong shutdown`  | stop-work, then stop     | The one verb that stops everything.                                       |
+
+Rules the implementation keeps:
+
+- It couples only to `ao`'s public CLI and to `systemctl --user` for the units
+  `ao` does not manage (`ao-tmux.service`, `ao-web.service`). It never imports
+  daemon or `ao` CLI internals, never opens the run file or the shutdown token,
+  and never calls the daemon HTTP API. A change that needs new behavior is an
+  upstream `ao` proposal, not an `aong` feature.
+- It resolves `ao` beside its own binary before falling back to `PATH`, so the
+  pair that was built together stays together. `ops/deploy.sh` builds and
+  installs both, and a rollback to a release predating `aong` removes the
+  installed `aong` rather than leaving it driving an older `ao`.
+- There is no `aong pause`. `ao` has no capability that gates new work while
+  leaving live workers alone — its soft pause _is_ the drain — so a `pause`
+  distinct from `drain` would have to either lie or grow new daemon behavior in
+  the porcelain.
+- `aong shutdown` stops work before the daemon and refuses to stop the daemon if
+  stopping work failed. Live agents with no supervisor is worse than a shutdown
+  the operator can retry.
+
+Environment support:
+
+- **Verified**: systemd user units on this fork's fleet, and the `plain`
+  classification on a host with no `systemctl` on `PATH`.
+- **Untested**: macOS and Windows, and any deployment where AO's units are
+  installed system-wide rather than as user units. `aong start` fails with an
+  explicit message on a `plain` host rather than inventing a supervision path of
+  its own; it names `ao daemon` and `ao start` instead.

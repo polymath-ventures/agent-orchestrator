@@ -38,4 +38,12 @@ test("deploy.sh keeps its load-bearing invariants", async () => {
 	assert.match(text, /-H "Origin: \$public_url"/);
 	// All dependencies are checked before any mutation happens.
 	assert.match(text, /missing dependency/);
+	// aong resolves ao as its sibling, so both must be built and installed
+	// together — a deploy that ships only one silently pairs mismatched
+	// binaries.
+	assert.match(text, /go build -trimpath -o "\$rel\/bin\/aong" \.\/cmd\/aong/);
+	assert.match(text, /install -m 755 "\$rel\/bin\/aong"/);
+	// Rolling back to a release that predates aong must remove the installed
+	// porcelain rather than leave it driving an older ao.
+	assert.match(text, /rm -f "\$AONG_BIN_TARGET"/);
 });

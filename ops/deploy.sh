@@ -25,6 +25,9 @@ PREVIOUS_FILE="$DEPLOY_ROOT/previous-release"
 LOG_FILE="$DEPLOY_ROOT/agent-orchestrator.deploy.log"
 LAST_FILE="$DEPLOY_ROOT/agent-orchestrator.last-deployed"
 BIN_TARGET="$HOME/.local/bin/ao"
+# aong must land beside ao: it resolves its sibling before PATH so the pair that
+# was built together stays together.
+AONG_BIN_TARGET="$HOME/.local/bin/aong"
 UNIT_DIR="${AO_UNIT_DIR:-$HOME/.config/systemd/user}"
 SERVICES=(ao-web.service ao.service)
 
@@ -121,6 +124,15 @@ rollback() {
   log "Rolling back to $prev"
   ln -sfn "$prev" "$CURRENT"
   install -m 755 "$prev/bin/ao" "$BIN_TARGET"
+  # aong resolves ao as its sibling, so the pair must roll back together. A
+  # release that predates aong has no binary to restore; drop the installed one
+  # rather than leave a newer porcelain driving an older ao.
+  if [ -f "$prev/bin/aong" ]; then
+    install -m 755 "$prev/bin/aong" "$AONG_BIN_TARGET"
+  else
+    rm -f "$AONG_BIN_TARGET"
+    log "NOTE: $prev predates aong; removed $AONG_BIN_TARGET."
+  fi
   sync_units "$prev"
   cat "$prev/REVISION" > "$LAST_FILE"
   restart_and_verify
@@ -153,6 +165,7 @@ deploy() {
 
   log "Building backend."
   (cd "$rel/source/backend" && go build -trimpath -o "$rel/bin/ao" ./cmd/ao)
+  (cd "$rel/source/backend" && go build -trimpath -o "$rel/bin/aong" ./cmd/aong)
   log "Building web bundle."
   (cd "$rel/source" && npm --prefix frontend ci --silent && npm --prefix frontend run build:web --silent) >/dev/null
   [ -f "$rel/source/frontend/dist/index.html" ] || die "web bundle missing after build"
@@ -165,6 +178,7 @@ deploy() {
   ln -sfn "$rel" "$CURRENT"
   echo "$sha" > "$LAST_FILE"
   install -m 755 "$rel/bin/ao" "$BIN_TARGET"
+  install -m 755 "$rel/bin/aong" "$AONG_BIN_TARGET"
   sync_units "$rel"
   log "Flipped current -> $rel; installed $BIN_TARGET."
 
