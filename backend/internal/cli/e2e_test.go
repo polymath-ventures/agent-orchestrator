@@ -17,12 +17,14 @@
 package cli_test
 
 import (
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
@@ -255,11 +257,7 @@ func TestE2E_Lifecycle(t *testing.T) {
 	out, _ := e.run(t, "status", "--json")
 	mustContain(t, out, `"state": "ready"`)
 	mustContain(t, out, fmt.Sprintf(`"port": %d`, e.port))
-	// The whole wire: the daemon stamps its own provenance, the CLI decodes it,
-	// and `status --json` surfaces it. The server always sends a non-empty value
-	// (an unstamped build sends "unknown"), so this holds regardless of whether
-	// the test binary was built inside a VCS checkout.
-	mustContain(t, out, `"buildRevision"`)
+	statusRevision := mustBuildProvenance(t, out)
 
 	// the daemon (not the CLI) has created + migrated the store
 	if _, err := os.Stat(filepath.Join(e.dataDir, "ao.db")); err != nil {
@@ -271,7 +269,18 @@ func TestE2E_Lifecycle(t *testing.T) {
 	// /healthz identity
 	body := httpGet(t, e.port, "/healthz")
 	mustContain(t, body, "agent-orchestrator-daemon")
-	mustContain(t, body, `"buildRevision"`)
+
+	// The whole wire, asserted by VALUE rather than by key name: the daemon
+	// stamps its own provenance, the CLI decodes it, and `status --json` reports
+	// the same thing the probe did. A payload that quietly degraded to a
+	// meaningless value — or a build that lost VCS stamping altogether — would
+	// keep a key-presence assertion green while deployed provenance stopped
+	// meaning anything, which is the exact regression this field exists to
+	// prevent.
+	probeRevision := mustBuildProvenance(t, body)
+	if statusRevision != probeRevision {
+		t.Fatalf("status reported build revision %q but the probe reported %q", statusRevision, probeRevision)
+	}
 
 	if out, code := e.run(t, "stop"); code != 0 || !strings.Contains(out, "stopped") {
 		t.Fatalf("stop: exit %d, out %s", code, out)
@@ -372,6 +381,38 @@ func TestE2E_Completion(t *testing.T) {
 // HTTP helpers (loopback)
 
 func httpClient() *http.Client { return &http.Client{Timeout: 3 * time.Second} }
+
+// buildRevisionPattern is the daemon's whole contract for the field: a real
+// 40-hex commit, or the explicit unknown sentinel. Anything else means the
+// value has stopped being usable as provenance.
+var buildRevisionPattern = regexp.MustCompile(`^(unknown|[0-9a-f]{40})$`)
+
+// mustBuildProvenance pulls buildRevision/buildModified out of a JSON payload
+// and fails unless both are usable. It slices the JSON object out of the
+// surrounding text because the CLI helper returns combined output.
+func mustBuildProvenance(t *testing.T, payload string) string {
+	t.Helper()
+	start, end := strings.Index(payload, "{"), strings.LastIndex(payload, "}")
+	if start < 0 || end < start {
+		t.Fatalf("no JSON object in payload:\n%s", payload)
+	}
+	var decoded struct {
+		BuildRevision string `json:"buildRevision"`
+		BuildModified *bool  `json:"buildModified"`
+	}
+	if err := json.Unmarshal([]byte(payload[start:end+1]), &decoded); err != nil {
+		t.Fatalf("decode provenance: %v\npayload:\n%s", err, payload)
+	}
+	if !buildRevisionPattern.MatchString(decoded.BuildRevision) {
+		t.Fatalf("buildRevision = %q, want a 40-hex commit or \"unknown\"", decoded.BuildRevision)
+	}
+	// A pointer, so an omitted key fails here instead of decoding into a
+	// confident "this build was clean".
+	if decoded.BuildModified == nil {
+		t.Fatalf("buildModified absent; silence must not read as a clean build:\n%s", payload)
+	}
+	return decoded.BuildRevision
+}
 
 func httpGet(t *testing.T, port int, path string) string {
 	t.Helper()

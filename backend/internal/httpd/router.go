@@ -320,16 +320,20 @@ func localControlRequest(r *http.Request) bool {
 // initialization happens before the server is constructed, so a listening
 // daemon is ready to answer requests.
 func daemonProbePayload(status string, cfg config.Config) map[string]any {
+	revision, modified := buildProvenance()
 	payload := map[string]any{
 		"status":  status,
 		"service": daemonmeta.ServiceName,
 		"pid":     os.Getpid(),
-		// Unconditional, unlike the fields below: this is the only thing in the
-		// payload that identifies the *source* the responder was built from, and
-		// a caller that cannot read the binary has nothing else to check it
-		// against. It carries buildRevisionUnknown rather than disappearing when
-		// the build is unstamped.
-		"buildRevision": buildRevision(),
+		// Unconditional, unlike the fields below: these are the only things in
+		// the payload that identify the *source* the responder was built from,
+		// and a caller that cannot read the binary has nothing else to check it
+		// against. buildRevision carries buildRevisionUnknown rather than
+		// disappearing when the build is unstamped, and buildModified is emitted
+		// even when false so "clean" is a stated fact rather than an inference
+		// from an absent key.
+		"buildRevision": revision,
+		"buildModified": modified,
 	}
 	if exe, err := os.Executable(); err == nil && exe != "" {
 		payload["executablePath"] = exe

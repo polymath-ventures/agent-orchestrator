@@ -8,45 +8,43 @@ import "runtime/debug"
 // "this daemon predates the field", and an absent key conflates the two.
 const buildRevisionUnknown = "unknown"
 
-// buildRevision reports the commit this binary was built from.
+// buildProvenance reports the commit this binary was built from, and whether
+// the tree that produced it was clean.
 //
 // The daemon already reports where its binary lives (executablePath), which
 // answers "which file is answering" but not "what is that file". Anyone without
 // read access to the deploy host's binary and journal — another account, CI, a
 // browser — otherwise has no way to confirm that a running daemon is the
 // artifact a given commit produced.
-func buildRevision() string {
+func buildProvenance() (revision string, modified bool) {
 	info, ok := debug.ReadBuildInfo()
-	return formatBuildRevision(info, ok)
+	return formatBuildProvenance(info, ok)
 }
 
-// formatBuildRevision is split from its caller so both stamped shapes stay
+// formatBuildProvenance is split from its caller so both stamped shapes stay
 // testable: a `go test` binary carries no vcs settings, so through
 // debug.ReadBuildInfo alone only the unknown path is ever reachable.
 //
-// A dirty build is reported as one suffixed string rather than as a separate
-// boolean beside the revision. Two fields would be two copies of one truth that
-// have to agree, and the consumer this exists for — a deploy gate asking "is
-// this exactly commit X, built clean?" — answers that with a single equality
-// check, which a suffixed revision fails exactly when it should.
-func formatBuildRevision(info *debug.BuildInfo, ok bool) string {
+// modified fails CLOSED — it is false only on an explicit vcs.modified=false.
+// A missing or unrecognized value means the tree's state was never established,
+// and reporting that as clean would let a deploy gate accept a build whose
+// provenance it could not actually confirm. Read it as "not known to be a clean
+// build of revision", which is also why an unknown revision reports true.
+func formatBuildProvenance(info *debug.BuildInfo, ok bool) (revision string, modified bool) {
 	if !ok || info == nil {
-		return buildRevisionUnknown
+		return buildRevisionUnknown, true
 	}
-	var revision, modified string
+	var vcsModified string
 	for _, setting := range info.Settings {
 		switch setting.Key {
 		case "vcs.revision":
 			revision = setting.Value
 		case "vcs.modified":
-			modified = setting.Value
+			vcsModified = setting.Value
 		}
 	}
 	if revision == "" {
-		return buildRevisionUnknown
+		return buildRevisionUnknown, true
 	}
-	if modified == "true" {
-		return revision + "-dirty"
-	}
-	return revision
+	return revision, vcsModified != "false"
 }
