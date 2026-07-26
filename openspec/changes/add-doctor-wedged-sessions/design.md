@@ -53,6 +53,13 @@ on state here would re-introduce a guess — exactly the failure mode of the
 removed check — where reporting the two facts side by side lets the operator
 decide.
 
+### The probe is bounded like every other doctor read
+
+`getJSON` raises the HTTP client timeout to the two-minute command timeout,
+which is correct for a spawn and wrong here: one slow daemon would stall the
+whole report before the `daemon` check that explains it even ran. The call is
+wrapped in the same `probeTimeout` doctor uses for its other daemon reads.
+
 ### A session with no activity timestamp is skipped, not warned about
 
 Silence is measured from a starting point. A session that has never recorded

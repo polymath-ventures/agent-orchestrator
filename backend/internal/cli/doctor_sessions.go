@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
 // A read-only diagnostic for the question `ao doctor` could not previously
@@ -26,14 +28,15 @@ import (
 // check reads that record and nothing else: no `ps`, no `tmux`, no process
 // inspection, and therefore no platform-specific behavior to get wrong.
 
-// wedgedSessionSilence is how long a live session may record no activity before
-// doctor mentions it.
+// wedgedSessionSilence is how long a session the daemon believes is ACTIVE may
+// record no activity before doctor mentions it.
 //
 // It is deliberately hours, not minutes. Activity is recorded per agent hook,
-// so a working agent refreshes it constantly, while daemon downtime silently
-// drops hooks — doctor already suppresses those as restart-window noise. A
-// threshold far longer than any restart window keeps that gap from producing
-// false warnings. The reported case was an agent stuck for eight hours.
+// so an agent that is really working refreshes it constantly, while daemon
+// downtime silently drops hooks — doctor already suppresses those as
+// restart-window noise. A threshold far longer than any restart window keeps
+// that gap from producing false warnings. The reported case was an agent stuck
+// for eight hours.
 const wedgedSessionSilence = 4 * time.Hour
 
 // checkWedgedSessions warns about live sessions that have gone silent.
@@ -47,20 +50,38 @@ func (c *commandContext) checkWedgedSessions(ctx context.Context) doctorCheck {
 		return doctorCheck{Level: level, Section: doctorSectionCore, Name: name, Message: msg}
 	}
 
+	// Bound this like every other doctor probe. getJSON raises the client
+	// timeout to the two-minute command timeout, which is right for a spawn but
+	// would let one slow daemon stall the whole report before the `daemon`
+	// check even runs.
+	probeCtx, cancel := context.WithTimeout(ctx, probeTimeout)
+	defer cancel()
+
 	// Scope the listing to live sessions: a fleet with a long terminated
-	// history should not pay to transfer it, and terminated sessions are silent
-	// by definition.
+	// history should not pay to transfer it.
 	params := url.Values{}
 	params.Set("active", "true")
 	var res sessionListResponse
-	if err := c.getJSON(ctx, apiPath("sessions", params), &res); err != nil {
+	if err := c.getJSON(probeCtx, apiPath("sessions", params), &res); err != nil {
 		return report(doctorPass, "unavailable: could not read the session list ("+err.Error()+")")
 	}
 
 	now := c.deps.Now()
 	var silent []string
 	for _, session := range res.Sessions {
+		// The `active=true` query already excludes terminated sessions. This
+		// keeps the check's own output correct if that server-side scoping ever
+		// changes, which is cheaper than discovering it through a wrong warning.
 		if session.IsTerminated {
+			continue
+		}
+		// Only a session the daemon believes is ACTIVE can be wedged. idle
+		// means the agent stopped; waiting_input and blocked mean it is paused
+		// on the user, and an operator legitimately leaves those overnight.
+		// Warning on them would make this check noise an operator learns to
+		// ignore — and the state is the daemon's own record, so using it is
+		// reading the owner of the fact, not guessing.
+		if session.Activity.State != string(domain.ActivityActive) {
 			continue
 		}
 		// Silence is measured from a starting point. A session that has never
@@ -74,21 +95,14 @@ func (c *commandContext) checkWedgedSessions(ctx context.Context) doctorCheck {
 		if quiet < wedgedSessionSilence {
 			continue
 		}
-		label := fmt.Sprintf("%s silent %s", session.ID, formatUptime(quiet))
-		// The daemon's own state is reported alongside the silence rather than
-		// used to filter: "idle for 8h" and "working for 8h" are both worth an
-		// operator's eye, and they read differently.
-		if session.Activity.State != "" {
-			label += " (state=" + session.Activity.State + ")"
-		}
-		silent = append(silent, label)
+		silent = append(silent, fmt.Sprintf("%s (active, silent %s)", session.ID, formatUptime(quiet)))
 	}
 
 	if len(silent) == 0 {
-		return report(doctorPass, fmt.Sprintf("no live session has been silent for over %s", wedgedSessionSilence))
+		return report(doctorPass, fmt.Sprintf("no active session has been silent for over %s", wedgedSessionSilence))
 	}
 	sort.Strings(silent)
 	return report(doctorWarn, fmt.Sprintf(
-		"%d live session(s) have recorded no activity for over %s — they may be wedged: %s",
+		"%d session(s) the daemon believes are active have recorded no activity for over %s — they may be wedged: %s; inspect with `ao session get <id>` and end one with `ao session kill <id>`",
 		len(silent), wedgedSessionSilence, strings.Join(silent, ", ")))
 }

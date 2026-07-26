@@ -31,9 +31,17 @@ func doctorSessionsContext(t *testing.T, now time.Time, sessions []sessionDTO) (
 	}))
 	t.Cleanup(srv.Close)
 
+	return sessionsContextFor(t, now, srv.URL), &requests
+}
+
+// sessionsContextFor writes a run file pointing at url and builds a context
+// whose clock is pinned and whose external-command hooks fail the test: the
+// check must reach the daemon and nothing else.
+func sessionsContextFor(t *testing.T, now time.Time, url string) *commandContext {
+	t.Helper()
 	port := 0
-	if _, err := fmt.Sscanf(strings.TrimPrefix(srv.URL, "http://127.0.0.1:"), "%d", &port); err != nil {
-		t.Fatalf("parse stub port from %q: %v", srv.URL, err)
+	if _, err := fmt.Sscanf(strings.TrimPrefix(url, "http://127.0.0.1:"), "%d", &port); err != nil {
+		t.Fatalf("parse stub port from %q: %v", url, err)
 	}
 
 	dir := t.TempDir()
@@ -55,7 +63,25 @@ func doctorSessionsContext(t *testing.T, now time.Time, sessions []sessionDTO) (
 			t.Fatal("the wedged-session check must not invoke any external command")
 			return nil, nil
 		},
-	}.withDefaults()}, &requests
+	}.withDefaults()}
+}
+
+// doctorSessionsContextSlow points the CLI at a daemon that accepts the
+// connection and then never answers.
+func doctorSessionsContextSlow(t *testing.T, now time.Time) (*commandContext, *[]string) {
+	t.Helper()
+	var requests []string
+	done := make(chan struct{})
+	t.Cleanup(func() { close(done) })
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests = append(requests, r.Method+" "+r.URL.RequestURI())
+		select {
+		case <-done:
+		case <-r.Context().Done():
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return sessionsContextFor(t, now, srv.URL), &requests
 }
 
 func liveSession(id string, last time.Time, state string) sessionDTO {
@@ -67,7 +93,7 @@ func liveSession(id string, last time.Time, state string) sessionDTO {
 func TestWedgedSessionsWarnsOnSilencePastTheThreshold(t *testing.T) {
 	now := time.Date(2026, 7, 26, 12, 0, 0, 0, time.UTC)
 	c, _ := doctorSessionsContext(t, now, []sessionDTO{
-		liveSession("mer-wedged", now.Add(-8*time.Hour), "working"),
+		liveSession("mer-wedged", now.Add(-8*time.Hour), "active"),
 	})
 
 	check := c.checkWedgedSessions(context.Background())
@@ -80,12 +106,58 @@ func TestWedgedSessionsWarnsOnSilencePastTheThreshold(t *testing.T) {
 	if !strings.Contains(check.Message, "8h") {
 		t.Fatalf("message does not say how long it has been silent: %q", check.Message)
 	}
+	if !strings.Contains(check.Message, "ao session get") {
+		t.Fatalf("message gives the operator no next action: %q", check.Message)
+	}
+}
+
+// idle means the agent stopped; waiting_input and blocked mean it is paused on
+// the user, and an operator legitimately leaves those overnight. Warning on
+// them would make this check noise an operator learns to ignore.
+func TestWedgedSessionsIgnoresSessionsThatAreNotActive(t *testing.T) {
+	now := time.Date(2026, 7, 26, 12, 0, 0, 0, time.UTC)
+	c, _ := doctorSessionsContext(t, now, []sessionDTO{
+		liveSession("mer-idle", now.Add(-20*time.Hour), "idle"),
+		liveSession("mer-waiting", now.Add(-20*time.Hour), "waiting_input"),
+		liveSession("mer-blocked", now.Add(-20*time.Hour), "blocked"),
+		liveSession("mer-exited", now.Add(-20*time.Hour), "exited"),
+		liveSession("mer-unknown", now.Add(-20*time.Hour), ""),
+	})
+
+	check := c.checkWedgedSessions(context.Background())
+	if check.Level != doctorPass {
+		t.Fatalf("level = %s, want PASS (%+v)", check.Level, check)
+	}
+	for _, id := range []string{"mer-idle", "mer-waiting", "mer-blocked", "mer-exited", "mer-unknown"} {
+		if strings.Contains(check.Message, id) {
+			t.Fatalf("warned about a session that is not active (%s): %q", id, check.Message)
+		}
+	}
+}
+
+// getJSON raises the client timeout to the two-minute command timeout, which
+// would let one slow daemon stall the whole doctor report.
+func TestWedgedSessionsDoesNotStallDoctorOnASlowDaemon(t *testing.T) {
+	now := time.Date(2026, 7, 26, 12, 0, 0, 0, time.UTC)
+	c, _ := doctorSessionsContextSlow(t, now)
+
+	start := time.Now()
+	check := c.checkWedgedSessions(context.Background())
+	if elapsed := time.Since(start); elapsed > 30*time.Second {
+		t.Fatalf("check took %s against a slow daemon; it must be bounded by the probe timeout", elapsed)
+	}
+	if check.Level != doctorPass {
+		t.Fatalf("level = %s, want PASS (%+v)", check.Level, check)
+	}
+	if !strings.Contains(check.Message, "unavailable") {
+		t.Fatalf("message does not report the signal as unavailable: %q", check.Message)
+	}
 }
 
 func TestWedgedSessionsPassesWhenEveryoneIsRecentlyActive(t *testing.T) {
 	now := time.Date(2026, 7, 26, 12, 0, 0, 0, time.UTC)
 	c, _ := doctorSessionsContext(t, now, []sessionDTO{
-		liveSession("mer-a", now.Add(-2*time.Minute), "working"),
+		liveSession("mer-a", now.Add(-2*time.Minute), "active"),
 		liveSession("mer-b", now.Add(-30*time.Minute), "idle"),
 	})
 
@@ -120,9 +192,9 @@ func TestWedgedSessionsIgnoresTerminatedSessions(t *testing.T) {
 func TestWedgedSessionsNamesEverySilentSession(t *testing.T) {
 	now := time.Date(2026, 7, 26, 12, 0, 0, 0, time.UTC)
 	c, _ := doctorSessionsContext(t, now, []sessionDTO{
-		liveSession("mer-one", now.Add(-9*time.Hour), "working"),
-		liveSession("mer-two", now.Add(-6*time.Hour), "idle"),
-		liveSession("mer-fine", now.Add(-time.Minute), "working"),
+		liveSession("mer-one", now.Add(-9*time.Hour), "active"),
+		liveSession("mer-two", now.Add(-6*time.Hour), "active"),
+		liveSession("mer-fine", now.Add(-time.Minute), "active"),
 	})
 
 	check := c.checkWedgedSessions(context.Background())
@@ -145,7 +217,7 @@ func TestWedgedSessionsNamesEverySilentSession(t *testing.T) {
 func TestWedgedSessionsSkipsSessionsWithNoRecordedActivity(t *testing.T) {
 	now := time.Date(2026, 7, 26, 12, 0, 0, 0, time.UTC)
 	c, _ := doctorSessionsContext(t, now, []sessionDTO{
-		liveSession("mer-fresh", time.Time{}, ""),
+		liveSession("mer-fresh", time.Time{}, "active"),
 	})
 
 	check := c.checkWedgedSessions(context.Background())
@@ -182,7 +254,7 @@ func TestWedgedSessionsDegradesWhenTheDaemonIsUnreachable(t *testing.T) {
 func TestWedgedSessionsOnlyReadsAndNeverTouchesTheSupervisorSocket(t *testing.T) {
 	now := time.Date(2026, 7, 26, 12, 0, 0, 0, time.UTC)
 	c, requests := doctorSessionsContext(t, now, []sessionDTO{
-		liveSession("mer-one", now.Add(-9*time.Hour), "working"),
+		liveSession("mer-one", now.Add(-9*time.Hour), "active"),
 	})
 
 	_ = c.checkWedgedSessions(context.Background())
@@ -210,7 +282,7 @@ func TestWedgedSessionsOnlyReadsAndNeverTouchesTheSupervisorSocket(t *testing.T)
 func TestDoctorReportsTheWedgedSessionsCheck(t *testing.T) {
 	now := time.Date(2026, 7, 26, 12, 0, 0, 0, time.UTC)
 	c, _ := doctorSessionsContext(t, now, []sessionDTO{
-		liveSession("mer-wedged", now.Add(-8*time.Hour), "working"),
+		liveSession("mer-wedged", now.Add(-8*time.Hour), "active"),
 	})
 	// runDoctor's other checks legitimately shell out (git, tmux, harnesses);
 	// the no-external-command guarantee is asserted on the check in isolation
