@@ -470,7 +470,7 @@ func waitForRestoreToParkOrReachTheManager(t *testing.T, reachedManager func() b
 			return
 		}
 		stacks := allGoroutineStacks()
-		if restoreIsBlockedOnAMutex(stacks) {
+		if restoreIsContendingForTheRoleLock(stacks) {
 			return
 		}
 		if time.Now().After(deadline) {
@@ -489,11 +489,11 @@ func allGoroutineStacks() string {
 	}
 }
 
-// restoreIsBlockedOnAMutex reports whether some goroutine is parked acquiring a
+// restoreIsContendingForTheRoleLock reports whether some goroutine is parked acquiring a
 // mutex with Service.Restore on its stack. Between the handoff signal and the
 // manager call, lockRole holds the only mutexes Restore touches, so a park there
 // means the restore is waiting on the role lock.
-func restoreIsBlockedOnAMutex(stacks string) bool {
+func restoreIsContendingForTheRoleLock(stacks string) bool {
 	for _, g := range strings.Split(stacks, "\n\n") {
 		if !strings.Contains(g, "session.(*Service).Restore(") {
 			continue
@@ -509,6 +509,12 @@ func restoreIsBlockedOnAMutex(stacks string) bool {
 		// The state word in the goroutine header ("[sync.Mutex.Lock]",
 		// "[semacquire]") is the same signal from the runtime's side; either
 		// form is accepted so this does not hinge on one rendering.
+		//
+		// What this proves is CONTENTION, not that the goroutine is parked at
+		// this instant — a lockSlow frame can also linger while waking. That is
+		// the property the barrier needs: contention on the role lock cannot
+		// happen unless the reconcile is holding it, so a missing or wrongly
+		// keyed lock can never satisfy this.
 		for _, evidence := range []string{
 			"(*Mutex).lockSlow", "SemacquireMutex", "runtime.semacquire",
 			"[sync.Mutex.Lock", "[semacquire",
