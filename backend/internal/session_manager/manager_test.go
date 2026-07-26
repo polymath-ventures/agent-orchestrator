@@ -1989,6 +1989,18 @@ func TestCleanup_ReportsSkippedWorkspaces(t *testing.T) {
 	if res.Skipped[0].Reason != "project is archived or unregistered — remove worktree manually" {
 		t.Fatalf("reason = %q, want archived-project reason", res.Skipped[0].Reason)
 	}
+
+	ws.destroyErr = fmt.Errorf("wrong repo: %w", ports.ErrWorkspaceRepoMismatch)
+	res, err = m.Cleanup(ctx, "mer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Skipped) != 1 || res.Skipped[0].SessionID != "mer-1" {
+		t.Fatalf("skipped = %v, want mer-1", res.Skipped)
+	}
+	if res.Skipped[0].Reason != "workspace belongs to a different repo — remove worktree manually" {
+		t.Fatalf("reason = %q, want repo-mismatch reason", res.Skipped[0].Reason)
+	}
 }
 
 // TestSpawnTeardown_WorkspaceRepoPathRoundTrip pins the WorkspaceRepoPath round

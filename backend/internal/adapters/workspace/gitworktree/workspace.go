@@ -256,8 +256,10 @@ func (w *Workspace) DestroyWorkspaceProject(ctx context.Context, info ports.Work
 	return firstErr
 }
 
-// Destroy removes the session's worktree and prunes it from the repo, refusing
-// (rather than force-deleting) if git still has the path registered afterwards.
+// Destroy removes the session's worktree and prunes it from the repo. It
+// refuses rather than force-deleting if git still has the path registered
+// afterwards, and its filesystem-removal backstop refuses a live worktree owned
+// by a different repo.
 func (w *Workspace) Destroy(ctx context.Context, info ports.WorkspaceInfo) error {
 	if info.Path == "" {
 		return fmt.Errorf("%w: empty path", ErrUnsafePath)
@@ -296,10 +298,7 @@ func (w *Workspace) Destroy(ctx context.Context, info ports.WorkspaceInfo) error
 		}
 		return fmt.Errorf("gitworktree: refusing to remove %q: path is still registered after git worktree prune", path)
 	}
-	if err := os.RemoveAll(path); err != nil {
-		return fmt.Errorf("gitworktree: remove unregistered path %q: %w", path, err)
-	}
-	return nil
+	return w.removePathIfNotForeign(ctx, repo, path, "remove unregistered path")
 }
 
 // ForceDestroy removes the session's worktree unconditionally (--force), prunes
@@ -331,10 +330,7 @@ func (w *Workspace) ForceDestroy(ctx context.Context, info ports.WorkspaceInfo) 
 	// os.RemoveAll as a backstop: cleans up filesystem residue left behind if
 	// git worktree remove --force still left the directory (e.g. files outside
 	// git tracking).
-	if err := os.RemoveAll(path); err != nil {
-		return fmt.Errorf("gitworktree: force remove path %q: %w", path, err)
-	}
-	return nil
+	return w.removePathIfNotForeign(ctx, repo, path, "force remove path")
 }
 
 // StashUncommitted captures all uncommitted work in the session's worktree
@@ -549,13 +545,9 @@ func (w *Workspace) AddExclude(ctx context.Context, info ports.WorkspaceInfo, pa
 	if err != nil {
 		return err
 	}
-	out, err := w.run(ctx, w.binary, "-C", path, "rev-parse", "--git-common-dir")
+	gitDir, err := w.gitCommonDir(ctx, path)
 	if err != nil {
 		return fmt.Errorf("gitworktree: AddExclude resolve git common dir: %w", err)
-	}
-	gitDir := strings.TrimSpace(string(out))
-	if !filepath.IsAbs(gitDir) {
-		gitDir = filepath.Join(path, gitDir)
 	}
 	infoDir := filepath.Join(gitDir, "info")
 	if err := os.MkdirAll(infoDir, 0o750); err != nil {
@@ -832,10 +824,83 @@ func (w *Workspace) forceDestroyPath(ctx context.Context, repo, path string) err
 	if err := w.pruneWorktrees(ctx, repo); err != nil {
 		return err
 	}
+	return w.removePathIfNotForeign(ctx, repo, path, "force remove path")
+}
+
+func (w *Workspace) removePathIfNotForeign(ctx context.Context, repo, path, action string) error {
+	mismatch, err := w.worktreeOwnedByDifferentRepo(ctx, repo, path)
+	if err != nil {
+		return err
+	}
+	if mismatch {
+		return fmt.Errorf("gitworktree: refusing to remove %q: resolved repo %q does not own this worktree: %w", path, repo, ports.ErrWorkspaceRepoMismatch)
+	}
 	if err := os.RemoveAll(path); err != nil {
-		return fmt.Errorf("gitworktree: force remove path %q: %w", path, err)
+		return fmt.Errorf("gitworktree: %s %q: %w", action, path, err)
 	}
 	return nil
+}
+
+func (w *Workspace) worktreeOwnedByDifferentRepo(ctx context.Context, repo, path string) (bool, error) {
+	if _, err := os.Stat(path); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return false, nil
+		}
+		return false, fmt.Errorf("gitworktree: stat worktree %q: %w", path, err)
+	}
+	pathCommon, ok := w.gitCommonDirForWorktreeRoot(ctx, path)
+	if !ok {
+		return false, nil
+	}
+	repoCommon, err := w.gitCommonDir(ctx, repo)
+	if err != nil {
+		return false, err
+	}
+	return pathCommon != repoCommon, nil
+}
+
+func (w *Workspace) gitCommonDirForWorktreeRoot(ctx context.Context, path string) (string, bool) {
+	topLevel, err := w.gitTopLevel(ctx, path)
+	if err != nil || topLevel != filepath.Clean(path) {
+		return "", false
+	}
+	common, err := w.gitCommonDir(ctx, path)
+	return common, err == nil
+}
+
+func (w *Workspace) gitTopLevel(ctx context.Context, path string) (string, error) {
+	out, err := w.run(ctx, w.binary, "-C", path, "rev-parse", "--show-toplevel")
+	if err != nil {
+		return "", err
+	}
+	top := strings.TrimSpace(string(out))
+	if top == "" {
+		return "", errors.New("empty git top level")
+	}
+	abs, err := physicalAbs(top)
+	if err != nil {
+		return "", err
+	}
+	return abs, nil
+}
+
+func (w *Workspace) gitCommonDir(ctx context.Context, path string) (string, error) {
+	out, err := w.run(ctx, w.binary, "-C", path, "rev-parse", "--git-common-dir")
+	if err != nil {
+		return "", fmt.Errorf("gitworktree: resolve git common dir for %q: %w", path, err)
+	}
+	common := strings.TrimSpace(string(out))
+	if common == "" {
+		return "", fmt.Errorf("gitworktree: resolve git common dir for %q: empty output", path)
+	}
+	if !filepath.IsAbs(common) {
+		common = filepath.Join(path, common)
+	}
+	abs, err := physicalAbs(common)
+	if err != nil {
+		return "", fmt.Errorf("gitworktree: resolve git common dir for %q: %w", path, err)
+	}
+	return abs, nil
 }
 
 func (w *Workspace) pruneWorktrees(ctx context.Context, repo string) error {
