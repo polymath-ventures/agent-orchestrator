@@ -318,8 +318,11 @@ func scopedSystemctlFake(t *testing.T, rec *doctorProbeRecorder, wantUnit, nrest
 			if got := slices.Contains(args, "--user"); got != wantUserScope {
 				t.Errorf("systemctl --user = %v, want %v (args: %s)", got, wantUserScope, joined)
 			}
-			if !strings.Contains(joined, wantUnit) {
-				t.Errorf("systemctl probed %q, want the derived unit %q", joined, wantUnit)
+			// Exact argv element, not a substring: "__ao.service" CONTAINS
+			// "_ao.service", so a substring check is satisfied even when the
+			// unescape step is missing.
+			if !slices.Contains(args, wantUnit) {
+				t.Errorf("systemctl probed %q, want the derived unit %q as an exact argument", joined, wantUnit)
 			}
 			return []byte(nrestarts + "\n"), nil
 		default:
@@ -484,5 +487,103 @@ func TestDoctorDaemonRestartsQuotesUnitInJournalHint(t *testing.T) {
 	}
 	if !strings.Contains(check.Message, "-u '"+unit+"'") {
 		t.Fatalf("journal hint in %q does not quote the unit; a shell would eat the escape", check.Message)
+	}
+}
+
+// TestDoctorDaemonRestartsAcceptsLiteralBackslashUnits pins that a LITERAL
+// backslash is a valid systemd unit-name character. systemd.unit(5) lists it
+// among the valid characters; `\xNN` is the escaping convention
+// unit_name_escape() emits, not a validity rule. A previous tightening required
+// the escaped form and so rejected real units, reporting the check unavailable
+// for a daemon that was running fine. This test exists to stop that recurring.
+func TestDoctorDaemonRestartsAcceptsLiteralBackslashUnits(t *testing.T) {
+	for _, unit := range []string{`ao\garbage.service`, `ao\x2.service`, `ao\xZZ.service`} {
+		t.Run(unit, func(t *testing.T) {
+			cfg := setConfigEnv(t)
+			srv := doctorDaemonServer(t)
+			rec := &doctorProbeRecorder{}
+			c, _ := doctorLiveDaemonContext(t, cfg, srv,
+				map[string]string{"git": "/bin/git", "systemctl": "/bin/systemctl"},
+				scopedSystemctlFake(t, rec, unit, "0", false),
+			)
+			c.deps.ProcRoot = writeProcCgroup(t, doctorFakeDaemonPID, "0::/system.slice/"+unit+"\n")
+
+			check := findDoctorCheck(t, c.runDoctor(context.Background()), "daemon-restarts")
+			if check.Level != doctorPass || !strings.Contains(check.Message, unit) {
+				t.Fatalf("daemon-restarts = %+v, want PASS naming the unit %q", check, unit)
+			}
+		})
+	}
+}
+
+// TestDoctorDaemonRestartsUnescapesCgroupNames covers systemd's cgroup-filename
+// escaping: a name starting with `_`, or colliding with a controller filename,
+// is written with one extra leading underscore. Reading it back without
+// reversing that asks systemd about a unit that does not exist — and systemctl
+// answers 0 for an unknown unit, so doctor would report a healthy PASS.
+func TestDoctorDaemonRestartsUnescapesCgroupNames(t *testing.T) {
+	for _, tc := range []struct{ onCgroup, wantUnit string }{
+		{"__ao.service", "_ao.service"},
+		{"_cpu.service", "cpu.service"},
+		{"ao.service", "ao.service"},
+	} {
+		t.Run(tc.onCgroup, func(t *testing.T) {
+			cfg := setConfigEnv(t)
+			srv := doctorDaemonServer(t)
+			rec := &doctorProbeRecorder{}
+			c, _ := doctorLiveDaemonContext(t, cfg, srv,
+				map[string]string{"git": "/bin/git", "systemctl": "/bin/systemctl"},
+				scopedSystemctlFake(t, rec, tc.wantUnit, "0", false),
+			)
+			c.deps.ProcRoot = writeProcCgroup(t, doctorFakeDaemonPID, "0::/system.slice/"+tc.onCgroup+"\n")
+
+			check := findDoctorCheck(t, c.runDoctor(context.Background()), "daemon-restarts")
+			// Anchored on the message's leading token: the escaped form is a
+			// superstring of the unescaped one, so Contains cannot tell them apart.
+			if check.Level != doctorPass || !strings.HasPrefix(check.Message, tc.wantUnit+" has restarted") {
+				t.Fatalf("daemon-restarts = %+v, want PASS naming exactly the unescaped unit %q", check, tc.wantUnit)
+			}
+		})
+	}
+}
+
+// TestDoctorDaemonRestartsAcceptsWellFormedEscapes is the other half: a real
+// `\xNN` escape must still be recognized, or tightening the pattern would
+// silently break the units it exists to match.
+func TestDoctorDaemonRestartsAcceptsWellFormedEscapes(t *testing.T) {
+	cfg := setConfigEnv(t)
+	srv := doctorDaemonServer(t)
+	rec := &doctorProbeRecorder{}
+	const unit = `ao\x2dworker:main.service`
+	c, _ := doctorLiveDaemonContext(t, cfg, srv,
+		map[string]string{"git": "/bin/git", "systemctl": "/bin/systemctl"},
+		scopedSystemctlFake(t, rec, unit, "0", false),
+	)
+	c.deps.ProcRoot = writeProcCgroup(t, doctorFakeDaemonPID, "0::/system.slice/"+unit+"\n")
+
+	check := findDoctorCheck(t, c.runDoctor(context.Background()), "daemon-restarts")
+	if check.Level != doctorPass || !strings.Contains(check.Message, unit) {
+		t.Fatalf("daemon-restarts = %+v, want PASS naming the escaped unit %q", check, unit)
+	}
+}
+
+// TestCgroupUnescape pins the transformation directly, by equality. The
+// integration checks also require exact values; a substring assertion would
+// not discriminate because systemd's escaped form is a superstring of the
+// unescaped one.
+func TestCgroupUnescape(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{"__ao.service", "_ao.service"}, // a unit literally named _ao.service
+		{"_cpu.service", "cpu.service"}, // collided with a controller filename
+		{"ao.service", "ao.service"},    // never escaped, must be untouched
+		{"", ""},                        // degenerate, must not panic
+		{"_", ""},                       // bare prefix
+		{"a_b.service", "a_b.service"},  // underscore not leading, untouched
+	} {
+		t.Run(tc.in, func(t *testing.T) {
+			if got := cgroupUnescape(tc.in); got != tc.want {
+				t.Fatalf("cgroupUnescape(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
 	}
 }

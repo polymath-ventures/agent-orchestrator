@@ -33,14 +33,74 @@ function nextConnection(server: net.Server): Promise<net.Socket> {
 	});
 }
 
-// Resolves with the first chunk of bytes an accepted socket receives, decoded
-// as UTF-8. Accepted sockets start paused, so attaching the handler after the
-// client has already written does not lose the data.
-function firstChunk(sock: net.Socket): Promise<string> {
+// Resolves once at least `want` bytes have arrived, decoded as UTF-8. A stream
+// socket makes no framing promise, so waiting for a single "data" event can
+// resolve on a partial token and fail a correct client. Accepted sockets start
+// paused, so attaching the handler after the client has already written does
+// not lose the data.
+function readAtLeast(sock: net.Socket, want: number): Promise<string> {
 	return new Promise((resolve) => {
-		sock.once("data", (buf: Buffer) => resolve(buf.toString("utf8")));
+		const chunks: Buffer[] = [];
+		let total = 0;
+		const onData = (buf: Buffer) => {
+			chunks.push(buf);
+			total += buf.length;
+			if (total < want) return;
+			sock.off("data", onData);
+			resolve(Buffer.concat(chunks).toString("utf8"));
+		};
+		sock.on("data", onData);
 	});
 }
+
+// Guards the helper the handshake assertions depend on. A stream socket may
+// deliver the token in pieces, and a helper that took only the first "data"
+// event would compare a partial token and fail a correct client. Splitting the
+// write here reproduces that framing without needing a real slow network.
+describe("readAtLeast", () => {
+	it("assembles a token delivered across multiple chunks", async () => {
+		const addr = tmpSocketPath();
+		const server = net.createServer();
+		servers.push(server);
+		const connectionPromise = nextConnection(server);
+		await new Promise<void>((resolve, reject) => {
+			server.listen(addr, () => resolve());
+			server.once("error", reject);
+		});
+
+		const client = net.connect(addr);
+		const conn = await withTimeout(connectionPromise, 3_000, "readAtLeast: server did not accept");
+		// try/finally, so a regression that never resolves still tears the sockets
+		// down. Otherwise afterEach blocks on server.close() with a live
+		// connection and the real failure is buried under a hook timeout.
+		try {
+			const received = readAtLeast(conn, HANDSHAKE_TOKEN.length);
+
+			// Deliberately split mid-token, with a gap, so a one-chunk read resolves short.
+			const split = 6;
+			client.write(HANDSHAKE_TOKEN.slice(0, split));
+			await new Promise<void>((r) => setTimeout(r, 50));
+			client.write(HANDSHAKE_TOKEN.slice(split));
+
+			expect(await withTimeout(received, 3_000, "readAtLeast: never assembled the full token")).toBe(HANDSHAKE_TOKEN);
+		} finally {
+			client.destroy();
+			conn.destroy();
+		}
+	});
+
+	const servers: net.Server[] = [];
+	afterEach(async () => {
+		await Promise.all(
+			servers.splice(0).map(
+				(s) =>
+					new Promise<void>((resolve) => {
+						s.close(() => resolve());
+					}),
+			),
+		);
+	});
+});
 
 describe("supervisor-link", () => {
 	const handles: SupervisorLinkHandle[] = [];
@@ -226,7 +286,11 @@ describe("supervisor-link", () => {
 		handles.push(link);
 
 		const conn = await withTimeout(connectionPromise, 3_000, "handshake: server did not receive connection");
-		const received = await withTimeout(firstChunk(conn), 3_000, "handshake: no bytes arrived on the accepted socket");
+		const received = await withTimeout(
+			readAtLeast(conn, HANDSHAKE_TOKEN.length),
+			3_000,
+			"handshake: the full token never arrived on the accepted socket",
+		);
 
 		expect(received).toBe(HANDSHAKE_TOKEN);
 		conn.destroy();
@@ -238,14 +302,16 @@ describe("supervisor-link", () => {
 		const server = net.createServer();
 		servers.push(server);
 
-		// Collect the first chunk of every accepted connection, and drop the first
-		// one so the link has to reconnect and prove itself again.
+		// Collect a full token from every accepted connection, and drop the first
+		// one so the link has to reconnect and prove itself again. Reading to the
+		// token's length rather than taking one chunk keeps this from resolving on
+		// a partial write that a stream socket is free to deliver.
 		const tokens: string[] = [];
 		const twoHandshakes = new Promise<void>((resolve) => {
 			let first = true;
 			server.on("connection", (sock) => {
-				sock.once("data", (buf: Buffer) => {
-					tokens.push(buf.toString("utf8"));
+				void readAtLeast(sock, HANDSHAKE_TOKEN.length).then((token) => {
+					tokens.push(token);
 					if (tokens.length >= 2) resolve();
 				});
 				if (first) {
