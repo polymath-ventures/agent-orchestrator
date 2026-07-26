@@ -457,6 +457,16 @@ func (f *fakePrimeSessions) RetirePrime(_ context.Context, id domain.SessionID) 
 	return nil
 }
 
+// RetireActivePrime mirrors the service: resolve the active Prime, then retire
+// it, as one call.
+func (f *fakePrimeSessions) RetireActivePrime(ctx context.Context) (bool, error) {
+	active, ok, err := f.ActivePrime(ctx)
+	if err != nil || !ok {
+		return false, err
+	}
+	return true, f.RetirePrime(ctx, active.ID)
+}
+
 func (f *fakePrimeSessions) Send(_ context.Context, id domain.SessionID, message string) error {
 	f.sent = append(f.sent, struct {
 		id      domain.SessionID

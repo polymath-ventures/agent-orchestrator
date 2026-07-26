@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"sync"
 	"testing"
 	"time"
@@ -501,4 +502,48 @@ func TestSpawn_MixSelectedSecondLaunchProbeFailureMarksDownWhenCallerDiesDuringR
 	if !tr.IsDown(workerMixCandidate(domain.HarnessClaudeCode, "", "")) {
 		t.Fatal("a launch-probe failure must mark the bucket down even when the caller context dies during rollback")
 	}
+}
+
+// Preflight promises to create nothing and change nothing — that is the whole
+// reason a role reconcile may ask it before tearing down the running session.
+// For a WORKER the promise cannot hold: resolveSpawnTarget resolves the mix
+// bucket, and selectMixBucket debits the candidate-health skip ledger for a
+// bucket it finds down. A speculative question would then permanently alter the
+// share accounting for a spawn that never happens.
+//
+// So the exported entry point refuses the kind outright rather than documenting
+// a rule its callers have to remember.
+func TestPreflight_RefusesWorkerAndLeavesCandidateHealthUntouched(t *testing.T) {
+	tr := candidatehealth.New(candidatehealth.Config{Source: "session_manager"})
+	m, _, _ := healthMixManager(t, domain.ProjectConfig{WorkerMix: singleBucketMix()}, tr, nil)
+	// The single bucket is down, so any mix resolution debits a skip against it.
+	down := workerMixCandidate(domain.HarnessClaudeCode, "", "")
+	tr.MarkDown(down, errors.New("provider outage"))
+
+	before := skipDebits(tr)
+
+	err := m.Preflight(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	if !errors.Is(err, ErrPreflightWorkerUnsupported) {
+		t.Fatalf("Preflight(worker) err = %v, want ErrPreflightWorkerUnsupported", err)
+	}
+	if after := skipDebits(tr); !maps.Equal(before, after) {
+		t.Fatalf("skip debits went from %v to %v across a speculative worker preflight; Preflight must not touch candidate health",
+			before, after)
+	}
+
+	// The guard is scoped to workers: the role kinds Preflight exists for are
+	// still answered on their merits.
+	if err := m.Preflight(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindOrchestrator}); errors.Is(err, ErrPreflightWorkerUnsupported) {
+		t.Fatalf("Preflight(orchestrator) was refused as a worker: %v", err)
+	}
+}
+
+// skipDebits snapshots the candidate-health skip ledger so a test can assert an
+// operation left it exactly as it found it.
+func skipDebits(tr *candidatehealth.Tracker) map[string]int {
+	out := map[string]int{}
+	tr.ForEachSkipped(func(c candidatehealth.Candidate, skipped int) {
+		out[c.String()] = skipped
+	})
+	return out
 }

@@ -1,6 +1,9 @@
 package sessionmanager
 
 import (
+	"context"
+	"errors"
+	"slices"
 	"strings"
 	"testing"
 
@@ -352,5 +355,684 @@ func TestKillSkipsWorkspaceOwnedByLiveSession(t *testing.T) {
 	}
 	if rt.destroyed != 1 || rt.destroyedIDs[0] != "old-handle" {
 		t.Fatalf("runtime destroyed = %d ids=%v, want old-handle", rt.destroyed, rt.destroyedIDs)
+	}
+}
+
+// #144 P3 — child worktree orphaned on Kill.
+//
+// When the ROOT workspace is owned by a live replacement, Kill skips every
+// teardown but still runs DeleteSessionWorktrees for the WHOLE session.
+// session_worktrees rows are the only per-repo record there is (SessionMetadata
+// records the root path only) and no HTTP, CLI, or read-model surface exposes
+// them, so a multi-repo child the live owner does NOT occupy is orphaned the
+// moment its marker is cleared. Cleanup then skips the same session for the
+// same root-only ownership reason, so nothing ever reclaims that directory.
+//
+// The fix is to reclaim the uncovered child right there, while its row still
+// names it: the root is shared, but a child nobody live occupies is held by
+// nobody. Markers are still cleared wholesale — keeping a partial subset breaks
+// every consumer of these rows, which assume they describe a whole project.
+func TestKillDestroysChildWorktreeNotCoveredByLiveOwner(t *testing.T) {
+	m, st, _, ws := newLifecycleManager()
+
+	const canonical = "/ws/mer/orchestrator/mer-orchestrator"
+	st.projects["mer"] = domain.ProjectRecord{
+		ID: "mer", Path: "/repos/mer", Kind: domain.ProjectKindWorkspace, Config: testRoleAgents(),
+	}
+	st.workspaceRepo["mer"] = []domain.WorkspaceRepoRecord{
+		{ProjectID: "mer", Name: "api", RelativePath: "api"},
+		{ProjectID: "mer", Name: "web", RelativePath: "web"},
+	}
+
+	st.sessions["mer-orch-1"] = domain.SessionRecord{
+		ID: "mer-orch-1", ProjectID: "mer", Kind: domain.KindOrchestrator,
+		Metadata: domain.SessionMetadata{WorkspacePath: canonical, Branch: "ao/mer-orchestrator", RuntimeHandleID: "old-handle"},
+		Activity: domain.Activity{State: domain.ActivityActive},
+	}
+	st.worktrees["mer-orch-1"] = []domain.SessionWorktreeRecord{
+		{SessionID: "mer-orch-1", RepoName: domain.RootWorkspaceRepoName, Branch: "ao/mer-orchestrator", WorktreePath: canonical, State: "active"},
+		{SessionID: "mer-orch-1", RepoName: "api", Branch: "ao/mer-orchestrator", WorktreePath: canonical + "/api", State: "active"},
+		{SessionID: "mer-orch-1", RepoName: "web", Branch: "ao/mer-orchestrator", WorktreePath: canonical + "/web", State: "active"},
+	}
+
+	// The live replacement on the same canonical root. It covers the root and
+	// "api"; nothing it holds points at .../web.
+	st.sessions["mer-orch-2"] = domain.SessionRecord{
+		ID: "mer-orch-2", ProjectID: "mer", Kind: domain.KindOrchestrator,
+		Metadata: domain.SessionMetadata{WorkspacePath: canonical, Branch: "ao/mer-orchestrator", RuntimeHandleID: "new-handle"},
+		Activity: domain.Activity{State: domain.ActivityActive},
+	}
+	st.worktrees["mer-orch-2"] = []domain.SessionWorktreeRecord{
+		{SessionID: "mer-orch-2", RepoName: domain.RootWorkspaceRepoName, Branch: "ao/mer-orchestrator", WorktreePath: canonical, State: "active"},
+		{SessionID: "mer-orch-2", RepoName: "api", Branch: "ao/mer-orchestrator", WorktreePath: canonical + "/api", State: "active"},
+	}
+
+	if _, err := m.Kill(ctx, "mer-orch-1"); err != nil {
+		t.Fatalf("Kill err = %v", err)
+	}
+
+	// The uncovered child is reclaimed — and nothing else is.
+	if ws.destroyed != 1 {
+		t.Fatalf("Destroy calls = %d, want exactly 1 (the uncovered child); calls = %v", ws.destroyed, ws.calls)
+	}
+	if got := ws.lastDestroyInfo.Path; got != canonical+"/web" {
+		t.Fatalf("destroyed %q, want the uncovered child %q; the live owner holds only %v",
+			got, canonical+"/web", st.worktrees["mer-orch-2"])
+	}
+	if got := ws.lastDestroyInfo.RepoPath; got != "/repos/mer/web" {
+		t.Fatalf("destroy repo path = %q, want the child repo /repos/mer/web; removing a child worktree against the wrong repo skips the dirty check and deletes uncommitted work",
+			got)
+	}
+	// The shared root and the covered child are never touched.
+	for _, call := range ws.calls {
+		if call == "Destroy:mer-orchestrator" || call == "Destroy:api" || strings.HasPrefix(call, "ForceDestroy:") {
+			t.Fatalf("call %q ran; the live replacement's worktrees must be preserved (calls: %v)", call, ws.calls)
+		}
+	}
+	if !st.sessions["mer-orch-1"].IsTerminated {
+		t.Fatal("the killed row must still be marked terminated")
+	}
+	// Markers are cleared wholesale: a surviving partial subset breaks the
+	// consumers of these rows and lets RestoreAll resurrect the killed session.
+	if rows := st.worktrees["mer-orch-1"]; len(rows) != 0 {
+		t.Fatalf("worktree rows survived: %#v, want none", rows)
+	}
+}
+
+// seedUncoveredChildKill builds the #144 P3 fixture: a killed orchestrator with
+// a root and two child worktrees, and a live replacement on the same canonical
+// root that covers the root and "api" but NOT ".../web". Returns the canonical
+// root path.
+func seedUncoveredChildKill(st *fakeStore) string {
+	const canonical = "/ws/mer/orchestrator/mer-orchestrator"
+	st.projects["mer"] = domain.ProjectRecord{
+		ID: "mer", Path: "/repos/mer", Kind: domain.ProjectKindWorkspace, Config: testRoleAgents(),
+	}
+	st.workspaceRepo["mer"] = []domain.WorkspaceRepoRecord{
+		{ProjectID: "mer", Name: "api", RelativePath: "api"},
+		{ProjectID: "mer", Name: "web", RelativePath: "web"},
+	}
+	st.sessions["mer-orch-1"] = domain.SessionRecord{
+		ID: "mer-orch-1", ProjectID: "mer", Kind: domain.KindOrchestrator,
+		Metadata: domain.SessionMetadata{WorkspacePath: canonical, Branch: "ao/mer-orchestrator", RuntimeHandleID: "old-handle"},
+		Activity: domain.Activity{State: domain.ActivityActive},
+	}
+	st.worktrees["mer-orch-1"] = []domain.SessionWorktreeRecord{
+		{SessionID: "mer-orch-1", RepoName: domain.RootWorkspaceRepoName, Branch: "ao/mer-orchestrator", WorktreePath: canonical, State: "active"},
+		{SessionID: "mer-orch-1", RepoName: "api", Branch: "ao/mer-orchestrator", WorktreePath: canonical + "/api", State: "active"},
+		{SessionID: "mer-orch-1", RepoName: "web", Branch: "ao/mer-orchestrator", WorktreePath: canonical + "/web", State: "active"},
+	}
+	st.sessions["mer-orch-2"] = domain.SessionRecord{
+		ID: "mer-orch-2", ProjectID: "mer", Kind: domain.KindOrchestrator,
+		Metadata: domain.SessionMetadata{WorkspacePath: canonical, Branch: "ao/mer-orchestrator", RuntimeHandleID: "new-handle"},
+		Activity: domain.Activity{State: domain.ActivityActive},
+	}
+	st.worktrees["mer-orch-2"] = []domain.SessionWorktreeRecord{
+		{SessionID: "mer-orch-2", RepoName: domain.RootWorkspaceRepoName, Branch: "ao/mer-orchestrator", WorktreePath: canonical, State: "active"},
+		{SessionID: "mer-orch-2", RepoName: "api", Branch: "ao/mer-orchestrator", WorktreePath: canonical + "/api", State: "active"},
+	}
+	return canonical
+}
+
+// The child reclaim must be ordered AFTER the runtime teardown.
+//
+// Reclaiming first removes a directory out from under an agent process that is
+// still running in it — the killed session's own harness — which is both a data
+// hazard and the precondition for the failure the next test pins.
+func TestKillReclaimsChildWorktreeOnlyAfterRuntimeTeardown(t *testing.T) {
+	m, st, rt, ws := newLifecycleManager()
+	var sharedLog []string
+	rt.sharedLog = &sharedLog
+	ws.sharedLog = &sharedLog
+	canonical := seedUncoveredChildKill(st)
+
+	if _, err := m.Kill(ctx, "mer-orch-1"); err != nil {
+		t.Fatalf("Kill err = %v", err)
+	}
+
+	runtimeIdx, childIdx := -1, -1
+	for i, call := range sharedLog {
+		if call == "RuntimeDestroy:old-handle" && runtimeIdx < 0 {
+			runtimeIdx = i
+		}
+		if strings.HasPrefix(call, "Destroy:") && childIdx < 0 {
+			childIdx = i
+		}
+	}
+	if childIdx < 0 {
+		t.Fatalf("no child worktree destroy in %v; the uncovered child at %s must still be reclaimed", sharedLog, canonical+"/web")
+	}
+	if runtimeIdx < 0 {
+		t.Fatalf("no runtime destroy in %v", sharedLog)
+	}
+	if runtimeIdx > childIdx {
+		t.Fatalf("runtime destroy (pos %d) ran after the child worktree destroy (pos %d) in %v; the killed session's agent was still running in the tree being removed",
+			runtimeIdx, childIdx, sharedLog)
+	}
+}
+
+// A failed runtime destroy aborts Kill with the session still LIVE. Nothing may
+// have been reclaimed by then: the child worktree belongs to a session that is
+// still running, and Kill's caller is told the kill did not happen.
+func TestKillReclaimsNoChildWorktreesWhenRuntimeDestroyFails(t *testing.T) {
+	m, st, rt, ws := newLifecycleManager()
+	seedUncoveredChildKill(st)
+	rt.destroyErr = errors.New("tmux: server not responding")
+
+	if _, err := m.Kill(ctx, "mer-orch-1"); err == nil {
+		t.Fatal("Kill err = nil, want the runtime destroy failure surfaced")
+	}
+	if ws.destroyed != 0 {
+		t.Fatalf("Destroy ran %d times (%v); the session is still live because its runtime survived, so its worktrees must be untouched",
+			ws.destroyed, ws.calls)
+	}
+	if st.sessions["mer-orch-1"].IsTerminated {
+		t.Fatal("the row was terminated despite the runtime destroy failing")
+	}
+	if rows := st.worktrees["mer-orch-1"]; len(rows) != 3 {
+		t.Fatalf("worktree rows = %#v, want all 3 preserved for the retry", rows)
+	}
+}
+
+// Coverage is what separates "held by nobody" from "held by a live session". A
+// reclaim bails out two ways — one live session's rows fail to load, or the
+// project read that would name a child's canonical repo path fails — and both
+// must fail CLOSED: an under-reported coverage map or a guessed repo path read
+// as permission to destroy deletes a worktree a live session is working in, on
+// nothing worse than a transient DB error.
+//
+// The kill itself still completes either way, and the markers are still cleared:
+// keeping them as retryable inventory is not safe while a row must be re-resolved
+// through the workspace registry to be usable (see destroyUncoveredChildWorktrees
+// and GH #165). What survives a bail-out is a directory an operator can still see
+// and remove — strictly better than a worktree yanked out from under an agent.
+func TestKillReclaimsNothingWhenTheReclaimCannotBeResolved(t *testing.T) {
+	tests := []struct {
+		name    string
+		breakIt func(*fakeStore)
+	}{
+		{
+			name: "live coverage is indeterminate",
+			// The live owner's rows are unreadable. It may well hold .../web —
+			// nothing here can tell, and that is exactly the point.
+			breakIt: func(st *fakeStore) {
+				st.listWTErr = map[domain.SessionID]error{"mer-orch-2": errors.New("database is locked")}
+			},
+		},
+		{
+			name: "the child's repo path cannot be resolved",
+			// The live owner's rows load fine, so .../web really is uncovered —
+			// but the project read that would name its canonical repo path fails.
+			breakIt: func(st *fakeStore) { st.getProjectErr = errors.New("database is locked") },
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			m, st, _, ws := newLifecycleManager()
+			canonical := seedUncoveredChildKill(st)
+			tc.breakIt(st)
+
+			if _, err := m.Kill(ctx, "mer-orch-1"); err != nil {
+				t.Fatalf("Kill err = %v; an unresolvable reclaim must not fail the kill", err)
+			}
+			if ws.destroyed != 0 {
+				t.Fatalf("Destroy ran %d times (%v); %s cannot be shown to be held by nobody",
+					ws.destroyed, ws.calls, canonical+"/web")
+			}
+			if !st.sessions["mer-orch-1"].IsTerminated {
+				t.Fatal("the killed row must still be marked terminated")
+			}
+			if rows := st.worktrees["mer-orch-1"]; len(rows) != 0 {
+				t.Fatalf("worktree rows survived: %#v; markers are cleared on every path, so RestoreAll cannot resurrect the killed session into the live owner's worktree", rows)
+			}
+		})
+	}
+}
+
+// The coverage read must be FRESH. Kill resolves ownership, then destroys the
+// runtime, and only then reclaims — and a role reconcile can retire the owner
+// and spawn a replacement while that teardown runs. Coverage computed from the
+// pre-teardown snapshot would not contain the replacement, so the child it is
+// working in would read as held by nobody and be destroyed underneath it.
+func TestKillResolvesChildCoverageFromLiveSessionsReadAfterTeardown(t *testing.T) {
+	m, st, _, ws := newLifecycleManager()
+	canonical := seedUncoveredChildKill(st)
+
+	// Between Kill's ownership read (1) and its coverage read (2), the captured
+	// owner is retired and a replacement takes over the canonical root — and,
+	// unlike its predecessor, it holds .../web.
+	st.beforeListAll = func(call int) {
+		if call != 2 {
+			return
+		}
+		retired := st.sessions["mer-orch-2"]
+		retired.IsTerminated = true
+		st.sessions["mer-orch-2"] = retired
+		st.sessions["mer-orch-3"] = domain.SessionRecord{
+			ID: "mer-orch-3", ProjectID: "mer", Kind: domain.KindOrchestrator,
+			Metadata: domain.SessionMetadata{WorkspacePath: canonical, Branch: "ao/mer-orchestrator", RuntimeHandleID: "newer-handle"},
+			Activity: domain.Activity{State: domain.ActivityActive},
+		}
+		st.worktrees["mer-orch-3"] = []domain.SessionWorktreeRecord{
+			{SessionID: "mer-orch-3", RepoName: domain.RootWorkspaceRepoName, Branch: "ao/mer-orchestrator", WorktreePath: canonical, State: "active"},
+			{SessionID: "mer-orch-3", RepoName: "api", Branch: "ao/mer-orchestrator", WorktreePath: canonical + "/api", State: "active"},
+			{SessionID: "mer-orch-3", RepoName: "web", Branch: "ao/mer-orchestrator", WorktreePath: canonical + "/web", State: "active"},
+		}
+	}
+
+	if _, err := m.Kill(ctx, "mer-orch-1"); err != nil {
+		t.Fatalf("Kill err = %v", err)
+	}
+	if ws.destroyed != 0 {
+		t.Fatalf("Destroy ran %d times (%v); %s is held by the replacement that appeared during teardown",
+			ws.destroyed, ws.calls, canonical+"/web")
+	}
+	if !st.sessions["mer-orch-1"].IsTerminated {
+		t.Fatal("the killed row must still be marked terminated")
+	}
+	// Coverage was complete, so this is the ordinary path: markers cleared.
+	if rows := st.worktrees["mer-orch-1"]; len(rows) != 0 {
+		t.Fatalf("worktree rows survived: %#v, want none", rows)
+	}
+}
+
+// The uncovered child's repo can be DEREGISTERED, and then its canonical repo
+// path is unrecoverable. Kill must not guess: ports.Workspace.Destroy resolves
+// the repo from RepoPath and silently falls back to the PROJECT repo when it is
+// empty, which makes `git worktree remove` fail against the wrong repo, skips
+// the dirty check entirely, and os.RemoveAll's the directory anyway — verified
+// against the real gitworktree adapter, which returned nil while deleting
+// staged work. Leaving the directory for an operator is the only safe move.
+func TestKillLeavesUncoveredChildOfDeregisteredRepoAlone(t *testing.T) {
+	m, st, _, ws := newLifecycleManager()
+
+	const canonical = "/ws/mer/orchestrator/mer-orchestrator"
+	st.projects["mer"] = domain.ProjectRecord{
+		ID: "mer", Path: "/repos/mer", Kind: domain.ProjectKindWorkspace, Config: testRoleAgents(),
+	}
+	// "web" was deregistered after mer-orch-1 spawned; only "api" remains.
+	st.workspaceRepo["mer"] = []domain.WorkspaceRepoRecord{
+		{ProjectID: "mer", Name: "api", RelativePath: "api"},
+	}
+
+	st.sessions["mer-orch-1"] = domain.SessionRecord{
+		ID: "mer-orch-1", ProjectID: "mer", Kind: domain.KindOrchestrator,
+		Metadata: domain.SessionMetadata{WorkspacePath: canonical, Branch: "ao/mer-orchestrator", RuntimeHandleID: "old-handle"},
+		Activity: domain.Activity{State: domain.ActivityActive},
+	}
+	st.worktrees["mer-orch-1"] = []domain.SessionWorktreeRecord{
+		{SessionID: "mer-orch-1", RepoName: domain.RootWorkspaceRepoName, Branch: "ao/mer-orchestrator", WorktreePath: canonical, State: "active"},
+		{SessionID: "mer-orch-1", RepoName: "web", Branch: "ao/mer-orchestrator", WorktreePath: canonical + "/web", State: "active"},
+	}
+	st.sessions["mer-orch-2"] = domain.SessionRecord{
+		ID: "mer-orch-2", ProjectID: "mer", Kind: domain.KindOrchestrator,
+		Metadata: domain.SessionMetadata{WorkspacePath: canonical, Branch: "ao/mer-orchestrator", RuntimeHandleID: "new-handle"},
+		Activity: domain.Activity{State: domain.ActivityActive},
+	}
+
+	if _, err := m.Kill(ctx, "mer-orch-1"); err != nil {
+		t.Fatalf("Kill err = %v", err)
+	}
+	if ws.destroyed != 0 {
+		t.Fatalf("Destroy ran %d times (%v); a worktree whose repo is deregistered cannot be removed safely and must be left for an operator",
+			ws.destroyed, ws.calls)
+	}
+	if !st.sessions["mer-orch-1"].IsTerminated {
+		t.Fatal("the killed row must still be marked terminated")
+	}
+}
+
+// The half of #144 P3 that must NOT regress: when the live owner covers every
+// one of the killed session's worktrees, all markers are still cleared, so
+// RestoreAll cannot resurrect the killed session into the live replacement's
+// worktree (#2319). These are shutdown-saved rows (State "removed"), the kind
+// RestoreAll actually replays, so the guard is exercised end to end.
+func TestKillClearsChildWorktreeMarkersCoveredByLiveOwner(t *testing.T) {
+	m, st, _, ws := newLifecycleManager()
+
+	const canonical = "/ws/mer/orchestrator/mer-orchestrator"
+	st.projects["mer"] = domain.ProjectRecord{
+		ID: "mer", Path: "/repos/mer", Kind: domain.ProjectKindWorkspace, Config: testRoleAgents(),
+	}
+	st.workspaceRepo["mer"] = []domain.WorkspaceRepoRecord{
+		{ProjectID: "mer", Name: "api", RelativePath: "api"},
+	}
+
+	// Shutdown-saved orchestrator: terminated, restore markers written.
+	st.sessions["mer-orch-1"] = domain.SessionRecord{
+		ID: "mer-orch-1", ProjectID: "mer", Kind: domain.KindOrchestrator,
+		Metadata:     domain.SessionMetadata{WorkspacePath: canonical, Branch: "ao/mer-orchestrator", RuntimeHandleID: "old-handle"},
+		IsTerminated: true, Activity: domain.Activity{State: domain.ActivityExited},
+	}
+	st.worktrees["mer-orch-1"] = []domain.SessionWorktreeRecord{
+		{SessionID: "mer-orch-1", RepoName: domain.RootWorkspaceRepoName, Branch: "ao/mer-orchestrator", WorktreePath: canonical, PreservedRef: "refs/ao/preserved/root", State: "removed"},
+		{SessionID: "mer-orch-1", RepoName: "api", Branch: "ao/mer-orchestrator", WorktreePath: canonical + "/api", PreservedRef: "refs/ao/preserved/api", State: "removed"},
+	}
+
+	// A replacement is already live on the canonical root and covers every one
+	// of those paths.
+	st.sessions["mer-orch-2"] = domain.SessionRecord{
+		ID: "mer-orch-2", ProjectID: "mer", Kind: domain.KindOrchestrator,
+		Metadata: domain.SessionMetadata{WorkspacePath: canonical, Branch: "ao/mer-orchestrator", RuntimeHandleID: "new-handle"},
+		Activity: domain.Activity{State: domain.ActivityActive},
+	}
+	st.worktrees["mer-orch-2"] = []domain.SessionWorktreeRecord{
+		{SessionID: "mer-orch-2", RepoName: domain.RootWorkspaceRepoName, Branch: "ao/mer-orchestrator", WorktreePath: canonical, State: "active"},
+		{SessionID: "mer-orch-2", RepoName: "api", Branch: "ao/mer-orchestrator", WorktreePath: canonical + "/api", State: "active"},
+	}
+
+	if _, err := m.Kill(ctx, "mer-orch-1"); err != nil {
+		t.Fatalf("Kill err = %v", err)
+	}
+	if rows := st.worktrees["mer-orch-1"]; len(rows) != 0 {
+		t.Fatalf("restore markers survived for worktrees the live owner covers: %#v; RestoreAll would resurrect the killed session into the live replacement's worktree", rows)
+	}
+
+	if err := m.RestoreAll(ctx); err != nil {
+		t.Fatalf("RestoreAll err = %v", err)
+	}
+	for _, call := range ws.calls {
+		if strings.HasPrefix(call, "Restore:") {
+			t.Fatalf("RestoreAll ran %q; a killed session must not be restored into the live replacement's worktree (calls: %v)", call, ws.calls)
+		}
+	}
+	if !st.sessions["mer-orch-1"].IsTerminated {
+		t.Fatal("the killed session must stay terminated across RestoreAll")
+	}
+}
+
+// #144 — the same inventory-loss defect on the OTHER teardown path.
+//
+// RetireForReplacement gates on the same root-only ownership bool as Kill, and
+// its owned-elsewhere arm cleared every marker for the session — including
+// children the live owner does not occupy. session_worktrees is the only record
+// of where a child worktree is, so clearing without reclaiming orphans it for
+// good. This path runs on every clean orchestrator/Prime replacement, so it
+// fires more often than the Kill path.
+func TestRetireForReplacementDestroysChildWorktreeNotCoveredByLiveOwner(t *testing.T) {
+	m, st, rt, ws := newLifecycleManager()
+	canonical := seedUncoveredChildKill(st)
+
+	if err := m.RetireForReplacement(ctx, "mer-orch-1"); err != nil {
+		t.Fatalf("RetireForReplacement err = %v", err)
+	}
+
+	// The uncovered child is reclaimed — and nothing else is.
+	if ws.destroyed != 1 {
+		t.Fatalf("Destroy calls = %d, want exactly 1 (the uncovered child); calls = %v", ws.destroyed, ws.calls)
+	}
+	if got := ws.lastDestroyInfo.Path; got != canonical+"/web" {
+		t.Fatalf("destroyed %q, want the uncovered child %q; the live owner holds only %v",
+			got, canonical+"/web", st.worktrees["mer-orch-2"])
+	}
+	if got := ws.lastDestroyInfo.RepoPath; got != "/repos/mer/web" {
+		t.Fatalf("destroy repo path = %q, want the child repo /repos/mer/web; removing a child worktree against the wrong repo skips the dirty check and deletes uncommitted work",
+			got)
+	}
+	// The shared root and the covered child stay untouched, by any means.
+	for _, call := range ws.calls {
+		if call == "Destroy:mer-orchestrator" || call == "Destroy:api" || strings.HasPrefix(call, "ForceDestroy:") {
+			t.Fatalf("call %q ran; the live replacement's worktrees must be preserved (calls: %v)", call, ws.calls)
+		}
+	}
+	if !st.sessions["mer-orch-1"].IsTerminated {
+		t.Fatal("the retired row must still be marked terminated")
+	}
+	if rt.destroyed != 1 || rt.destroyedIDs[0] != "old-handle" {
+		t.Fatalf("runtime destroyed = %d ids=%v, want old-handle", rt.destroyed, rt.destroyedIDs)
+	}
+	// Markers are still cleared wholesale, so RestoreAll cannot resurrect the
+	// retired session into the live replacement's worktree (#2319).
+	if rows := st.worktrees["mer-orch-1"]; len(rows) != 0 {
+		t.Fatalf("worktree rows survived: %#v, want none", rows)
+	}
+}
+
+// The reclaim sits between the runtime destroy and the marker clear, and both
+// sides are load-bearing: reclaiming first pulls the directory out from under
+// the retiring session's own still-running agent, and clearing first deletes
+// the rows the reclaim reads.
+func TestRetireForReplacementReclaimsChildWorktreeOnlyAfterRuntimeTeardown(t *testing.T) {
+	m, st, rt, ws := newLifecycleManager()
+	var sharedLog []string
+	rt.sharedLog = &sharedLog
+	ws.sharedLog = &sharedLog
+	canonical := seedUncoveredChildKill(st)
+
+	if err := m.RetireForReplacement(ctx, "mer-orch-1"); err != nil {
+		t.Fatalf("RetireForReplacement err = %v", err)
+	}
+
+	runtimeIdx, childIdx := -1, -1
+	for i, call := range sharedLog {
+		if call == "RuntimeDestroy:old-handle" && runtimeIdx < 0 {
+			runtimeIdx = i
+		}
+		if strings.HasPrefix(call, "Destroy:") && childIdx < 0 {
+			childIdx = i
+		}
+	}
+	if childIdx < 0 {
+		t.Fatalf("no child worktree destroy in %v; the uncovered child at %s must still be reclaimed", sharedLog, canonical+"/web")
+	}
+	if runtimeIdx < 0 {
+		t.Fatalf("no runtime destroy in %v", sharedLog)
+	}
+	if runtimeIdx > childIdx {
+		t.Fatalf("runtime destroy (pos %d) ran after the child worktree destroy (pos %d) in %v; the retiring session's agent was still running in the tree being removed",
+			runtimeIdx, childIdx, sharedLog)
+	}
+}
+
+// A failed runtime destroy aborts the retire with the session still LIVE, so
+// nothing may have been reclaimed and its inventory must survive for the retry.
+func TestRetireForReplacementReclaimsNoChildWorktreesWhenRuntimeDestroyFails(t *testing.T) {
+	m, st, rt, ws := newLifecycleManager()
+	seedUncoveredChildKill(st)
+	rt.destroyErr = errors.New("tmux: server not responding")
+
+	if err := m.RetireForReplacement(ctx, "mer-orch-1"); err == nil {
+		t.Fatal("RetireForReplacement err = nil, want the runtime destroy failure surfaced")
+	}
+	if ws.destroyed != 0 {
+		t.Fatalf("Destroy ran %d times (%v); the session is still live because its runtime survived, so its worktrees must be untouched",
+			ws.destroyed, ws.calls)
+	}
+	if st.sessions["mer-orch-1"].IsTerminated {
+		t.Fatal("the row was terminated despite the runtime destroy failing")
+	}
+	if rows := st.worktrees["mer-orch-1"]; len(rows) != 3 {
+		t.Fatalf("worktree rows = %#v, want all 3 preserved for the retry", rows)
+	}
+}
+
+// failingWorktreeClearStore fails only the restore-marker clear, leaving every
+// other store operation intact.
+type failingWorktreeClearStore struct {
+	*fakeStore
+	err error
+}
+
+func (s *failingWorktreeClearStore) DeleteSessionWorktrees(ctx context.Context, id domain.SessionID) error {
+	if s.err != nil {
+		return s.err
+	}
+	return s.fakeStore.DeleteSessionWorktrees(ctx, id)
+}
+
+// countingTerminateLCM optionally fails the terminal-state write and always
+// counts the attempts, so a test can tell "termination was never tried" — the
+// defect — from "it was tried and the store refused".
+type countingTerminateLCM struct {
+	*fakeLCM
+	err      error
+	attempts int
+}
+
+func (l *countingTerminateLCM) MarkTerminated(ctx context.Context, id domain.SessionID) error {
+	l.attempts++
+	if l.err != nil {
+		return l.err
+	}
+	return l.fakeLCM.MarkTerminated(ctx, id)
+}
+
+// Once the runtime is destroyed the row MUST end terminated, whatever else
+// fails. The owned-elsewhere arm clears markers AFTER the runtime destroy (the
+// reclaim reads the rows the clear deletes), so a clear that returns early would
+// leave a live row whose runtime is already dead. reconcileLive reads exactly
+// that as crash recovery on the next boot and stashes and force-destroys this
+// row's shared root and covered children — underneath the live replacement that
+// legitimately owns them.
+//
+// Both post-destroy writes can fail independently, so all four combinations are
+// pinned. Two properties run across them: termination is ATTEMPTED in every one
+// (that is what the errors.Join replaced an early return for), and every failure
+// that happened is still reachable through the join with errors.Is — a join that
+// flattened its causes into a string would satisfy the state assertions and
+// silently lose the diagnosis.
+func TestRetireForReplacementReportsEveryPostDestroyFailure(t *testing.T) {
+	errClear := errors.New("sqlite: database is locked")
+	errTerminate := errors.New("sqlite: disk I/O error")
+
+	cases := []struct {
+		name           string
+		clearErr       error
+		terminateErr   error
+		wantTerminated bool
+		wantCauses     []error
+	}{
+		{name: "neither fails", wantTerminated: true},
+		{name: "clear fails", clearErr: errClear, wantTerminated: true, wantCauses: []error{errClear}},
+		{name: "terminate fails", terminateErr: errTerminate, wantCauses: []error{errTerminate}},
+		{name: "both fail", clearErr: errClear, terminateErr: errTerminate, wantCauses: []error{errClear, errTerminate}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			st := newFakeStore()
+			st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+			rt := &fakeRuntime{}
+			lcm := &countingTerminateLCM{fakeLCM: &fakeLCM{store: st}, err: tc.terminateErr}
+			m := New(Deps{
+				Runtime:   rt,
+				Agents:    fakeAgents{},
+				Workspace: &fakeWorkspace{},
+				Store:     &failingWorktreeClearStore{fakeStore: st, err: tc.clearErr},
+				Messenger: &fakeMessenger{},
+				Lifecycle: lcm,
+				LookPath:  func(string) (string, error) { return "/bin/true", nil },
+			})
+			seedUncoveredChildKill(st)
+
+			err := m.RetireForReplacement(ctx, "mer-orch-1")
+
+			if rt.destroyed != 1 {
+				t.Fatalf("runtime destroys = %d, want 1 (the precondition for every case here)", rt.destroyed)
+			}
+			// The whole point of the join: a failed clear must not skip the
+			// terminal write, and a failed terminal write must still be tried.
+			if lcm.attempts != 1 {
+				t.Errorf("MarkTerminated attempts = %d, want 1; past the runtime destroy the row must always be pushed to terminated", lcm.attempts)
+			}
+			if got := st.sessions["mer-orch-1"].IsTerminated; got != tc.wantTerminated {
+				t.Errorf("row terminated = %v, want %v; a live row whose runtime is dead is read as crash recovery on the next boot", got, tc.wantTerminated)
+			}
+			// Markers survive exactly when their clear failed — the retry's only
+			// record of where the retired row's children are.
+			markersCleared := len(st.worktrees["mer-orch-1"]) == 0
+			if wantCleared := tc.clearErr == nil; markersCleared != wantCleared {
+				t.Errorf("restore markers cleared = %v, want %v (rows = %#v)", markersCleared, wantCleared, st.worktrees["mer-orch-1"])
+			}
+
+			if len(tc.wantCauses) == 0 {
+				if err != nil {
+					t.Fatalf("RetireForReplacement err = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("RetireForReplacement err = nil, want %v surfaced", tc.wantCauses)
+			}
+			for _, cause := range []error{errClear, errTerminate} {
+				want := slices.Contains(tc.wantCauses, cause)
+				if got := errors.Is(err, cause); got != want {
+					t.Errorf("errors.Is(err, %v) = %v, want %v; err = %v", cause, got, want, err)
+				}
+			}
+		})
+	}
+}
+
+// ---- Restore ----
+
+// RestoreWithMode is the THIRD lifecycle operation over a role's canonical
+// workspace, after Kill and Cleanup, and it must honor the same ownership
+// invariant those two already enforce. Role workspaces are canonical, so a
+// killed orchestrator's row keeps recording the worktree its live replacement
+// occupies; relaunching that row puts a SECOND runtime on one worktree and one
+// branch. The refusal has to land before anything is created, restored, or
+// launched — a refusal that first materializes the worktree is not a refusal.
+func TestRestoreRefusesWorkspaceOwnedByLiveSession(t *testing.T) {
+	m, st, rt, ws := newLifecycleManager()
+
+	const canonical = "/ws/mer/orchestrator/mer-orchestrator"
+	st.projects["mer"] = domain.ProjectRecord{
+		ID: "mer", Path: "/repos/mer", Kind: domain.ProjectKindWorkspace, Config: testRoleAgents(),
+	}
+	st.workspaceRepo["mer"] = []domain.WorkspaceRepoRecord{{ProjectID: "mer", Name: "web", RelativePath: "web"}}
+
+	// The killed orchestrator: terminated, still recording the canonical path.
+	st.sessions["mer-orch-1"] = domain.SessionRecord{
+		ID: "mer-orch-1", ProjectID: "mer", Kind: domain.KindOrchestrator,
+		Harness: domain.HarnessClaudeCode, IsTerminated: true,
+		Activity: domain.Activity{State: domain.ActivityExited},
+		Metadata: domain.SessionMetadata{
+			WorkspacePath: canonical, Branch: "ao/mer-orchestrator",
+			Prompt: "keep working", AgentSessionID: "agent-1",
+		},
+	}
+	// Its live replacement, running in that same canonical worktree.
+	st.sessions["mer-orch-2"] = domain.SessionRecord{
+		ID: "mer-orch-2", ProjectID: "mer", Kind: domain.KindOrchestrator,
+		Harness:  domain.HarnessClaudeCode,
+		Metadata: domain.SessionMetadata{WorkspacePath: canonical, Branch: "ao/mer-orchestrator", RuntimeHandleID: "new-handle"},
+		Activity: domain.Activity{State: domain.ActivityActive},
+	}
+
+	_, err := m.RestoreWithMode(ctx, "mer-orch-1")
+	if !errors.Is(err, ErrWorkspaceOwnedByLiveSession) {
+		t.Fatalf("RestoreWithMode err = %v, want ErrWorkspaceOwnedByLiveSession", err)
+	}
+	if len(ws.calls) != 0 {
+		t.Fatalf("workspace calls = %v, want none; a refused restore must not touch the live owner's worktree", ws.calls)
+	}
+	if rt.created != 0 {
+		t.Fatalf("runtime creates = %d, want 0; a second runtime inside the live replacement's worktree is the defect", rt.created)
+	}
+	if !st.sessions["mer-orch-1"].IsTerminated {
+		t.Fatal("the refused row was flipped live; a refused restore must not resurrect it")
+	}
+}
+
+// The guard keys on the WORKSPACE, not on "some other session is live". A
+// terminated row whose worktree nobody occupies must still restore, which is
+// what keeps the new check from turning every busy fleet into an unrestorable
+// one. TestRestore_ReopensTerminal pins the no-live-sessions-at-all case; this
+// pins the case the check actually has to discriminate.
+func TestRestoreAllowedWhenLiveSessionOwnsADifferentWorkspace(t *testing.T) {
+	m, st, rt, _ := newManager()
+	st.sessions["mer-2"] = mkLive("mer-2")
+	seedTerminal(st, "mer-1", domain.SessionMetadata{
+		WorkspacePath: "/ws/mer-1", Branch: "ao/mer-1/root", AgentSessionID: "agent-x",
+	})
+
+	if _, err := m.RestoreWithMode(ctx, "mer-1"); err != nil {
+		t.Fatalf("RestoreWithMode err = %v; a live session in a DIFFERENT worktree must not block a restore", err)
+	}
+	if rt.created != 1 {
+		t.Fatalf("runtime creates = %d, want 1", rt.created)
+	}
+	if st.sessions["mer-1"].IsTerminated {
+		t.Fatal("restored session is still terminated")
 	}
 }

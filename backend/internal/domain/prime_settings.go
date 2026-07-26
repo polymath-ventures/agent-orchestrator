@@ -26,15 +26,61 @@ type PrimeSettings struct {
 }
 
 // DefaultPrimeSettings returns the persisted default for fresh daemons: Prime
-// disabled with the daemon's standard display name and wake policy defaults.
+// disabled with the daemon's standard display name, wake policy defaults, and
+// the unattended permission mode every AO-managed role needs.
+//
+// Prime is projectless, so unlike orchestrator and worker sessions it has no
+// ProjectConfig.AgentConfig to inherit a permission mode from: whatever these
+// settings carry is what the harness is launched with. An empty permission mode
+// normalizes to PermissionModeDefault, which emits no --permission-mode flag at
+// all, so an enabled Prime blocks on the first tool prompt with nobody at its
+// pane to answer — and the supervisor's only recourse is to declare it unhealthy
+// and spawn a replacement that stalls identically. Prime is off until an
+// operator explicitly enables it, and its whole job is to supervise the fleet
+// unattended, so the useful default is the unattended one. An operator who wants
+// prompting back sets permissions explicitly to "default"; WithDefaults only
+// fills the field when it is empty.
+//
+// On already-deployed daemons this default changes behavior, and that is the
+// point rather than a hazard, because for Prime an EMPTY permission mode means
+// "never configured" and nothing else:
+//
+//   - There is no CLI flag and no UI control for the field (a control is GH
+//     #163), so the only way to store a value is a raw PUT /prime/settings.
+//   - An explicitly stored value — including "default" — is preserved
+//     untouched, forever, by the emptiness test in WithDefaults below.
+//   - The behavior an empty value produced is the stall described above, so
+//     there is no working prior configuration to escalate away from.
+//
+// Migrating stored empty rows to a persisted "default" would therefore freeze
+// the reported bug in place for exactly the operators who hit it. The default
+// is not hidden either: GET /prime/settings applies the same defaulting, so the
+// mode it reports is the effective mode the next Prime will launch with.
+//
+// Prime is a singleton and this settings record is its single source, so a
+// permission change applies to every subsequent Prime — immediately if the
+// operator relaunches Prime, and otherwise at the next spawn.
+//
+// DefaultPrimeSettings is also the shape a fresh daemon persists, so the
+// default is durable for new installs and applied on read for old ones.
 func DefaultPrimeSettings() PrimeSettings {
 	return PrimeSettings{
 		DisplayName:  defaultPrimeDisplayName,
 		WakeInterval: defaultPrimeWakeIntervalConfig,
+		AgentConfig:  AgentConfig{Permissions: PermissionModeBypassPermissions},
 	}
 }
 
-// WithDefaults overlays daemon defaults onto unset Prime settings.
+// WithDefaults overlays daemon defaults onto UNSET Prime settings, and only
+// onto unset ones: every field is filled from the default exactly when it is
+// empty, so a stored value always wins.
+//
+// For AgentConfig.Permissions this emptiness test is the whole contract that
+// makes the unattended default safe (see DefaultPrimeSettings). An operator who
+// wants prompting stores "default" and gets prompting on every subsequent read;
+// only "never configured" resolves to the daemon default. Because this runs on
+// every settings read and write, the mode GET /prime/settings reports is always
+// the effective one the next Prime spawn launches with.
 func (s PrimeSettings) WithDefaults() PrimeSettings {
 	def := DefaultPrimeSettings()
 	if s.DisplayName == "" {
@@ -42,6 +88,9 @@ func (s PrimeSettings) WithDefaults() PrimeSettings {
 	}
 	if s.WakeInterval == "" {
 		s.WakeInterval = def.WakeInterval
+	}
+	if s.AgentConfig.Permissions == "" {
+		s.AgentConfig.Permissions = def.AgentConfig.Permissions
 	}
 	return s
 }

@@ -50,6 +50,9 @@ type ListFilter struct {
 // *sessionmanager.Manager in production, a fake in tests.
 type commander interface {
 	Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.SessionRecord, int, int, error)
+	// Preflight runs Spawn's own preconditions without creating anything, so a
+	// caller that must tear something down to make room can refuse first.
+	Preflight(ctx context.Context, cfg ports.SpawnConfig) error
 	RestoreWithMode(ctx context.Context, id domain.SessionID) (sessionmanager.RestoreResult, error)
 	Kill(ctx context.Context, id domain.SessionID) (bool, error)
 	RetireForReplacement(ctx context.Context, id domain.SessionID) error
@@ -369,6 +372,31 @@ func (s *Service) ReconcileRole(ctx context.Context, target domain.RoleTarget, o
 		return domain.Session{}, err
 	}
 
+	// planRole only knows the reasons a role plan cannot be built (Prime
+	// disabled, project missing); every other spawn precondition lives in the
+	// manager. Asking it here — before anything is torn down — is what keeps
+	// "the running role session survives a replacement that cannot be created"
+	// true by construction rather than by hoping Spawn succeeds. It is the same
+	// code Spawn runs, so the two cannot disagree.
+	//
+	// Preflight answers about the world BEFORE the retirement below, and Spawn
+	// re-resolves everything against the world after it. That check-then-act
+	// window is deliberate: the plan Preflight resolves carries the project
+	// record, the project kind, and the pause verdict, all of which the teardown
+	// can change, so handing that stale plan to Spawn would skip re-checking
+	// exactly the state the teardown moved. Recomputation is correct by
+	// freshness; what Preflight buys is refusing the DETERMINISTIC failures
+	// before anything is destroyed.
+	preflightStart := s.now()
+	if err := s.manager.Preflight(ctx, plan.spawn); err != nil {
+		// A refusal here is a spawn that did not happen, exactly as a refusal
+		// inside Spawn is — the operator's role session is missing or unreplaced
+		// either way, so it must be equally observable. Without this, moving a
+		// check earlier silently deleted its telemetry.
+		s.emitSpawnFailed(plan.spawn, err, s.now().Sub(preflightStart).Milliseconds())
+		return domain.Session{}, toAPIError(err)
+	}
+
 	if opts.Clean {
 		for _, sess := range existing {
 			_ = s.sendRoleRetireNotice(ctx, target, sess.ID)
@@ -490,6 +518,49 @@ func (s *Service) ActivePrime(ctx context.Context) (domain.Session, bool, error)
 		return domain.Session{}, false, nil
 	}
 	return newestSession(existing), true, nil
+}
+
+// RetireActivePrime retires every active fleet Prime and reports whether it
+// retired anything. It is the disable pass: the supervisor calls it once fleet
+// Prime is persisted as off.
+//
+// It retires all of them, not just the newest, for the same reason
+// ReconcileRole's clean path loops: check-then-spawn is not atomic (see the
+// note there), so more than one active Prime row is reachable. Retiring only
+// the newest would let a completed disable leave an older Prime running, which
+// is the exact outcome this pass exists to prevent.
+//
+// Resolving the active Prime and retiring it are one operation under the same
+// per-role lock ReconcileRole holds, and that is the whole point. Unlocked, the
+// disable pass and an in-flight reconcile interleave: the disable looks up "the
+// active Prime" in the window after the reconcile snapshotted Enabled=true but
+// before it spawned, finds nothing, retires nothing — and the reconcile then
+// leaves running exactly the Prime the operator just turned off. Under the
+// lock the two orders are both safe. Disable first: it retires nothing (nothing
+// is active yet), and the reconcile's planRole then reads Enabled=false and
+// refuses with PRIME_DISABLED. Reconcile first: it spawns, and the disable then
+// finds that Prime and retires it. Either way no active Prime remains once both
+// have returned.
+//
+// The lock covers only this pass. The settings write itself is not held under
+// it — persisting is the prime service's job, and blocking an HTTP save behind
+// a role reconcile would be a worse trade than the window this closes.
+func (s *Service) RetireActivePrime(ctx context.Context) (bool, error) {
+	unlock := s.lockRole(domain.PrimeTarget())
+	defer unlock()
+
+	existing, err := s.activePrimeSessions(ctx)
+	if err != nil {
+		return false, err
+	}
+	retired := false
+	for _, sess := range existing {
+		if err := s.RetirePrime(ctx, sess.ID); err != nil {
+			return retired, err
+		}
+		retired = true
+	}
+	return retired, nil
 }
 
 // RetirePrime terminates the active Prime without spawning a replacement. The
@@ -656,6 +727,19 @@ func (s *Service) Restore(ctx context.Context, id domain.SessionID) (RestoreOutc
 	}
 	if ok && rec.Kind == domain.KindPrime {
 		return RestoreOutcome{}, apierr.Forbidden("PRIME_MANUAL_RESTORE_FORBIDDEN", "Prime sessions are managed only by the fleet Prime supervisor and cannot be restored manually", nil)
+	}
+	// Restore is the third lifecycle operation over a role's canonical workspace,
+	// and the manager's ownership guard that refuses to relaunch a row whose
+	// workspace a live session holds is a check-then-act: a ReconcileRole landing
+	// between the guard's live-session read and the relaunch would recreate the
+	// two-runtimes-on-one-worktree defect the guard exists to prevent. Unlike Kill
+	// and Cleanup, restore runs in the service that owns the per-RoleTarget lock,
+	// so serializing it here costs nothing and makes the guard non-racy. The
+	// target is resolved from the row first — a worker has no RoleTarget and takes
+	// no lock, and Prime is already refused above.
+	if ok && rec.Kind == domain.KindOrchestrator {
+		unlock := s.lockRole(domain.OrchestratorTarget(rec.ProjectID))
+		defer unlock()
 	}
 	res, err := s.manager.RestoreWithMode(ctx, id)
 	if err != nil {
@@ -865,6 +949,12 @@ func toAPIError(err error) error {
 	case errors.Is(err, sessionmanager.ErrAwaitingDecision):
 		return apierr.Conflict("SESSION_AWAITING_DECISION",
 			"Session is paused on a permission decision; answer it in the session terminal first", nil)
+	case errors.Is(err, sessionmanager.ErrWorkspaceOwnedByLiveSession):
+		// A live session is running in the workspace this terminated row records.
+		// It is a transient conflict, not a server fault: the row becomes
+		// restorable again once the live owner is gone.
+		return apierr.Conflict("SESSION_WORKSPACE_IN_USE",
+			"Another live session is running in this session's workspace; restore it after that session ends", nil)
 	case errors.Is(err, sessionmanager.ErrIncompleteHandle):
 		return apierr.Conflict("SESSION_INCOMPLETE_HANDLE", "Session is missing runtime or workspace handles", nil)
 	case errors.Is(err, sessionmanager.ErrNotResumable):

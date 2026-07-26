@@ -23,6 +23,56 @@ func TestDefaultPrimeSettingsDisabled(t *testing.T) {
 	}
 }
 
+// Prime is projectless: it has no ProjectConfig.AgentConfig to inherit a
+// permission mode from the way orchestrator and worker sessions do, so these
+// settings are the only source the launch reads. An empty mode normalizes to
+// PermissionModeDefault, which emits no --permission-mode flag, and an enabled
+// Prime then blocks on its first tool prompt with nobody at its pane.
+func TestPrimeSettingsDefaultToUnattendedPermissions(t *testing.T) {
+	for name, got := range map[string]PrimeSettings{
+		"fresh daemon":      DefaultPrimeSettings(),
+		"settings unset":    (PrimeSettings{}).WithDefaults(),
+		"harness set alone": (PrimeSettings{Enabled: true, Harness: HarnessClaudeCode}).WithDefaults(),
+	} {
+		t.Run(name, func(t *testing.T) {
+			switch got.AgentConfig.Permissions {
+			case "", PermissionModeDefault:
+				t.Fatalf("Prime resolves permissions %q: no --permission-mode flag is emitted, so an enabled Prime stalls on the first permission prompt",
+					got.AgentConfig.Permissions)
+			}
+			if got.AgentConfig.Permissions != PermissionModeBypassPermissions {
+				t.Fatalf("Prime resolves permissions %q, want %q", got.AgentConfig.Permissions, PermissionModeBypassPermissions)
+			}
+		})
+	}
+}
+
+// The escape hatch: an operator who wants Prime to prompt sets the mode
+// explicitly. WithDefaults fills the field only when it is empty, so an explicit
+// "default" survives and is not overwritten by the unattended default above.
+//
+// This is what makes an empty stored value mean "never configured" and nothing
+// else, and therefore what makes the unattended default safe to apply on read
+// instead of migrating stored rows. WithDefaults runs on EVERY settings read, so
+// the property is asserted under repetition too: a mode that survived once but
+// decayed on a later read would escalate the operator's choice away silently,
+// exactly what the on-read default is claimed not to do.
+func TestPrimeSettingsWithDefaultsPreservesExplicitPermissions(t *testing.T) {
+	for _, want := range []PermissionMode{PermissionModeDefault, PermissionModeAcceptEdits, PermissionModeAuto} {
+		got := (PrimeSettings{AgentConfig: AgentConfig{Permissions: want}}).WithDefaults()
+		if got.AgentConfig.Permissions != want {
+			t.Fatalf("explicit permissions %q overwritten with %q", want, got.AgentConfig.Permissions)
+		}
+		for read := 2; read <= 5; read++ {
+			got = got.WithDefaults()
+			if got.AgentConfig.Permissions != want {
+				t.Fatalf("explicit permissions %q became %q by settings read %d; the operator's mode must survive every read",
+					want, got.AgentConfig.Permissions, read)
+			}
+		}
+	}
+}
+
 func TestPrimeSettingsWithDefaultsPreservesConfiguredValues(t *testing.T) {
 	disabled := false
 	got := (PrimeSettings{

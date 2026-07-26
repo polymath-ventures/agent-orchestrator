@@ -2,9 +2,14 @@ package session
 
 import (
 	"context"
+	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
+
+	sessionmanager "github.com/aoagents/agent-orchestrator/backend/internal/session_manager"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 
@@ -321,4 +326,203 @@ func TestReconcileRoleRetiresUnverifiedReplacementWhenCallerDisconnects(t *testi
 	if len(fc.retired) != 1 || fc.retired[0] != "prime-1" {
 		t.Fatalf("retired = %v, want the unverified prime-1 retired", fc.retired)
 	}
+}
+
+// roleLockProbeCommander parks ReconcileRole inside the role lock — at
+// ReleaseStaleRoleResources, which the reconcile reaches only after it has taken
+// the lock — and records whether a restore reached the manager while it was
+// parked.
+type roleLockProbeCommander struct {
+	*fakeCommander
+	entered chan struct{}
+	release chan struct{}
+	// reconcileParked is true for exactly the span in which ReconcileRole holds
+	// the role lock and is stopped inside it.
+	reconcileParked        atomic.Bool
+	restoreDuringReconcile atomic.Bool
+}
+
+func (f *roleLockProbeCommander) ReleaseStaleRoleResources(ctx context.Context, target domain.RoleTarget) (sessionmanager.ReleaseResult, error) {
+	f.reconcileParked.Store(true)
+	close(f.entered)
+	<-f.release
+	f.reconcileParked.Store(false)
+	return f.fakeCommander.ReleaseStaleRoleResources(ctx, target)
+}
+
+func (f *roleLockProbeCommander) RestoreWithMode(ctx context.Context, id domain.SessionID) (sessionmanager.RestoreResult, error) {
+	if f.reconcileParked.Load() {
+		f.restoreDuringReconcile.Store(true)
+	}
+	return f.fakeCommander.RestoreWithMode(ctx, id)
+}
+
+// restoreHandoffStore signals the moment Restore has resolved the row it is
+// about to relaunch. That read is the last thing Restore does BEFORE taking the
+// role lock, so it is the handoff point: once it fires, the restore's very next
+// act is either to block on the lock (correct) or to call straight into the
+// manager (the defect).
+type restoreHandoffStore struct {
+	*fakeStore
+	id     domain.SessionID
+	looked chan struct{}
+	once   sync.Once
+}
+
+func (s *restoreHandoffStore) GetSession(ctx context.Context, id domain.SessionID) (domain.SessionRecord, bool, error) {
+	rec, ok, err := s.fakeStore.GetSession(ctx, id)
+	if id == s.id {
+		s.once.Do(func() { close(s.looked) })
+	}
+	return rec, ok, err
+}
+
+// The manager's restore-side ownership guard reads the live sessions and only
+// then relaunches. That is a check-then-act: a ReconcileRole for the same role
+// target landing in between creates or releases the canonical role workspace and
+// puts two runtimes on one worktree — the exact defect the guard exists to
+// prevent. Restore runs in the service that owns the per-RoleTarget lock, so the
+// two must serialize on it.
+//
+// Driven by channel handoff, not timing: the reconcile is parked inside the lock
+// before the restore starts, and the restore is released to take the lock before
+// the reconcile is let go.
+func TestRestoreSerializesWithRoleReconcileForTheSameTarget(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer"}
+	st.sessions["mer-orch-1"] = domain.SessionRecord{
+		ID: "mer-orch-1", ProjectID: "mer", Kind: domain.KindOrchestrator, IsTerminated: true,
+	}
+	handoff := &restoreHandoffStore{fakeStore: st, id: "mer-orch-1", looked: make(chan struct{})}
+	fc := &roleLockProbeCommander{
+		fakeCommander: &fakeCommander{
+			spawnRecord:   domain.SessionRecord{ID: "mer-2", ProjectID: "mer", Kind: domain.KindOrchestrator},
+			restoreResult: sessionmanager.RestoreResult{Session: st.sessions["mer-orch-1"], Mode: sessionmanager.RestoreModeNative},
+		},
+		entered: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	svc := &Service{manager: fc, store: handoff}
+
+	reconcileDone := make(chan error, 1)
+	go func() {
+		_, err := svc.ReconcileRole(context.Background(), domain.OrchestratorTarget("mer"), ReconcileOptions{})
+		reconcileDone <- err
+	}()
+	<-fc.entered // the reconcile now provably holds the orchestrator role lock
+
+	restoreDone := make(chan error, 1)
+	go func() {
+		_, err := svc.Restore(context.Background(), "mer-orch-1")
+		restoreDone <- err
+	}()
+	<-handoff.looked // the restore has resolved its row and is about to take the lock
+	// …but "about to" is not an ordering. The handoff fires from INSIDE
+	// GetSession, so releasing the reconcile here would leave the assertion below
+	// racing: on a build with no lock at all the restore can still reach the
+	// manager after the reconcile has cleared reconcileParked, and the test
+	// passes for the wrong reason. Block until the restore goroutine has provably
+	// gone as far as its build allows — parked acquiring the role mutex (locked)
+	// or already through to the manager (unlocked) — so what follows is an
+	// assertion rather than a race won.
+	waitForRestoreToParkOrReachTheManager(t, fc.restoreDuringReconcile.Load)
+
+	close(fc.release)
+	if err := <-reconcileDone; err != nil {
+		t.Fatalf("ReconcileRole: %v", err)
+	}
+	if err := <-restoreDone; err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+
+	if fc.restoreDuringReconcile.Load() {
+		t.Fatal("Restore reached the manager while a ReconcileRole for the same role target was mid-flight; the reconcile can create or release the canonical role workspace under the restore's ownership check, putting two runtimes on one worktree")
+	}
+	if fc.restoreCalls != 1 {
+		t.Fatalf("RestoreWithMode calls = %d, want 1 — the restore must still run, just after the reconcile", fc.restoreCalls)
+	}
+}
+
+// waitForRestoreToParkOrReachTheManager is the barrier the test above needs: it
+// returns once the goroutine running Service.Restore can make no further
+// progress on its own, which is either
+//
+//   - blocked acquiring a mutex inside Restore (it took the role lock and the
+//     reconcile still holds it), or
+//   - reachedManager() — it called through to the manager, which is the defect.
+//
+// testing/synctest is the natural tool for "wait until every other goroutine is
+// stuck" and deliberately does NOT work here: its docs state that locking a
+// sync.Mutex is not durably blocking, because a mutex can be released from
+// outside the bubble. A goroutine parked on the role lock therefore never
+// satisfies synctest.Wait, which blocks forever and hangs the bubble (verified
+// locally on go1.26 — the run panics at the test timeout with the restore
+// goroutine in "sync.Mutex.Lock, synctest bubble 1"). Reading the goroutine
+// stacks is what observes a mutex park directly.
+//
+// The poll only ever waits for a state the correct build reaches immediately; it
+// is a barrier, not a timing assumption. It can time out but never pass early.
+func waitForRestoreToParkOrReachTheManager(t *testing.T, reachedManager func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		if reachedManager() {
+			return
+		}
+		stacks := allGoroutineStacks()
+		if restoreIsContendingForTheRoleLock(stacks) {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the Restore goroutine neither reached the manager nor parked on a lock within 30s; goroutine stacks:\n%s", stacks)
+		}
+		time.Sleep(50 * time.Microsecond)
+	}
+}
+
+func allGoroutineStacks() string {
+	for size := 1 << 16; ; size *= 2 {
+		buf := make([]byte, size)
+		if n := runtime.Stack(buf, true); n < size {
+			return string(buf[:n])
+		}
+	}
+}
+
+// restoreIsContendingForTheRoleLock reports whether some goroutine is parked acquiring a
+// mutex with Service.Restore on its stack. Between the handoff signal and the
+// manager call, lockRole holds the only mutexes Restore touches, so a park there
+// means the restore is waiting on the role lock.
+func restoreIsContendingForTheRoleLock(stacks string) bool {
+	for _, g := range strings.Split(stacks, "\n\n") {
+		if !strings.Contains(g, "session.(*Service).Restore(") {
+			continue
+		}
+		// Only evidence of CONTENTION counts. A bare "sync.(*Mutex).Lock" frame
+		// is not it: that frame is on the stack for the microseconds a goroutine
+		// spends acquiring an UNcontended mutex too, so accepting it would let
+		// the barrier release the parked reconcile while the restore was merely
+		// passing through an unlocked acquisition — and an absent or wrongly
+		// keyed lock would then pass. A goroutine only reaches lockSlow, or the
+		// semaphore wait beneath it, when the mutex is already held.
+		//
+		// The state word in the goroutine header ("[sync.Mutex.Lock]",
+		// "[semacquire]") is the same signal from the runtime's side; either
+		// form is accepted so this does not hinge on one rendering.
+		//
+		// What this proves is CONTENTION, not that the goroutine is parked at
+		// this instant — a lockSlow frame can also linger while waking. That is
+		// the property the barrier needs: contention on the role lock cannot
+		// happen unless the reconcile is holding it, so a missing or wrongly
+		// keyed lock can never satisfy this.
+		for _, evidence := range []string{
+			"(*Mutex).lockSlow", "SemacquireMutex", "runtime.semacquire",
+			"[sync.Mutex.Lock", "[semacquire",
+		} {
+			if strings.Contains(g, evidence) {
+				return true
+			}
+		}
+	}
+	return false
 }
