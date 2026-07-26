@@ -12,9 +12,11 @@ package aongcli
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -138,6 +140,7 @@ func NewRootCommand(deps Deps) *cobra.Command {
 		return usageError{err}
 	})
 
+	root.SetHelpCommand(newHelpCommand(root))
 	root.AddCommand(newStartCommand(ctx))
 	root.AddCommand(newStatusCommand(ctx))
 	root.AddCommand(newDrainCommand(ctx))
@@ -154,4 +157,22 @@ func noArgs(_ *cobra.Command, args []string) error {
 		return usageError{errors.New("expected no arguments")}
 	}
 	return nil
+}
+
+// newHelpCommand replaces Cobra's built-in help command. The built-in one
+// resolves an unknown topic to the (now runnable) root and silently prints root
+// help with exit 0, which hides the typo. Asking for help on a verb that does
+// not exist is misuse, and misuse exits 2.
+func newHelpCommand(root *cobra.Command) *cobra.Command {
+	return &cobra.Command{
+		Use:   "help [command]",
+		Short: "Help about any command",
+		RunE: func(_ *cobra.Command, args []string) error {
+			target, _, err := root.Find(args)
+			if err != nil || target == nil || (len(args) > 0 && target == root) {
+				return usageError{fmt.Errorf("unknown help topic %q", strings.Join(args, " "))}
+			}
+			return target.Help()
+		},
+	}
 }

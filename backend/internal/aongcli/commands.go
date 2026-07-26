@@ -65,7 +65,7 @@ func newStatusCommand(ctx *commandContext) *cobra.Command {
 func (c *commandContext) runStatus(ctx context.Context, cmd *cobra.Command) error {
 	out := cmd.OutOrStdout()
 	// Daemon state and fleet pause state already come from `ao status`; aong
-	// adds only the service units ao does not manage.
+	// adds the service-unit layer, which `ao status` does not report at all.
 	if err := c.echoAO(ctx, out, "status"); err != nil {
 		return err
 	}
@@ -197,17 +197,19 @@ func (c *commandContext) runShutdown(ctx context.Context, cmd *cobra.Command) er
 }
 
 // daemonAbsent reports whether `ao status` proves there is no live AO daemon to
-// gate. Only "stopped" and "stale" prove that: stale means the run file points
-// at a dead process, or at a live process that failed the ownership probe and
-// therefore is not our daemon (`ao stop` refuses that case anyway).
+// gate. Only "stopped" proves that — it means there is no run file at all.
 //
-// Every other state — including "unhealthy" and "not_ready", which a transient
-// probe failure produces against a perfectly live daemon — is treated as
-// present, so shutdown attempts the stop-work and aborts if it fails. The
-// question this gate answers deliberately is not "is the daemon healthy" but
-// "is it certain there is no work to stop": guessing wrong in the other
+// Every other state is treated as present. "unhealthy" and "not_ready" are what
+// a transient probe failure produces against a perfectly live daemon, and
+// "stale" is overloaded: `ao` reports it both for a run file pointing at a dead
+// process AND for a live process whose ownership probe failed, so it cannot
+// stand as proof of absence either.
+//
+// The question this gate answers is deliberately not "is the daemon healthy"
+// but "is it certain there is no work to stop". Guessing wrong in the other
 // direction stops the daemon while agents are still running, which is the exact
-// state shutdown exists to prevent.
+// state shutdown exists to prevent, so anything short of certainty fails closed:
+// stop-work is attempted, and a failure aborts the shutdown.
 func (c *commandContext) daemonAbsent(ctx context.Context) (bool, error) {
 	out, err := c.runAO(ctx, "status", "--json")
 	if err != nil {
@@ -219,5 +221,5 @@ func (c *commandContext) daemonAbsent(ctx context.Context) (bool, error) {
 	if err := json.Unmarshal(out, &status); err != nil {
 		return false, fmt.Errorf("parse `ao status --json`: %w", err)
 	}
-	return status.State == "stopped" || status.State == "stale", nil
+	return status.State == "stopped", nil
 }

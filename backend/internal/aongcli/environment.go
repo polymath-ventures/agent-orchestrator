@@ -8,8 +8,9 @@ import (
 
 // aoUnits are the systemd user units an AO deployment can be made of, in start
 // order: the tmux server that owns every agent pane, the daemon, then the web
-// supervisor. `ao` already knows about ao.service; the other two are the only
-// reason aong talks to systemctl at all.
+// supervisor. All three are probed and started here — `ao` knows how to *stop*
+// ao.service, but nothing in `ao` starts a unit or reports unit state, and
+// ao-tmux/ao-web are outside its model entirely.
 var aoUnits = []string{"ao-tmux.service", "ao.service", "ao-web.service"}
 
 type environmentKind string

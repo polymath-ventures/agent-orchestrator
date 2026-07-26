@@ -200,6 +200,35 @@ func TestResolveAONonExecutableSiblingDoesNotDisplacePath(t *testing.T) {
 	}
 }
 
+// An aong installed as a symlink into a release directory must look for its
+// sibling in the release directory, not in the bin directory holding the link.
+func TestResolveAOResolvesSymlinkedSelf(t *testing.T) {
+	h := newFakeHost(t)
+	releaseDir := filepath.Dir(h.exePath) // already holds an executable `ao`
+	realAong := h.exePath
+	if err := os.WriteFile(realAong, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	linkDir := t.TempDir()
+	link := filepath.Join(linkDir, "aong")
+	if err := os.Symlink(realAong, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	// Executable() reports the link path, as it does on platforms that do not
+	// resolve /proc/self/exe.
+	h.exePath = link
+
+	c := &commandContext{deps: h.deps(&bytes.Buffer{}, &bytes.Buffer{}).withDefaults()}
+	got, err := c.resolveAO()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(releaseDir, aoBinaryName())
+	if got != want {
+		t.Fatalf("resolveAO() = %q, want the sibling of the symlink TARGET %q", got, want)
+	}
+}
+
 func TestResolveAOMissingNamesBothLocations(t *testing.T) {
 	h := newFakeHost(t)
 	siblingDir := t.TempDir()
@@ -548,7 +577,7 @@ func TestShutdownAbortsWhenStopWorkFails(t *testing.T) {
 
 // Only a state that PROVES no live daemon exists may skip stop-work.
 func TestShutdownSkipsStopWorkOnlyWhenDaemonIsProvenAbsent(t *testing.T) {
-	for _, state := range []string{"stopped", "stale"} {
+	for _, state := range []string{"stopped"} {
 		t.Run(state, func(t *testing.T) {
 			h := newFakeHost(t)
 			h.respond = func(call recordedCall) ([]byte, error) {
@@ -578,7 +607,10 @@ func TestShutdownSkipsStopWorkOnlyWhenDaemonIsProvenAbsent(t *testing.T) {
 // daemon with live agents. Treating "not ready" as "nothing to stop" would stop
 // the daemon out from under running work — the exact state shutdown prevents.
 func TestShutdownStopsWorkWhenDaemonStateIsIndeterminate(t *testing.T) {
-	for _, state := range []string{"unhealthy", "not_ready", "", "some-future-state"} {
+	// "stale" is in this list deliberately: `ao` reports it both for a run file
+	// pointing at a dead process AND for a live process whose ownership probe
+	// failed, so it is not proof that nothing is running.
+	for _, state := range []string{"unhealthy", "not_ready", "stale", "", "some-future-state"} {
 		t.Run("state="+state, func(t *testing.T) {
 			h := newFakeHost(t)
 			h.respond = func(call recordedCall) ([]byte, error) {
@@ -681,7 +713,8 @@ func TestUsageErrorsExitTwo(t *testing.T) {
 	for _, args := range [][]string{
 		{"status", "--nope"},
 		{"drain", "unexpected-arg"},
-		{"typo"}, // an unknown verb is misuse, not a runtime failure
+		{"typo"},         // an unknown verb is misuse, not a runtime failure
+		{"help", "typo"}, // so is asking for help on a verb that does not exist
 	} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
 			h := newFakeHost(t)
@@ -707,5 +740,25 @@ func TestSuccessExitsZero(t *testing.T) {
 	_, _, err := run(t, h, "resume")
 	if ExitCode(err) != 0 {
 		t.Fatalf("ExitCode(%v) = %d, want 0", err, ExitCode(err))
+	}
+}
+
+// Making the root runnable (so an unknown verb is misuse) must not break the
+// ordinary help and version paths.
+func TestHelpAndVersionPathsStillSucceed(t *testing.T) {
+	for _, args := range [][]string{{}, {"--help"}, {"--version"}, {"help"}, {"help", "status"}} {
+		t.Run(strings.Join(append([]string{"aong"}, args...), " "), func(t *testing.T) {
+			h := newFakeHost(t)
+			out, _, err := run(t, h, args...)
+			if ExitCode(err) != 0 {
+				t.Fatalf("ExitCode(%v) = %d, want 0", err, ExitCode(err))
+			}
+			if strings.TrimSpace(out) == "" {
+				t.Fatal("printed nothing")
+			}
+			if len(h.calls) != 0 {
+				t.Fatalf("a help/version path ran commands: %v", h.argv())
+			}
+		})
 	}
 }

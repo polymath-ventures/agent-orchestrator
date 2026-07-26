@@ -211,9 +211,14 @@ and a failure aborts the shutdown.
 - **WHEN** `aong shutdown` runs and the reported daemon state proves no live daemon exists
 - **THEN** no fleet pause command is invoked and `ao stop` is invoked
 
-#### Scenario: An unhealthy or not-ready daemon still has its work stopped
+#### Scenario: An unhealthy, not-ready, or stale daemon still has its work stopped
 
-- **WHEN** `aong shutdown` runs and the daemon is reported as unhealthy or not ready
+- **WHEN** `aong shutdown` runs and the daemon is reported as unhealthy, not ready, or stale
+- **THEN** `ao pause --all --hard` is invoked before `ao stop`
+
+#### Scenario: An unrecognised daemon state fails closed
+
+- **WHEN** `aong shutdown` runs and the reported daemon state is empty or not one `aong` recognises
 - **THEN** `ao pause --all --hard` is invoked before `ao stop`
 
 ### Requirement: aong follows AO's CLI exit-code convention
@@ -223,8 +228,13 @@ success, matching the convention `ao` is scripted against.
 
 #### Scenario: Misuse exits 2
 
-- **WHEN** `aong` is invoked with an unknown flag or an unexpected argument
+- **WHEN** `aong` is invoked with an unknown flag, an unknown verb, an unexpected argument, or help for a verb that does not exist
 - **THEN** the process exits with code 2
+
+#### Scenario: Help and version still succeed
+
+- **WHEN** `aong` is invoked with no arguments, `--help`, `--version`, `help`, or `help <known verb>`
+- **THEN** the process prints the corresponding text, exits 0, and invokes no lifecycle command
 
 #### Scenario: Runtime failure exits 1
 
