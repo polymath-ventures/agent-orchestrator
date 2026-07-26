@@ -46,6 +46,7 @@ preflight() {
 repo_root() { cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd; }
 
 restart_and_verify() {
+  local expected_sha="$1"
   systemctl --user daemon-reload
   systemctl --user restart "${SERVICES[@]}"
   log "Services restarted: ${SERVICES[*]}"
@@ -54,23 +55,43 @@ restart_and_verify() {
   # Identity, not just liveness: the healthz responder must be the daemon this
   # deploy installed (executablePath) and the process the run file names (pid)
   # — a stale or foreign daemon on the same port must not satisfy the gate.
+  #
+  # executablePath proves WHICH FILE is answering; buildRevision proves WHAT
+  # THAT FILE IS. Without the second, a stale binary left at the expected path
+  # satisfies every other check, which is the failure this gate exists to catch.
   local run_file="${AO_RUN_FILE:-$HOME/.ao/running.json}" port=""
   for _ in $(seq 1 30); do
-    port="$(python3 - "$run_file" "$BIN_TARGET" <<'PY' 2>/dev/null || true
+    port="$(python3 - "$run_file" "$BIN_TARGET" "$expected_sha" <<'PY' 2>/dev/null || true
 import json, sys, urllib.request
 run = json.load(open(sys.argv[1]))
 health = json.load(urllib.request.urlopen(f"http://127.0.0.1:{run['port']}/healthz", timeout=3))
 assert health.get("status") == "ok"
 assert health.get("pid") == run["pid"], f"healthz pid {health.get('pid')} != run-file pid {run['pid']}"
 assert health.get("executablePath") == sys.argv[2], f"responder is {health.get('executablePath')}, not {sys.argv[2]}"
+expected = sys.argv[3]
+revision = health.get("buildRevision")
+# Three distinct failures, kept distinct: a daemon too old to report at all, a
+# build whose provenance the toolchain never recorded, and the wrong commit.
+# Collapsing them would send an operator hunting the wrong cause.
+assert revision is not None, "responder predates buildRevision; it cannot prove which commit it is"
+assert revision != "unknown", (
+    "responder reports an unstamped build (no VCS metadata reachable at build time, "
+    "or -buildvcs=false); it cannot prove which commit it is"
+)
+assert revision == expected, f"responder was built from {revision}, not the deployed {expected}"
+# Fails closed by construction on the daemon side: anything other than an
+# explicit false means the tree's state was never established.
+assert health.get("buildModified") is False, (
+    f"responder reports a modified build of {revision}; the deployed tree was not clean"
+)
 print(run["port"])
 PY
 )"
     [ -n "$port" ] && break
     sleep 2
   done
-  [ -n "$port" ] || die "daemon healthz never verified as the installed binary (run file: $run_file)"
-  log "Daemon healthy and identity-verified on 127.0.0.1:$port."
+  [ -n "$port" ] || die "daemon healthz never verified as the installed binary at $expected_sha (run file: $run_file)"
+  log "Daemon healthy and identity-verified on 127.0.0.1:$port (build $expected_sha)."
 
   # ao-web serves the shell and proxies the daemon on the same origin.
   curl -fsS -m 5 "http://127.0.0.1:5173/healthz" >/dev/null || die "ao-web proxy is not serving /healthz"
@@ -136,7 +157,9 @@ rollback() {
   fi
   sync_units "$prev"
   cat "$prev/REVISION" > "$LAST_FILE"
-  restart_and_verify
+  # The rollback target's own recorded revision — the gate proves we landed on
+  # the release we rolled back TO, not merely that something healthy is up.
+  restart_and_verify "$(cat "$prev/REVISION")"
   log "Rollback complete: $(cat "$prev/REVISION")"
 }
 
@@ -183,7 +206,7 @@ deploy() {
   sync_units "$rel"
   log "Flipped current -> $rel; installed $BIN_TARGET."
 
-  restart_and_verify
+  restart_and_verify "$sha"
   log "Deploy complete: $sha"
 }
 

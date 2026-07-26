@@ -34,6 +34,16 @@ test("deploy.sh keeps its load-bearing invariants", async () => {
 	assert.match(text, /sync_units "\$prev"/);
 	// The health gate must verify identity (pid + executablePath), not mere 200s.
 	assert.match(text, /executablePath/);
+	// executablePath only proves which FILE answered. Without a revision check a
+	// stale binary sitting at the expected path satisfies every other assertion,
+	// so the gate must compare the responder's build against the deployed sha.
+	assert.match(text, /revision == expected/);
+	// A dirty build must fail the gate even when the revision matches.
+	assert.match(text, /buildModified"\) is False/);
+	// Both entry points must pass their own expected revision — a rollback that
+	// verified against the incoming sha would confirm the wrong release.
+	assert.match(text, /restart_and_verify "\$sha"/);
+	assert.match(text, /restart_and_verify "\$\(cat "\$prev\/REVISION"\)"/);
 	// The public check must exercise the browser-mode API path with an Origin.
 	assert.match(text, /-H "Origin: \$public_url"/);
 	// All dependencies are checked before any mutation happens.

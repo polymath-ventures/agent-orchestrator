@@ -319,6 +319,19 @@ func localControlRequest(r *http.Request) bool {
 // daemonProbePayload is shared by /healthz and /readyz. Dependency
 // initialization happens before the server is constructed, so a listening
 // daemon is ready to answer requests.
+//
+// This payload is deliberately NOT in the generated OpenAPI contract
+// (apispec/openapi.yaml), unlike everything under /api/v1. The probes are
+// infrastructure endpoints for tooling rather than part of the typed client
+// surface, and their URLs are depended on verbatim by systemd, ops/deploy.sh,
+// and ops/ao-web-server.mjs — putting them behind the generator would buy
+// schema enforcement at the cost of coupling them to API versioning they must
+// outlive.
+//
+// The trade is real, though, and the cost lands here: every consumer
+// hand-maintains its own view of these fields. If you change this map, update
+// them together — backend/internal/cli/status.go (probeResult), ops/deploy.sh's
+// identity gate, and any dashboard reading it. Nothing generated will catch you.
 func daemonProbePayload(status string, cfg config.Config) map[string]any {
 	revision, modified := buildProvenance()
 	payload := map[string]any{
