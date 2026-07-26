@@ -225,9 +225,12 @@ daemon logs the resolved socket at startup under `tmux runtime socket`.
 
 Expected result: the daemon comes back ready, existing tmux sessions are still
 listed, and AO reattaches to live sessions instead of marking them dead after the
-reaper window. A daemon with zero connected Electron/browser clients should stay
-up; the supervisor only auto-stops an app-owned daemon after a client has
-connected and later disconnected.
+reaper window. A daemon with zero connected Electron/browser clients stays up:
+the frontend-death watchdog is installed only when `AO_OWNER=app`, so a
+persistent or headless daemon has no `supervise.sock` at all and nothing that
+connects can arm it. On this fork's units `AO_OWNER` is unset, so the watchdog
+is never installed; `journalctl --user -u ao.service` shows
+`supervisor: not app-owned` at boot.
 
 ### Migrating off the legacy `/tmp` socket
 

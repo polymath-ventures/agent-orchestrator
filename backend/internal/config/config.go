@@ -49,6 +49,11 @@ const (
 	// DefaultMetricsLowQuotaPercent fires low_quota when a known quota window
 	// reports remaining usage at or below this percent. Zero disables the alert.
 	DefaultMetricsLowQuotaPercent = 10
+	// OwnerApp is the AO_OWNER value the desktop app sets for a daemon whose
+	// lifetime it owns. It is the ONLY value that means "a client is responsible
+	// for stopping this daemon"; every other value, including empty, means the
+	// daemon is persistent and must never stop itself.
+	OwnerApp = "app"
 	// DefaultQuotaProbeInterval is how often the daemon probes each installed
 	// harness for its login's current usage. It is deliberately slow because some
 	// probes cost a real quota turn (e.g. claude -p "/usage"). Zero disables the
@@ -132,6 +137,13 @@ type Config struct {
 	// fresh id per boot, which correctly makes any surviving shell terminals
 	// from an earlier run look like orphans and get cleaned up.
 	AppRunID string
+	// Owner records how this daemon was spawned (AO_OWNER), set by whoever
+	// spawned it. OwnerApp means the desktop app owns this daemon's lifetime;
+	// "persistent" (an AO_KEEP_DAEMON daemon) and empty (headless `ao daemon`)
+	// both mean the daemon outlives any client. It is the single source of the
+	// ownership fact: the run file records it, and it decides whether the
+	// frontend-death watchdog is installed at all.
+	Owner string
 	// AllowedOrigins are the browser origins granted CORS read access (see
 	// DefaultAllowedOrigins). Overridden by AO_ALLOWED_ORIGINS.
 	AllowedOrigins []string
@@ -172,6 +184,8 @@ func (c Config) Addr() string {
 //	AO_MODEL_REVALIDATION_INTERVAL model-pin probe period (Go duration >= 0, 0 disables, default 24h)
 //	AO_APP_RUN_ID        desktop-app launch id, set by the Electron supervisor
 //	                     (default: a fresh id minted per daemon boot)
+//	AO_OWNER             how this daemon was spawned: "app" (desktop-owned),
+//	                     "persistent" (AO_KEEP_DAEMON), or empty (headless)
 //	AO_ALLOWED_ORIGINS   CORS origins, comma-separated (default DefaultAllowedOrigins)
 //	AO_MOBILE_ADVERTISED_HOST  host advertised in the Connect Mobile pairing status/QR (default: interface autopick)
 //	AO_TELEMETRY_EVENTS  local event capture off|on (default off)
@@ -253,6 +267,8 @@ func Load() (Config, error) {
 	if raw := strings.TrimSpace(os.Getenv("AO_MOBILE_ADVERTISED_HOST")); raw != "" {
 		cfg.MobileAdvertisedHost = raw
 	}
+
+	cfg.Owner = strings.TrimSpace(os.Getenv("AO_OWNER"))
 
 	// A missing AO_APP_RUN_ID means nothing is supervising this daemon, so this
 	// boot IS the run: mint an id rather than leaving it empty, which would make

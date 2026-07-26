@@ -325,9 +325,16 @@ func Run() error {
 	// window matters. See handshakeTimeout in the supervisor package.
 	const supervisorGrace = 5 * time.Second
 
-	if ln, addr, err := supervisor.Listen(cfg.RunFilePath); err != nil {
-		// Non-fatal: without the link the daemon still works (e.g. headless "ao start"),
-		// it just will not auto-stop when a frontend dies. Do not block startup on it.
+	if !supervisorEnabled(cfg.Owner) {
+		// A daemon no client owns must never stop itself, and the only way to
+		// guarantee that is to not install the mechanism. Opening the socket and
+		// trusting the client to decline the link left a socket any connection
+		// could arm (#147); the ownership fact lives here, so the guarantee does
+		// too.
+		log.Info("supervisor: not app-owned; frontend-death auto-stop not installed", "owner", cfg.Owner)
+	} else if ln, addr, err := supervisor.Listen(cfg.RunFilePath); err != nil {
+		// Non-fatal: without the link the daemon still works, it just will not
+		// auto-stop when a frontend dies. Do not block startup on it.
 		log.Warn("supervisor: listener unavailable; frontend-death auto-stop disabled", "err", err)
 	} else {
 		log.Info("supervisor: listening", "addr", addr)
@@ -398,3 +405,16 @@ func stabilizeWorkingDirectory(dataDir string) error {
 	}
 	return nil
 }
+
+// supervisorEnabled reports whether this daemon should install the
+// frontend-death watchdog.
+//
+// The watchdog exists for exactly one situation: the desktop app spawned this
+// daemon and would otherwise orphan it on quit. Every other daemon —
+// AO_KEEP_DAEMON ("persistent"), headless `ao daemon` (empty), or anything
+// unrecognised — outlives its clients by design and must never self-stop. The
+// upstream package documents that guarantee, but it was previously enforced
+// only by the Electron client declining to open the link, which left the socket
+// open for anything else to arm (#147). The daemon knows how it was spawned, so
+// the guarantee belongs here.
+func supervisorEnabled(owner string) bool { return owner == config.OwnerApp }
