@@ -155,6 +155,53 @@ func TestWorkspaceIntegrationDestroyDirtyWorktree(t *testing.T) {
 	}
 }
 
+func TestWorkspaceIntegrationDestroyRefusesMismatchedRepoPath(t *testing.T) {
+	git := requireGit(t)
+	tmp := t.TempDir()
+	parentRepo := setupOriginClone(t, git, filepath.Join(tmp, "parent"))
+	childRepo := setupOriginClone(t, git, filepath.Join(tmp, "child"))
+	root := filepath.Join(tmp, "managed")
+	ws, err := New(Options{Binary: git, ManagedRoot: root, RepoResolver: StaticRepoResolver{"proj": parentRepo}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	ctx := context.Background()
+	info, err := ws.Create(ctx, ports.WorkspaceConfig{
+		ProjectID: "proj",
+		SessionID: "child",
+		Branch:    "feature/child",
+		RepoPath:  childRepo,
+	})
+	if err != nil {
+		t.Fatalf("create child worktree: %v", err)
+	}
+
+	wip := filepath.Join(info.Path, "wip.txt")
+	if err := os.WriteFile(wip, []byte("uncommitted\n"), 0o600); err != nil {
+		t.Fatalf("write wip: %v", err)
+	}
+	mismatched := info
+	mismatched.RepoPath = parentRepo
+
+	err = ws.Destroy(ctx, mismatched)
+	if err == nil {
+		t.Fatal("Destroy with mismatched RepoPath succeeded; want refusal")
+	}
+	if errors.Is(err, ports.ErrWorkspaceDirty) {
+		t.Fatalf("Destroy error = %v, want repo-mismatch refusal before dirty classification", err)
+	}
+	if _, statErr := os.Stat(wip); statErr != nil {
+		t.Fatalf("dirty child worktree was not preserved: %v", statErr)
+	}
+	records, err := ws.listRecords(ctx, childRepo)
+	if err != nil {
+		t.Fatalf("list child records: %v", err)
+	}
+	if _, ok := findWorktree(records, info.Path); !ok {
+		t.Fatalf("child repo no longer registers worktree %q after refused Destroy", info.Path)
+	}
+}
+
 // TestWorkspaceIntegrationCreateInRemotelessRepo guards the BRANCH_NOT_FETCHED
 // regression: a repo with no remote configured must still spawn worktrees for
 // new branches by basing them on the local default-branch head
