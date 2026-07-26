@@ -110,3 +110,6 @@ ds-bundle/
 frontend/index.d.ts
 frontend/dist/decl/
 frontend/dist/ds-compiled.css
+.reviewcache/
+.reviewtmp/
+/TASK-PLAN.md
