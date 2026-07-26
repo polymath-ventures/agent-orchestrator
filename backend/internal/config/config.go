@@ -268,7 +268,11 @@ func Load() (Config, error) {
 		cfg.MobileAdvertisedHost = raw
 	}
 
-	cfg.Owner = strings.TrimSpace(os.Getenv("AO_OWNER"))
+	// Deliberately NOT trimmed: OwnerApp is an exact-match gate for installing
+	// the self-stop watchdog, so a malformed " app " must stay unrecognised and
+	// fail closed. It also keeps running.json's owner byte-identical to the
+	// value whoever spawned the daemon set.
+	cfg.Owner = os.Getenv("AO_OWNER")
 
 	// A missing AO_APP_RUN_ID means nothing is supervising this daemon, so this
 	// boot IS the run: mint an id rather than leaving it empty, which would make

@@ -2,7 +2,7 @@
 // callback when the last connected client disconnects and stays gone for a
 // configurable grace period. It arms only after the FIRST client completes the
 // handshake (see HandshakeToken) so a daemon started with no frontend (e.g. CLI
-// "ao start") never self-stops, and so a transient probe that merely opens the
+// "ao daemon") never self-stops, and so a transient probe that merely opens the
 // socket cannot perturb the daemon's lifecycle.
 //
 // This package is a leaf: it imports only stdlib.

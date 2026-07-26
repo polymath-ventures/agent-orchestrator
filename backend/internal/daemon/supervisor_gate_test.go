@@ -1,79 +1,43 @@
 package daemon
 
 import (
-	"net"
-	"os"
+	"io"
+	"log/slog"
 	"path/filepath"
 	"testing"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
-	"github.com/aoagents/agent-orchestrator/backend/internal/daemon/supervisor"
 )
 
-// The supervisor watchdog exists so the desktop app does not orphan the daemon
-// it spawned. A daemon nobody spawned — headless `ao daemon` under systemd, a
-// keep-alive daemon — must never self-stop, and the only way to guarantee that
-// is to not install the mechanism at all. Installing it and relying on the
-// client to decline the link leaves the socket open for anyone to arm.
-func TestSupervisorInstalledOnlyForAppOwnedDaemon(t *testing.T) {
-	for _, tc := range []struct {
-		name  string
-		owner string
-		want  bool
-	}{
-		{"app-owned desktop daemon", config.OwnerApp, true},
-		{"keep-alive daemon", "persistent", false},
-		{"headless daemon", "", false},
-		{"unrecognised owner", "something-else", false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := supervisorEnabled(tc.owner); got != tc.want {
-				t.Fatalf("supervisorEnabled(%q) = %v, want %v", tc.owner, got, tc.want)
-			}
-		})
-	}
+func quietLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
+
+// gateConfig builds the only two fields listenSupervisor reads.
+func gateConfig(t *testing.T, owner string) config.Config {
+	t.Helper()
+	return config.Config{Owner: owner, RunFilePath: filepath.Join(t.TempDir(), "running.json")}
 }
 
-// The guarantee has to be structural: with the watchdog not installed there is
-// no socket, so nothing that connects can arm it — no matter what connects, how
-// often, or whether it speaks the handshake.
-func TestNonAppOwnedDaemonExposesNoSupervisorSocket(t *testing.T) {
-	dir := t.TempDir()
-	runFile := filepath.Join(dir, "running.json")
-	sockPath := filepath.Join(dir, "supervise.sock")
-
-	for _, owner := range []string{"", "persistent", "something-else"} {
+// The watchdog exists so the desktop app does not orphan the daemon it spawned.
+// A daemon nobody spawned — headless `ao daemon` under systemd, an
+// AO_KEEP_DAEMON daemon — must never self-stop, and the only way to guarantee
+// that regardless of what connects is to not install the listener at all.
+//
+// This exercises the same function daemon.Run calls, so reverting the gate to
+// an unconditional supervisor.Listen fails here.
+func TestSupervisorListenerInstalledOnlyForAppOwnedDaemon(t *testing.T) {
+	for _, owner := range []string{"persistent", "", "something-else", "App", "app "} {
 		t.Run("owner="+owner, func(t *testing.T) {
-			if supervisorEnabled(owner) {
-				t.Fatalf("owner %q would install the watchdog", owner)
-			}
-			// Nothing installed the listener, so the socket must not exist and a
-			// client cannot connect to arm anything.
-			if _, err := os.Stat(sockPath); !os.IsNotExist(err) {
-				t.Fatalf("supervise.sock exists for a non-app-owned daemon: %v", err)
-			}
-			if conn, err := net.Dial("unix", sockPath); err == nil {
-				_ = conn.Close()
-				t.Fatal("connected to a supervisor socket that must not exist")
+			if ln := listenSupervisor(gateConfig(t, owner), quietLogger()); ln != nil {
+				_ = ln.Close()
+				t.Fatalf("owner %q installed the frontend-death watchdog", owner)
 			}
 		})
 	}
 
-	// Control: the app-owned path is unchanged and still creates the socket.
-	if !supervisorEnabled(config.OwnerApp) {
-		t.Fatal("app-owned daemon would not install the watchdog")
+	// Control: the app-owned path is unchanged and still gets a listener.
+	ln := listenSupervisor(gateConfig(t, config.OwnerApp), quietLogger())
+	if ln == nil {
+		t.Fatal("app-owned daemon did not install the watchdog")
 	}
-	ln, addr, err := supervisor.Listen(runFile)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = ln.Close() }()
-	if addr != sockPath {
-		t.Fatalf("socket path = %q, want %q", addr, sockPath)
-	}
-	conn, err := net.Dial("unix", sockPath)
-	if err != nil {
-		t.Fatalf("app-owned daemon's supervisor socket is not connectable: %v", err)
-	}
-	_ = conn.Close()
+	_ = ln.Close()
 }

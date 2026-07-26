@@ -277,7 +277,8 @@ func TestLoadOwner(t *testing.T) {
 		{"app", OwnerApp},
 		{"persistent", "persistent"},
 		{"", ""},
-		{"  app  ", OwnerApp},
+		// Not trimmed: an exact-match gate must fail closed on a malformed value.
+		{"  app  ", "  app  "},
 	} {
 		t.Run("AO_OWNER="+tc.env, func(t *testing.T) {
 			t.Setenv("AO_OWNER", tc.env)

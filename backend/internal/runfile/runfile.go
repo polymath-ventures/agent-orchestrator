@@ -31,8 +31,12 @@ type Info struct {
 	// to hold a supervisor link on attach from the daemon's own durable record
 	// rather than the current process env. "app" = normal desktop-spawned daemon
 	// (re-link on attach); "persistent" = spawned under AO_KEEP_DAEMON, stays
-	// alive across app quit and is never re-linked; empty = headless `ao start`
+	// alive across app quit and is never re-linked; empty = headless `ao daemon`
 	// daemon, stays persistent across app quit.
+	//
+	// The daemon reads the same fact (config.Config.Owner) to decide whether to
+	// install the frontend-death watchdog at all: only "app" does, so a
+	// persistent or headless daemon has no supervisor socket to arm.
 	Owner string `json:"owner,omitempty"`
 	// ShutdownToken authorizes local daemon shutdown requests. It lives in
 	// running.json so arbitrary loopback clients cannot cleanly stop the daemon.
