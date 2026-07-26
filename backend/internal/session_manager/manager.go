@@ -658,7 +658,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	// than with a rename typed into a turn already in flight.
 	if err := m.deliverNameForSpawn(ctx, agent, launchCfg, handle, id, cfg.DisplayName); err != nil {
 		if !m.forgiveSpawnNameFailure(ctx, handle, id, err) {
-			_ = m.runtime.Destroy(ctx, handle)
+			m.destroyFailedLaunchRuntime(ctx, handle)
 			m.rollbackPreparedSpawnWorkspace(ctx, rec, ws, workspaceProject)
 			m.markSpawnFailedTerminatedWithoutWorkspace(ctx, id)
 			return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: deliver name: %w", id, err)
