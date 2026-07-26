@@ -137,6 +137,72 @@ func TestSpawnRollbackSurvivesCallerCancellation(t *testing.T) {
 	}
 }
 
+// disconnectingNameMessenger models the client going away during spawn's
+// post-start name write: the pane write is the in-flight step when the request
+// context is cancelled, so it fails with ctx.Err() and drives Spawn into the
+// name-delivery rollback branch.
+type disconnectingNameMessenger struct {
+	*fakeMessenger
+	cancel context.CancelFunc
+}
+
+func (m *disconnectingNameMessenger) Send(ctx context.Context, id domain.SessionID, msg string) error {
+	m.cancel()
+	_ = m.fakeMessenger.Send(ctx, id, msg)
+	return ctx.Err()
+}
+
+// Name delivery is the spawn step added after the compensating-context rule, and
+// it carries the same rollback obligation as its siblings: a spawn that fails to
+// name a session it cannot confirm alive must destroy the runtime it just
+// created. Doing that teardown on the caller's cancelled context leaves the tmux
+// session live with no correct durable record — the orphan the rollback exists
+// to prevent.
+//
+// This drives the rollback through the name-delivery failure specifically rather
+// than through MarkSpawned, because that branch is the one the MarkSpawned test
+// above cannot reach.
+func TestSpawnNameDeliveryRollbackSurvivesCallerCancellation(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+	// aliveByHandle leaves "h1" unset, so the post-failure liveness probe cannot
+	// confirm the pane and forgiveSpawnNameFailure refuses to keep the session.
+	// That is what makes this the rollback branch rather than the forgiven one; a
+	// real tmux probe on a dead caller context fails the same way, so a
+	// disconnect lands here as the ordinary outcome rather than a corner case.
+	rt := &ctxHonoringRuntime{fakeRuntime: &fakeRuntime{}}
+	cctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	m := New(Deps{
+		Runtime: rt, Agents: agentsFor{agent: renameOnlyAgent{}}, Workspace: &fakeWorkspace{}, Store: st,
+		Messenger: &disconnectingNameMessenger{fakeMessenger: &fakeMessenger{}, cancel: cancel},
+		Lifecycle: &fakeLCM{store: st},
+		LookPath:  func(string) (string, error) { return "/bin/true", nil },
+	})
+
+	_, _, _, err := m.Spawn(cctx, ports.SpawnConfig{
+		ProjectID: "mer", Kind: domain.KindWorker, Harness: domain.HarnessClaudeCode,
+		IssueID: "170", IssueTitle: "Name delivery rollback",
+	})
+	if err == nil || !strings.Contains(err.Error(), "deliver name") {
+		t.Fatalf("spawn err = %v, want the name-delivery branch to reject the spawn", err)
+	}
+	if cctx.Err() == nil {
+		t.Fatal("setup: the failing name write must have cancelled the caller context")
+	}
+	if rt.created != 1 {
+		t.Fatalf("runtime created = %d, want the spawn to have reached runtime.Create", rt.created)
+	}
+
+	// The branch's other two rollback steps already detach inside their helpers,
+	// and the workspace/terminal-state halves are pinned by the MarkSpawned test
+	// above; the inline runtime destroy is the one this branch got wrong.
+	if rt.destroyedLive != 1 {
+		t.Errorf("runtime destroys that took effect = %d (skipped on cancelled ctx = %d); the tmux session is still live after the name-delivery rollback",
+			rt.destroyedLive, rt.destroySkipped)
+	}
+}
+
 // Restore creates a runtime session exactly like spawn does, so it carries the
 // same rollback obligation: a relaunch that fails after runtime.Create must
 // destroy the pane it just made. The caller here is the one that goes away — a
