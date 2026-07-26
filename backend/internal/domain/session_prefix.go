@@ -23,7 +23,8 @@ const MaxSessionPrefixRunes = 3
 const prefixTokenAlphabet = "abcdefghijklmnopqrstuvwxyz0123456789"
 
 // DeriveSessionPrefix returns a project's session prefix, derived from its name
-// and distinct from every prefix in taken.
+// and distinct from every prefix in taken while the sweep below still has a free
+// token.
 //
 // It exists because the prefix heads every session name, and the name is the
 // only project cue once names propagate into a harness's own flat, cross-project
@@ -35,15 +36,20 @@ const prefixTokenAlphabet = "abcdefghijklmnopqrstuvwxyz0123456789"
 // The rule, in order: the initials of a multi-word name, or the leading
 // characters of a single-word one; then a longer draw from the name's own
 // characters; then the smallest free numeric suffix that still fits the cap; then
-// a deterministic sweep of every token width the cap allows. The sweep is what
-// makes uniqueness a property rather than an aspiration: it searches the whole
-// space the cap can express, so it returns a free prefix whenever one exists.
+// a deterministic sweep of prefixTokenAlphabet at every width the cap allows.
+// The sweep is what makes uniqueness a property rather than an aspiration: it
+// searches that whole space, so it returns a free prefix whenever one exists in
+// it.
 //
-// The cap is therefore the only bound on that guarantee. Once every prefix the
-// cap can express is taken, the last candidate is returned even though it
-// duplicates — deliberately, because the caller's alternative is refusing to
-// create the project, and a duplicate prefix an operator can retype beats a
-// project that cannot be registered.
+// That alphabet is the bound on the guarantee, and it is narrower than what
+// derivation can emit: a name-drawn prefix may carry any letter or digit,
+// including non-ASCII, while the sweep walks only lowercase ASCII
+// alphanumerics. So the guarantee is exactly this — unique while any of the
+// sweep's tokens is free — and not the broader claim that it holds while any
+// representable prefix is free. Once the sweep's space is full, the last
+// candidate is returned even though it duplicates, deliberately: the caller's
+// alternative is refusing to create the project, and a duplicate prefix an
+// operator can retype beats a project that cannot be registered.
 //
 // A name with no usable characters derives from projectID instead, and inputs
 // with nothing usable at all derive a token seeded by those inputs. Neither path
@@ -116,9 +122,9 @@ func DeriveSessionPrefix(projectName, projectID string, taken []string) string {
 		}
 	}
 
-	// Every prefix the cap can express is taken. This is the one path that returns
-	// a duplicate, and it is the least-bad option: a blank prefix would put the
-	// caller back where this started, and an error would fail project creation
+	// Every token the sweep can produce is taken. This is the one path that
+	// returns a duplicate, and it is the least-bad option: a blank prefix would put
+	// the caller back where this started, and an error would fail project creation
 	// over a display detail.
 	if base != "" {
 		return base

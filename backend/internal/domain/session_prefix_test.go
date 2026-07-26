@@ -202,6 +202,10 @@ func TestDeriveSessionPrefixDegradesToADuplicateWhenEveryWidthIsExhausted(t *tes
 		taken = append(taken, allPrefixTokens(width)...)
 	}
 	taken = append(taken, "cc", "coa")
+	takenSet := map[string]bool{}
+	for _, p := range taken {
+		takenSet[p] = true
+	}
 
 	got := DeriveSessionPrefix("Coach Claw", "coachclaw", taken)
 	if got == "" {
@@ -209,6 +213,13 @@ func TestDeriveSessionPrefixDegradesToADuplicateWhenEveryWidthIsExhausted(t *tes
 	}
 	if n := utf8.RuneCountInString(got); n > MaxSessionPrefixRunes {
 		t.Fatalf("exhausted space derived %q with %d runes, want at most %d", got, n, MaxSessionPrefixRunes)
+	}
+	// The name of this test is the assertion: with nothing free left, the value
+	// handed back is a known duplicate. Checking only "non-blank and within cap"
+	// would also pass if derivation invented some value outside the search space,
+	// which is not the contract being pinned.
+	if !takenSet[got] {
+		t.Fatalf("exhausted space derived %q, which is not among the taken prefixes; the terminal path is meant to return a duplicate", got)
 	}
 }
 

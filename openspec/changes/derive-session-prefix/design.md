@@ -23,8 +23,9 @@ exists at all.
 
 **Goals:**
 
-- A project created without an explicit prefix gets a short, name-derived,
-  project-unique prefix persisted on it.
+- A project created without an explicit prefix gets a short, name-derived
+  prefix persisted on it, distinct from the prefixes in use while the derivation's
+  candidate space holds a free value.
 - One deterministic derivation rule, stated once, beside the grammar that
   consumes it.
 - Operator override wins everywhere; a blank is the only thing derivation fills.
@@ -79,14 +80,17 @@ Checked against the prefixes already in use, in this order:
 4. A sweep of every token width the cap allows, widest first, from an
    input-seeded offset.
 
-Step 4 is what makes uniqueness a property rather than a hope: it searches the
-whole space the cap can express, so it finds a free prefix whenever one exists.
+Step 4 is what makes uniqueness a property rather than a hope: it searches that
+alphabet at every width, so it finds a free prefix whenever one exists in it.
 Sweeping only the widest width would have been the subtler bug — a duplicate
 handed back while shorter, equally legal prefixes sat free. The walk is in a
 fixed order, so the result is deterministic given the same taken set.
 
-Once every prefix the cap can express is taken, derivation returns a duplicate
-rather than failing. That is the deliberate terminal behavior: the caller's only
+The guarantee is bounded by that alphabet, and stated that way everywhere rather
+than as a claim about every prefix the cap could represent: a name-drawn prefix
+may carry characters the sweep does not enumerate, so the broader claim would be
+false. Once the sweep's values are all taken, derivation returns a duplicate
+rather than failing — the deliberate terminal behavior, because the caller's only
 alternative is refusing to register the project, and a prefix an operator can
 retype beats a project that cannot exist.
 
@@ -102,9 +106,10 @@ change exists to fix.
 
 ### Reuse the listing `Add` already performs
 
-`Add` calls `activeProjectCount`, which lists every project, purely to test
-`== 0`. The collision check needs that same list, so `Add` lists once and uses the
-result for both. This adds no store round-trip.
+`Add` already listed every project purely to test whether this was the first one.
+The collision check needs that same list, so `Add` now lists once — calling the
+store directly, in place of the one-line counting helper that wrapped it — and
+uses the result for both. This adds no store round-trip.
 
 Because `addMu` is held across the read and the persist, two concurrent `Add`
 calls cannot both observe the same free prefix and both claim it. Uniqueness is a
@@ -138,8 +143,8 @@ but routing it through the same function keeps one rule rather than two.
 ## Risks / Trade-offs
 
 - **Three characters is lossy; unrelated projects can read alike** ("Coach Claw"
-  and "Code Cleanup" both want `cc`) → Collision resolution guarantees the stored
-  values differ, and the operator can retype the prefix at any time. Uniqueness
+  and "Code Cleanup" both want `cc`) → Collision resolution keeps the stored
+  values distinct for any realistic project count, and the operator can retype the prefix at any time. Uniqueness
   was the stated priority; legibility was not.
 - **A derived prefix can collide with a prefix an operator types _later_** →
   Out of scope by design. `UpdateSettings`/`SetConfig` accept the operator's

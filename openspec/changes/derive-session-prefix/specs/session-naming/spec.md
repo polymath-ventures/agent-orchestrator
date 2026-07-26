@@ -58,19 +58,20 @@ accepts one. Derivation fills a blank; it never overrides a choice.
 
 A derived prefix SHALL be checked against the prefixes already in use by other
 projects, and a collision SHALL yield a distinct prefix rather than a duplicate
-whenever a distinct prefix within the cap is still free.
+whenever the derivation's own candidate space still holds a free value.
 
 Collision resolution SHALL first lengthen the candidate using further characters
 from the project's own name, and SHALL fall back to the smallest unused numeric
 suffix that keeps the prefix within the three-character cap only when the name
 offers no distinguishing characters.
 
-The three-character cap makes the prefix space finite, which bounds that
-guarantee: uniqueness SHALL hold while any prefix the derivation can produce
-within the cap is still free. Once none is, the system SHALL still create the
-project — accepting a duplicate prefix — rather than fail it, because a project
-that cannot be registered is a worse outcome than a prefix an operator can
-retype.
+That candidate space is finite, which bounds the guarantee: the search covers a
+fixed alphabet at every width the cap allows, and uniqueness SHALL hold while any
+of those values is free. It is not a claim about every prefix the cap could
+represent — a name-drawn prefix may carry characters the search does not
+enumerate. Once the search's values are all taken, the system SHALL still create
+the project, accepting a duplicate prefix, rather than fail it: a project that
+cannot be registered is a worse outcome than a prefix an operator can retype.
 
 When a project's name yields no usable characters, the system SHALL derive a
 distinct token from the project's id instead. This path SHALL NOT emit a value
@@ -88,7 +89,8 @@ is renamed by it.
   already uses
 - **AND** the name offers further distinguishing characters
 - **THEN** the persisted prefix is a longer candidate drawn from that name
-- **AND** it differs from every prefix already in use
+- **AND** it differs from every prefix already in use, the candidate space not
+  being exhausted
 
 #### Scenario: An exhausted name falls back to a numeric suffix
 
@@ -97,14 +99,16 @@ is renamed by it.
 - **AND** the name offers no further distinguishing characters within the cap
 - **THEN** the persisted prefix carries the smallest unused numeric suffix that
   fits the three-character cap
-- **AND** it differs from every prefix already in use
+- **AND** it differs from every prefix already in use, the candidate space not
+  being exhausted
 
 #### Scenario: An unusable name still yields a distinct prefix
 
 - **WHEN** a project is created whose name yields no usable characters
 - **THEN** project creation succeeds
 - **AND** the persisted prefix is derived from the project's id
-- **AND** two such projects do not receive the same prefix
+- **AND** two such projects do not receive the same prefix, the candidate space
+  not being exhausted
 
 #### Scenario: An exhausted prefix space still creates the project
 
