@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"errors"
 	"runtime"
 	"strings"
 	"sync"
@@ -181,6 +182,134 @@ func TestReconcileRoleAllowsPrimeWhenEnabled(t *testing.T) {
 	}
 	if !fc.spawned {
 		t.Fatal("an enabled Prime must reconcile into existence")
+	}
+}
+
+func TestReconcilePrimeToSettingsEnablesFromPersistedSettings(t *testing.T) {
+	st := newFakeStore()
+	st.prime = domain.PrimeSettings{Enabled: true, Harness: domain.HarnessClaudeCode}.WithDefaults()
+
+	fc := &fakeCommander{spawnRecord: domain.SessionRecord{
+		ID:       "prime-1",
+		Kind:     domain.KindPrime,
+		Harness:  domain.HarnessClaudeCode,
+		Metadata: domain.SessionMetadata{Branch: "ao/prime"},
+	}}
+	svc := &Service{manager: fc, store: st}
+
+	if err := svc.ReconcilePrimeToSettings(context.Background()); err != nil {
+		t.Fatalf("ReconcilePrimeToSettings: %v", err)
+	}
+	if !fc.spawned {
+		t.Fatal("enabled settings must reconcile by spawning or adopting Prime")
+	}
+	if len(fc.released) != 1 || fc.released[0] != domain.PrimeTarget() {
+		t.Fatalf("released = %v, want stale Prime resources released before spawn", fc.released)
+	}
+}
+
+func TestReconcilePrimeToSettingsDisablesFromPersistedSettings(t *testing.T) {
+	st := newFakeStore()
+	st.prime = domain.PrimeSettings{Enabled: false, Harness: domain.HarnessClaudeCode}.WithDefaults()
+	st.sessions["prime-1"] = domain.SessionRecord{ID: "prime-1", Kind: domain.KindPrime, Harness: domain.HarnessClaudeCode}
+	st.sessions["prime-2"] = domain.SessionRecord{ID: "prime-2", Kind: domain.KindPrime, Harness: domain.HarnessClaudeCode}
+
+	fc := &fakeCommander{}
+	svc := &Service{manager: fc, store: st}
+
+	if err := svc.ReconcilePrimeToSettings(context.Background()); err != nil {
+		t.Fatalf("ReconcilePrimeToSettings: %v", err)
+	}
+	if len(fc.retired) != 2 {
+		t.Fatalf("retired = %v, want every active Prime retired", fc.retired)
+	}
+	if fc.spawned {
+		t.Fatal("disabled settings must not spawn Prime")
+	}
+}
+
+func TestSetAndReconcilePrimeSettingsTimeoutCoversLockWait(t *testing.T) {
+	st := newFakeStore()
+	svc := &Service{manager: &fakeCommander{}, store: st}
+
+	unlock := svc.lockRole(domain.PrimeTarget())
+	ctx, cancel := context.WithTimeout(context.Background(), time.Nanosecond)
+	defer cancel()
+
+	err := svc.SetAndReconcilePrimeSettings(ctx, domain.PrimeSettings{Enabled: true, Harness: domain.HarnessClaudeCode}.WithDefaults())
+	unlock()
+
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("SetAndReconcilePrimeSettings err = %v, want context deadline while waiting for Prime lock", err)
+	}
+	settings, getErr := st.GetPrimeSettings(context.Background())
+	if getErr != nil {
+		t.Fatalf("GetPrimeSettings: %v", getErr)
+	}
+	if settings.Enabled {
+		t.Fatal("settings were persisted even though the save timed out before acquiring the Prime role lock")
+	}
+}
+
+func TestSetAndReconcilePrimeSettingsSerializesConcurrentSaves(t *testing.T) {
+	ctx := context.Background()
+	st := newFakeStore()
+	fc := &primeRaceCommander{
+		fakeCommander: &fakeCommander{spawnRecord: domain.SessionRecord{
+			ID:       "prime-1",
+			Kind:     domain.KindPrime,
+			Harness:  domain.HarnessClaudeCode,
+			Metadata: domain.SessionMetadata{Branch: "ao/prime"},
+		}},
+		store:   st,
+		entered: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	svc := &Service{manager: fc, store: st}
+
+	enableDone := make(chan error, 1)
+	go func() {
+		enableDone <- svc.SetAndReconcilePrimeSettings(ctx, domain.PrimeSettings{Enabled: true, Harness: domain.HarnessClaudeCode}.WithDefaults())
+	}()
+	<-fc.entered
+
+	disableDone := make(chan error, 1)
+	go func() {
+		disableDone <- svc.SetAndReconcilePrimeSettings(ctx, domain.PrimeSettings{Enabled: false, Harness: domain.HarnessClaudeCode}.WithDefaults())
+	}()
+
+	settings, err := st.GetPrimeSettings(ctx)
+	if err != nil {
+		t.Fatalf("GetPrimeSettings: %v", err)
+	}
+	if !settings.Enabled {
+		t.Fatal("disable settings persisted while the enable lifecycle pass was still in progress")
+	}
+	select {
+	case err := <-disableDone:
+		t.Fatalf("disable save returned before the enable save finished: %v", err)
+	default:
+	}
+
+	close(fc.release)
+	if err := <-enableDone; err != nil {
+		t.Fatalf("enable SetAndReconcilePrimeSettings: %v", err)
+	}
+	if err := <-disableDone; err != nil {
+		t.Fatalf("disable SetAndReconcilePrimeSettings: %v", err)
+	}
+
+	settings, err = st.GetPrimeSettings(ctx)
+	if err != nil {
+		t.Fatalf("GetPrimeSettings after disable: %v", err)
+	}
+	if settings.Enabled {
+		t.Fatal("final persisted settings = enabled, want the later disable save to win")
+	}
+	if active, ok, err := svc.ActivePrime(ctx); err != nil {
+		t.Fatalf("ActivePrime: %v", err)
+	} else if ok {
+		t.Fatalf("Prime %q remained active after the later disable save returned", active.ID)
 	}
 }
 

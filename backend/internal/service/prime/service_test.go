@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
@@ -105,34 +106,86 @@ func (f *fakePrompts) RoleSystemPrompt(_ context.Context, kind domain.SessionKin
 // supervisor only noticed on its next 30s tick, so the operator had to time the
 // disabled window by hand — the documented workaround.
 func TestSetSettingsSignalsImmediateReconcile(t *testing.T) {
-	pokes := 0
+	reconciler := &fakeSettingsReconciler{}
 	svc := New(Deps{
-		Store:             &fakeStore{settings: domain.DefaultPrimeSettings()},
-		OnSettingsChanged: func() { pokes++ },
+		Store:              &fakeStore{settings: domain.DefaultPrimeSettings()},
+		SettingsReconciler: reconciler,
 	})
 
 	settings := domain.PrimeSettings{Enabled: true, Harness: domain.HarnessClaudeCode}.WithDefaults()
 	if _, err := svc.SetSettings(context.Background(), settings); err != nil {
 		t.Fatalf("SetSettings: %v", err)
 	}
-	if pokes != 1 {
-		t.Fatalf("reconcile signals = %d, want 1", pokes)
+	if reconciler.calls != 1 {
+		t.Fatalf("reconcile calls = %d, want 1", reconciler.calls)
+	}
+	if !reconciler.settings.Enabled || reconciler.settings.Harness != domain.HarnessClaudeCode {
+		t.Fatalf("reconciled settings = %+v, want the saved Prime settings", reconciler.settings)
+	}
+}
+
+func TestSetSettingsSurfacesSaveAndReconcileFailure(t *testing.T) {
+	reconciler := &fakeSettingsReconciler{err: errors.New("spawn failed")}
+	svc := New(Deps{Store: &fakeStore{settings: domain.DefaultPrimeSettings()}, SettingsReconciler: reconciler})
+
+	settings := domain.PrimeSettings{Enabled: true, Harness: domain.HarnessClaudeCode}.WithDefaults()
+	if _, err := svc.SetSettings(context.Background(), settings); err == nil {
+		t.Fatal("SetSettings() = nil error, want reconcile failure")
+	}
+	if !reconciler.settings.Enabled {
+		t.Fatal("settings were not handed to the save-and-reconcile path before surfacing the reconcile failure")
+	}
+}
+
+func TestSetSettingsTimeoutIsExplicit(t *testing.T) {
+	reconciler := &fakeSettingsReconciler{waitForContext: true}
+	svc := New(Deps{
+		Store:                    &fakeStore{settings: domain.DefaultPrimeSettings()},
+		SettingsReconciler:       reconciler,
+		SettingsReconcileTimeout: time.Nanosecond,
+	})
+
+	settings := domain.PrimeSettings{Enabled: true, Harness: domain.HarnessClaudeCode}.WithDefaults()
+	_, err := svc.SetSettings(context.Background(), settings)
+	var api *apierr.Error
+	if !errors.As(err, &api) || api.Code != "PRIME_RECONCILE_TIMEOUT" {
+		t.Fatalf("err = %v, want PRIME_RECONCILE_TIMEOUT", err)
+	}
+	if !reconciler.settings.Enabled {
+		t.Fatal("settings were not handed to the save-and-reconcile path before the timeout surfaced")
 	}
 }
 
 // A rejected write must not claim a reconcile happened.
 func TestSetSettingsDoesNotSignalOnValidationFailure(t *testing.T) {
-	pokes := 0
+	reconciler := &fakeSettingsReconciler{}
 	svc := New(Deps{
-		Store:             &fakeStore{settings: domain.DefaultPrimeSettings()},
-		OnSettingsChanged: func() { pokes++ },
+		Store:              &fakeStore{settings: domain.DefaultPrimeSettings()},
+		SettingsReconciler: reconciler,
 	})
 
 	// Enabled with no agent is invalid.
 	if _, err := svc.SetSettings(context.Background(), domain.PrimeSettings{Enabled: true}); err == nil {
 		t.Fatal("SetSettings() = nil error for invalid settings")
 	}
-	if pokes != 0 {
-		t.Fatalf("reconcile signals = %d, want 0 on a rejected write", pokes)
+	if reconciler.calls != 0 {
+		t.Fatalf("reconcile calls = %d, want 0 on a rejected write", reconciler.calls)
 	}
+}
+
+type fakeSettingsReconciler struct {
+	calls          int
+	err            error
+	waitForContext bool
+	settings       domain.PrimeSettings
+}
+
+func (f *fakeSettingsReconciler) SetAndReconcilePrimeSettings(ctx context.Context, settings domain.PrimeSettings) error {
+	f.calls++
+	f.settings = settings
+	if f.waitForContext {
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	return f.err
 }
