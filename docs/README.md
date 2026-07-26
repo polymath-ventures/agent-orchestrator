@@ -16,6 +16,7 @@ Start with [architecture.md](architecture.md) for the current backend model and
 | [backend-code-structure.md](backend-code-structure.md)               | Package ownership rules for the Go backend: domain, services, ports, adapters, storage, HTTP, CLI, and daemon wiring. |
 | [cli/README.md](cli/README.md)                                       | CLI commands and daemon control surface.                                                                              |
 | [fork.md](fork.md)                                                   | Fork goals, port tracking, and conventions for upstreamable versus fork-only work.                                    |
+| [local-ci.md](local-ci.md)                                           | Local CI commands, Agent CI workdir defaults, and conservative cleanup policy.                                        |
 | [prime-supervisor.md](prime-supervisor.md)                           | Optional daemon-global fleet Prime role, persisted settings, lifecycle, and prompt inspection.                        |
 | [macos-electron-titlebar-smoke.md](macos-electron-titlebar-smoke.md) | Manual hosted macOS Electron launch and native traffic-light/titlebar-cluster geometry verification.                  |
 | [STATUS.md](STATUS.md)                                               | What is shipped on `main` today and what is still in flight.                                                          |
