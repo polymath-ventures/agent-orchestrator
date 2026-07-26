@@ -55,7 +55,10 @@ changed_files >"$tmp"
 files=()
 n=0
 while IFS= read -r -d '' f; do
-	[ -e "$f" ] || continue
+	# -L as well as -e: a dangling symlink is "nonexistent" to -e, but remote
+	# Prettier still rejects it, and silently skipping it would break the CI
+	# parity this gate exists to provide.
+	[ -e "$f" ] || [ -L "$f" ] || continue
 	files+=("$f")
 	n=$((n + 1))
 done <"$tmp"
