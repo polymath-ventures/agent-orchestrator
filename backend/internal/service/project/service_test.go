@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -487,7 +488,9 @@ func TestManager_DefaultsWhenUnconfigured(t *testing.T) {
 	}
 
 	// Get on a project that set no config still reports the default branch and a
-	// derived session prefix, and omits the (empty) config object.
+	// derived session prefix. The config object carries the derived prefix and
+	// nothing else: the prefix is persisted at creation so the settings form shows
+	// the value sessions actually use.
 	got, err := m.Get(ctx, "ao")
 	if err != nil {
 		t.Fatalf("Get: %v", err)
@@ -501,8 +504,11 @@ func TestManager_DefaultsWhenUnconfigured(t *testing.T) {
 	if got.Project.Agent != "claude-code" {
 		t.Fatalf("default agent = %q, want claude-code", got.Project.Agent)
 	}
-	if got.Project.Config != nil {
-		t.Fatalf("unconfigured project should omit config, got %#v", got.Project.Config)
+	if got.Project.Config == nil {
+		t.Fatalf("unconfigured project should still carry the derived session prefix, got nil config")
+	}
+	if want := (domain.ProjectConfig{SessionPrefix: "ao"}); !reflect.DeepEqual(*got.Project.Config, want) {
+		t.Fatalf("unconfigured project config = %#v, want only the derived prefix %#v", *got.Project.Config, want)
 	}
 
 	list, err := m.List(ctx)
@@ -717,7 +723,10 @@ func TestManager_UpdateSettingsRejectsUnreachableModelBeforePersistence(t *testi
 	if getErr != nil {
 		t.Fatalf("Get: %v", getErr)
 	}
-	if got.Project == nil || got.Project.Name != "ao" || got.Project.Config != nil {
+	// Unchanged means the creation-time config — the derived session prefix and
+	// nothing the rejected update tried to write.
+	if got.Project == nil || got.Project.Name != "ao" || got.Project.Config == nil ||
+		!reflect.DeepEqual(*got.Project.Config, domain.ProjectConfig{SessionPrefix: "ao"}) {
 		t.Fatalf("project changed after rejected settings update = %#v", got.Project)
 	}
 }
@@ -753,8 +762,9 @@ func TestManager_SetConfigRejectsUnreachableModelBeforePersistence(t *testing.T)
 	if getErr != nil {
 		t.Fatalf("Get: %v", getErr)
 	}
-	if got.Project == nil || got.Project.Config != nil {
-		t.Fatalf("stored config = %#v, want unchanged empty config", got.Project)
+	if got.Project == nil || got.Project.Config == nil ||
+		!reflect.DeepEqual(*got.Project.Config, domain.ProjectConfig{SessionPrefix: "ao"}) {
+		t.Fatalf("stored config = %#v, want the unchanged creation-time config", got.Project)
 	}
 }
 
