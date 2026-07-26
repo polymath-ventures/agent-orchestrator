@@ -76,11 +76,9 @@ never hardcoded in skills:
 - Skills assume `bd` is attached to whatever the repo configured and never
   select or name a host themselves. Put the host specifics in a repo fragment,
   not in a skill.
-- Similarly, skills derive the operational GitHub repo from the checkout's
-  `origin` remote. Do not use `upstream` or bare `gh repo view` heuristics to
-  choose the issue/PR target. If `origin` is a fork and `upstream` is the public
-  project, operational GitHub issue/PR commands target `origin`; `upstream` is
-  only for explicitly upstream-scoped workflows such as syncs.
+- Similarly, skills derive the target GitHub repo from the git remote; an
+  orchestrator may pin it instead via `POLYPOWERS_REPO=owner/repo`
+  (`AO_PROJECT_REPO` honored as a legacy alias).
 
 ## Development Rules
 
@@ -95,15 +93,38 @@ Non-negotiable. Violating any of these is a bug in your behavior.
    worktree YOU created under the repo-local agent worktree directory:
 
    ```bash
+   MAIN_REPO_ROOT="$(
+     git worktree list --porcelain |
+       awk '$1 == "worktree" { print substr($0, 10); exit }'
+   )"
+   MAIN_REPO_ROOT="$(cd "$MAIN_REPO_ROOT" && pwd -P)"
+   test "$(git -C "$MAIN_REPO_ROOT" rev-parse --is-inside-work-tree)" = true || {
+     echo "Cannot resolve the registered main checkout: $MAIN_REPO_ROOT" >&2
+     exit 1
+   }
    DEFAULT_BRANCH_REF="$(git symbolic-ref --quiet refs/remotes/origin/HEAD 2>/dev/null || echo refs/remotes/origin/main)"
    DEFAULT_BRANCH="${DEFAULT_BRANCH_REF#refs/remotes/origin/}"
-   git fetch origin "$DEFAULT_BRANCH"
-   git worktree add .claude/worktrees/<slug> -b <branch> "origin/$DEFAULT_BRANCH"
+   TASK_WORKTREE="$MAIN_REPO_ROOT/.claude/worktrees/<slug>"
+   WORK_ITEM_KEY=<bead-id-or-gh:#N>
+   git -C "$MAIN_REPO_ROOT" fetch origin "$DEFAULT_BRANCH"
+   git -C "$MAIN_REPO_ROOT" worktree add "$TASK_WORKTREE" -b <branch> "origin/$DEFAULT_BRANCH" || {
+     echo "Task worktree creation failed; the session anchor remains untouched" >&2
+     exit 1
+   }
+   TASK_WORKTREE="$(cd "$TASK_WORKTREE" && pwd -P)" || {
+     echo "Cannot canonicalize the created task worktree" >&2
+     exit 1
+   }
+   TASK_GIT_DIR="$(git -C "$TASK_WORKTREE" rev-parse --absolute-git-dir)" || exit 1
+   printf 'format=polypowers-worktree-owner-v1\ntask=%s\npath=%s\n' \
+     "$WORK_ITEM_KEY" "$TASK_WORKTREE" \
+     >"$TASK_GIT_DIR/polypowers-worktree-owner"
    ```
 
-   Run this from the main repo root, never inside another worktree, then install
-   deps. Fetch and branch from the remote ref even when the local default branch
-   appears clean; a clean local branch can still be stale.
+   Resolve and target the registered main checkout as above even when the
+   session was launched inside another worktree, then install dependencies in
+   the new task checkout. Fetch and branch from the remote ref even when the
+   local default branch appears clean; a clean local branch can still be stale.
    `.claude/worktrees/` is the shared convention for Claude, Codex,
    Gemini, and other agents; the `.claude` path name is historical, not a
    Claude-only boundary. Do not place working copies under `.git/worktrees/` —
@@ -115,12 +136,23 @@ Non-negotiable. Violating any of these is a bug in your behavior.
    The `cleanup-merge` lifecycle is the one narrow exception: it may
    fast-forward the worktree that already owns the default branch only after
    confirming that checkout is clean, and it must never switch that checkout's
-   branch. Fetch-only sync of refs is always fine. A Codex-supplied detached
-   worktree may itself have been created
-   from a stale local branch before session-start logic ran. Never reset or move
-   a supplied worktree that may contain active work; use it only as launch
-   context and create the required task worktree from the freshly fetched
-   remote ref as above.
+   branch. Fetch-only sync of refs is always fine. A launcher- or
+   harness-supplied worktree is the resumable session anchor, regardless of
+   client or whether it is detached. It may have been created from stale local
+   state before session-start logic ran. Never remove the session anchor, or
+   reset, move, or adopt that supplied worktree as the disposable task
+   worktree; use it only as launch context and create the required task worktree
+   from the freshly fetched remote ref as above.
+
+   The final lines of that block are not optional. They record lifecycle
+   ownership in the new worktree's git directory as `polypowers-worktree-owner`,
+   and `cleanup-merge` will not automatically remove a worktree that lacks it —
+   nor will it ever backfill one, because provenance has to be recorded at
+   creation to mean anything. Set `WORK_ITEM_KEY` to the canonical work-item key:
+   the Beads id when the repo uses Beads, otherwise `gh:#N`. A plausible path,
+   branch name, current checkout, or files already written there are never
+   ownership proof. Omit the marker and you have minted a worktree that must be
+   cleaned up by hand, forever.
 
 3. **Test gates.** Fast loop per commit. Before push: full CI (build, format, and tests), then rebase against the default branch — clean → push
    (`--force-with-lease` if rewritten); conflicted → park. Never push a stale
@@ -216,67 +248,6 @@ in-progress work first; recommend 1–3 unclaimed items, not the full list.
 **End:** close/update beads and issues, run CI, `git pull --rebase && git
 push`, report. Merge only under rule 6's authorization (user's word, or
 autonomous mode with the gate satisfied) — never on your own initiative.
-
-## Final-review status contract
-
-The clean status is the only machine-readable final-review verdict the merge
-gate may consume.
-
-`/final-review` emits its verdict as a GitHub commit status on the reviewed head
-SHA, using context `final-review`. A clean review writes `state=success`; a
-non-clean, inconclusive, or timed-out review writes `state=failure`. The status
-description is the parseable contract: `verdict=<clean|parked>
-reviewer_family=<family> head=<full-head-sha>`. A clean review that is parked
-only because repo policy requires a human merge still writes
-`final-review=success`; the human gate is recorded separately as a current-head
-`merge-park` status with `reason=human-required`.
-
-Human merge gates check the `final-review` status on the **current** PR head
-SHA. Autonomous-merge paths check the same clean review status and additionally
-refuse to merge when a current-head `merge-park` signal exists or when a linked
-issue carries the manual non-AO-worker hold marker `no-ao`. If the PR receives
-a new push, the old statuses are tied to the old SHA and no longer count. This
-replaces any PR-comment protocol; do not use comments or free-form summaries as
-the gate.
-
-AO's native review API (`GET /sessions/{id}/reviews`, with states such as
-`ineligible` or `needs_review`) is a separate AO reviewer system. It is useful
-for AO's own review UI, but it is **not** `/final-review` and must never be read
-as the final-review merge verdict.
-
-Repos that carry `ops/final-review-status.mjs` use it as the status helper:
-`node ops/final-review-status.mjs set --repo <owner/repo> --sha
-<full-head-sha> --verdict <clean|parked> --reviewer-family <family>
---author-family <implementer-family>` after the review loop; add
-`--human-merge-required` when a clean review must park for human merge authority.
-A clean `set` **requires** one or more `--author-family` values and is
-**refused** when `--reviewer-family` matches any of them. Reviewer independence
-is enforced here, at write time, so a clean status is independent by
-construction. Pass several `--author-family` flags when more than one family
-authored the head. Use `node ops/final-review-status.mjs check --repo
-<owner/repo> --sha <current-head-sha>` for a human-authorized merge gate, and
-add `--mode autonomous --pr <PR-number>` for autonomous merge eligibility. The
-`check` command is deliberately family-agnostic because independence was already
-enforced at `set` time, so the required `review-passed` merge-queue gate, which
-cannot see per-session harness provenance, is never bricked.
-
-## Agent reviewers run in the foreground
-
-Operator standing rule: agent and harness invocations that a worker starts for
-implementation, review, final-review, diagnosis, or rescue work run in the
-foreground/attached. Do not background reviewer or diagnostic agents.
-
-- A foreground invocation is attached, observable, and fails loudly.
-- A long review uses the maximum foreground timeout; if it still does not fit,
-  split it into smaller foreground passes and re-run. Do not detach to dodge a
-  shell's time cap.
-- If a reviewer hangs at startup, use the active workflow's or harness's
-  narrower startup fallback for that run, still attached. Optional integrations
-  that fail at startup may be disabled for that foreground run when the harness
-  supports it.
-- This binds every agent invocation a worker or orchestrator drives for review
-  passes, `/final-review`, diagnosis, and rescue runs. AO's own daemon launch of
-  worker sessions into a TTY is already blocking/attached and stays that way.
 
 ## The identity contract — what skills defer to your agent identity
 
