@@ -568,9 +568,9 @@ func TestDoctorDaemonRestartsAcceptsWellFormedEscapes(t *testing.T) {
 }
 
 // TestCgroupUnescape pins the transformation directly, by equality. The
-// indirect checks cannot: systemd's escaped form is a superstring of the
-// unescaped one, so `strings.Contains` is satisfied either way and a test built
-// on it would pass with the unescape step deleted.
+// integration checks also require exact values; a substring assertion would
+// not discriminate because systemd's escaped form is a superstring of the
+// unescaped one.
 func TestCgroupUnescape(t *testing.T) {
 	for _, tc := range []struct{ in, want string }{
 		{"__ao.service", "_ao.service"}, // a unit literally named _ao.service
