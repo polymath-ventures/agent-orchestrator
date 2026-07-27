@@ -722,7 +722,7 @@ func TestDoctorJSONAugmentsAOReport(t *testing.T) {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
 			h := systemdHost(t, "ao-tmux.service", "ao-web.service")
 			h.stream = func(_ recordedCall, _ io.Reader, out, _ io.Writer) error {
-				_, _ = fmt.Fprint(out, `{"ok":true,"failures":0,"checks":[]}`)
+				_, _ = fmt.Fprint(out, `{"ok":true,"failures":0,"generatedAt":"later","checks":[]}`)
 				return nil
 			}
 
@@ -736,6 +736,16 @@ func TestDoctorJSONAugmentsAOReport(t *testing.T) {
 			var report aongDoctorReport
 			if err := json.Unmarshal([]byte(out), &report); err != nil {
 				t.Fatalf("decode doctor json: %v\nout=%s", err, out)
+			}
+			if !strings.Contains(out, "\n  ") {
+				t.Fatalf("doctor json was not pretty-printed like ao doctor json:\n%s", out)
+			}
+			var raw map[string]any
+			if err := json.Unmarshal([]byte(out), &raw); err != nil {
+				t.Fatalf("decode doctor json as map: %v\nout=%s", err, out)
+			}
+			if raw["generatedAt"] != "later" {
+				t.Fatalf("doctor json dropped unknown report field: %+v", raw)
 			}
 			for _, want := range []string{"ao-web.service", "ao-tmux.service"} {
 				var found bool
@@ -952,6 +962,21 @@ func TestPauseProjectHardPassesThrough(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Fatalf("pause project hard output missing %q:\n%s", want, out)
 		}
+	}
+}
+
+func TestPauseRejectsMultipleProjects(t *testing.T) {
+	h := newFakeHost(t)
+
+	_, _, err := run(t, h, "pause", "mercury", "venus")
+	if ExitCode(err) != 2 {
+		t.Fatalf("ExitCode(%v) = %d, want usage exit 2", err, ExitCode(err))
+	}
+	if got := h.aoArgv(); len(got) != 0 {
+		t.Fatalf("pause with multiple projects invoked ao: %v", got)
+	}
+	if !strings.Contains(err.Error(), "expected at most one project") {
+		t.Fatalf("pause multiple-project error = %q, want arity error", err)
 	}
 }
 

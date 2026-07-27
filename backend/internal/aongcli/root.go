@@ -245,10 +245,9 @@ func NewRootCommand(deps Deps) *cobra.Command {
 		Version:       versionString(),
 		SilenceUsage:  true,
 		SilenceErrors: true,
-		// Root is runnable so an unrecognised verb reaches this Args validator
-		// and is reported as misuse (exit 2). Cobra's own "unknown command"
-		// error is an ordinary error, which would exit 1 and misreport a typo
-		// as a runtime failure to anything scripting aong.
+		// Root is runnable so bare `aong` prints help successfully. Unknown
+		// non-overridden verbs are routed to `ao` passthrough before Cobra sees
+		// them, preserving the complete AO command surface.
 		Args: noArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return cmd.Help()

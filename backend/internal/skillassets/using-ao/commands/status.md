@@ -11,7 +11,8 @@ aong status
 
 ## Flags
 
-No flags. `aong status` composes `ao status` and adds service-unit state.
+No flags. `aong status` composes `ao status` and adds service-unit state. Use
+raw `ao status --json` when you need machine-readable daemon state.
 
 ## Examples
 

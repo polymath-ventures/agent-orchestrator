@@ -150,7 +150,7 @@ func (c *commandContext) runDoctorJSON(ctx context.Context, cmd *cobra.Command, 
 		}
 	}
 
-	var report aongDoctorReport
+	var report map[string]any
 	if err := json.Unmarshal(aoOut.Bytes(), &report); err != nil {
 		if _, copyErr := io.Copy(cmd.OutOrStdout(), &aoOut); copyErr != nil {
 			return copyErr
@@ -175,19 +175,35 @@ func (c *commandContext) runDoctorJSON(ctx context.Context, cmd *cobra.Command, 
 			Message: "no loaded ao-web.service or ao-tmux.service units found",
 		})
 	}
-	report.Checks = append(report.Checks, checks...)
-	report.Failures = 0
-	for _, check := range report.Checks {
-		if check.Level == "FAIL" {
-			report.Failures++
+	reportChecks, _ := report["checks"].([]any)
+	for _, check := range checks {
+		reportChecks = append(reportChecks, map[string]any{
+			"level":   check.Level,
+			"section": check.Section,
+			"name":    check.Name,
+			"message": check.Message,
+		})
+	}
+	report["checks"] = reportChecks
+	failures := 0
+	for _, raw := range reportChecks {
+		check, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		if level, ok := check["level"].(string); ok && level == "FAIL" {
+			failures++
 		}
 	}
-	report.OK = report.Failures == 0
-	if err := json.NewEncoder(cmd.OutOrStdout()).Encode(report); err != nil {
+	report["failures"] = failures
+	report["ok"] = failures == 0
+	enc := json.NewEncoder(cmd.OutOrStdout())
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(report); err != nil {
 		return err
 	}
-	if report.Failures > 0 {
-		return fmt.Errorf("doctor found %d failing check(s)", report.Failures)
+	if failures > 0 {
+		return fmt.Errorf("doctor found %d failing check(s)", failures)
 	}
 	if aoErrRun != nil {
 		return fmt.Errorf("ao doctor failed: %w", aoErrRun)
@@ -301,6 +317,7 @@ func newPauseCommand(ctx *commandContext) *cobra.Command {
 			"work-control command. Use `aong drain` to gate new work and drain at idle,\n" +
 			"or `aong stop-work` to terminate live work now.\n\n" +
 			"`aong pause <project>` and `aong pause <project> --hard` still preserve AO's project-scoped pause.",
+		Args: atMostOneProjectArg,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 1 && !all {
 				aoArgs := []string{"pause", args[0]}
@@ -319,7 +336,6 @@ func newPauseCommand(ctx *commandContext) *cobra.Command {
 	cmd.Flags().BoolVar(&all, "all", false, "Use aong drain or aong stop-work for fleet-wide work control")
 	cmd.Flags().BoolVar(&hard, "hard", false, "Use aong stop-work for immediate fleet-wide termination")
 	_ = cmd.Flags().MarkHidden("all")
-	_ = cmd.Flags().MarkHidden("hard")
 	return cmd
 }
 
@@ -361,12 +377,7 @@ func newResumeCommand(ctx *commandContext) *cobra.Command {
 	return &cobra.Command{
 		Use:   "resume [project]",
 		Short: "Restore fleet-wide intake and spawns",
-		Args: func(_ *cobra.Command, args []string) error {
-			if len(args) > 1 {
-				return usageError{errors.New("expected at most one project")}
-			}
-			return nil
-		},
+		Args:  atMostOneProjectArg,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 1 {
 				return ctx.echoAO(cmd.Context(), cmd.OutOrStdout(), "resume", args[0])
@@ -374,6 +385,13 @@ func newResumeCommand(ctx *commandContext) *cobra.Command {
 			return ctx.echoAO(cmd.Context(), cmd.OutOrStdout(), "resume", "--all")
 		},
 	}
+}
+
+func atMostOneProjectArg(_ *cobra.Command, args []string) error {
+	if len(args) > 1 {
+		return usageError{errors.New("expected at most one project")}
+	}
+	return nil
 }
 
 func newStopCommand(ctx *commandContext) *cobra.Command {

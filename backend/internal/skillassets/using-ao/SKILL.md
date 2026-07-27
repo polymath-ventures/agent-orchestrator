@@ -39,7 +39,10 @@ for commands that are not fork-specific lifecycle overrides.
 
 ## Conventions
 
-- Most read commands accept `--json` for machine-readable output.
+- Most read commands accept `--json` for machine-readable output. Fork-specific
+  lifecycle overrides such as `aong start`, `aong status`, and `aong stop` are
+  text-only; use raw `ao status --json` when you need machine-readable daemon
+  state.
 - `-p / --project` scopes session subcommand lookups to one project.
 - Session and project ids are shown by `aong session ls` and `aong project ls`.
 - `--agent` is an alias for `--harness` on `aong spawn`.
