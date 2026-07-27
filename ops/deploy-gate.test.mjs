@@ -5,7 +5,42 @@
 // run it, so a check that stops functioning fails here rather than in production.
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createServer } from "node:http";
+import { execFile } from "node:child_process";
+import { mkdtemp, writeFile, symlink } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { checkHealth, GateError } from "./healthz-gate.mjs";
+
+const GATE = new URL("./healthz-gate.mjs", import.meta.url).pathname;
+
+function spawnGate(args, entry = GATE) {
+	return new Promise((resolve) => {
+		execFile(process.execPath, [entry, ...args], (err, stdout, stderr) =>
+			resolve({ code: err?.code ?? 0, stdout, stderr }),
+		);
+	});
+}
+
+// Runs the real CLI against a fixture daemon, and judges success exactly as
+// deploy.sh does: a bare-numeric stdout, nothing else.
+async function runCli({ health, provenanceRequired = "1", entry = GATE }) {
+	const server = createServer((_q, r) => {
+		r.writeHead(200, { "Content-Type": "application/json" });
+		r.end(JSON.stringify(health));
+	});
+	await new Promise((res) => server.listen(0, "127.0.0.1", res));
+	try {
+		const dir = await mkdtemp(join(tmpdir(), "gate-cli-"));
+		const runFile = join(dir, "running.json");
+		await writeFile(runFile, JSON.stringify({ port: server.address().port, pid: health.pid }));
+		const { code, stdout, stderr } = await spawnGate([runFile, BIN, SHA, provenanceRequired], entry);
+		const out = stdout.replace(/\n+$/, "");
+		return { ok: code === 0 && /^[0-9]+$/.test(out), code, stdout: out, stderr };
+	} finally {
+		await new Promise((res) => server.close(res));
+	}
+}
 
 const SHA = "a".repeat(40);
 const OTHER_SHA = "b".repeat(40);
@@ -93,4 +128,43 @@ test("a rollback still refuses a daemon that reports a modified build", () => {
 test("a rollback still refuses the wrong commit and an unstamped build", () => {
 	assert.match(rejection(clean({ buildRevision: OTHER_SHA }), false) ?? "", /not the expected/);
 	assert.match(rejection(clean({ buildRevision: "unknown" }), false) ?? "", /unstamped build/);
+});
+
+// The tests above exercise the decision logic. These exercise the shipped CLI
+// boundary — entrypoint detection, file reading, stream separation, exit codes —
+// which the pure tests cannot see, and which is where the symlink defect lived.
+test("the CLI prints only the port on stdout, and warns on stderr", async () => {
+	const { ok, stdout, stderr } = await runCli({ health: clean() });
+	assert.ok(ok, `gate rejected a clean deploy: ${stderr}`);
+	assert.match(stdout, /^[0-9]+$/, "stdout must carry the port and nothing else");
+
+	const legacy = clean();
+	delete legacy.buildRevision;
+	delete legacy.buildModified;
+	const rollback = await runCli({ health: legacy, provenanceRequired: "0" });
+	assert.ok(rollback.ok, "rollback to a pre-provenance release was blocked");
+	assert.match(rollback.stdout, /^[0-9]+$/);
+	assert.match(rollback.stderr, /predates buildRevision/);
+});
+
+// $DEPLOY_ROOT/current is a symlink to the active release, so the gate can be
+// invoked through one. Comparing import.meta.url to argv[1] raw made the CLI
+// block silently not run — exit 0, no output, no verification at all.
+test("the CLI still runs when invoked through a symlink", async () => {
+	const dir = await mkdtemp(join(tmpdir(), "gate-link-"));
+	const link = join(dir, "healthz-gate.mjs");
+	await symlink(new URL("./healthz-gate.mjs", import.meta.url).pathname, link);
+	const { ok, stdout } = await runCli({ health: clean(), entry: link });
+	assert.ok(ok, "the gate did not verify anything when reached through a symlink");
+	assert.match(stdout, /^[0-9]+$/);
+});
+
+test("the CLI fails loudly, and silently, on an unreachable daemon", async () => {
+	const dir = await mkdtemp(join(tmpdir(), "gate-dead-"));
+	const runFile = join(dir, "running.json");
+	await writeFile(runFile, JSON.stringify({ port: 1, pid: 4242 }));
+	const { code, stdout, stderr } = await spawnGate([runFile, BIN, SHA, "1"]);
+	assert.notEqual(code, 0, "an unreachable daemon must not pass the gate");
+	assert.equal(stdout.trim(), "", "stdout must stay empty so the shell cannot read it as a port");
+	assert.ok(stderr.trim().length > 0, "a failure must say why");
 });

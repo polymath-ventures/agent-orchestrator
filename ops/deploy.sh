@@ -41,6 +41,14 @@ preflight() {
   for dep in git go npm node curl systemctl journalctl cmp install; do
     command -v "$dep" >/dev/null 2>&1 || die "missing dependency: $dep"
   done
+  # Presence is not capability. The healthz gate uses global fetch (node 18+),
+  # and the web build needs vite's floor, so an old-but-working node would pass
+  # the check above and then fail AFTER the release flip — on rollback there is
+  # no build step to expose it first. Refuse before any mutation.
+  local node_major
+  node_major="$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)"
+  [ "$node_major" -ge 20 ] 2>/dev/null \
+    || die "node 20+ required (found $(node --version 2>/dev/null || echo none))"
 }
 
 repo_root() { cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd; }

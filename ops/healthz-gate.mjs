@@ -9,6 +9,8 @@
 // node, `npm` is already a deploy preflight dependency, and being a real module
 // means the tests import it instead of extracting it from a shell script.
 import { readFile } from "node:fs/promises";
+import { realpathSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 
 export class GateError extends Error {}
 
@@ -56,10 +58,25 @@ export function checkHealth({ health, run, binTarget, expectedSha, provenanceReq
 	return null;
 }
 
+// True when this module was run directly, resolving both sides through
+// realpath: `import.meta.url` is already resolved but `process.argv[1]` keeps
+// whatever symlinked path the caller used. Comparing them raw makes the CLI
+// silently do nothing when invoked through a link — and the deploy layout has
+// one, since `$DEPLOY_ROOT/current` is a symlink to the active release.
+function invokedDirectly() {
+	const entry = process.argv[1];
+	if (!entry) return false;
+	try {
+		return realpathSync(entry) === realpathSync(fileURLToPath(import.meta.url));
+	} catch {
+		return false;
+	}
+}
+
 // CLI: <run-file> <bin-target> <expected-sha> <provenance-required 1|0>
 // Prints the port on stdout and nothing else; warnings and diagnoses go to
 // stderr. deploy.sh treats a bare-numeric stdout as the only success.
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (invokedDirectly()) {
 	const [runFile, binTarget, expectedSha, provenanceRequired] = process.argv.slice(2);
 	try {
 		const run = JSON.parse(await readFile(runFile, "utf8"));
