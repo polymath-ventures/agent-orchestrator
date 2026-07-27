@@ -9,7 +9,9 @@ import (
 
 func main() {
 	if err := aongcli.Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		if aongcli.ShouldPrintError(err) {
+			fmt.Fprintln(os.Stderr, err)
+		}
 		os.Exit(aongcli.ExitCode(err))
 	}
 }

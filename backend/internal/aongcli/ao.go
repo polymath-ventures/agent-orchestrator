@@ -2,12 +2,15 @@ package aongcli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 )
 
 // aoBinaryName is the co-installed `ao` executable's file name.
@@ -74,6 +77,7 @@ func (c *commandContext) runAO(ctx context.Context, args ...string) ([]byte, err
 	if err != nil {
 		return nil, err
 	}
+	c.explainAO("run", args...)
 	out, err := c.deps.RunCommand(ctx, aoPath, args...)
 	if err != nil {
 		return out, fmt.Errorf("ao %s: %w%s", strings.Join(args, " "), err, indentedOutput(out))
@@ -88,6 +92,49 @@ func (c *commandContext) echoAO(ctx context.Context, out io.Writer, args ...stri
 		return err
 	}
 	return relay(out, stdout)
+}
+
+func (c *commandContext) runAOPassthrough(ctx context.Context, args ...string) error {
+	aoPath, err := c.resolveAO()
+	if err != nil {
+		return err
+	}
+	c.explainAO("passthrough", args...)
+	if err := c.deps.RunStreamingCommand(ctx, aoPath, args, c.deps.In, c.deps.Out, c.deps.Err); err != nil {
+		return passthroughError{err: err}
+	}
+	return nil
+}
+
+type passthroughError struct {
+	err error
+}
+
+func (e passthroughError) Error() string { return e.err.Error() }
+func (e passthroughError) Unwrap() error { return e.err }
+func (e passthroughError) Silent() bool {
+	var exitErr *exec.ExitError
+	return errors.As(e.err, &exitErr)
+}
+func (e passthroughError) ExitCode() int {
+	var exitErr *exec.ExitError
+	if errors.As(e.err, &exitErr) {
+		if status, ok := exitErr.Sys().(syscall.WaitStatus); ok && status.Signaled() {
+			return 128 + int(status.Signal())
+		}
+	}
+	var exitCoder interface{ ExitCode() int }
+	if errors.As(e.err, &exitCoder) {
+		return exitCoder.ExitCode()
+	}
+	return 1
+}
+
+func (c *commandContext) explainAO(kind string, args ...string) {
+	if !c.verbose {
+		return
+	}
+	_, _ = fmt.Fprintf(c.deps.Err, "aong: %s: ao %s\n", kind, strings.Join(args, " "))
 }
 
 // relay writes command output through with exactly one trailing newline, so

@@ -13,10 +13,10 @@ Prime is disabled by default and is controlled by persisted daemon settings,
 not by a host project. Use global Settings in the desktop app or the CLI:
 
 ```bash
-ao prime enable --agent codex --permission bypass-permissions --name "AO Prime" --wake-interval 15m
-ao prime set --permission accept-edits
-ao prime settings
-ao prime disable
+aong prime enable --agent codex --permission bypass-permissions --name "AO Prime" --wake-interval 15m
+aong prime set --permission accept-edits
+aong prime settings
+aong prime disable
 ```
 
 The settings are stored under the daemon data directory and include enablement,
@@ -83,5 +83,5 @@ activity. `wakeBackoff` controls repeat wake spacing; omit it for exponential
 backoff from `wakeInterval` up to one hour, or set `enabled: false` to keep
 fixed-interval nudges.
 
-`ao prime prompt` and `GET /api/v1/prime/prompt` show the effective fleet Prime
+`aong prime prompt` and `GET /api/v1/prime/prompt` show the effective fleet Prime
 prompt, including global Prime rules.

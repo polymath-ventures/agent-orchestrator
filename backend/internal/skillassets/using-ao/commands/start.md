@@ -1,27 +1,23 @@
-# ao start
+# aong start
 
-Fetch (if needed) and open the Agent Orchestrator desktop app. The desktop app owns the daemon, state, and updates. `ao start` no longer runs a daemon: it resolves the installed app (or downloads the latest release), opens it, and exits.
+Start the local AO user services on this fork's web-first deployment. On a
+systemd host, `aong start` starts whichever AO user units are loaded, in
+dependency order. On a plain host with no AO services, it fails with a message
+explaining that there is no service manager path for `aong` to compose.
 
 ## Syntax
 
 ```
-ao start [flags]
+aong start
 ```
 
 ## Flags
 
-| Flag | Meaning | Default / Required |
-|---|---|---|
-| `--json` | Output start result as JSON | - |
+No flags.
 
 ## Examples
 
 ```bash
-# Open the AO desktop app
-ao start
-```
-
-```bash
-# Open the app and get the result as JSON
-ao start --json
+# Start loaded AO user services
+aong start
 ```

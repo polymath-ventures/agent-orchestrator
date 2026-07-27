@@ -1,11 +1,12 @@
-# ao doctor
+# aong doctor
 
-Run local AO health checks. Use this to diagnose setup problems or verify the environment is correctly configured.
+Run local AO health checks. `aong doctor` runs `ao doctor` and adds fork-owned
+service-unit health for loaded `ao-web.service` and `ao-tmux.service`.
 
 ## Syntax
 
 ```
-ao doctor [flags]
+aong doctor [flags]
 ```
 
 ## Flags
@@ -18,10 +19,10 @@ ao doctor [flags]
 
 ```bash
 # Run health checks
-ao doctor
+aong doctor
 ```
 
 ```bash
 # Get health check results as JSON
-ao doctor --json
+aong doctor --json
 ```

@@ -1,24 +1,24 @@
-# ao orchestrator
+# aong orchestrator
 
 Manage orchestrator sessions.
 
 ## Syntax
 
 ```
-ao orchestrator <subcommand> [flags]
+aong orchestrator <subcommand> [flags]
 ```
 
 ## Subcommands
 
 ---
 
-### ao orchestrator ls
+### aong orchestrator ls
 
 List orchestrator sessions. Aliases: `ls`, `list`.
 
 **Syntax:**
 ```
-ao orchestrator ls [flags]
+aong orchestrator ls [flags]
 ```
 
 **Flags:**
@@ -31,10 +31,10 @@ ao orchestrator ls [flags]
 
 ```bash
 # List all orchestrator sessions
-ao orchestrator ls
+aong orchestrator ls
 ```
 
 ```bash
 # List orchestrator sessions as JSON
-ao orchestrator ls --json
+aong orchestrator ls --json
 ```

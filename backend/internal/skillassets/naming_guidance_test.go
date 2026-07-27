@@ -20,17 +20,22 @@ var namingGuidanceFiles = []string{
 	"using-ao/SKILL.md",
 	"using-ao/references.md",
 	"using-ao/commands/doctor.md",
+	"using-ao/commands/drain.md",
 	"using-ao/commands/import.md",
 	"using-ao/commands/orchestrator.md",
+	"using-ao/commands/pause.md",
 	"using-ao/commands/preview.md",
 	"using-ao/commands/project.md",
 	"using-ao/commands/review.md",
+	"using-ao/commands/resume.md",
 	"using-ao/commands/send.md",
 	"using-ao/commands/session.md",
+	"using-ao/commands/shutdown.md",
 	"using-ao/commands/spawn.md",
 	"using-ao/commands/start.md",
 	"using-ao/commands/status.md",
 	"using-ao/commands/stop.md",
+	"using-ao/commands/stop-work.md",
 }
 
 // TestShippedGuidanceDoesNotTeachAgentsToNameSessions is the guard the design
@@ -48,7 +53,7 @@ func TestShippedGuidanceDoesNotTeachAgentsToNameSessions(t *testing.T) {
 				t.Fatalf("shipped guidance %s is missing: %v — update namingGuidanceFiles rather than letting the guard skip it", name, err)
 			}
 			for i, line := range strings.Split(string(body), "\n") {
-				if strings.Contains(line, "ao spawn") && strings.Contains(line, "--name") {
+				if (strings.Contains(line, "ao spawn") || strings.Contains(line, "aong spawn")) && strings.Contains(line, "--name") {
 					t.Errorf("%s:%d pairs a spawn instruction with the name flag; the daemon computes the name:\n\t%s", name, i+1, strings.TrimSpace(line))
 				}
 				if strings.Contains(line, "--name") && strings.Contains(line, "Required") {

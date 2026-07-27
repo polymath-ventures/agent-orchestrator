@@ -1,9 +1,13 @@
 package aongcli
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
+	"strings"
 
 	"github.com/spf13/cobra"
 )
@@ -62,6 +66,198 @@ func newStatusCommand(ctx *commandContext) *cobra.Command {
 	}
 }
 
+func newDoctorCommand(ctx *commandContext) *cobra.Command {
+	var asJSON bool
+	cmd := &cobra.Command{
+		Use:   "doctor",
+		Short: "Run ao doctor plus fork service checks",
+		Long: "Run ao doctor and add fork-owned service checks for loaded " +
+			"ao-web.service and ao-tmux.service units.",
+		Args: noArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			doctorArgs := []string{"doctor"}
+			if asJSON {
+				doctorArgs = append(doctorArgs, "--json")
+				return ctx.runDoctorJSON(cmd.Context(), cmd, doctorArgs)
+			}
+			return ctx.runDoctorText(cmd.Context(), cmd, doctorArgs)
+		},
+	}
+	cmd.Flags().BoolVar(&asJSON, "json", false, "Output health checks as JSON")
+	return cmd
+}
+
+func (c *commandContext) runDoctorText(ctx context.Context, cmd *cobra.Command, doctorArgs []string) error {
+	aoErr := c.runAOPassthrough(ctx, doctorArgs...)
+	checks, err := c.forkDoctorChecks(ctx)
+	if err != nil {
+		if aoErr != nil {
+			return fmt.Errorf("fork service probe failed after ao doctor failed: %w", err)
+		}
+		return err
+	}
+	if len(checks) == 0 {
+		if _, err := fmt.Fprintln(cmd.OutOrStdout(), "fork services: not found"); err != nil {
+			return err
+		}
+		if aoErr != nil {
+			return fmt.Errorf("ao doctor failed: %w", aoErr)
+		}
+		return nil
+	}
+	for _, check := range checks {
+		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "fork service %s: %s\n", check.Name, check.Message); err != nil {
+			return err
+		}
+	}
+	failures := forkDoctorFailures(checks)
+	if len(failures) > 0 {
+		if aoErr != nil {
+			return fmt.Errorf("ao doctor failed and fork service health failed: %s", strings.Join(failures, ", "))
+		}
+		return fmt.Errorf("fork service health failed: %s", strings.Join(failures, ", "))
+	}
+	if aoErr != nil {
+		return fmt.Errorf("ao doctor failed: %w", aoErr)
+	}
+	return nil
+}
+
+type aongDoctorReport struct {
+	OK       bool              `json:"ok"`
+	Failures int               `json:"failures"`
+	Checks   []aongDoctorCheck `json:"checks"`
+}
+
+type aongDoctorCheck struct {
+	Level   string `json:"level"`
+	Section string `json:"section,omitempty"`
+	Name    string `json:"name"`
+	Message string `json:"message"`
+}
+
+func (c *commandContext) runDoctorJSON(ctx context.Context, cmd *cobra.Command, args []string) error {
+	aoPath, err := c.resolveAO()
+	if err != nil {
+		return err
+	}
+	c.explainAO("run", args...)
+	var aoOut, aoErr bytes.Buffer
+	aoErrRun := c.deps.RunStreamingCommand(ctx, aoPath, args, c.deps.In, &aoOut, &aoErr)
+	if aoErr.Len() > 0 {
+		if _, err := io.Copy(cmd.ErrOrStderr(), &aoErr); err != nil {
+			return err
+		}
+	}
+
+	var report map[string]any
+	if err := json.Unmarshal(aoOut.Bytes(), &report); err != nil {
+		if _, copyErr := io.Copy(cmd.OutOrStdout(), &aoOut); copyErr != nil {
+			return copyErr
+		}
+		if aoErrRun != nil {
+			return fmt.Errorf("ao doctor failed: %w", aoErrRun)
+		}
+		return fmt.Errorf("parse `ao doctor --json`: %w", err)
+	}
+	checks, err := c.forkDoctorChecks(ctx)
+	if err != nil {
+		if _, copyErr := io.Copy(cmd.OutOrStdout(), &aoOut); copyErr != nil {
+			return copyErr
+		}
+		return err
+	}
+	if len(checks) == 0 {
+		checks = append(checks, aongDoctorCheck{
+			Level:   "PASS",
+			Section: "Fork services",
+			Name:    "ao-units",
+			Message: "no loaded ao-web.service or ao-tmux.service units found",
+		})
+	}
+	reportChecks, _ := report["checks"].([]any)
+	for _, check := range checks {
+		reportChecks = append(reportChecks, map[string]any{
+			"level":   check.Level,
+			"section": check.Section,
+			"name":    check.Name,
+			"message": check.Message,
+		})
+	}
+	report["checks"] = reportChecks
+	failures := 0
+	for _, raw := range reportChecks {
+		check, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		if level, ok := check["level"].(string); ok && level == "FAIL" {
+			failures++
+		}
+	}
+	report["failures"] = failures
+	report["ok"] = failures == 0
+	enc := json.NewEncoder(cmd.OutOrStdout())
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(report); err != nil {
+		return err
+	}
+	if failures > 0 {
+		return fmt.Errorf("doctor found %d failing check(s)", failures)
+	}
+	if aoErrRun != nil {
+		return fmt.Errorf("ao doctor failed: %w", aoErrRun)
+	}
+	return nil
+}
+
+func (c *commandContext) forkDoctorChecks(ctx context.Context) ([]aongDoctorCheck, error) {
+	env, err := c.detectEnvironment(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if env.Kind != envSystemd {
+		return nil, nil
+	}
+
+	loaded := map[string]bool{}
+	for _, unit := range env.LoadedUnits {
+		loaded[unit] = true
+	}
+	forkUnits := []string{"ao-web.service", "ao-tmux.service"}
+	var checks []aongDoctorCheck
+	for _, unit := range forkUnits {
+		if !loaded[unit] {
+			continue
+		}
+		active, err := c.unitProperty(ctx, env.systemctl, unit, "ActiveState")
+		if err != nil {
+			return nil, err
+		}
+		level := "PASS"
+		if active != "active" {
+			level = "FAIL"
+		}
+		checks = append(checks, aongDoctorCheck{
+			Level:   level,
+			Section: "Fork services",
+			Name:    unit,
+			Message: active,
+		})
+	}
+	return checks, nil
+}
+
+func forkDoctorFailures(checks []aongDoctorCheck) []string {
+	var failures []string
+	for _, check := range checks {
+		if check.Level == "FAIL" {
+			failures = append(failures, fmt.Sprintf("%s=%s", check.Name, check.Message))
+		}
+	}
+	return failures
+}
+
 func (c *commandContext) runStatus(ctx context.Context, cmd *cobra.Command) error {
 	out := cmd.OutOrStdout()
 	// Daemon state and fleet pause state already come from `ao status`; aong
@@ -112,6 +308,48 @@ func newDrainCommand(ctx *commandContext) *cobra.Command {
 	}
 }
 
+func newPauseCommand(ctx *commandContext) *cobra.Command {
+	var all, hard bool
+	cmd := &cobra.Command{
+		Use:   "pause [project]",
+		Short: "Explain the honest fleet work-control verbs",
+		Long: "`aong pause` without arguments intentionally does not alias the fleet\n" +
+			"work-control command. Use `aong drain` to gate new work and drain at idle,\n" +
+			"or `aong stop-work` to terminate live work now.\n\n" +
+			"`aong pause <project>` and `aong pause <project> --hard` still preserve AO's project-scoped pause.",
+		Args: atMostOneProjectArg,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 1 && !all {
+				aoArgs := []string{"pause", args[0]}
+				if hard {
+					aoArgs = append(aoArgs, "--hard")
+				}
+				if err := ctx.echoAO(cmd.Context(), cmd.OutOrStdout(), aoArgs...); err != nil {
+					return err
+				}
+				_, err := fmt.Fprintf(cmd.OutOrStdout(), "Project stays paused until `aong resume %s`.\n", args[0])
+				return err
+			}
+			return printPauseGuidance(ctx, cmd)
+		},
+	}
+	cmd.Flags().BoolVar(&all, "all", false, "Use aong drain or aong stop-work for fleet-wide work control")
+	cmd.Flags().BoolVar(&hard, "hard", false, "Use aong stop-work for immediate fleet-wide termination")
+	_ = cmd.Flags().MarkHidden("all")
+	return cmd
+}
+
+func printPauseGuidance(ctx *commandContext, cmd *cobra.Command) error {
+	if ctx.verbose {
+		_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "aong: diverges: fleet pause is not an alias for `ao pause`; no ao command will be run")
+	}
+	_, err := fmt.Fprintln(cmd.OutOrStdout(), "`aong pause` is intentionally not a fleet alias. Use `aong drain` to gate new work and drain live workers at idle, `aong stop-work` to terminate live work now, or `aong pause <project>` for a project-scoped pause.")
+	if err != nil {
+		return err
+	}
+	return usageError{errors.New("fleet pause is not an aong verb; use drain or stop-work")}
+}
+
 func newStopWorkCommand(ctx *commandContext) *cobra.Command {
 	return &cobra.Command{
 		Use:   "stop-work",
@@ -137,13 +375,23 @@ func (c *commandContext) runGating(ctx context.Context, cmd *cobra.Command, args
 
 func newResumeCommand(ctx *commandContext) *cobra.Command {
 	return &cobra.Command{
-		Use:   "resume",
+		Use:   "resume [project]",
 		Short: "Restore fleet-wide intake and spawns",
-		Args:  noArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
+		Args:  atMostOneProjectArg,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 1 {
+				return ctx.echoAO(cmd.Context(), cmd.OutOrStdout(), "resume", args[0])
+			}
 			return ctx.echoAO(cmd.Context(), cmd.OutOrStdout(), "resume", "--all")
 		},
 	}
+}
+
+func atMostOneProjectArg(_ *cobra.Command, args []string) error {
+	if len(args) > 1 {
+		return usageError{errors.New("expected at most one project")}
+	}
+	return nil
 }
 
 func newStopCommand(ctx *commandContext) *cobra.Command {

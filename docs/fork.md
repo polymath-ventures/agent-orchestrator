@@ -211,12 +211,12 @@ Manual restart verification:
 ```bash
 AO_TMUX_SOCKET="${AO_DATA_DIR:-$HOME/.ao/data}/run/tmux/default"
 systemctl --user status ao.service ao-tmux.service
-ao status
-ao session ls
+aong status
+aong session ls
 tmux -S "$AO_TMUX_SOCKET" list-sessions
 systemctl --user restart ao.service
-ao status
-ao session ls
+aong status
+aong session ls
 tmux -S "$AO_TMUX_SOCKET" list-sessions
 ```
 
@@ -293,19 +293,25 @@ daemon, and they no longer describe what they do on a web-first deployment:
 drain, `pause --hard` is an emergency stop filed as a flag on the
 non-destructive verb, and `stop` stops only the daemon.
 
-`aong` (`backend/cmd/aong`) is a thin porcelain that presents the correct verbs.
-It is deliberately deletable: if upstream adopts the model, the Cobra command
-definitions lift into `ao`'s command tree and this binary goes away.
+`aong` (`backend/cmd/aong`) is the fork's operator-facing surface over `ao`.
+It passes every non-overridden `ao` command through by default, so operators do
+not need to remember which binary has which verb. The override table is the
+interesting part: lifecycle names that are misleading upstream become honest on
+the fork, while the rest of `ao` stays available unchanged. It is deliberately
+deletable: if upstream adopts the model, the override command definitions lift
+into `ao`'s command tree and this binary goes away.
 
-| Verb             | Composes                 | Effect                                                                    |
-| ---------------- | ------------------------ | ------------------------------------------------------------------------- |
-| `aong start`     | `systemctl --user start` | Starts the AO user units that are installed, in dependency order.         |
-| `aong status`    | `ao status`              | Daemon state and fleet pause state, plus each loaded unit's active state. |
-| `aong drain`     | `ao pause --all`         | Gate new work; live workers finish, then are terminated as they go idle.  |
-| `aong stop-work` | `ao pause --all --hard`  | Terminate all live sessions now, including orchestrators and Prime.       |
-| `aong resume`    | `ao resume --all`        | Restore intake and spawns.                                                |
-| `aong stop`      | `ao stop`                | Stop the daemon. Agent sessions keep running, unsupervised.               |
-| `aong shutdown`  | stop-work, then stop     | The one verb that stops everything.                                       |
+| Verb             | Composes                 | Effect                                                                     |
+| ---------------- | ------------------------ | -------------------------------------------------------------------------- |
+| `aong start`     | `systemctl --user start` | Starts the AO user units that are installed, in dependency order.          |
+| `aong status`    | `ao status`              | Daemon state and fleet pause state, plus each loaded unit's active state.  |
+| `aong doctor`    | `ao doctor`              | AO doctor checks, plus loaded `ao-web.service` / `ao-tmux.service` health. |
+| `aong drain`     | `ao pause --all`         | Gate new work; live workers finish, then are terminated as they go idle.   |
+| `aong stop-work` | `ao pause --all --hard`  | Terminate all live sessions now, including orchestrators and Prime.        |
+| `aong resume`    | `ao resume --all`        | Restore intake and spawns.                                                 |
+| `aong stop`      | `ao stop`                | Stop the daemon. Agent sessions keep running, unsupervised.                |
+| `aong shutdown`  | stop-work, then stop     | The one verb that stops everything.                                        |
+| every other verb | same `ao` argv           | Passthrough with stdin/stdout/stderr and exit code preserved.              |
 
 Rules the implementation keeps:
 
@@ -324,10 +330,14 @@ Rules the implementation keeps:
 - `aong` is distributed by `ops/deploy.sh` only. The Electron desktop packaging
   is deliberately unchanged — the desktop app is exactly the `plain` environment
   where `aong` has no services to manage.
-- There is no `aong pause`. `ao` has no capability that gates new work while
-  leaving live workers alone — its soft pause _is_ the drain — so a `pause`
-  distinct from `drain` would have to either lie or grow new daemon behavior in
-  the porcelain.
+- `aong pause` is deliberately not an alias. `ao` has no capability that gates
+  new work while leaving live workers alone — its soft pause _is_ the drain —
+  so `aong pause` points operators at `aong drain` and `aong stop-work` instead
+  of silently restoring the old misleading name.
+- `aong --verbose <verb>` prints the underlying `ao` invocation for passthrough
+  and wrapping overrides, or states plainly when an override diverges instead
+  of wrapping an equivalent `ao` command. The flag belongs before the verb;
+  flags after a passthrough verb are forwarded to `ao`.
 - `aong shutdown` stops work before the daemon, and refuses to stop the daemon
   whenever stopping work failed — unconditionally, with no state that licenses
   an exception. Live agents with no supervisor is worse than a shutdown the

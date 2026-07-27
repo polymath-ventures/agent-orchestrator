@@ -1,11 +1,11 @@
-# ao spawn
+# aong spawn
 
-Spawn a worker agent session in a registered project. The session runs the chosen agent in a fresh git worktree. Register the project first with `ao project add`.
+Spawn a worker agent session in a registered project. The session runs the chosen agent in a fresh git worktree. Register the project first with `aong project add`.
 
 ## Syntax
 
 ```
-ao spawn [flags]
+aong spawn [flags]
 ```
 
 ## Flags
@@ -35,15 +35,15 @@ Available harnesses: `claude-code`, `codex`, `codex-fugu`, `aider`, `opencode`, 
 
 ```bash
 # Spawn a worker for issue 142 in the agent-orchestrator project
-ao spawn --project agent-orchestrator --issue 142 --prompt "Fix the session leak described in issue 142. Branch off upstream/main."
+aong spawn --project agent-orchestrator --issue 142 --prompt "Fix the session leak described in issue 142. Branch off upstream/main."
 ```
 
 ```bash
 # Spawn a worker and immediately claim an open PR
-ao spawn --project agent-orchestrator --claim-pr 88 --harness claude-code
+aong spawn --project agent-orchestrator --claim-pr 88 --harness claude-code
 ```
 
 ```bash
 # Spawn one Codex worker on a specific model without changing project defaults
-ao spawn --project agent-orchestrator --issue 142 --harness codex --model gpt-5-codex
+aong spawn --project agent-orchestrator --issue 142 --harness codex --model gpt-5-codex
 ```
