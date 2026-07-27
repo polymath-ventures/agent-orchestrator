@@ -41,14 +41,22 @@ preflight() {
   for dep in git go npm node curl systemctl journalctl cmp install; do
     command -v "$dep" >/dev/null 2>&1 || die "missing dependency: $dep"
   done
-  # Presence is not capability. The healthz gate uses global fetch (node 18+),
-  # and the web build needs vite's floor, so an old-but-working node would pass
-  # the check above and then fail AFTER the release flip — on rollback there is
-  # no build step to expose it first. Refuse before any mutation.
-  local node_major
-  node_major="$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)"
-  [ "$node_major" -ge 20 ] 2>/dev/null \
-    || die "node 20+ required (found $(node --version 2>/dev/null || echo none))"
+  # Presence is not capability: the healthz gate uses global fetch, so an
+  # old-but-working node would pass the check above and then fail AFTER the
+  # release flip. Every path needs the gate, so this floor is checked here.
+  require_node 18 "the healthz gate (global fetch)"
+}
+
+# Deliberately two floors rather than one. The gate needs node 18; the web
+# build needs vite's, which is higher. Applying the higher floor everywhere
+# would turn an emergency rollback — which runs no build at all — away from a
+# host that could have recovered. Each requirement is checked where it is
+# actually needed, before any mutation on that path.
+require_node() {
+  local want="$1" why="$2" have
+  have="$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)"
+  [ "$have" -ge "$want" ] 2>/dev/null \
+    || die "node $want+ required for $why (found $(node --version 2>/dev/null || echo none))"
 }
 
 repo_root() { cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd; }
@@ -171,6 +179,8 @@ rollback() {
 
 deploy() {
   local ref="${1:-origin/main}" root sha ts rel prev_target
+  # Only the forward path builds the web bundle, so only it needs vite's floor.
+  require_node 20 "the web bundle build (vite)"
   root="$(repo_root)"
   git -C "$root" fetch origin --quiet
   sha="$(git -C "$root" rev-parse --verify "$ref^{commit}")" || die "cannot resolve ref: $ref"

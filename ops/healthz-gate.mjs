@@ -65,12 +65,13 @@ export function checkHealth({ health, run, binTarget, expectedSha, provenanceReq
 // one, since `$DEPLOY_ROOT/current` is a symlink to the active release.
 function invokedDirectly() {
 	const entry = process.argv[1];
+	// No argv[1] means this was imported, not run — the only case that is
+	// legitimately "not directly invoked". A realpath failure is something else
+	// entirely and must not be swallowed into that answer: silently deciding not
+	// to run would leave the deploy retrying for a minute against a gate that
+	// never executed, then failing with a generic "no response".
 	if (!entry) return false;
-	try {
-		return realpathSync(entry) === realpathSync(fileURLToPath(import.meta.url));
-	} catch {
-		return false;
-	}
+	return realpathSync(entry) === realpathSync(fileURLToPath(import.meta.url));
 }
 
 // CLI: <run-file> <bin-target> <expected-sha> <provenance-required 1|0>
