@@ -61,8 +61,9 @@ func ExitCode(err error) int {
 	if errors.As(err, &ue) {
 		return 2
 	}
-	var pe passthroughError
-	if errors.As(err, &pe) {
+	// Intentionally do not use errors.As here: once a passthroughError is
+	// wrapped by an override, it is an override runtime failure and must exit 1.
+	if pe, ok := err.(passthroughError); ok { //nolint:errorlint // Top-level passthrough is the only case that preserves child exit codes.
 		return pe.ExitCode()
 	}
 	return 1
@@ -77,8 +78,10 @@ func ShouldPrintError(err error) bool {
 	if err == nil {
 		return false
 	}
-	var silent silentError
-	return !errors.As(err, &silent) || !silent.Silent()
+	// Intentionally do not use errors.As here: only top-level passthrough
+	// failures have already had their stderr handled by the child process.
+	silent, ok := err.(silentError) //nolint:errorlint // Wrapped passthrough failures belong to overrides and must print.
+	return !ok || !silent.Silent()
 }
 
 // Deps holds the side effects aong needs. Tests replace these so every

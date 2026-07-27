@@ -101,7 +101,7 @@ func (c *commandContext) runDoctorText(ctx context.Context, cmd *cobra.Command, 
 			return err
 		}
 		if aoErr != nil {
-			return aoErr
+			return fmt.Errorf("ao doctor failed: %w", aoErr)
 		}
 		return nil
 	}
@@ -118,7 +118,7 @@ func (c *commandContext) runDoctorText(ctx context.Context, cmd *cobra.Command, 
 		return fmt.Errorf("fork service health failed: %s", strings.Join(failures, ", "))
 	}
 	if aoErr != nil {
-		return aoErr
+		return fmt.Errorf("ao doctor failed: %w", aoErr)
 	}
 	return nil
 }
@@ -156,7 +156,7 @@ func (c *commandContext) runDoctorJSON(ctx context.Context, cmd *cobra.Command, 
 			return copyErr
 		}
 		if aoErrRun != nil {
-			return passthroughError{err: aoErrRun}
+			return fmt.Errorf("ao doctor failed: %w", aoErrRun)
 		}
 		return fmt.Errorf("parse `ao doctor --json`: %w", err)
 	}
@@ -190,7 +190,7 @@ func (c *commandContext) runDoctorJSON(ctx context.Context, cmd *cobra.Command, 
 		return fmt.Errorf("doctor found %d failing check(s)", report.Failures)
 	}
 	if aoErrRun != nil {
-		return passthroughError{err: aoErrRun}
+		return fmt.Errorf("ao doctor failed: %w", aoErrRun)
 	}
 	return nil
 }

@@ -11,6 +11,10 @@ the co-installed `ao` binary, while overriding lifecycle verbs whose upstream
 names are misleading on the web-first deployment. Every command is
 `aong <command> --help` for the authoritative flag list.
 
+On deployments where `aong` is not installed (for example the desktop app or a
+source checkout running `ao daemon` directly), use `ao` with the same arguments
+for commands that are not fork-specific lifecycle overrides.
+
 | Command | What it does | When to use | Details |
 |---|---|---|---|
 | `spawn` | Spawn a worker agent in a fresh git worktree | Starting a new task or issue | [commands/spawn.md](commands/spawn.md) |

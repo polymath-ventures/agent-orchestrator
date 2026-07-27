@@ -693,8 +693,8 @@ func TestDoctorReportsForkUnitsEvenWhenAODoctorFails(t *testing.T) {
 			t.Fatalf("doctor output missing %q:\n%s", want, out)
 		}
 	}
-	if got := ExitCode(err); got != 3 {
-		t.Fatalf("ExitCode(%v) = %d, want underlying ao exit code 3", err, got)
+	if got := ExitCode(err); got != 1 {
+		t.Fatalf("ExitCode(%v) = %d, want override runtime failure exit 1", err, got)
 	}
 }
 

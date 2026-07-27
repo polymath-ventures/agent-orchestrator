@@ -19,5 +19,3 @@ No flags.
 # Stop the daemon
 aong stop
 ```
-
-```bash
