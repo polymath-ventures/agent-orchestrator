@@ -205,7 +205,7 @@ describe("shared agent/model selection helpers", () => {
 });
 
 describe("ModelAvailabilityField", () => {
-	it("renders dynamic harness/model/effort choices, selected status, checked time, and fallback provenance", () => {
+	it("renders dynamic harness/model/effort choices, checked time, and fallback provenance, and suppresses a non-actionable status", () => {
 		const onChange = vi.fn();
 		const onRefresh = vi.fn();
 		render(

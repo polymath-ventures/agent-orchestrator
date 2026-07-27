@@ -101,11 +101,6 @@ pnpm-lock.yaml
 # Beads / Dolt files (added by bd init)
 .dolt/
 
-.ds-sync/
-ds-bundle/
-frontend/index.d.ts
-frontend/dist/decl/
-frontend/dist/ds-compiled.css
 .reviewcache/
 .reviewtmp/
 /TASK-PLAN.md
