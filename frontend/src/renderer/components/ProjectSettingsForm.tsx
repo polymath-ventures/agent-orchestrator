@@ -736,7 +736,6 @@ function HarnessModelRow({
 				onRefresh={onRefreshModels}
 				showHarness={false}
 				fieldLabelsVisible={false}
-				statusVisibility="actionable"
 				emptyLabel="Inherit default"
 				showManualModelNotice
 			/>

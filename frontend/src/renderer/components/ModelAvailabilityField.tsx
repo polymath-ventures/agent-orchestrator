@@ -37,7 +37,6 @@ export type ModelAvailabilityFieldProps = {
 	onRefresh?: () => void | Promise<unknown>;
 	showHarness?: boolean;
 	showEffort?: boolean;
-	statusVisibility?: "all" | "actionable";
 	allowEmpty?: boolean;
 	emptyLabel?: string;
 	fieldLabelsVisible?: boolean;
@@ -62,7 +61,6 @@ export function ModelAvailabilityField({
 	onRefresh,
 	showHarness = true,
 	showEffort = true,
-	statusVisibility = "all",
 	allowEmpty = true,
 	emptyLabel = "Agent default",
 	fieldLabelsVisible = true,
@@ -86,7 +84,13 @@ export function ModelAvailabilityField({
 				: harnessEfforts(harness),
 	);
 	const provenance = harness ? catalogProvenanceLabel(harness) : "";
-	const showModelStatus = model && (statusVisibility === "all" || model.status === "unreachable");
+	// Only an actionable status is rendered. A non-actionable one — "not probed;
+	// only configured pins are live-validated" — is noise a user cannot act on.
+	// This used to be a caller-supplied `statusVisibility` prop defaulting to
+	// "all", so the component shipped the wrong behavior and every one of its
+	// four callers had to remember to override it. The rule belongs here, in the
+	// component that owns the status, not in a copy each caller re-derives.
+	const showModelStatus = model && model.status === "unreachable";
 	const columnClass = showHarness && showEffort ? "sm:grid-cols-3" : showHarness || showEffort ? "sm:grid-cols-2" : "";
 
 	const selectHarness = (nextHarnessID: string) => {
