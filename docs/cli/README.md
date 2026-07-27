@@ -42,7 +42,7 @@ Every product command resolves to a daemon HTTP route. Run `aong <command>
 | `aong doctor` / `--json`     | Run `ao doctor`, then add fork-owned `ao-web.service` / `ao-tmux.service` health.                                                            |
 | `aong drain`                 | Gate fleet-wide intake and drain live workers at idle.                                                                                       |
 | `aong stop-work`             | Terminate all live work immediately.                                                                                                         |
-| `aong pause <project>`       | Preserve AO's project-scoped pause for one project. Bare `aong pause` is guidance, not a fleet alias.                                        |
+| `aong pause <project>`       | Preserve AO's project-scoped pause, including `--hard`. Bare `aong pause` is guidance, not a fleet alias.                                    |
 | `aong resume [project]`      | Restore fleet-wide intake and spawns, or resume one paused project when a project is named.                                                  |
 | `aong shutdown`              | Stop work, then stop the daemon.                                                                                                             |
 | `aong completion <shell>`    | Pass through to `ao completion <shell>`; the generated script is for the raw `ao` command.                                                   |
@@ -51,30 +51,30 @@ Every product command resolves to a daemon HTTP route. Run `aong <command>
 
 ### Product commands
 
-| Command                                 | Daemon route                                          |
-| --------------------------------------- | ----------------------------------------------------- |
-| `aong project add`                      | `POST /api/v1/projects`                               |
-| `aong project ls`                       | `GET /api/v1/projects`                                |
-| `aong project get <id>`                 | `GET /api/v1/projects/{id}`                           |
-| `aong project set-config <id>`          | `PUT /api/v1/projects/{id}/config`                    |
-| `aong project config export <p>`        | `GET /api/v1/projects/{id}`                           |
-| `aong project config apply <p> <f>`     | `GET` + `PUT /api/v1/projects/{id}/config`            |
-| `aong project config diff <p> <f>`      | `GET /api/v1/projects/{id}`                           |
-| `aong project rm <id>`                  | `DELETE /api/v1/projects/{id}`                        |
-| `aong role prompt <project> <role>`     | `GET /api/v1/projects/{id}/roles/{role}/prompt`       |
-| `aong prime settings`                   | `GET /api/v1/prime/settings`                          |
-| `aong prime enable` / `set` / `disable` | `GET` + `PUT /api/v1/prime/settings`                  |
-| `aong prime prompt`                     | `GET /api/v1/prime/prompt`                            |
-| `aong drain` / `aong stop-work`         | `/fleet/pause` with soft or hard semantics            |
-| `aong pause <project>`                  | `PUT /api/v1/projects/{id}/paused`                    |
-| `aong resume [project]`                 | `/fleet/resume` or `PUT /api/v1/projects/{id}/paused` |
-| `aong agent ls`                         | `GET /api/v1/agents`                                  |
-| `aong agent ls --refresh`               | `POST /api/v1/agents/refresh`                         |
-| `aong spawn`                            | `POST /api/v1/sessions`                               |
-| `aong session ls`                       | `GET /api/v1/sessions`                                |
-| `aong session get <id>`                 | `GET /api/v1/sessions/{id}`                           |
-| `aong session kill <id>`                | `POST /api/v1/sessions/{id}/kill`                     |
-| `aong session restore <id>`             | `POST /api/v1/sessions/{id}/restore`                  |
+| Command                                 | Daemon route                                           |
+| --------------------------------------- | ------------------------------------------------------ |
+| `aong project add`                      | `POST /api/v1/projects`                                |
+| `aong project ls`                       | `GET /api/v1/projects`                                 |
+| `aong project get <id>`                 | `GET /api/v1/projects/{id}`                            |
+| `aong project set-config <id>`          | `PUT /api/v1/projects/{id}/config`                     |
+| `aong project config export <p>`        | `GET /api/v1/projects/{id}`                            |
+| `aong project config apply <p> <f>`     | `GET` + `PUT /api/v1/projects/{id}/config`             |
+| `aong project config diff <p> <f>`      | `GET /api/v1/projects/{id}`                            |
+| `aong project rm <id>`                  | `DELETE /api/v1/projects/{id}`                         |
+| `aong role prompt <project> <role>`     | `GET /api/v1/projects/{id}/roles/{role}/prompt`        |
+| `aong prime settings`                   | `GET /api/v1/prime/settings`                           |
+| `aong prime enable` / `set` / `disable` | `GET` + `PUT /api/v1/prime/settings`                   |
+| `aong prime prompt`                     | `GET /api/v1/prime/prompt`                             |
+| `aong drain` / `aong stop-work`         | `/fleet/pause` with soft or hard semantics             |
+| `aong pause <project>`                  | `POST /api/v1/projects/{id}/pause`                     |
+| `aong resume [project]`                 | `/fleet/resume` or `POST /api/v1/projects/{id}/resume` |
+| `aong agent ls`                         | `GET /api/v1/agents`                                   |
+| `aong agent ls --refresh`               | `POST /api/v1/agents/refresh`                          |
+| `aong spawn`                            | `POST /api/v1/sessions`                                |
+| `aong session ls`                       | `GET /api/v1/sessions`                                 |
+| `aong session get <id>`                 | `GET /api/v1/sessions/{id}`                            |
+| `aong session kill <id>`                | `POST /api/v1/sessions/{id}/kill`                      |
+| `aong session restore <id>`             | `POST /api/v1/sessions/{id}/restore`                   |
 
 `project config apply` sends the `configETag` from its read as `If-Match`, so
 concurrent edits fail with `PROJECT_CONFIG_STALE` instead of being overwritten.
@@ -112,11 +112,11 @@ spawn remains the authoritative runtime validation point. Use
 Use `aong drain` to gate new fleet-wide intake and drain live workers at idle,
 `aong stop-work` to terminate live work immediately, and `aong resume` to
 restore fleet intake and spawns. Bare `aong pause` is intentionally only
-guidance so it is not mistaken for a fleet drain, while `aong pause <project>`
-and `aong resume <project>` preserve AO's project-scoped pause/resume. Pause
-state appears in `aong status` (`fleet:` line) and `aong project ls` /
-`aong project get`. `aong spawn --force` overrides an active pause for a single
-spawn.
+guidance so it is not mistaken for a fleet drain, while `aong pause <project>`,
+`aong pause <project> --hard`, and `aong resume <project>` preserve AO's
+project-scoped pause/resume. Pause state appears in `aong status` (`fleet:`
+line) and `aong project ls` / `aong project get`. `aong spawn --force`
+overrides an active pause for a single spawn.
 
 `aong project config` treats a project's stored config as versionable JSON.
 `export <project>` prints the stored config (the persisted override set the

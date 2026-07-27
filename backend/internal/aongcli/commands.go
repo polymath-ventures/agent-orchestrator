@@ -162,6 +162,9 @@ func (c *commandContext) runDoctorJSON(ctx context.Context, cmd *cobra.Command, 
 	}
 	checks, err := c.forkDoctorChecks(ctx)
 	if err != nil {
+		if _, copyErr := io.Copy(cmd.OutOrStdout(), &aoOut); copyErr != nil {
+			return copyErr
+		}
 		return err
 	}
 	if len(checks) == 0 {
@@ -297,10 +300,14 @@ func newPauseCommand(ctx *commandContext) *cobra.Command {
 		Long: "`aong pause` without arguments intentionally does not alias the fleet\n" +
 			"work-control command. Use `aong drain` to gate new work and drain at idle,\n" +
 			"or `aong stop-work` to terminate live work now.\n\n" +
-			"`aong pause <project>` still preserves AO's project-scoped pause.",
+			"`aong pause <project>` and `aong pause <project> --hard` still preserve AO's project-scoped pause.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if len(args) == 1 && !all && !hard {
-				if err := ctx.echoAO(cmd.Context(), cmd.OutOrStdout(), "pause", args[0]); err != nil {
+			if len(args) == 1 && !all {
+				aoArgs := []string{"pause", args[0]}
+				if hard {
+					aoArgs = append(aoArgs, "--hard")
+				}
+				if err := ctx.echoAO(cmd.Context(), cmd.OutOrStdout(), aoArgs...); err != nil {
 					return err
 				}
 				_, err := fmt.Fprintf(cmd.OutOrStdout(), "Project stays paused until `aong resume %s`.\n", args[0])

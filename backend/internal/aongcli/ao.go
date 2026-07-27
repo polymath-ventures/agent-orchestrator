@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 )
 
 // aoBinaryName is the co-installed `ao` executable's file name.
@@ -110,8 +112,17 @@ type passthroughError struct {
 
 func (e passthroughError) Error() string { return e.err.Error() }
 func (e passthroughError) Unwrap() error { return e.err }
-func (e passthroughError) Silent() bool  { return true }
+func (e passthroughError) Silent() bool {
+	var exitErr *exec.ExitError
+	return errors.As(e.err, &exitErr)
+}
 func (e passthroughError) ExitCode() int {
+	var exitErr *exec.ExitError
+	if errors.As(e.err, &exitErr) {
+		if status, ok := exitErr.Sys().(syscall.WaitStatus); ok && status.Signaled() {
+			return 128 + int(status.Signal())
+		}
+	}
 	var exitCoder interface{ ExitCode() int }
 	if errors.As(e.err, &exitCoder) {
 		return exitCoder.ExitCode()

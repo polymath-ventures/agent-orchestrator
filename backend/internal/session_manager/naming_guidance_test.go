@@ -36,7 +36,7 @@ func TestGeneratedGuidanceDoesNotTeachAgentsToNameSessions(t *testing.T) {
 			// would slip past a per-line check, and no generated guidance has a
 			// legitimate reason to mention the name flag at all once it mentions
 			// spawning.
-			if strings.Contains(body, "aong spawn") && strings.Contains(body, "--name") {
+			if (strings.Contains(body, "ao spawn") || strings.Contains(body, "aong spawn")) && strings.Contains(body, "--name") {
 				t.Errorf("%s describes spawning and mentions the name flag; the daemon computes the name:\n%s", producer, body)
 			}
 		})
@@ -47,7 +47,7 @@ func TestGeneratedGuidanceDoesNotTeachAgentsToNameSessions(t *testing.T) {
 // cannot be satisfied by gutting the text.
 func TestCopilotOrchestratorMessageStillDirectsASpawn(t *testing.T) {
 	body := copilotOrchestratorMessage(domain.ProjectID("demo"), "do the thing")
-	for _, want := range []string{"aong spawn", "--project demo", "--prompt", "do the thing"} {
+	for _, want := range []string{"ao spawn", "--project demo", "--prompt", "do the thing"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("copilot orchestrator directive is missing %q:\n%s", want, body)
 		}

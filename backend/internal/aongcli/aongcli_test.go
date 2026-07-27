@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -350,7 +352,8 @@ func TestShouldPrintErrorSuppressesOnlySilentPassthroughErrors(t *testing.T) {
 		want bool
 	}{
 		{name: "nil", err: nil, want: false},
-		{name: "passthrough", err: passthroughError{err: exitCodeError(7)}, want: false},
+		{name: "passthrough exit", err: passthroughError{err: &exec.ExitError{}}, want: false},
+		{name: "passthrough start failure", err: passthroughError{err: errors.New("exec format error")}, want: true},
 		{name: "usage", err: usageError{err: errors.New("bad args")}, want: true},
 		{name: "runtime", err: errors.New("boom"), want: true},
 	} {
@@ -359,6 +362,19 @@ func TestShouldPrintErrorSuppressesOnlySilentPassthroughErrors(t *testing.T) {
 				t.Fatalf("ShouldPrintError(%v) = %v, want %v", tc.err, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestPassthroughSignalExitCodeUsesShellConvention(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("signal exit status is Unix-specific")
+	}
+	err := exec.Command("sh", "-c", "kill -TERM $$").Run()
+	if err == nil {
+		t.Fatal("expected command to terminate by signal")
+	}
+	if got := (passthroughError{err: err}).ExitCode(); got != 143 {
+		t.Fatalf("ExitCode(%v) = %d, want 143", err, got)
 	}
 }
 
@@ -415,6 +431,29 @@ func TestCurrentAOCommandsAreReachableThroughAONG(t *testing.T) {
 				t.Fatalf("ao calls = %v, want [%q]", got, want)
 			}
 		})
+	}
+}
+
+func TestAONGOverrideTableMatchesRegisteredCommands(t *testing.T) {
+	root := NewRootCommand(Deps{Out: &bytes.Buffer{}, Err: &bytes.Buffer{}, In: strings.NewReader("")})
+	registered := map[string]struct{}{}
+	for _, cmd := range root.Commands() {
+		if cmd.Hidden {
+			continue
+		}
+		registered[cmd.Name()] = struct{}{}
+	}
+	delete(registered, "help")
+
+	for name := range aongOverrideNames {
+		if _, ok := registered[name]; !ok {
+			t.Fatalf("override table includes %q, but root does not register that command", name)
+		}
+	}
+	for name := range registered {
+		if _, ok := aongOverrideNames[name]; !ok {
+			t.Fatalf("root registers %q, but override table does not include it", name)
+		}
 	}
 }
 
@@ -716,6 +755,29 @@ func TestDoctorJSONAugmentsAOReport(t *testing.T) {
 	}
 }
 
+func TestDoctorJSONPreservesAOReportWhenForkProbeFails(t *testing.T) {
+	h := newFakeHost(t)
+	h.lookPath["systemctl"] = "/usr/bin/systemctl"
+	h.stream = func(_ recordedCall, _ io.Reader, out, _ io.Writer) error {
+		_, _ = fmt.Fprint(out, `{"ok":true,"failures":0,"checks":[]}`)
+		return nil
+	}
+	h.respond = func(call recordedCall) ([]byte, error) {
+		if filepath.Base(call.name) == "systemctl" {
+			return []byte("Failed to connect to bus\n"), errors.New("exit status 1")
+		}
+		return nil, nil
+	}
+
+	out, _, err := run(t, h, "doctor", "--json")
+	if err == nil {
+		t.Fatal("expected doctor json to fail when fork service probe fails")
+	}
+	if !strings.Contains(out, `"ok":true`) {
+		t.Fatalf("doctor json discarded ao report after fork probe failure:\n%s", out)
+	}
+}
+
 func forkUnitStateHost(t *testing.T, activeStates map[string]string) *fakeHost {
 	t.Helper()
 	h := newFakeHost(t)
@@ -871,6 +933,24 @@ func TestPauseProjectPassesThrough(t *testing.T) {
 	for _, want := range []string{"project paused", "aong resume mercury"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("pause project output missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestPauseProjectHardPassesThrough(t *testing.T) {
+	h := newFakeHost(t)
+	h.respond = func(recordedCall) ([]byte, error) { return []byte("project stopped\n"), nil }
+
+	out, _, err := run(t, h, "pause", "mercury", "--hard")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := h.aoArgv(); len(got) != 1 || got[0] != aoBinaryName()+" pause mercury --hard" {
+		t.Fatalf("ao calls = %v, want one `ao pause mercury --hard`", got)
+	}
+	for _, want := range []string{"project stopped", "aong resume mercury"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("pause project hard output missing %q:\n%s", want, out)
 		}
 	}
 }

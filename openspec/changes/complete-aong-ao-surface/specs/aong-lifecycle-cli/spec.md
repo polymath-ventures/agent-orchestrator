@@ -73,6 +73,8 @@ actual effect:
 - `aong resume` SHALL run `ao resume --all`, restoring normal intake and spawns.
 - `aong pause <project>` SHALL run `ao pause <project>`, preserving AO's
   project-scoped pause.
+- `aong pause <project> --hard` SHALL run `ao pause <project> --hard`,
+  preserving AO's project-scoped hard pause.
 - `aong resume <project>` SHALL run `ao resume <project>`, preserving AO's
   project-scoped resume.
 
@@ -101,6 +103,11 @@ the available work-control verbs are `aong drain` for gate-and-drain-at-idle and
 
 - **WHEN** `aong pause my-project` runs
 - **THEN** `ao pause my-project` is invoked
+
+#### Scenario: project hard pause is preserved
+
+- **WHEN** `aong pause my-project --hard` runs
+- **THEN** `ao pause my-project --hard` is invoked
 
 #### Scenario: project resume is preserved
 

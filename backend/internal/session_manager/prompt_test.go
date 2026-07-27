@@ -46,7 +46,7 @@ func TestBuildSystemPrompt_WorkerIncludesRulesAndOrchestrator(t *testing.T) {
 	for _, want := range []string{
 		"## AO Worker Role",
 		"## Orchestrator Coordination",
-		`aong send --session mer-orchestrator --message "<your message>"`,
+		`ao send --session mer-orchestrator --message "<your message>"`,
 		"## Pull Requests for This Session",
 		"## Project Rules",
 		"Always run focused tests.",

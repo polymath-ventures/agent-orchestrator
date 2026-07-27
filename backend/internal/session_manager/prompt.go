@@ -310,7 +310,7 @@ An active orchestrator session exists for this project.
 
 Message it only for true blockers, cross-session coordination, or decisions you cannot resolve locally:
 
-`+"`aong send --session %s --message \"<your message>\"`", orchestratorID)
+`+"`ao send --session %s --message \"<your message>\"`", orchestratorID)
 }
 
 // workerMultiPRPrompt explains the branch convention AO uses to attribute pull
