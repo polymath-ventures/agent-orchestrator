@@ -38,7 +38,7 @@ die() { log "FATAL: $*"; exit 1; }
 # mid-deploy would leave the system half-flipped with a misleading error.
 preflight() {
   local dep
-  for dep in git go npm curl python3 systemctl journalctl cmp install; do
+  for dep in git go npm node curl systemctl journalctl cmp install; do
     command -v "$dep" >/dev/null 2>&1 || die "missing dependency: $dep"
   done
 }
@@ -64,63 +64,15 @@ restart_and_verify() {
   # executablePath proves WHICH FILE is answering; buildRevision proves WHAT
   # THAT FILE IS. Without the second, a stale binary left at the expected path
   # satisfies every other check, which is the failure this gate exists to catch.
-  #
-  # Checks raise instead of assert: python -O strips assert statements, which
-  # would silently void the whole gate if PYTHONOPTIMIZE ever reached this
-  # environment. stdout carries only the port, so any non-numeric output is a
-  # failure explanation worth surfacing rather than discarding.
   local run_file="${AO_RUN_FILE:-$HOME/.ao/running.json}" port="" probe="" last_err=""
   # Streams stay separate: stdout is the port and nothing else, stderr carries
   # the diagnosis or the legacy-rollback warning. Merging them would make a
   # successful-but-warning probe indistinguishable from a failed one.
   local probe_err="$DEPLOY_ROOT/.healthz-probe.err"
+  local gate; gate="$(dirname "${BASH_SOURCE[0]}")/healthz-gate.mjs"
   mkdir -p "$DEPLOY_ROOT"
   for _ in $(seq 1 30); do
-    probe="$(python3 - "$run_file" "$BIN_TARGET" "$expected_sha" "$provenance_required" <<'PY' 2>"$probe_err" || true
-import json, sys, urllib.request
-
-run_file, bin_target, expected = sys.argv[1], sys.argv[2], sys.argv[3]
-provenance_required = sys.argv[4] == "1"
-
-def die(msg):
-    raise SystemExit(msg)
-
-run = json.load(open(run_file))
-health = json.load(urllib.request.urlopen(f"http://127.0.0.1:{run['port']}/healthz", timeout=3))
-
-if health.get("status") != "ok":
-    die(f"healthz reports status={health.get('status')!r}, want ok")
-if health.get("pid") != run["pid"]:
-    die(f"healthz pid {health.get('pid')} != run-file pid {run['pid']}")
-if health.get("executablePath") != bin_target:
-    die(f"responder is {health.get('executablePath')}, not {bin_target}")
-
-# Kept distinct on purpose: a daemon too old to report at all, a build whose
-# provenance was never recorded, and the wrong commit send an operator to three
-# different places.
-revision = health.get("buildRevision")
-modified = health.get("buildModified")
-
-# Checked first and unconditionally: a daemon that says its tree was dirty is
-# refused even on the relaxed rollback path. The relaxation below exists for
-# artifacts that cannot ANSWER, never for ones that answer badly.
-if modified is True:
-    die("responder reports a modified build; the deployed tree was not clean")
-
-if revision is None:
-    if provenance_required:
-        die("responder predates buildRevision; it cannot prove which commit it is")
-    sys.stderr.write(f"WARN: responder predates buildRevision; provenance unverified against {expected}\n")
-elif revision == "unknown":
-    die("responder reports an unstamped build (no VCS metadata at build time, or -buildvcs=false); it cannot prove which commit it is")
-elif revision != expected:
-    die(f"responder was built from {revision}, not the expected {expected}")
-elif modified is not False:
-    die(f"responder does not report a clean build of {revision} (buildModified={modified!r})")
-
-print(run["port"])
-PY
-)"
+    probe="$(node "$gate" "$run_file" "$BIN_TARGET" "$expected_sha" "$provenance_required" 2>"$probe_err" || true)"
     # Only a bare port on stdout means every check passed.
     case "$probe" in
       ''|*[!0-9]*)
