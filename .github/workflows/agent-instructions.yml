@@ -1,0 +1,37 @@
+name: Agent instructions
+
+# CLAUDE.md / AGENTS.md / AGENTS.shared.md (and GEMINI.md where enabled) are
+# GENERATED from
+# agent-instructions/ by scripts/polyscribe.sh and carry a DO NOT EDIT banner.
+# Nothing verified that, so a hand-edit to a generated file survived review and
+# sat on main until the next regeneration silently reverted it (#204 updated
+# CLAUDE.md to document `aong` without touching the source, and never reached
+# AGENTS.md or AGENTS.shared.md at all).
+#
+# The banner states the rule; this makes it true. --check renders the sources to
+# temporary files and fails if the committed output differs from them.
+
+on:
+  pull_request:
+    paths:
+      - "agent-instructions/**"
+      - "scripts/polyscribe.sh"
+      - "CLAUDE.md"
+      - "AGENTS.md"
+      - "AGENTS.shared.md"
+      # Listed even though this repo does not currently generate it: polyscribe
+      # emits GEMINI.md conditionally, so without the filter a direct edit to it
+      # would skip this check the moment the agy client is enabled.
+      - "GEMINI.md"
+      - ".github/workflows/agent-instructions.yml"
+
+jobs:
+  generated-files-match-sources:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Generated agent instructions match their sources
+        run: bash scripts/polyscribe.sh --check
