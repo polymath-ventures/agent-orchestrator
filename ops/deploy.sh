@@ -38,14 +38,36 @@ die() { log "FATAL: $*"; exit 1; }
 # mid-deploy would leave the system half-flipped with a misleading error.
 preflight() {
   local dep
-  for dep in git go npm curl python3 systemctl journalctl cmp install; do
+  for dep in git go npm node curl systemctl journalctl cmp install; do
     command -v "$dep" >/dev/null 2>&1 || die "missing dependency: $dep"
   done
+  # Presence is not capability: the healthz gate uses global fetch, so an
+  # old-but-working node would pass the check above and then fail AFTER the
+  # release flip. Every path needs the gate, so this floor is checked here.
+  require_node 18 "the healthz gate (global fetch)"
+}
+
+# Deliberately two floors rather than one. The gate needs node 18; the web
+# build needs vite's, which is higher. Applying the higher floor everywhere
+# would turn an emergency rollback — which runs no build at all — away from a
+# host that could have recovered. Each requirement is checked where it is
+# actually needed, before any mutation on that path.
+require_node() {
+  local want="$1" why="$2" have
+  have="$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)"
+  [ "$have" -ge "$want" ] 2>/dev/null \
+    || die "node $want+ required for $why (found $(node --version 2>/dev/null || echo none))"
 }
 
 repo_root() { cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd; }
 
 restart_and_verify() {
+  # provenance_required=0 only on rollback: a release built before the daemon
+  # reported its own revision cannot answer, and blocking recovery to a
+  # known-good older release is worse than the gap. Everything the artifact CAN
+  # prove is still enforced there. Self-healing: once every release in the
+  # rollback window postdates the field, rollback is strict again.
+  local expected_sha="$1" provenance_required="${2:-1}"
   systemctl --user daemon-reload
   systemctl --user restart "${SERVICES[@]}"
   log "Services restarted: ${SERVICES[*]}"
@@ -54,23 +76,36 @@ restart_and_verify() {
   # Identity, not just liveness: the healthz responder must be the daemon this
   # deploy installed (executablePath) and the process the run file names (pid)
   # — a stale or foreign daemon on the same port must not satisfy the gate.
-  local run_file="${AO_RUN_FILE:-$HOME/.ao/running.json}" port=""
+  #
+  # executablePath proves WHICH FILE is answering; buildRevision proves WHAT
+  # THAT FILE IS. Without the second, a stale binary left at the expected path
+  # satisfies every other check, which is the failure this gate exists to catch.
+  local run_file="${AO_RUN_FILE:-$HOME/.ao/running.json}" port="" probe="" last_err=""
+  # Streams stay separate: stdout is the port and nothing else, stderr carries
+  # the diagnosis or the legacy-rollback warning. Merging them would make a
+  # successful-but-warning probe indistinguishable from a failed one.
+  local probe_err="$DEPLOY_ROOT/.healthz-probe.err"
+  local gate; gate="$(dirname "${BASH_SOURCE[0]}")/healthz-gate.mjs"
+  mkdir -p "$DEPLOY_ROOT"
   for _ in $(seq 1 30); do
-    port="$(python3 - "$run_file" "$BIN_TARGET" <<'PY' 2>/dev/null || true
-import json, sys, urllib.request
-run = json.load(open(sys.argv[1]))
-health = json.load(urllib.request.urlopen(f"http://127.0.0.1:{run['port']}/healthz", timeout=3))
-assert health.get("status") == "ok"
-assert health.get("pid") == run["pid"], f"healthz pid {health.get('pid')} != run-file pid {run['pid']}"
-assert health.get("executablePath") == sys.argv[2], f"responder is {health.get('executablePath')}, not {sys.argv[2]}"
-print(run["port"])
-PY
-)"
-    [ -n "$port" ] && break
+    probe="$(node "$gate" "$run_file" "$BIN_TARGET" "$expected_sha" "$provenance_required" 2>"$probe_err" || true)"
+    # Only a bare port on stdout means every check passed.
+    case "$probe" in
+      ''|*[!0-9]*)
+        last_err="$(cat "$probe_err" 2>/dev/null || true)"
+        ;;
+      *)
+        port="$probe"
+        # A relaxed rollback announces itself here. Log it rather than let an
+        # unverified provenance pass in silence.
+        if [ -s "$probe_err" ]; then log "$(cat "$probe_err")"; fi
+        break
+        ;;
+    esac
     sleep 2
   done
-  [ -n "$port" ] || die "daemon healthz never verified as the installed binary (run file: $run_file)"
-  log "Daemon healthy and identity-verified on 127.0.0.1:$port."
+  [ -n "$port" ] || die "daemon healthz never verified as the installed binary at $expected_sha (run file: $run_file): ${last_err:-no response}"
+  log "Daemon healthy and identity-verified on 127.0.0.1:$port (build $expected_sha)."
 
   # ao-web serves the shell and proxies the daemon on the same origin.
   curl -fsS -m 5 "http://127.0.0.1:5173/healthz" >/dev/null || die "ao-web proxy is not serving /healthz"
@@ -136,12 +171,16 @@ rollback() {
   fi
   sync_units "$prev"
   cat "$prev/REVISION" > "$LAST_FILE"
-  restart_and_verify
+  # The rollback target's own recorded revision — the gate proves we landed on
+  # the release we rolled back TO, not merely that something healthy is up.
+  restart_and_verify "$(cat "$prev/REVISION")" 0
   log "Rollback complete: $(cat "$prev/REVISION")"
 }
 
 deploy() {
   local ref="${1:-origin/main}" root sha ts rel prev_target
+  # Only the forward path builds the web bundle, so only it needs vite's floor.
+  require_node 20 "the web bundle build (vite)"
   root="$(repo_root)"
   git -C "$root" fetch origin --quiet
   sha="$(git -C "$root" rev-parse --verify "$ref^{commit}")" || die "cannot resolve ref: $ref"
@@ -183,7 +222,7 @@ deploy() {
   sync_units "$rel"
   log "Flipped current -> $rel; installed $BIN_TARGET."
 
-  restart_and_verify
+  restart_and_verify "$sha" 1
   log "Deploy complete: $sha"
 }
 

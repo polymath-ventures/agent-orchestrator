@@ -67,9 +67,22 @@ func TestHealthProbesIncludeDaemonIdentity(t *testing.T) {
 			ExecutablePath          string `json:"executablePath"`
 			WorkingDirectory        string `json:"workingDirectory"`
 			StartupWorkingDirectory string `json:"startupWorkingDirectory"`
+			BuildRevision           string `json:"buildRevision"`
+			BuildModified           *bool  `json:"buildModified"`
 		}
 		if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
 			t.Fatalf("decode %s: %v", path, err)
+		}
+		// Unconditional, unlike executablePath: a caller with no read access to
+		// the binary uses these to tell which source produced the daemon
+		// answering it, and an absent field is indistinguishable from an old
+		// build that never reported one. buildModified is checked as a pointer
+		// so an omitted key fails rather than decoding to a confident "clean".
+		if body.BuildRevision == "" {
+			t.Errorf("GET %s buildRevision is absent; the responder's provenance is unknowable to any caller that cannot read its binary", path)
+		}
+		if body.BuildModified == nil {
+			t.Errorf("GET %s buildModified is absent; a consumer cannot tell a clean build from one that never said", path)
 		}
 		if body.ExecutablePath != wantExe {
 			t.Errorf("GET %s executablePath = %q, want %q", path, body.ExecutablePath, wantExe)

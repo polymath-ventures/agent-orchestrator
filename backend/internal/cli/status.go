@@ -31,15 +31,21 @@ const (
 )
 
 type daemonStatus struct {
-	State         daemonState   `json:"state"`
-	PID           int           `json:"pid,omitempty"`
-	Port          int           `json:"port,omitempty"`
-	StartedAt     *time.Time    `json:"startedAt,omitempty"`
-	Uptime        string        `json:"uptime,omitempty"`
-	RunFile       string        `json:"runFile"`
-	DataDir       string        `json:"dataDir"`
-	Health        string        `json:"health,omitempty"`
-	Ready         string        `json:"ready,omitempty"`
+	State     daemonState `json:"state"`
+	PID       int         `json:"pid,omitempty"`
+	Port      int         `json:"port,omitempty"`
+	StartedAt *time.Time  `json:"startedAt,omitempty"`
+	Uptime    string      `json:"uptime,omitempty"`
+	RunFile   string      `json:"runFile"`
+	DataDir   string      `json:"dataDir"`
+	Health    string      `json:"health,omitempty"`
+	Ready     string      `json:"ready,omitempty"`
+	// BuildRevision is whatever the running daemon reported, verbatim — a
+	// commit sha, or "unknown". It stays empty only when no daemon answered, or
+	// when one answered that predates the field. BuildModified is a pointer for
+	// the same reason: a plain bool would turn that silence into "clean".
+	BuildRevision string        `json:"buildRevision,omitempty"`
+	BuildModified *bool         `json:"buildModified,omitempty"`
 	Fleet         string        `json:"fleet,omitempty"`
 	Quotas        []statusQuota `json:"quotas,omitempty"`
 	Error         string        `json:"error,omitempty"`
@@ -69,6 +75,8 @@ type probeResult struct {
 	PID              int    `json:"pid"`
 	ExecutablePath   string `json:"executablePath,omitempty"`
 	WorkingDirectory string `json:"workingDirectory,omitempty"`
+	BuildRevision    string `json:"buildRevision,omitempty"`
+	BuildModified    *bool  `json:"buildModified,omitempty"`
 }
 
 func newStatusCommand(ctx *commandContext) *cobra.Command {
@@ -133,6 +141,8 @@ func (c *commandContext) inspectDaemon(ctx context.Context) (daemonStatus, error
 	}
 	st.owned = true
 	st.Health = health.Status
+	st.BuildRevision = health.BuildRevision
+	st.BuildModified = health.BuildModified
 	if health.Status != "ok" {
 		st.State = stateUnhealthy
 		return st, nil
@@ -290,6 +300,17 @@ func writeStatus(cmd *cobra.Command, st daemonStatus) error {
 	}
 	if st.Ready != "" {
 		if _, err := fmt.Fprintf(out, "  readyz: %s\n", st.Ready); err != nil {
+			return err
+		}
+	}
+	if st.BuildRevision != "" {
+		build := st.BuildRevision
+		// Only an explicit "this tree was clean" is left unqualified; a daemon
+		// that did not say is flagged rather than presented as a clean build.
+		if st.BuildModified == nil || *st.BuildModified {
+			build += " (modified)"
+		}
+		if _, err := fmt.Fprintf(out, "  build: %s\n", build); err != nil {
 			return err
 		}
 	}

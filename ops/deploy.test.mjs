@@ -34,6 +34,29 @@ test("deploy.sh keeps its load-bearing invariants", async () => {
 	assert.match(text, /sync_units "\$prev"/);
 	// The health gate must verify identity (pid + executablePath), not mere 200s.
 	assert.match(text, /executablePath/);
+	// The gate's own logic is covered behaviorally in deploy-gate.test.mjs, which
+	// imports healthz-gate.mjs and runs it against fixture payloads. What that
+	// suite CANNOT see is the shell wiring around the module — it calls the gate
+	// directly — so the wiring is pinned here instead.
+	//
+	// Streams must stay apart. Merging stderr into stdout (`2>&1`) makes the
+	// legacy-rollback warning indistinguishable from the port, and the numeric
+	// success test below then rejects the one case that path exists to allow.
+	// This shipped broken once; the behavioral suite could not catch it.
+	assert.match(text, /2>"\$probe_err"/);
+	// The gate is a node module, not an inline interpreter blob: ops/ is node,
+	// npm is already a preflight dependency, and a real module can be imported
+	// by its tests instead of extracted from this file.
+	assert.match(text, /node "\$gate"/);
+	assert.doesNotMatch(text, /python/);
+	// Success is a bare numeric stdout and nothing else.
+	assert.match(text, /''\|\*\[!0-9\]\*\)/);
+	// Each entry point must pass its OWN expected revision, and only rollback may
+	// relax the provenance requirement. A rollback verifying against the incoming
+	// sha, or a deploy that tolerated a silent daemon, would both be invisible to
+	// the behavioral suite.
+	assert.match(text, /restart_and_verify "\$sha" 1/);
+	assert.match(text, /restart_and_verify "\$\(cat "\$prev\/REVISION"\)" 0/);
 	// The public check must exercise the browser-mode API path with an Origin.
 	assert.match(text, /-H "Origin: \$public_url"/);
 	// All dependencies are checked before any mutation happens.
