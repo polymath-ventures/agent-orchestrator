@@ -205,7 +205,7 @@ describe("shared agent/model selection helpers", () => {
 });
 
 describe("ModelAvailabilityField", () => {
-	it("renders dynamic harness/model/effort choices, selected status, checked time, and fallback provenance", () => {
+	it("renders dynamic harness/model/effort choices, checked time, and fallback provenance, and suppresses a non-actionable status", () => {
 		const onChange = vi.fn();
 		const onRefresh = vi.fn();
 		render(
@@ -222,8 +222,11 @@ describe("ModelAvailabilityField", () => {
 		expect(screen.getByLabelText("Harness")).toHaveValue("codex-fugu");
 		expect(screen.getByLabelText("Model")).toHaveValue("fugu");
 		expect(screen.getByLabelText("Effort")).toHaveValue("xhigh");
-		expect(screen.getByText(/Status: unknown/i)).toBeInTheDocument();
-		expect(screen.getByText(/not probed/i)).toBeInTheDocument();
+		// A non-actionable status is never rendered — it used to depend on every
+		// caller passing statusVisibility="actionable", and now holds by
+		// construction. Provenance and catalog warnings are unaffected.
+		expect(screen.queryByText(/Status: unknown/i)).not.toBeInTheDocument();
+		expect(screen.queryByText(/not probed/i)).not.toBeInTheDocument();
 		expect(screen.getByText(/known fallback catalog/i)).toBeInTheDocument();
 		expect(screen.getByText(/installed catalog could not be read/i)).toBeInTheDocument();
 		expect(screen.getByText(/Checked/)).toHaveAttribute("datetime", availability.checkedAt);
@@ -281,7 +284,6 @@ describe("ModelAvailabilityField", () => {
 				value={{ harness: "codex-fugu", model: "fugu", effort: "xhigh" }}
 				onChange={vi.fn()}
 				availability={unreachableAvailability}
-				statusVisibility="actionable"
 			/>,
 		);
 
@@ -295,7 +297,6 @@ describe("ModelAvailabilityField", () => {
 				value={{ harness: "codex-fugu", model: "retired-model", effort: "high" }}
 				onChange={vi.fn()}
 				availability={unreachableAvailability}
-				statusVisibility="actionable"
 			/>,
 		);
 

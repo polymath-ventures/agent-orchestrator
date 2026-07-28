@@ -144,7 +144,6 @@ export function PrimeSection() {
 					disabled={busy}
 					isRefreshing={isRefreshingModels || modelAvailabilityQuery.isFetching}
 					onRefresh={refreshModels}
-					statusVisibility="actionable"
 					harnessEmptyLabel="Select harness"
 					modelEmptyLabel="Select model"
 					effortEmptyLabel="Select effort"

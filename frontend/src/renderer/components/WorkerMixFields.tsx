@@ -222,7 +222,6 @@ export function WorkerMixFields({
 								isRefreshing={isRefreshing}
 								onRefresh={onRefresh}
 								showHarness={false}
-								statusVisibility="actionable"
 								emptyLabel="Default / inherit"
 								showManualModelNotice
 							/>

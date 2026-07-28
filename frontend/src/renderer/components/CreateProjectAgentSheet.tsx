@@ -293,7 +293,6 @@ export function CreateProjectAgentSheet({
 											isRefreshing={isRefreshingModels || modelAvailabilityQuery.isFetching}
 											onRefresh={() => refreshModels().catch(() => undefined)}
 											showHarness={false}
-											statusVisibility="actionable"
 											emptyLabel="Harness default"
 											showManualModelNotice
 										/>
