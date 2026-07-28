@@ -1782,22 +1782,24 @@ func (m *Manager) RetireForReplacement(ctx context.Context, id domain.SessionID)
 		m.logger.Warn("retire replacement: stale workspace; skipping preserve", "sessionID", id, "path", ws.Path, "error", err)
 	}
 	handle := runtimeHandle(rec.Metadata)
+	cleanupCtx, cancelCleanup := cleanupContext(ctx)
+	defer cancelCleanup()
 	if handle.ID != "" {
-		if err := m.runtime.Destroy(ctx, handle); err != nil {
+		if err := m.runtime.Destroy(cleanupCtx, handle); err != nil {
 			return fmt.Errorf("retire replacement %s: runtime: %w", id, err)
 		}
 	}
-	if err := m.workspace.ForceDestroy(ctx, ws); err != nil {
+	if err := m.workspace.ForceDestroy(cleanupCtx, ws); err != nil {
 		if staleWorkspace {
 			m.logger.Warn("retire replacement: stale workspace cleanup failed", "sessionID", id, "path", ws.Path, "error", err)
 		}
 		return fmt.Errorf("retire replacement %s: force destroy: %w", id, err)
 	}
-	m.cleanupAgentWorkspace(ctx, rec, ws.Path)
-	if err := m.store.DeleteSessionWorktrees(ctx, rec.ID); err != nil {
+	m.cleanupAgentWorkspace(cleanupCtx, rec, ws.Path)
+	if err := m.store.DeleteSessionWorktrees(cleanupCtx, rec.ID); err != nil {
 		return fmt.Errorf("retire replacement %s: clear restore markers: %w", id, err)
 	}
-	if err := m.lcm.MarkTerminated(ctx, rec.ID); err != nil {
+	if err := m.lcm.MarkTerminated(cleanupCtx, rec.ID); err != nil {
 		return fmt.Errorf("retire replacement %s: mark terminated: %w", id, err)
 	}
 	return nil
@@ -1815,24 +1817,26 @@ func (m *Manager) retireWorkspaceProjectForReplacement(ctx context.Context, rec 
 		}
 	}
 	handle := runtimeHandle(rec.Metadata)
+	cleanupCtx, cancelCleanup := cleanupContext(ctx)
+	defer cancelCleanup()
 	if handle.ID != "" {
-		if err := m.runtime.Destroy(ctx, handle); err != nil {
+		if err := m.runtime.Destroy(cleanupCtx, handle); err != nil {
 			return fmt.Errorf("retire replacement %s: runtime: %w", rec.ID, err)
 		}
 	}
 	for i := len(rows) - 1; i >= 0; i-- {
-		if err := m.workspace.ForceDestroy(ctx, workspaceInfoFromRepoInfo(rows[i])); err != nil {
+		if err := m.workspace.ForceDestroy(cleanupCtx, workspaceInfoFromRepoInfo(rows[i])); err != nil {
 			if staleRepos[rows[i].RepoName] {
 				m.logger.Warn("retire replacement: stale workspace repo cleanup failed", "sessionID", rec.ID, "repo", rows[i].RepoName, "path", rows[i].Path, "error", err)
 			}
 			return fmt.Errorf("retire replacement %s repo %s: force destroy: %w", rec.ID, rows[i].RepoName, err)
 		}
 	}
-	m.cleanupAgentWorkspace(ctx, rec, rec.Metadata.WorkspacePath)
-	if err := m.store.DeleteSessionWorktrees(ctx, rec.ID); err != nil {
+	m.cleanupAgentWorkspace(cleanupCtx, rec, rec.Metadata.WorkspacePath)
+	if err := m.store.DeleteSessionWorktrees(cleanupCtx, rec.ID); err != nil {
 		return fmt.Errorf("retire replacement %s: clear restore markers: %w", rec.ID, err)
 	}
-	if err := m.lcm.MarkTerminated(ctx, rec.ID); err != nil {
+	if err := m.lcm.MarkTerminated(cleanupCtx, rec.ID); err != nil {
 		return fmt.Errorf("retire replacement %s: mark terminated: %w", rec.ID, err)
 	}
 	return nil

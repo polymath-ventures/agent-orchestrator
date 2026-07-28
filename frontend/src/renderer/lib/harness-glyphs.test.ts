@@ -1,7 +1,34 @@
 import { describe, expect, it } from "vitest";
-import { AGENT_OPTIONS } from "./agent-options";
+import { selectableAgentCatalog } from "./agent-selection";
 import { NEUTRAL_HARNESS_TILE, getHarnessGlyphView } from "./harness-glyphs";
-import type { AgentProvider } from "../types/workspace";
+import type { AgentInfo } from "./agent-selection";
+
+const GLYPH_TEST_AGENTS = [
+	"claude-code",
+	"codex",
+	"aider",
+	"opencode",
+	"grok",
+	"droid",
+	"amp",
+	"agy",
+	"crush",
+	"cursor",
+	"qwen",
+	"copilot",
+	"goose",
+	"auggie",
+	"continue",
+	"devin",
+	"cline",
+	"kimi",
+	"kiro",
+	"kilocode",
+	"vibe",
+	"pi",
+	"autohand",
+	"fake",
+].map((id) => ({ id, label: id, reviewerCapable: false })) satisfies AgentInfo[];
 
 // The sidebar indicator must resolve *something* renderable for every harness
 // the daemon can spawn, including ones added after this table was written.
@@ -64,12 +91,16 @@ describe("getHarnessGlyphView", () => {
 	});
 
 	it("renders something for every harness the client knows about", () => {
-		const providers: AgentProvider[] = [...AGENT_OPTIONS, "codex-fugu"];
+		const providers =
+			selectableAgentCatalog(
+				{ installed: GLYPH_TEST_AGENTS },
+				{ includeDefault: { id: "codex-fugu", label: "codex-fugu", reviewerCapable: false } },
+			).installed ?? [];
 		for (const provider of providers) {
-			const view = getHarnessGlyphView(provider);
-			expect(view.label, `${provider} needs a label`).not.toHaveLength(0);
+			const view = getHarnessGlyphView(provider.id);
+			expect(view.label, `${provider.id} needs a label`).not.toHaveLength(0);
 			const renderable = view.paths.length > 0 || Boolean(view.monogram);
-			expect(renderable, `${provider} renders neither a mark nor a monogram`).toBe(true);
+			expect(renderable, `${provider.id} renders neither a mark nor a monogram`).toBe(true);
 		}
 	});
 

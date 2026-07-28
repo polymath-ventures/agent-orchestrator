@@ -93,28 +93,41 @@ func (m *Manager) ReleaseStaleRoleResources(ctx context.Context, target domain.R
 // lifecycle transition to make here — only the workspace is reclaimed.
 func (m *Manager) releaseRoleWorkspace(ctx context.Context, rec domain.SessionRecord) error {
 	ws := workspaceInfoForTeardown(rec, m.dataDir)
-	if rows, ok, rowErr := m.workspaceProjectRows(ctx, rec); rowErr != nil {
+	rows, ok, rowErr := m.workspaceProjectRows(ctx, rec)
+	if rowErr != nil {
 		return fmt.Errorf("workspace rows: %w", rowErr)
-	} else if ok {
+	}
+	if ok {
 		for i := len(rows) - 1; i >= 0; i-- {
 			info := workspaceInfoFromRepoInfo(rows[i])
 			if err := m.stashBeforeRelease(ctx, rec, info, rows[i].RepoName); err != nil {
 				return err
 			}
-			if err := m.workspace.ForceDestroy(ctx, info); err != nil {
+		}
+		cleanupCtx, cancelCleanup := cleanupContext(ctx)
+		defer cancelCleanup()
+		for i := len(rows) - 1; i >= 0; i-- {
+			info := workspaceInfoFromRepoInfo(rows[i])
+			if err := m.workspace.ForceDestroy(cleanupCtx, info); err != nil {
 				return fmt.Errorf("force destroy %s: %w", rows[i].RepoName, err)
 			}
 		}
-	} else {
-		if err := m.stashBeforeRelease(ctx, rec, ws, ""); err != nil {
-			return err
+		m.cleanupAgentWorkspace(cleanupCtx, rec, rec.Metadata.WorkspacePath)
+		if err := m.store.DeleteSessionWorktrees(cleanupCtx, rec.ID); err != nil {
+			return fmt.Errorf("clear restore markers: %w", err)
 		}
-		if err := m.workspace.ForceDestroy(ctx, ws); err != nil {
-			return fmt.Errorf("force destroy: %w", err)
-		}
+		return nil
 	}
-	m.cleanupAgentWorkspace(ctx, rec, rec.Metadata.WorkspacePath)
-	if err := m.store.DeleteSessionWorktrees(ctx, rec.ID); err != nil {
+	if err := m.stashBeforeRelease(ctx, rec, ws, ""); err != nil {
+		return err
+	}
+	cleanupCtx, cancelCleanup := cleanupContext(ctx)
+	defer cancelCleanup()
+	if err := m.workspace.ForceDestroy(cleanupCtx, ws); err != nil {
+		return fmt.Errorf("force destroy: %w", err)
+	}
+	m.cleanupAgentWorkspace(cleanupCtx, rec, rec.Metadata.WorkspacePath)
+	if err := m.store.DeleteSessionWorktrees(cleanupCtx, rec.ID); err != nil {
 		return fmt.Errorf("clear restore markers: %w", err)
 	}
 	return nil
