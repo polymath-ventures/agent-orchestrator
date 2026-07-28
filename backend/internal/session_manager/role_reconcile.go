@@ -19,6 +19,11 @@ type ReleaseResult struct {
 	Preserved []domain.SessionID
 }
 
+type releaseWorkspaceTarget struct {
+	info     ports.WorkspaceInfo
+	repoName string
+}
+
 // ReleaseStaleRoleResources prepares a role target for a replacement: it reaps
 // runtimes leaked by terminated sessions of that role and releases the
 // workspaces those sessions still hold, so the canonical role branch is free
@@ -93,28 +98,38 @@ func (m *Manager) ReleaseStaleRoleResources(ctx context.Context, target domain.R
 // lifecycle transition to make here — only the workspace is reclaimed.
 func (m *Manager) releaseRoleWorkspace(ctx context.Context, rec domain.SessionRecord) error {
 	ws := workspaceInfoForTeardown(rec, m.dataDir)
-	if rows, ok, rowErr := m.workspaceProjectRows(ctx, rec); rowErr != nil {
+	rows, ok, rowErr := m.workspaceProjectRows(ctx, rec)
+	if rowErr != nil {
 		return fmt.Errorf("workspace rows: %w", rowErr)
-	} else if ok {
+	}
+	targets := []releaseWorkspaceTarget{{info: ws}}
+	if ok {
+		targets = make([]releaseWorkspaceTarget, 0, len(rows))
 		for i := len(rows) - 1; i >= 0; i-- {
-			info := workspaceInfoFromRepoInfo(rows[i])
-			if err := m.stashBeforeRelease(ctx, rec, info, rows[i].RepoName); err != nil {
-				return err
-			}
-			if err := m.workspace.ForceDestroy(ctx, info); err != nil {
-				return fmt.Errorf("force destroy %s: %w", rows[i].RepoName, err)
-			}
+			targets = append(targets, releaseWorkspaceTarget{
+				info:     workspaceInfoFromRepoInfo(rows[i]),
+				repoName: rows[i].RepoName,
+			})
 		}
-	} else {
-		if err := m.stashBeforeRelease(ctx, rec, ws, ""); err != nil {
+	}
+	for _, target := range targets {
+		if err := m.stashBeforeRelease(ctx, rec, target.info, target.repoName); err != nil {
 			return err
 		}
-		if err := m.workspace.ForceDestroy(ctx, ws); err != nil {
+	}
+
+	cleanupCtx, cancelCleanup := cleanupContext(ctx)
+	defer cancelCleanup()
+	for _, target := range targets {
+		if err := m.workspace.ForceDestroy(cleanupCtx, target.info); err != nil {
+			if target.repoName != "" {
+				return fmt.Errorf("force destroy %s: %w", target.repoName, err)
+			}
 			return fmt.Errorf("force destroy: %w", err)
 		}
 	}
-	m.cleanupAgentWorkspace(ctx, rec, rec.Metadata.WorkspacePath)
-	if err := m.store.DeleteSessionWorktrees(ctx, rec.ID); err != nil {
+	m.cleanupAgentWorkspace(cleanupCtx, rec, rec.Metadata.WorkspacePath)
+	if err := m.store.DeleteSessionWorktrees(cleanupCtx, rec.ID); err != nil {
 		return fmt.Errorf("clear restore markers: %w", err)
 	}
 	return nil

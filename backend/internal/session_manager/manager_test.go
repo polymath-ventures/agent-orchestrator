@@ -4647,7 +4647,7 @@ func TestRetireForReplacementStaleWorkspaceSkipsPreserveAndTerminates(t *testing
 	}
 }
 
-func TestRetireForReplacementStaleWorkspaceCleanupFailureLeavesSessionActive(t *testing.T) {
+func TestRetireForReplacementStaleWorkspaceCleanupFailureMarksSessionTerminated(t *testing.T) {
 	m, st, rt, ws := newLifecycleManager()
 	ws.stashErr = ports.ErrWorkspaceStale
 	ws.forceDestroyErr = errors.New("stale cleanup failed")
@@ -4670,8 +4670,8 @@ func TestRetireForReplacementStaleWorkspaceCleanupFailureLeavesSessionActive(t *
 	if err == nil || !strings.Contains(err.Error(), "force destroy") {
 		t.Fatalf("RetireForReplacement err = %v, want force destroy failure", err)
 	}
-	if st.sessions["mer-orch"].IsTerminated {
-		t.Fatal("session must remain active when stale cleanup fails")
+	if !st.sessions["mer-orch"].IsTerminated {
+		t.Fatal("session must be marked terminated once runtime destroy succeeded, even when stale cleanup fails")
 	}
 	if rows := st.worktrees["mer-orch"]; len(rows) != 1 {
 		t.Fatalf("restore markers after stale cleanup failure = %v, want retained", rows)
@@ -4854,8 +4854,8 @@ func TestRetireForReplacementWorkspaceProjectForceDestroyFailureKeepsRepoInvento
 	if err == nil || !strings.Contains(err.Error(), "force destroy") {
 		t.Fatalf("RetireForReplacement err = %v, want force destroy failure", err)
 	}
-	if st.sessions["mer-orch"].IsTerminated {
-		t.Fatal("session must remain active when force destroy fails")
+	if !st.sessions["mer-orch"].IsTerminated {
+		t.Fatal("session must be marked terminated once runtime destroy succeeded, even when force destroy fails")
 	}
 	if rows := st.worktrees["mer-orch"]; len(rows) != 2 {
 		t.Fatalf("workspace repo inventory after force destroy failure = %v, want root and child retained", rows)
@@ -4888,15 +4888,15 @@ func TestRetireForReplacementWorkspaceProjectStaleCleanupFailureKeepsRepoInvento
 	if err == nil || !strings.Contains(err.Error(), "force destroy") {
 		t.Fatalf("RetireForReplacement err = %v, want force destroy failure", err)
 	}
-	if st.sessions["mer-orch"].IsTerminated {
-		t.Fatal("session must remain active when stale repo cleanup fails")
+	if !st.sessions["mer-orch"].IsTerminated {
+		t.Fatal("session must be marked terminated once runtime destroy succeeded, even when stale cleanup fails")
 	}
 	if rows := st.worktrees["mer-orch"]; len(rows) != 2 {
 		t.Fatalf("workspace repo inventory after stale cleanup failure = %v, want root and child retained", rows)
 	}
 }
 
-func TestRetireForReplacementForceDestroyFailureLeavesSessionActive(t *testing.T) {
+func TestRetireForReplacementForceDestroyFailureMarksSessionTerminated(t *testing.T) {
 	m, st, rt, ws := newLifecycleManager()
 	ws.forceDestroyErr = errors.New("worktree still registered")
 	ws.stashRef = "refs/ao/preserved/mer-orch"
@@ -4919,8 +4919,8 @@ func TestRetireForReplacementForceDestroyFailureLeavesSessionActive(t *testing.T
 	if err == nil || !strings.Contains(err.Error(), "force destroy") {
 		t.Fatalf("RetireForReplacement err = %v, want force destroy failure", err)
 	}
-	if st.sessions["mer-orch"].IsTerminated {
-		t.Fatal("session must remain active so retry can retire it again")
+	if !st.sessions["mer-orch"].IsTerminated {
+		t.Fatal("session must be marked terminated once runtime destroy succeeded, even when workspace release fails")
 	}
 	if rt.destroyed != 1 {
 		t.Fatalf("runtime destroyed = %d, want 1 before workspace release", rt.destroyed)

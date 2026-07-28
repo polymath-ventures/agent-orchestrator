@@ -1,7 +1,36 @@
 import { describe, expect, it } from "vitest";
-import { AGENT_OPTIONS } from "./agent-options";
 import { NEUTRAL_HARNESS_TILE, getHarnessGlyphView } from "./harness-glyphs";
 import type { AgentProvider } from "../types/workspace";
+
+const GLYPH_TEST_PROVIDER_MAP = {
+	"claude-code": true,
+	codex: true,
+	"codex-fugu": true,
+	aider: true,
+	opencode: true,
+	grok: true,
+	droid: true,
+	amp: true,
+	agy: true,
+	crush: true,
+	cursor: true,
+	qwen: true,
+	copilot: true,
+	goose: true,
+	auggie: true,
+	continue: true,
+	devin: true,
+	cline: true,
+	kimi: true,
+	kiro: true,
+	kilocode: true,
+	vibe: true,
+	pi: true,
+	autohand: true,
+	fake: true,
+} satisfies Record<AgentProvider, true>;
+
+const GLYPH_TEST_PROVIDERS = Object.keys(GLYPH_TEST_PROVIDER_MAP) as AgentProvider[];
 
 // The sidebar indicator must resolve *something* renderable for every harness
 // the daemon can spawn, including ones added after this table was written.
@@ -64,8 +93,7 @@ describe("getHarnessGlyphView", () => {
 	});
 
 	it("renders something for every harness the client knows about", () => {
-		const providers: AgentProvider[] = [...AGENT_OPTIONS, "codex-fugu"];
-		for (const provider of providers) {
+		for (const provider of GLYPH_TEST_PROVIDERS) {
 			const view = getHarnessGlyphView(provider);
 			expect(view.label, `${provider} needs a label`).not.toHaveLength(0);
 			const renderable = view.paths.length > 0 || Boolean(view.monogram);

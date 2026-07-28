@@ -1,6 +1,7 @@
 package sessionmanager
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -9,6 +10,21 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
+
+type stashFailOnCallWorkspace struct {
+	*fakeWorkspace
+	failAt int
+	count  int
+	err    error
+}
+
+func (w *stashFailOnCallWorkspace) StashUncommitted(ctx context.Context, info ports.WorkspaceInfo) (string, error) {
+	w.count++
+	if w.count == w.failAt {
+		return "", w.err
+	}
+	return w.fakeWorkspace.StashUncommitted(ctx, info)
+}
 
 // The reported outage: a terminated Prime row whose worktree still holds
 // ao/prime. Nothing in the old code released it, so every replacement spawn hit
@@ -170,5 +186,95 @@ func TestReleaseStaleRoleResourcesProceedsWhenWorktreeIsStale(t *testing.T) {
 	}
 	if len(res.Released) != 1 {
 		t.Fatalf("Released = %v, want prime-1 released despite the stale worktree", res.Released)
+	}
+}
+
+func TestReleaseStaleRoleResourcesWorkspaceProjectSurvivesCallerCancellationAfterPreservation(t *testing.T) {
+	base := newFakeStore()
+	st := &ctxHonoringWorktreeStore{fakeStore: base}
+	cctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ws := &cancelAfterStashesWorkspace{
+		ctxHonoringWorkspace: &ctxHonoringWorkspace{fakeWorkspace: &fakeWorkspace{}},
+		cancel:               cancel,
+		after:                2,
+	}
+	m := New(Deps{
+		Runtime: &fakeRuntime{}, Agents: fakeAgents{}, Workspace: ws, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: base},
+		LookPath: func(string) (string, error) { return "/bin/true", nil },
+	})
+	base.projects["mer"] = domain.ProjectRecord{ID: "mer", Path: "/repos/mer", Kind: domain.ProjectKindWorkspace, Config: testRoleAgents()}
+	base.workspaceRepo["mer"] = []domain.WorkspaceRepoRecord{{
+		ProjectID:    "mer",
+		Name:         "api",
+		RelativePath: "api",
+	}}
+	base.sessions["mer-orch"] = domain.SessionRecord{
+		ID:           "mer-orch",
+		ProjectID:    "mer",
+		Kind:         domain.KindOrchestrator,
+		Metadata:     domain.SessionMetadata{WorkspacePath: "/ws/mer-orch", Branch: "ao/mer-orchestrator"},
+		IsTerminated: true,
+		Activity:     domain.Activity{State: domain.ActivityExited},
+	}
+	base.worktrees["mer-orch"] = []domain.SessionWorktreeRecord{
+		{SessionID: "mer-orch", RepoName: domain.RootWorkspaceRepoName, Branch: "ao/mer-orchestrator", WorktreePath: "/ws/mer-orch", State: "active"},
+		{SessionID: "mer-orch", RepoName: "api", Branch: "ao/mer-orchestrator", WorktreePath: "/ws/mer-orch/api", State: "active"},
+	}
+
+	res, err := m.ReleaseStaleRoleResources(cctx, domain.OrchestratorTarget("mer"))
+	if err != nil {
+		t.Fatalf("ReleaseStaleRoleResources err = %v", err)
+	}
+	if cctx.Err() == nil {
+		t.Fatal("setup: the second successful stash must have cancelled the caller context before force destroy")
+	}
+	if len(res.Released) != 1 || res.Released[0] != "mer-orch" {
+		t.Fatalf("Released = %v, want mer-orch", res.Released)
+	}
+	if ws.destroyedLive != 2 {
+		t.Errorf("workspace repo destroys that took effect = %d (skipped on cancelled ctx = %d); want both preserved repos released",
+			ws.destroyedLive, ws.destroySkipped)
+	}
+	if st.deletedLive != 1 {
+		t.Errorf("restore-marker clears that took effect = %d (skipped on cancelled ctx = %d)", st.deletedLive, st.deleteSkipped)
+	}
+}
+
+func TestReleaseStaleRoleResourcesWorkspaceProjectRefusesReleaseWhenAnyRepoStashFails(t *testing.T) {
+	m, st, _, baseWS := newLifecycleManager()
+	ws := &stashFailOnCallWorkspace{fakeWorkspace: baseWS, failAt: 2, err: errors.New("git stash exploded")}
+	m.workspace = ws
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Path: "/repos/mer", Kind: domain.ProjectKindWorkspace, Config: testRoleAgents()}
+	st.workspaceRepo["mer"] = []domain.WorkspaceRepoRecord{{
+		ProjectID:    "mer",
+		Name:         "api",
+		RelativePath: "api",
+	}}
+	st.sessions["mer-orch"] = domain.SessionRecord{
+		ID:           "mer-orch",
+		ProjectID:    "mer",
+		Kind:         domain.KindOrchestrator,
+		Metadata:     domain.SessionMetadata{WorkspacePath: "/ws/mer-orch", Branch: "ao/mer-orchestrator"},
+		IsTerminated: true,
+		Activity:     domain.Activity{State: domain.ActivityExited},
+	}
+	st.worktrees["mer-orch"] = []domain.SessionWorktreeRecord{
+		{SessionID: "mer-orch", RepoName: domain.RootWorkspaceRepoName, Branch: "ao/mer-orchestrator", WorktreePath: "/ws/mer-orch", State: "active"},
+		{SessionID: "mer-orch", RepoName: "api", Branch: "ao/mer-orchestrator", WorktreePath: "/ws/mer-orch/api", State: "active"},
+	}
+
+	res, err := m.ReleaseStaleRoleResources(ctx, domain.OrchestratorTarget("mer"))
+	if err != nil {
+		t.Fatalf("ReleaseStaleRoleResources err = %v", err)
+	}
+	for _, call := range ws.calls {
+		if strings.HasPrefix(call, "ForceDestroy:") {
+			t.Fatalf("call %q ran after a failed repo stash; uncommitted work would be destroyed", call)
+		}
+	}
+	if len(res.Released) != 0 {
+		t.Fatalf("Released = %v, want none when any repo's work could not be captured", res.Released)
 	}
 }

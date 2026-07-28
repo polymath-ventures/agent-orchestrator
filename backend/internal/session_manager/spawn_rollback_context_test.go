@@ -52,6 +52,33 @@ func (w *ctxHonoringWorkspace) Destroy(ctx context.Context, info ports.Workspace
 	return w.fakeWorkspace.Destroy(ctx, info)
 }
 
+func (w *ctxHonoringWorkspace) ForceDestroy(ctx context.Context, info ports.WorkspaceInfo) error {
+	if err := ctx.Err(); err != nil {
+		w.destroySkipped++
+		return err
+	}
+	w.destroyedLive++
+	return w.fakeWorkspace.ForceDestroy(ctx, info)
+}
+
+type cancelAfterStashesWorkspace struct {
+	*ctxHonoringWorkspace
+	cancel context.CancelFunc
+	after  int
+	count  int
+}
+
+func (w *cancelAfterStashesWorkspace) StashUncommitted(ctx context.Context, info ports.WorkspaceInfo) (string, error) {
+	ref, err := w.fakeWorkspace.StashUncommitted(ctx, info)
+	if err == nil {
+		w.count++
+		if w.count == w.after {
+			w.cancel()
+		}
+	}
+	return ref, err
+}
+
 // disconnectingLCM models an HTTP client that goes away mid-spawn: MarkSpawned
 // is the in-flight step when the request context is cancelled, so it returns
 // ctx.Err() and drives Spawn into its post-Create rollback. MarkTerminated then
@@ -744,6 +771,183 @@ func TestRetireForReplacementCleanupSurvivesCallerCancellation(t *testing.T) {
 	}
 	if rows := base.worktrees["mer-orch-1"]; len(rows) != 0 {
 		t.Errorf("surviving restore markers = %#v, want none", rows)
+	}
+}
+
+func TestRetireForReplacementWorkspaceProjectCleanupSurvivesCallerCancellation(t *testing.T) {
+	base := newFakeStore()
+	st := &ctxHonoringWorktreeStore{fakeStore: base}
+	cctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	rt := &cancelOnRuntimeDestroy{fakeRuntime: &fakeRuntime{}, cancel: cancel}
+	ws := &ctxHonoringWorkspace{fakeWorkspace: &fakeWorkspace{}}
+	lcm := &ctxHonoringLCM{fakeLCM: &fakeLCM{store: base}}
+	m := New(Deps{
+		Runtime: rt, Agents: fakeAgents{}, Workspace: ws, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: lcm,
+		LookPath: func(string) (string, error) { return "/bin/true", nil },
+	})
+	base.projects["mer"] = domain.ProjectRecord{ID: "mer", Path: "/repos/mer", Kind: domain.ProjectKindWorkspace, Config: testRoleAgents()}
+	base.workspaceRepo["mer"] = []domain.WorkspaceRepoRecord{{
+		ProjectID:    "mer",
+		Name:         "api",
+		RelativePath: "api",
+	}}
+	base.sessions["mer-orch"] = domain.SessionRecord{
+		ID:        "mer-orch",
+		ProjectID: "mer",
+		Kind:      domain.KindOrchestrator,
+		Metadata:  domain.SessionMetadata{WorkspacePath: "/ws/mer-orch", Branch: "ao/mer-orchestrator", RuntimeHandleID: "orch-handle"},
+		Activity:  domain.Activity{State: domain.ActivityActive},
+	}
+	base.worktrees["mer-orch"] = []domain.SessionWorktreeRecord{
+		{SessionID: "mer-orch", RepoName: domain.RootWorkspaceRepoName, Branch: "ao/mer-orchestrator", WorktreePath: "/ws/mer-orch", State: "active"},
+		{SessionID: "mer-orch", RepoName: "api", Branch: "ao/mer-orchestrator", WorktreePath: "/ws/mer-orch/api", State: "active"},
+	}
+
+	if err := m.RetireForReplacement(cctx, "mer-orch"); err != nil {
+		t.Fatalf("RetireForReplacement err = %v, want workspace-project cleanup to complete despite the caller going away", err)
+	}
+	if cctx.Err() == nil {
+		t.Fatal("setup: the runtime destroy must have cancelled the caller context")
+	}
+	if rt.destroyed != 1 {
+		t.Fatalf("runtime destroys = %d, want 1 (the precondition for this test)", rt.destroyed)
+	}
+
+	if ws.destroyedLive != 2 {
+		t.Errorf("workspace repo destroys that took effect = %d (skipped on cancelled ctx = %d); the workspace-project repos are orphaned after replacement",
+			ws.destroyedLive, ws.destroySkipped)
+	}
+	if st.deletedLive != 1 {
+		t.Errorf("restore-marker clears that took effect = %d (skipped on cancelled ctx = %d); RestoreAll can resurrect the retired row into a replacement worktree",
+			st.deletedLive, st.deleteSkipped)
+	}
+	if lcm.terminatedLive != 1 {
+		t.Errorf("terminal-state writes that took effect = %d (skipped on cancelled ctx = %d); the retired row is still live with a dead runtime",
+			lcm.terminatedLive, lcm.terminateSkipped)
+	}
+	if !base.sessions["mer-orch"].IsTerminated {
+		t.Error("the retired workspace-project row is still live after its runtime was destroyed")
+	}
+	if rows := base.worktrees["mer-orch"]; len(rows) != 0 {
+		t.Errorf("surviving restore markers = %#v, want none", rows)
+	}
+}
+
+func TestRetireForReplacementSingleRepoCleanupSurvivesCallerCancellation(t *testing.T) {
+	base := newFakeStore()
+	st := &ctxHonoringWorktreeStore{fakeStore: base}
+	cctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	rt := &cancelOnRuntimeDestroy{fakeRuntime: &fakeRuntime{}, cancel: cancel}
+	ws := &ctxHonoringWorkspace{fakeWorkspace: &fakeWorkspace{}}
+	lcm := &ctxHonoringLCM{fakeLCM: &fakeLCM{store: base}}
+	m := New(Deps{
+		Runtime: rt, Agents: fakeAgents{}, Workspace: ws, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: lcm,
+		LookPath: func(string) (string, error) { return "/bin/true", nil },
+	})
+	base.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+	base.sessions["mer-orch"] = domain.SessionRecord{
+		ID:        "mer-orch",
+		ProjectID: "mer",
+		Kind:      domain.KindOrchestrator,
+		Metadata:  domain.SessionMetadata{WorkspacePath: "/ws/mer-orch", Branch: "ao/mer-orchestrator", RuntimeHandleID: "orch-handle"},
+		Activity:  domain.Activity{State: domain.ActivityActive},
+	}
+	base.worktrees["mer-orch"] = []domain.SessionWorktreeRecord{{
+		SessionID:    "mer-orch",
+		RepoName:     domain.RootWorkspaceRepoName,
+		Branch:       "ao/mer-orchestrator",
+		WorktreePath: "/ws/mer-orch",
+		State:        "active",
+	}}
+
+	if err := m.RetireForReplacement(cctx, "mer-orch"); err != nil {
+		t.Fatalf("RetireForReplacement err = %v, want single-repo cleanup to complete despite the caller going away", err)
+	}
+	if cctx.Err() == nil {
+		t.Fatal("setup: the runtime destroy must have cancelled the caller context")
+	}
+	if rt.destroyed != 1 {
+		t.Fatalf("runtime destroys = %d, want 1 (the precondition for this test)", rt.destroyed)
+	}
+	if ws.destroyedLive != 1 {
+		t.Errorf("workspace destroys that took effect = %d (skipped on cancelled ctx = %d); the single-repo worktree is orphaned after replacement",
+			ws.destroyedLive, ws.destroySkipped)
+	}
+	if st.deletedLive != 1 {
+		t.Errorf("restore-marker clears that took effect = %d (skipped on cancelled ctx = %d)", st.deletedLive, st.deleteSkipped)
+	}
+	if lcm.terminatedLive != 1 {
+		t.Errorf("terminal-state writes that took effect = %d (skipped on cancelled ctx = %d)", lcm.terminatedLive, lcm.terminateSkipped)
+	}
+	if !base.sessions["mer-orch"].IsTerminated {
+		t.Error("the retired single-repo row is still live after its runtime was destroyed")
+	}
+}
+
+func TestRetireForReplacementWorkspaceProjectCallerCancellationBeforeRuntimeDestroyLeavesSessionRetryable(t *testing.T) {
+	base := newFakeStore()
+	st := &ctxHonoringWorktreeStore{fakeStore: base}
+	cctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	rt := &ctxHonoringRuntime{fakeRuntime: &fakeRuntime{}}
+	ws := &cancelAfterStashesWorkspace{
+		ctxHonoringWorkspace: &ctxHonoringWorkspace{fakeWorkspace: &fakeWorkspace{}},
+		cancel:               cancel,
+		after:                2,
+	}
+	lcm := &ctxHonoringLCM{fakeLCM: &fakeLCM{store: base}}
+	m := New(Deps{
+		Runtime: rt, Agents: fakeAgents{}, Workspace: ws, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: lcm,
+		LookPath: func(string) (string, error) { return "/bin/true", nil },
+	})
+	base.projects["mer"] = domain.ProjectRecord{ID: "mer", Path: "/repos/mer", Kind: domain.ProjectKindWorkspace, Config: testRoleAgents()}
+	base.workspaceRepo["mer"] = []domain.WorkspaceRepoRecord{{
+		ProjectID:    "mer",
+		Name:         "api",
+		RelativePath: "api",
+	}}
+	base.sessions["mer-orch"] = domain.SessionRecord{
+		ID:        "mer-orch",
+		ProjectID: "mer",
+		Kind:      domain.KindOrchestrator,
+		Metadata:  domain.SessionMetadata{WorkspacePath: "/ws/mer-orch", Branch: "ao/mer-orchestrator", RuntimeHandleID: "orch-handle"},
+		Activity:  domain.Activity{State: domain.ActivityActive},
+	}
+	base.worktrees["mer-orch"] = []domain.SessionWorktreeRecord{
+		{SessionID: "mer-orch", RepoName: domain.RootWorkspaceRepoName, Branch: "ao/mer-orchestrator", WorktreePath: "/ws/mer-orch", State: "active"},
+		{SessionID: "mer-orch", RepoName: "api", Branch: "ao/mer-orchestrator", WorktreePath: "/ws/mer-orch/api", State: "active"},
+	}
+
+	if err := m.RetireForReplacement(cctx, "mer-orch"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("RetireForReplacement err = %v, want the cancelled caller to abort before runtime destroy", err)
+	}
+	if cctx.Err() == nil {
+		t.Fatal("setup: the second successful stash must have cancelled the caller context before runtime destroy")
+	}
+	if rt.destroyedLive != 0 || rt.destroySkipped != 1 {
+		t.Errorf("runtime destroys that took effect = %d (skipped on cancelled ctx = %d); cancellation before runtime destroy must leave the row retryable",
+			rt.destroyedLive, rt.destroySkipped)
+	}
+	if ws.destroyedLive != 0 {
+		t.Errorf("workspace repo destroys that took effect = %d (skipped on cancelled ctx = %d); no workspace cleanup should run before the runtime is reaped",
+			ws.destroyedLive, ws.destroySkipped)
+	}
+	if st.deletedLive != 0 {
+		t.Errorf("restore-marker clears that took effect = %d (skipped on cancelled ctx = %d)", st.deletedLive, st.deleteSkipped)
+	}
+	if lcm.terminatedLive != 0 {
+		t.Errorf("terminal-state writes that took effect = %d (skipped on cancelled ctx = %d)", lcm.terminatedLive, lcm.terminateSkipped)
+	}
+	if base.sessions["mer-orch"].IsTerminated {
+		t.Error("session was marked terminated even though runtime destroy never took effect")
+	}
+	if rows := base.worktrees["mer-orch"]; len(rows) != 2 {
+		t.Errorf("surviving restore markers = %#v, want root and child retained for retry", rows)
 	}
 }
 
