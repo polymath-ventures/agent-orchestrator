@@ -1,9 +1,8 @@
 {
   "version": 1,
   "modules": [
-    {"source": "30-polypowers.md","path": "agent-instructions/source/30-polypowers.md","marker": "@sx-managed: polypowers-module","sha256": "a403d0d316499d547c1ff3a54bd757a8368303e6d916e03462c7cdc740ddb65c"},
-    {"source": "35-worktree-recipe.ref.md","path": "agent-instructions/source/35-worktree-recipe.ref.md","marker": "@sx-managed: polypowers-worktree-recipe","sha256": "e9c44ce014bb058c8677864cf57d4fe2bc61a02a580e8d763ae6218016150095"},
-    {"source": "40-operating-principles.md","path": "agent-instructions/source/40-operating-principles.md","marker": "@sx-managed: operating-principles","sha256": "46c3ffcb1a4613df5dee99e740d285a46957e39f70b807134f8572766fecc933"},
+    {"source": "30-polypowers.md","path": "agent-instructions/source/30-polypowers.md","marker": "@sx-managed: polypowers-module","sha256": "47cc18e410d52bf23c860ea28a780783d704258121042e2446ba99883600d411"},
+    {"source": "40-operating-principles.md","path": "agent-instructions/source/40-operating-principles.md","marker": "@sx-managed: operating-principles","sha256": "9f49171e381cc0af44bf5a11d70ecb0f6dc09b255b1c2a46df23eea44215c1d6"},
     {"source": "65-agent-identity.md","path": "agent-instructions/source/65-agent-identity.md","marker": "@sx-managed: agent-identity-contract","sha256": "c9dd7642826073cf93d5ad194e28a792e22215eb6ea1d5921aae22b15eb4f051"},
     {"source": "agent-overrides/claude.md","path": "agent-instructions/agent-overrides/claude.md","marker": "@sx-managed: claude-identity","sha256": "ede9fdd1f90c3d35fd9be0ba286c98a42aabce4ca80281504e88b1a0e8474a38"},
     {"source": "agent-overrides/codex.md","path": "agent-instructions/agent-overrides/codex.md","marker": "@sx-managed: codex-identity","sha256": "d6532fbbdf1989f058f960ffb67b9fb2e494d5447d8520cf31b9fcaf64a0a717"},
