@@ -75,11 +75,6 @@ never hardcoded in skills:
 - Skills assume `bd` is attached to whatever the repo configured and never
   select or name a host themselves. Put the host specifics in a repo fragment,
   not in a skill.
-- Similarly, skills derive the operational GitHub repo from the checkout's
-  `origin` remote. Do not use `upstream` or bare `gh repo view` heuristics to
-  choose the issue/PR target. If `origin` is a fork and `upstream` is the public
-  project, operational GitHub issue/PR commands target `origin`; `upstream` is
-  only for explicitly upstream-scoped workflows such as syncs.
 
 ## Development Rules
 
@@ -250,67 +245,6 @@ in-progress work first; recommend 1–3 unclaimed items, not the full list.
 push`, report. Merge only under rule 6's authorization (user's word, or
 autonomous mode with the gate satisfied) — never on your own initiative.
 
-## Final-review status contract
-
-The clean status is the only machine-readable final-review verdict the merge
-gate may consume.
-
-`/final-review` emits its verdict as a GitHub commit status on the reviewed head
-SHA, using context `final-review`. A clean review writes `state=success`; a
-non-clean, inconclusive, or timed-out review writes `state=failure`. The status
-description is the parseable contract: `verdict=<clean|parked>
-reviewer_family=<family> head=<full-head-sha>`. A clean review that is parked
-only because repo policy requires a human merge still writes
-`final-review=success`; the human gate is recorded separately as a current-head
-`merge-park` status with `reason=human-required`.
-
-Human merge gates check the `final-review` status on the **current** PR head
-SHA. Autonomous-merge paths check the same clean review status and additionally
-refuse to merge when a current-head `merge-park` signal exists or when a linked
-issue carries the manual non-AO-worker hold marker `no-ao`. If the PR receives
-a new push, the old statuses are tied to the old SHA and no longer count. This
-replaces any PR-comment protocol; do not use comments or free-form summaries as
-the gate.
-
-AO's native review API (`GET /sessions/{id}/reviews`, with states such as
-`ineligible` or `needs_review`) is a separate AO reviewer system. It is useful
-for AO's own review UI, but it is **not** `/final-review` and must never be read
-as the final-review merge verdict.
-
-Repos that carry `ops/final-review-status.mjs` use it as the status helper:
-`node ops/final-review-status.mjs set --repo <owner/repo> --sha
-<full-head-sha> --verdict <clean|parked> --reviewer-family <family>
---author-family <implementer-family>` after the review loop; add
-`--human-merge-required` when a clean review must park for human merge authority.
-A clean `set` **requires** one or more `--author-family` values and is
-**refused** when `--reviewer-family` matches any of them. Reviewer independence
-is enforced here, at write time, so a clean status is independent by
-construction. Pass several `--author-family` flags when more than one family
-authored the head. Use `node ops/final-review-status.mjs check --repo
-<owner/repo> --sha <current-head-sha>` for a human-authorized merge gate, and
-add `--mode autonomous --pr <PR-number>` for autonomous merge eligibility. The
-`check` command is deliberately family-agnostic because independence was already
-enforced at `set` time, so the required `review-passed` merge-queue gate, which
-cannot see per-session harness provenance, is never bricked.
-
-## Agent reviewers run in the foreground
-
-Operator standing rule: agent and harness invocations that a worker starts for
-implementation, review, final-review, diagnosis, or rescue work run in the
-foreground/attached. Do not background reviewer or diagnostic agents.
-
-- A foreground invocation is attached, observable, and fails loudly.
-- A long review uses the maximum foreground timeout; if it still does not fit,
-  split it into smaller foreground passes and re-run. Do not detach to dodge a
-  shell's time cap.
-- If a reviewer hangs at startup, use the active workflow's or harness's
-  narrower startup fallback for that run, still attached. Optional integrations
-  that fail at startup may be disabled for that foreground run when the harness
-  supports it.
-- This binds every agent invocation a worker or orchestrator drives for review
-  passes, `/final-review`, diagnosis, and rescue runs. AO's own daemon launch of
-  worker sessions into a TTY is already blocking/attached and stays that way.
-
 ## The identity contract — what skills defer to your agent identity
 
 Shared skills describe _process_ and resolve the _who/how_ from this contract:
@@ -372,6 +306,13 @@ frontend correctness depend on `window.ao`, Electron preload APIs, Electron-only
 daemon status fields such as a discovered port, or desktop packaging behavior
 unless the ticket explicitly targets Electron. For frontend changes, include or
 preserve web-mode coverage when the behavior can run in a browser.
+
+Because this fork has both remotes, skills derive the operational GitHub repo
+from the checkout's `origin` remote. Do not use `upstream` or bare
+`gh repo view` heuristics to choose the issue/PR target. If `origin` is a fork
+and `upstream` is the public project, operational GitHub issue/PR commands
+target `origin`; `upstream` is only for explicitly upstream-scoped workflows
+such as syncs.
 
 ## Deploy
 
@@ -482,6 +423,67 @@ only behind bearer-password auth, as documented in
 
 All app state belongs under `~/.ao` unless explicitly overridden by
 `AO_DATA_DIR` or `AO_RUN_FILE`. Do not rely on Electron default app-data paths.
+
+## Final-review status contract
+
+The clean status is the only machine-readable final-review verdict the merge
+gate may consume.
+
+`/final-review` emits its verdict as a GitHub commit status on the reviewed head
+SHA, using context `final-review`. A clean review writes `state=success`; a
+non-clean, inconclusive, or timed-out review writes `state=failure`. The status
+description is the parseable contract: `verdict=<clean|parked>
+reviewer_family=<family> head=<full-head-sha>`. A clean review that is parked
+only because repo policy requires a human merge still writes
+`final-review=success`; the human gate is recorded separately as a current-head
+`merge-park` status with `reason=human-required`.
+
+Human merge gates check the `final-review` status on the **current** PR head
+SHA. Autonomous-merge paths check the same clean review status and additionally
+refuse to merge when a current-head `merge-park` signal exists or when a linked
+issue carries the manual non-AO-worker hold marker `no-ao`. If the PR receives
+a new push, the old statuses are tied to the old SHA and no longer count. This
+replaces any PR-comment protocol; do not use comments or free-form summaries as
+the gate.
+
+AO's native review API (`GET /sessions/{id}/reviews`, with states such as
+`ineligible` or `needs_review`) is a separate AO reviewer system. It is useful
+for AO's own review UI, but it is **not** `/final-review` and must never be read
+as the final-review merge verdict.
+
+Repos that carry `ops/final-review-status.mjs` use it as the status helper:
+`node ops/final-review-status.mjs set --repo <owner/repo> --sha
+<full-head-sha> --verdict <clean|parked> --reviewer-family <family>
+--author-family <implementer-family>` after the review loop; add
+`--human-merge-required` when a clean review must park for human merge authority.
+A clean `set` **requires** one or more `--author-family` values and is
+**refused** when `--reviewer-family` matches any of them. Reviewer independence
+is enforced here, at write time, so a clean status is independent by
+construction. Pass several `--author-family` flags when more than one family
+authored the head. Use `node ops/final-review-status.mjs check --repo
+<owner/repo> --sha <current-head-sha>` for a human-authorized merge gate, and
+add `--mode autonomous --pr <PR-number>` for autonomous merge eligibility. The
+`check` command is deliberately family-agnostic because independence was already
+enforced at `set` time, so the required `review-passed` merge-queue gate, which
+cannot see per-session harness provenance, is never bricked.
+
+## Agent reviewers run in the foreground
+
+Operator standing rule: agent and harness invocations that a worker starts for
+implementation, review, final-review, diagnosis, or rescue work run in the
+foreground/attached. Do not background reviewer or diagnostic agents.
+
+- A foreground invocation is attached, observable, and fails loudly.
+- A long review uses the maximum foreground timeout; if it still does not fit,
+  split it into smaller foreground passes and re-run. Do not detach to dodge a
+  shell's time cap.
+- If a reviewer hangs at startup, use the active workflow's or harness's
+  narrower startup fallback for that run, still attached. Optional integrations
+  that fail at startup may be disabled for that foreground run when the harness
+  supports it.
+- This binds every agent invocation a worker or orchestrator drives for review
+  passes, `/final-review`, diagnosis, and rescue runs. AO's own daemon launch of
+  worker sessions into a TTY is already blocking/attached and stays that way.
 
 ## Agent Identity Contract
 
