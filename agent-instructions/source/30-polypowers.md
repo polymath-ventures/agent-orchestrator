@@ -95,7 +95,7 @@ Non-negotiable. Violating any of these is a bug in your behavior.
    the shared main checkout and never in the launcher-supplied session anchor.
    Create it with the ownership helper, which records the
    `polypowers-worktree-owner` marker at creation; nothing backfills it later,
-   so a worktree made any other way can never be cleaned up automatically. The
+   so a worktree made any other way carries no proof of who owns it. The
    helper, the branch/detach forms, and the session-anchor rules are in
    `35-worktree-recipe.ref.md` — read it when you create a worktree.
 3. **Test gates.** Fast loop per commit. Before push: full CI (build, format, and tests), then rebase against the default branch — clean → push
@@ -109,8 +109,9 @@ Non-negotiable. Violating any of these is a bug in your behavior.
    against something, establish that its condition is present in THIS repo,
    because a mechanism that is real in general is not yet a defect here. Where
    that cannot be executed — a latent path, a race, a destructive trigger —
-   file it anyway, with what you checked and what you could not, never with
-   borrowed certainty. The primary agent verifies and reports the exact
+   say what you checked and what you could not, never claiming borrowed
+   certainty. (Whether something becomes a ticket at all is rule 8's question,
+   not this one; this rule governs the honesty of the claim either way.) The primary agent verifies and reports the exact
    command and exact error; "not installed" does not mean "unavailable." You
    have access to browsers, screenshots, web search, and other tools; use them.
 6. **Don't self-review; merge only with authorization.** Independent review

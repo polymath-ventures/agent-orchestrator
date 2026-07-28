@@ -108,11 +108,12 @@ worktree; use it only as launch context and create the required task worktree
 from the freshly fetched remote ref as above.
 
 The helper call is not optional. It records lifecycle ownership in the new
-worktree's git directory as `polypowers-worktree-owner`; `cleanup-merge` uses
-that marker as positive provenance when it is present, and may separately
-derive disposability for clean merged worktrees without live sessions. It will
-never backfill a missing marker, because provenance has to be recorded at
-creation to mean anything. Set `WORK_ITEM_KEY` to the canonical work-item key:
+worktree's git directory as `polypowers-worktree-owner`, which is how
+`cleanup-merge` knows which work item a worktree belongs to. It is provenance
+only: removal requires the worktree to be provably disposable on its own terms —
+clean tree, merged branch, no live session, all three — and the marker grants no
+bypass. Cleanup will never backfill a missing one, because provenance has to be
+recorded at creation to mean anything. Set `WORK_ITEM_KEY` to the canonical work-item key:
 the Beads id when the repo uses Beads, otherwise `gh:#N`. A plausible path,
 branch name, current checkout, or files already written there are never
 ownership proof.
