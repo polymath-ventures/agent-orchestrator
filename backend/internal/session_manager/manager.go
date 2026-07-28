@@ -1782,27 +1782,29 @@ func (m *Manager) RetireForReplacement(ctx context.Context, id domain.SessionID)
 		m.logger.Warn("retire replacement: stale workspace; skipping preserve", "sessionID", id, "path", ws.Path, "error", err)
 	}
 	handle := runtimeHandle(rec.Metadata)
-	cleanupCtx, cancelCleanup := cleanupContext(ctx)
-	defer cancelCleanup()
 	if handle.ID != "" {
-		if err := m.runtime.Destroy(cleanupCtx, handle); err != nil {
+		if err := m.runtime.Destroy(ctx, handle); err != nil {
 			return fmt.Errorf("retire replacement %s: runtime: %w", id, err)
 		}
 	}
+	cleanupCtx, cancelCleanup := cleanupContext(ctx)
+	defer cancelCleanup()
+	var cleanupErr error
 	if err := m.workspace.ForceDestroy(cleanupCtx, ws); err != nil {
 		if staleWorkspace {
 			m.logger.Warn("retire replacement: stale workspace cleanup failed", "sessionID", id, "path", ws.Path, "error", err)
 		}
-		return fmt.Errorf("retire replacement %s: force destroy: %w", id, err)
-	}
-	m.cleanupAgentWorkspace(cleanupCtx, rec, ws.Path)
-	if err := m.store.DeleteSessionWorktrees(cleanupCtx, rec.ID); err != nil {
-		return fmt.Errorf("retire replacement %s: clear restore markers: %w", id, err)
+		cleanupErr = fmt.Errorf("retire replacement %s: force destroy: %w", id, err)
+	} else {
+		m.cleanupAgentWorkspace(cleanupCtx, rec, ws.Path)
+		if err := m.store.DeleteSessionWorktrees(cleanupCtx, rec.ID); err != nil {
+			cleanupErr = fmt.Errorf("retire replacement %s: clear restore markers: %w", id, err)
+		}
 	}
 	if err := m.lcm.MarkTerminated(cleanupCtx, rec.ID); err != nil {
-		return fmt.Errorf("retire replacement %s: mark terminated: %w", id, err)
+		return errors.Join(cleanupErr, fmt.Errorf("retire replacement %s: mark terminated: %w", id, err))
 	}
-	return nil
+	return cleanupErr
 }
 
 func (m *Manager) retireWorkspaceProjectForReplacement(ctx context.Context, rec domain.SessionRecord, rows []ports.WorkspaceRepoInfo) error {
@@ -1817,29 +1819,33 @@ func (m *Manager) retireWorkspaceProjectForReplacement(ctx context.Context, rec 
 		}
 	}
 	handle := runtimeHandle(rec.Metadata)
-	cleanupCtx, cancelCleanup := cleanupContext(ctx)
-	defer cancelCleanup()
 	if handle.ID != "" {
-		if err := m.runtime.Destroy(cleanupCtx, handle); err != nil {
+		if err := m.runtime.Destroy(ctx, handle); err != nil {
 			return fmt.Errorf("retire replacement %s: runtime: %w", rec.ID, err)
 		}
 	}
+	cleanupCtx, cancelCleanup := cleanupContext(ctx)
+	defer cancelCleanup()
+	var cleanupErr error
 	for i := len(rows) - 1; i >= 0; i-- {
 		if err := m.workspace.ForceDestroy(cleanupCtx, workspaceInfoFromRepoInfo(rows[i])); err != nil {
 			if staleRepos[rows[i].RepoName] {
 				m.logger.Warn("retire replacement: stale workspace repo cleanup failed", "sessionID", rec.ID, "repo", rows[i].RepoName, "path", rows[i].Path, "error", err)
 			}
-			return fmt.Errorf("retire replacement %s repo %s: force destroy: %w", rec.ID, rows[i].RepoName, err)
+			cleanupErr = fmt.Errorf("retire replacement %s repo %s: force destroy: %w", rec.ID, rows[i].RepoName, err)
+			break
 		}
 	}
-	m.cleanupAgentWorkspace(cleanupCtx, rec, rec.Metadata.WorkspacePath)
-	if err := m.store.DeleteSessionWorktrees(cleanupCtx, rec.ID); err != nil {
-		return fmt.Errorf("retire replacement %s: clear restore markers: %w", rec.ID, err)
+	if cleanupErr == nil {
+		m.cleanupAgentWorkspace(cleanupCtx, rec, rec.Metadata.WorkspacePath)
+		if err := m.store.DeleteSessionWorktrees(cleanupCtx, rec.ID); err != nil {
+			cleanupErr = fmt.Errorf("retire replacement %s: clear restore markers: %w", rec.ID, err)
+		}
 	}
 	if err := m.lcm.MarkTerminated(cleanupCtx, rec.ID); err != nil {
-		return fmt.Errorf("retire replacement %s: mark terminated: %w", rec.ID, err)
+		return errors.Join(cleanupErr, fmt.Errorf("retire replacement %s: mark terminated: %w", rec.ID, err))
 	}
-	return nil
+	return cleanupErr
 }
 
 // RestoreWithMode relaunches a torn-down session and reports whether AO used
@@ -3726,12 +3732,11 @@ func (m *Manager) cleanupAgentWorkspace(ctx context.Context, rec domain.SessionR
 		return
 	}
 	// Deliberately runs on the context it is given rather than deriving its own
-	// cleanup context. Unlike the other teardown helpers this one is not
-	// compensation-only: Kill, Cleanup, RetireForReplacement and stale-role
-	// release all call it as part of the teardown the caller actually asked for,
-	// and those callers are entitled to abandon it. On the rollback path it is
-	// already detached, because rollbackPreparedSpawnWorkspace hands it that
-	// cleanup context — which also keeps the pair on one budget instead of two.
+	// cleanup context. Callers classify the teardown they are performing: use
+	// the caller context while the teardown is still safe to abandon, and pass a
+	// bounded cleanup context once an irreversible step has committed the row to
+	// finishing. Inheriting that context keeps the agent hook, marker clear, and
+	// terminal write on the same budget instead of restarting it here.
 	env := spawnEnv(rec.ID, rec.ProjectID, rec.IssueID, m.dataDir, rec.Metadata.RuntimeToken, nil)
 	if project, err := m.loadProject(ctx, rec.ProjectID); err == nil {
 		env = m.runtimeEnv(rec.ID, rec.ProjectID, rec.IssueID, rec.Metadata.RuntimeToken, project.Config.Env)

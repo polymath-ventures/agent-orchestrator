@@ -1,34 +1,36 @@
 import { describe, expect, it } from "vitest";
-import { selectableAgentCatalog } from "./agent-selection";
 import { NEUTRAL_HARNESS_TILE, getHarnessGlyphView } from "./harness-glyphs";
-import type { AgentInfo } from "./agent-selection";
+import type { AgentProvider } from "../types/workspace";
 
-const GLYPH_TEST_AGENTS = [
-	"claude-code",
-	"codex",
-	"aider",
-	"opencode",
-	"grok",
-	"droid",
-	"amp",
-	"agy",
-	"crush",
-	"cursor",
-	"qwen",
-	"copilot",
-	"goose",
-	"auggie",
-	"continue",
-	"devin",
-	"cline",
-	"kimi",
-	"kiro",
-	"kilocode",
-	"vibe",
-	"pi",
-	"autohand",
-	"fake",
-].map((id) => ({ id, label: id, reviewerCapable: false })) satisfies AgentInfo[];
+const GLYPH_TEST_PROVIDER_MAP = {
+	"claude-code": true,
+	codex: true,
+	"codex-fugu": true,
+	aider: true,
+	opencode: true,
+	grok: true,
+	droid: true,
+	amp: true,
+	agy: true,
+	crush: true,
+	cursor: true,
+	qwen: true,
+	copilot: true,
+	goose: true,
+	auggie: true,
+	continue: true,
+	devin: true,
+	cline: true,
+	kimi: true,
+	kiro: true,
+	kilocode: true,
+	vibe: true,
+	pi: true,
+	autohand: true,
+	fake: true,
+} satisfies Record<AgentProvider, true>;
+
+const GLYPH_TEST_PROVIDERS = Object.keys(GLYPH_TEST_PROVIDER_MAP) as AgentProvider[];
 
 // The sidebar indicator must resolve *something* renderable for every harness
 // the daemon can spawn, including ones added after this table was written.
@@ -91,16 +93,11 @@ describe("getHarnessGlyphView", () => {
 	});
 
 	it("renders something for every harness the client knows about", () => {
-		const providers =
-			selectableAgentCatalog(
-				{ installed: GLYPH_TEST_AGENTS },
-				{ includeDefault: { id: "codex-fugu", label: "codex-fugu", reviewerCapable: false } },
-			).installed ?? [];
-		for (const provider of providers) {
-			const view = getHarnessGlyphView(provider.id);
-			expect(view.label, `${provider.id} needs a label`).not.toHaveLength(0);
+		for (const provider of GLYPH_TEST_PROVIDERS) {
+			const view = getHarnessGlyphView(provider);
+			expect(view.label, `${provider} needs a label`).not.toHaveLength(0);
 			const renderable = view.paths.length > 0 || Boolean(view.monogram);
-			expect(renderable, `${provider.id} renders neither a mark nor a monogram`).toBe(true);
+			expect(renderable, `${provider} renders neither a mark nor a monogram`).toBe(true);
 		}
 	});
 
