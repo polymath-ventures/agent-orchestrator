@@ -184,8 +184,20 @@ add `--mode autonomous --pr <PR-number>` for autonomous merge eligibility. The
 enforced at `set` time, so the required `review-passed` merge-queue gate, which
 cannot see per-session harness provenance, is never bricked.
 
-## Agent reviewers run in the foreground — this repo
+## Agent reviewers run in the foreground
 
-The shared rule applies here as written. One repo-specific clarification: AO's own
-daemon launch of worker sessions into a TTY is already blocking/attached and stays
-that way.
+Operator standing rule: agent and harness invocations that a worker starts for
+implementation, review, final-review, diagnosis, or rescue work run in the
+foreground/attached. Do not background reviewer or diagnostic agents.
+
+- A foreground invocation is attached, observable, and fails loudly.
+- A long review uses the maximum foreground timeout; if it still does not fit,
+  split it into smaller foreground passes and re-run. Do not detach to dodge a
+  shell's time cap.
+- If a reviewer hangs at startup, use the active workflow's or harness's
+  narrower startup fallback for that run, still attached. Optional integrations
+  that fail at startup may be disabled for that foreground run when the harness
+  supports it.
+- This binds every agent invocation a worker or orchestrator drives for review
+  passes, `/final-review`, diagnosis, and rescue runs. AO's own daemon launch of
+  worker sessions into a TTY is already blocking/attached and stays that way.
