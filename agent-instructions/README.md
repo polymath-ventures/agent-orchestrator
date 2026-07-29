@@ -6,11 +6,12 @@
 
 One skill, one entrypoint (`/nickify`), that brings the **Polymath agent
 standard** to either a **user account** or a **repo**. It detects where you run
-it and asks which you want. It's an *orchestrator* — it drives your existing
+it and asks which you want. It's an _orchestrator_ — it drives your existing
 tools (`sx`, `openspec`, `bd`, `git`, the agent-CLI installers, the
 agent-instructions assembler) rather than reimplementing them.
 
 **How it behaves everywhere:**
+
 - **Idempotent** — re-running does nothing if you're already set up.
 - **Durable repo intent** — repo scope writes `nickify.json`, a committed
   desired-state file that records provisioning choices such as target clients
@@ -65,8 +66,8 @@ Brings the current repo to the standard:
    `agent-instructions/` source (tailored to the stack), **including the
    versioned generic standard set** (polypowers, operating principles, identity
    contract, and per-client identity bodies), then runs the assembler to emit
-   `CLAUDE.md`/`AGENTS.md`/`GEMINI.md`. So the repo actually tells agents *how
-   and when they must use polypowers* — not just makes the skills available.
+   `CLAUDE.md`/`AGENTS.md`/`GEMINI.md`. So the repo actually tells agents _how
+   and when they must use polypowers_ — not just makes the skills available.
 6. **tool request drift** — reports repo-level tool files and points new recipes to trusted vault sidecars.
 7. **Finalize** — `.gitignore` hygiene for repo-local agent worktrees,
    generated local asset/runtime output (`.claude/skills/`,
@@ -84,17 +85,17 @@ The schema is nested by subsystem:
 
 ```json
 {
-  "schema": 1,
-  "repo": "owner/name",
-  "clients": ["claude-code", "codex"],
-  "subsystems": {
-    "beads": { "enabled": false, "reason": "user-opt-out" },
-    "openspec": { "enabled": true },
-    "sx": { "enabled": true },
-    "agent_instructions": { "enabled": true, "standard_version": 1 },
-    "tools": { "enabled": true },
-    "hooks": { "enabled": true }
-  }
+	"schema": 1,
+	"repo": "owner/name",
+	"clients": ["claude-code", "codex"],
+	"subsystems": {
+		"beads": { "enabled": false, "reason": "user-opt-out" },
+		"openspec": { "enabled": true },
+		"sx": { "enabled": true },
+		"agent_instructions": { "enabled": true, "standard_version": 2 },
+		"tools": { "enabled": true },
+		"hooks": { "enabled": true }
+	}
 }
 ```
 
@@ -138,13 +139,16 @@ The standard set is a versioned collection of generic repo instruction modules
 published by this skill and recorded in `standard-set.json` with normalized
 SHA-256 hashes. It includes:
 
-1. `30-polypowers.md` — the shared workflow constitution and skill catalog.
-2. `40-operating-principles.md` — generic operator principles: quality and
+1. `30-polypowers.md` — the shared workflow constitution. Skills are not
+   listed here; every harness injects its own installed-skill listing.
+1. `35-worktree-recipe.ref.md` — the worktree mechanics rule 2 points at.
+   Referenced on demand rather than inlined, so it costs one line of context.
+1. `40-operating-principles.md` — generic operator principles: quality and
    speed, engineering merit, smallest correct changes, operator judgment over
    enforcement gates, ticket scope, and workflow proportionality.
-3. `65-agent-identity.md` — the client-neutral identity contract.
-4. `agent-overrides/{claude,codex,agy}.md` — client-specific identity bodies.
-5. `README.md` — authoring notes for the installed source tree.
+1. `65-agent-identity.md` — the client-neutral identity contract.
+1. `agent-overrides/{claude,codex,agy}.md` — client-specific identity bodies.
+1. `README.md` — authoring notes for the installed source tree.
 
 Role policy and Orc escalation text are intentionally absent. Those belong in
 the product that launches role-specific sessions, not in shared repo context.
@@ -168,10 +172,10 @@ the prose that governs it. It consists of:
   dispatches to the right skill), `capture` (turn notes/recordings into tracked
   work), `issue-status`, `sync-issues-to-beads`.
 - **Lifecycle** — `cleanup-merge`, `deploy-verify`, `stabilize`.
-- **The governing module** — the "constitution": the command catalog, the
-  MUST-do rules (e.g. *don't self-review, don't self-merge*), the reviewer-roster
+- **The governing module** — the "constitution": the
+  MUST-do rules (e.g. _don't self-review, don't self-merge_), the reviewer-roster
   contract, and the subagent-tier/model model. This is the piece that tells an
-  agent *how and when* it must reach for the skills above. It ships as an
+  agent _how and when_ it must reach for the skills above. It ships as an
   `agent-instructions/` fragment so `polyscribe` can weave it into every repo's
   identity files.
 
@@ -188,13 +192,14 @@ module, tools, project overview, …). polyscribe:
 - concatenates those fragments in order and **emits the configured per-client
   identity files** — for example `CLAUDE.md`, `AGENTS.md`, or `GEMINI.md` — so
   each configured agent gets the same governance in its own expected file;
-- runs automatically at **session start** (as a global hook) and is
-  **idempotent** — it rebuilds the outputs from source every time;
+- runs automatically at **session start** (as a global hook) in **check-only**
+  mode — it reports drift without rewriting tracked files;
 - is a **no-op** in any repo that doesn't opt in (no `agent-instructions/` →
   nothing happens), and never clobbers a repo-owned assembler script.
 
 Net: one modular source of truth → consistent, multi-client agent instructions,
-kept in sync automatically. (Shipped as the org-scoped `polyscribe` hook asset.)
+checked automatically and rebuilt through tracked reconcile commits. (Shipped as
+the org-scoped `polyscribe` hook asset.)
 
 ## Depends on
 
