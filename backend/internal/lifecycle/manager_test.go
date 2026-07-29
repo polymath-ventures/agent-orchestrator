@@ -467,6 +467,55 @@ func TestActivity_StaleLaunchSignalIsIgnored(t *testing.T) {
 	}
 }
 
+// An id-less signal for a session that HAS a launch id is a stale/unfenced
+// callback — supervised hooks always carry the id — and must be dropped. Guards
+// the fork's stricter fence (upstream accepted empty ids). See GH #220.
+func TestActivity_EmptyLaunchSignalIsIgnoredForSupervisedSession(t *testing.T) {
+	m, st, _ := newManager()
+	rec := working("mer-1")
+	rec.Metadata.RuntimeLaunchID = "launch-2"
+	st.sessions["mer-1"] = rec
+	before := st.sessions["mer-1"]
+	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{Valid: true, State: domain.ActivityExited, LaunchID: ""}); err != nil {
+		t.Fatal(err)
+	}
+	if st.sessions["mer-1"] != before {
+		t.Fatalf("empty-launch-id signal mutated a supervised session: %+v", st.sessions["mer-1"])
+	}
+}
+
+// A stale-generation final hook (wrong launch id) on a terminated session must
+// be fenced BEFORE telemetry extraction so it cannot corrupt usage/quota totals.
+// Guards the fence-before-telemetry ordering. See GH #220.
+func TestActivity_StaleTerminatedSignalDropsTelemetry(t *testing.T) {
+	st := newFakeStore()
+	sink := &telemetrySink{}
+	m := New(st, nil, WithTelemetry(sink))
+	now := time.Unix(200, 0).UTC()
+	m.clock = func() time.Time { return now }
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID:           "mer-1",
+		ProjectID:    "mer",
+		Harness:      domain.HarnessCodex,
+		IsTerminated: true,
+		Activity:     domain.Activity{State: domain.ActivityExited},
+		Metadata:     domain.SessionMetadata{RuntimeLaunchID: "launch-2"},
+	}
+	inputTokens := 10.0
+	err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{
+		Valid:    true,
+		State:    domain.ActivityIdle,
+		LaunchID: "launch-1",
+		Usage:    &ports.UsageSignal{InputTokens: &inputTokens, TotalTokens: &inputTokens},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sink.events) != 0 {
+		t.Fatalf("stale terminated signal emitted telemetry: %#v", sink.events)
+	}
+}
+
 func TestActivity_NewLaunchSignalWaitsForMarkSpawned(t *testing.T) {
 	m, st, _ := newManager()
 	rec := working("mer-1")
