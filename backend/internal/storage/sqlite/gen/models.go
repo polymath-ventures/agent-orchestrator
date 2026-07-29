@@ -221,8 +221,6 @@ type Session struct {
 	PreviewRevision    int64
 	Model              string
 	MixSelected        bool
-	RuntimeToken       string
-	LaunchCommand      string
 	Effort             string
 	PromptPolicyHash   string
 	MixBucketModel     string
