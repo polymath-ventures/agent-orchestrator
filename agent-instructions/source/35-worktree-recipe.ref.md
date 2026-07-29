@@ -17,8 +17,8 @@ agent worktree directory. This is how you create one:
 create_owned_worktree() {
   main_repo_root="$1"
   target_worktree="$2"
-  branch_arg="$3" # branch name, existing branch, or --detach
-  start_ref="$4" # empty selects an existing branch checkout
+  branch_arg="$3" # new branch name, an existing branch, or --detach
+  start_ref="$4" # ref for new/detached checkouts; empty means check out branch_arg
   work_item_key="$5"
   canon_worktree=
   test -n "$work_item_key" || {

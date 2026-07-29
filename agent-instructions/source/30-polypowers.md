@@ -97,7 +97,8 @@ Non-negotiable. Violating any of these is a bug in your behavior.
    `polypowers-worktree-owner` marker at creation; nothing backfills it later,
    so a worktree made any other way carries no proof of who owns it. The
    helper, the branch/detach forms, and the session-anchor rules are in
-   `35-worktree-recipe.ref.md` — read it when you create a worktree.
+   `agent-instructions/source/35-worktree-recipe.ref.md` — read it when you
+   create a worktree.
 3. **Test gates.** Fast loop per commit. Before push: full CI (build, format, and tests), then rebase against the default branch — clean → push
    (`--force-with-lease` if rewritten); conflicted → park. Never push a stale
    stack.
