@@ -3,7 +3,7 @@
 # polyscribe.sh
 #
 # @sx-managed: polyscribe (vault) — do not edit; managed by the agent-vault hook
-# @sx-managed-version: 9
+# @sx-managed-version: 12
 #
 # Assemble modular markdown PRIMITIVES into the per-agent instruction files the
 # coding tools read, at TWO scopes:
@@ -24,10 +24,12 @@
 # import for the importing client, so each client carries the body inline instead.
 #
 # A primitive named "<name>.ref.md" instead of "<name>.md" emits a one-line
-# pointer rather than inlining its body. It is flagged REF in the length report —
-# the convention for "this is a short pointer that tells the agent to read a
-# bigger file on demand" (context-budget escape hatch). The build reports lengths
-# so you can manage what to inline vs ref.
+# pointer rather than inlining its body. When an earlier module names that
+# .ref.md path, the pointer is anchored at that reference site; otherwise it
+# emits in sorted module order. It is flagged REF in the length report — the
+# convention for "this is a short pointer that tells the agent to read a bigger
+# file on demand" (context-budget escape hatch). The build reports lengths so you
+# can manage what to inline vs ref.
 #
 # HTML comments are AUTHORING-ONLY. Any <!-- ... --> block in a source primitive
 # or override (multi-line included) is stripped during assembly and never reaches
@@ -41,17 +43,21 @@
 # Edit agent-instructions/source|agent-overrides|system, never the generated files.
 #
 # Usage (toolchain-free — no npm required):
-#   bash scripts/polyscribe.sh            # build + write the REPO files, print length report
-#   bash scripts/polyscribe.sh --check    # build REPO files to temp, diff, exit 1 on drift (CI)
-#   bash scripts/polyscribe.sh --system   # build + write the SYSTEM (global $HOME) files
-#                                          #   honors AGENTS_SYSTEM_HOME to retarget for testing
+#   bash "$HOME/.claude/hooks/polyscribe/polyscribe.sh"            # Claude install: build + write the REPO files
+#   bash "$HOME/.gemini/hooks/polyscribe/polyscribe.sh" --check    # Gemini install: build to temp, diff, exit 1 on drift
+#   bash "$HOME/.claude/hooks/polyscribe/polyscribe.sh" --system   # build + write SYSTEM files
+#                                                                  #   honors AGENTS_SYSTEM_HOME to retarget for testing
 #   (Node repos MAY alias these as `npm run agents[:check|:system]` — optional convenience,
 #    added by nickify only when a package.json already exists. Not required.)
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
-REPO_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd -P)"
+if git_root="$(git rev-parse --show-toplevel 2>/dev/null)" && [[ -n "$git_root" ]]; then
+  REPO_ROOT="$(cd -- "$git_root" && pwd -P)"
+else
+  printf 'polyscribe: cannot resolve repo root; run inside a git repository\n' >&2
+  exit 1
+fi
 
 AI_DIR="${REPO_ROOT}/agent-instructions"
 SRC_DIR="${AI_DIR}/source"
@@ -60,8 +66,27 @@ SYS_DIR="${AI_DIR}/system"
 STANDARD_SET_MANIFEST="${AI_DIR}/standard-set.json"
 ROLE_DIR="${AI_DIR}/roles"
 
-BANNER='<!-- GENERATED — DO NOT EDIT. Edit agent-instructions/{source,agent-overrides,system}/, then rebuild: bash scripts/polyscribe.sh (system scope adds --system) -->'
-ROLE_BANNER='<!-- GENERATED — DO NOT EDIT. Edit agent-instructions/roles/<role>/, then rebuild: bash scripts/polyscribe.sh -->'
+SCRIPT_PATH="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/$(basename -- "${BASH_SOURCE[0]}")"
+case "$SCRIPT_PATH" in
+  "$HOME/.claude/hooks/polyscribe/polyscribe.sh")
+    REBUILD_COMMAND='bash "$HOME/.claude/hooks/polyscribe/polyscribe.sh"'
+    ;;
+  "$HOME/.gemini/hooks/polyscribe/polyscribe.sh")
+    REBUILD_COMMAND='bash "$HOME/.gemini/hooks/polyscribe/polyscribe.sh"'
+    ;;
+  "$REPO_ROOT/polyscribe/polyscribe.sh")
+    REBUILD_COMMAND='bash polyscribe/polyscribe.sh'
+    ;;
+  "$REPO_ROOT/scripts/polyscribe.sh")
+    REBUILD_COMMAND='bash scripts/polyscribe.sh'
+    ;;
+  *)
+    REBUILD_COMMAND="bash $(printf '%q' "$SCRIPT_PATH")"
+    ;;
+esac
+
+BANNER="<!-- GENERATED — DO NOT EDIT. Edit agent-instructions/{source,agent-overrides,system}/, then rebuild: ${REBUILD_COMMAND} (system scope adds --system) -->"
+ROLE_BANNER="<!-- GENERATED — DO NOT EDIT. Edit agent-instructions/roles/<role>/, then rebuild: ${REBUILD_COMMAND} -->"
 CEILING=200
 
 # --- REPO scope (NEVER glob — order is explicit) -----------------------------
@@ -296,6 +321,130 @@ check_standard_set() {
   [[ "$checked" = "$expected_count" ]] || die "standard-set manifest parsed $checked module entries but contains $expected_count source entries: $STANDARD_SET_MANIFEST"
 }
 
+# Track .ref.md modules already emitted while rendering one output.
+EMITTED_REF_MODULES="|"
+REF_MODULES=()
+REF_RELS=()
+ref_already_emitted() {
+  case "$EMITTED_REF_MODULES" in
+    *"|$1|"*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+mark_ref_emitted() {
+  EMITTED_REF_MODULES="${EMITTED_REF_MODULES}$1|"
+}
+emit_ref_pointer() {
+  local mod="$1" rel="$2" prefix="${3:-}"
+  printf '%sFor **%s**, read `%s` when relevant (referenced on demand, not inlined here).\n' \
+    "$prefix" "$mod" "$rel"
+  mark_ref_emitted "$mod"
+}
+prepare_ref_modules() {
+  local dir="$1"; shift
+  local mod f
+  REF_MODULES=()
+  REF_RELS=()
+  for mod in "$@"; do
+    f="$(module_file "$dir" "$mod")"
+    [[ "$f" == *.ref.md ]] || continue
+    REF_MODULES+=("$mod")
+    REF_RELS+=("${f#"$REPO_ROOT"/}")
+  done
+}
+ref_rel_for_mod() {
+  local mod="$1" i
+  if [[ "${#REF_MODULES[@]}" -gt 0 ]]; then
+    for i in "${!REF_MODULES[@]}"; do
+      [[ "${REF_MODULES[$i]}" == "$mod" ]] && { printf '%s' "${REF_RELS[$i]}"; return 0; }
+    done
+  fi
+  return 1
+}
+should_skip_module() {
+  local mod="$1"
+  ref_rel_for_mod "$mod" >/dev/null && ref_already_emitted "$mod"
+}
+paragraph_ref_anchors() {
+  local paragraph="$1"
+  local first_line indent="" i mod rel emitted=false
+  first_line="${paragraph%%$'\n'*}"
+  if [[ "${#REF_MODULES[@]}" -gt 0 ]]; then
+    for i in "${!REF_MODULES[@]}"; do
+      mod="${REF_MODULES[$i]}"
+      rel="${REF_RELS[$i]}"
+      ref_already_emitted "$mod" && continue
+      case "$paragraph" in
+        *"$rel"*)
+          indent=""
+          if [[ "$first_line" =~ ^([0-9]+\.|-)[[:space:]] ]]; then
+            indent="${BASH_REMATCH[1]} "
+            indent="${indent//?/ }"
+          fi
+          printf '\n'
+          emit_ref_pointer "$mod" "$rel" "$indent"
+          emitted=true
+          ;;
+      esac
+    done
+  fi
+  [[ "$emitted" = true ]]
+}
+emit_trimmed_with_ref_anchors() {
+  local f="$1"
+  local rendered line paragraph="" anchor_text="" in_fence=false fence_re='^[[:space:]]*(```|~~~)'
+  rendered="$(emit_trimmed "$f")" || return $?
+  [[ -n "$rendered" ]] || return 0
+  while IFS= read -r line; do
+    if [[ "$in_fence" = true ]]; then
+      if [[ -n "$paragraph" ]]; then
+        paragraph="${paragraph}
+${line}"
+      else
+        paragraph="$line"
+      fi
+      [[ "$line" =~ $fence_re ]] && in_fence=false
+    elif [[ "$line" =~ $fence_re ]]; then
+      if [[ -n "$paragraph" ]]; then
+        paragraph="${paragraph}
+${line}"
+      else
+        paragraph="$line"
+      fi
+      in_fence=true
+    elif [[ "$line" =~ ^[[:space:]]*$ ]]; then
+      if [[ -n "$paragraph" ]]; then
+        printf '%s\n' "$paragraph"
+        paragraph_ref_anchors "$anchor_text" || true
+        paragraph=""
+        anchor_text=""
+      fi
+      printf '\n'
+    elif [[ -n "$paragraph" && "$line" =~ ^([0-9]+\.|-)[[:space:]] ]]; then
+      printf '%s\n' "$paragraph"
+      paragraph_ref_anchors "$anchor_text" && printf '\n'
+      paragraph="$line"
+      anchor_text="$line"
+    else
+      if [[ -n "$paragraph" ]]; then
+        paragraph="${paragraph}
+${line}"
+        anchor_text="${anchor_text}
+${line}"
+      else
+        paragraph="$line"
+        anchor_text="$line"
+      fi
+    fi
+  done <<EOF
+$rendered
+EOF
+  if [[ -n "$paragraph" ]]; then
+    printf '%s\n' "$paragraph"
+    paragraph_ref_anchors "$anchor_text" || true
+  fi
+}
+
 # Emit one module. A normal <name>.md is inlined; a <name>.ref.md is the
 # by-reference escape hatch — its body is NOT inlined, only a one-line pointer
 # telling the agent to read the file on demand (keeps the assembled file small).
@@ -303,10 +452,9 @@ emit_module() {
   local dir="$1" mod="$2" f
   f="$(module_file "$dir" "$mod")"
   if [[ "$f" == *.ref.md ]]; then
-    printf 'For **%s**, read `%s` when relevant (referenced on demand, not inlined here).\n' \
-      "$mod" "${f#"$REPO_ROOT"/}"
+    emit_ref_pointer "$mod" "$(ref_rel_for_mod "$mod")"
   else
-    emit_trimmed "$f"
+    emit_trimmed_with_ref_anchors "$f"
   fi
 }
 
@@ -315,11 +463,14 @@ emit_module() {
 emit_assembled() {
   local dir="$1"; shift
   local override_file="$1"; shift # may be empty
-  local mod first=1
+  local mod first=1 modules=("$@")
+  EMITTED_REF_MODULES="|"
+  prepare_ref_modules "$dir" "${modules[@]}"
   printf '%s\n\n' "$BANNER"
   # Separator goes BEFORE each module (except the first) and before the override,
   # so an empty-override output (AGENTS.shared.md, system files) has no trailing blank.
-  for mod in "$@"; do
+  for mod in "${modules[@]}"; do
+    should_skip_module "$mod" && continue
     [[ $first -eq 1 ]] || printf '\n'
     emit_module "$dir" "$mod"
     first=0
@@ -342,7 +493,10 @@ EOF
   [[ "${#modules[@]}" -gt 0 ]] || die "missing role modules: ${role_source}/NN-*.md"
 
   printf '%s\n\n' "$ROLE_BANNER"
+  EMITTED_REF_MODULES="|"
+  prepare_ref_modules "$role_source" "${modules[@]}"
   for mod in "${modules[@]}"; do
+    should_skip_module "$mod" && continue
     [[ $first -eq 1 ]] || printf '\n'
     emit_module "$role_source" "$mod"
     first=0
@@ -448,7 +602,9 @@ esac
 if [[ "$MODE" == "check" ]]; then
   preflight_repo
   check_standard_set
-  tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+  tmp="$(mktemp -d)"
+  cleanup_check_tmp() { [[ ! -d "$tmp" ]] || rm -r "$tmp"; }
+  trap cleanup_check_tmp EXIT
   drift=0
   for out in "${REPO_ALL[@]}"; do
     render_repo "$out" >"${tmp}/${out}"
@@ -462,7 +618,7 @@ if [[ "$MODE" == "check" ]]; then
       diff -u "${REPO_ROOT}/${out}" "${tmp}/${out}" --label "committed/${out}" --label "freshly-built/${out}" || drift=1
     done
   fi
-  [[ $drift -ne 0 ]] && die "repo agent instruction files are stale. Run: bash scripts/polyscribe.sh"
+  [[ $drift -ne 0 ]] && die "repo agent instruction files are stale. Run: ${REBUILD_COMMAND}"
   printf 'polyscribe: repo files (AGENTS.md + CLAUDE.md/GEMINI.md inline + AGENTS.shared.md) up to date.\n'
   exit 0
 fi
@@ -472,7 +628,13 @@ if [[ "$MODE" == "system" ]]; then
   # Two-phase for atomicity (same rationale as the repo build below): render all
   # system outputs to temps, then move them into place only if all succeed.
   sys_tmps=(); sys_dsts=()
-  cleanup_sys_tmps() { local t; for t in "${sys_tmps[@]:-}"; do [[ -n "$t" ]] && rm -f "$t"; done; }
+  cleanup_sys_tmps() {
+    local t
+    for t in "${sys_tmps[@]:-}"; do
+      [[ -n "$t" ]] || continue
+      [[ ! -e "$t" && ! -L "$t" ]] || rm -- "$t"
+    done
+  }
   trap cleanup_sys_tmps EXIT
   for path in "${SYSTEM_OUTPUTS[@]}"; do
     mkdir -p "$(dirname "$path")"
@@ -500,7 +662,13 @@ fi
 # half-updated set split across source versions.
 preflight_repo
 build_tmps=(); build_dsts=()
-cleanup_build_tmps() { local t; for t in "${build_tmps[@]:-}"; do [[ -n "$t" ]] && rm -f "$t"; done; }
+cleanup_build_tmps() {
+  local t
+  for t in "${build_tmps[@]:-}"; do
+    [[ -n "$t" ]] || continue
+    [[ ! -e "$t" && ! -L "$t" ]] || rm -- "$t"
+  done
+}
 trap cleanup_build_tmps EXIT
 for out in "${REPO_ALL[@]}"; do
   tmpf="$(mktemp "${REPO_ROOT}/.${out}.XXXXXX")"
