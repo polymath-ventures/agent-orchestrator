@@ -187,25 +187,46 @@ test("predicate matches on the leading path segment, not a substring", () => {
 });
 
 test("predicate FAILS SAFE when the base ref is missing and the change is committed", () => {
-	// The nastiest shape, and the one a shared changed-set helper invites: the
-	// branch's backend changes are COMMITTED, so the working tree is clean, and
-	// `origin/main` is absent (single-branch clone, unfetched remote, shallow
-	// checkout). Deriving the changed set from the working tree alone then reports
-	// nothing, and the Go stages get skipped on a branch that may not compile.
+	// The branch's backend changes are COMMITTED, so the working tree is clean,
+	// and the base ref it should compare against does not exist locally (a
+	// single-branch clone, an unfetched remote, a shallow checkout). Reading only
+	// the working tree would report nothing and skip the build on a branch that
+	// may not compile.
 	//
-	// Prettier degrades gracefully in exactly this situation on purpose — missing
-	// a few committed files is a small, visible miss. A skip-the-build decision
-	// cannot borrow that tolerance, which is why the predicate passes
-	// --require-base and this case must RUN.
+	// origin/HEAD must be SET here, pointing at the absent origin/main. Leaving it
+	// unset instead exits at the earlier unknown-default-branch guard, so the
+	// missing-base guard is never reached and this test silently stops testing it
+	// — which is exactly what happened once and was caught by deleting the guard
+	// and watching this test keep passing.
 	const dir = setupRepo({ withBase: false });
 	try {
+		git(dir, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main");
 		write(dir, "backend/foo.go", "package backend\n\nvar Z = 3\n");
 		git(dir, "add", "backend/foo.go");
 		git(dir, "commit", "-qm", "committed backend change, no base ref");
 		assert.equal(git(dir, "status", "--porcelain").trim(), "", "working tree must be clean");
 
+		// Preconditions: the default branch IS known, and its ref is NOT present.
+		assert.equal(
+			git(dir, "symbolic-ref", "refs/remotes/origin/HEAD").trim(),
+			"refs/remotes/origin/main",
+			"origin/HEAD must be set, or this exits at the earlier guard",
+		);
+		const present = spawnSync("git", ["rev-parse", "--verify", "--quiet", "refs/remotes/origin/main"], {
+			cwd: dir,
+			encoding: "utf8",
+		});
+		assert.notEqual(present.status, 0, "the base ref must be absent for this test to mean anything");
+
 		const r = runPredicate(dir);
 		assert.notEqual(r.status, 0, `expected run\nstdout:${r.stdout}\nstderr:${r.stderr}`);
+		// Assert the REASON, not just the exit status. Without the explicit guard
+		// the diff would fail on the bad revision and `set -e` would still produce
+		// a non-zero exit — the right outcome for the wrong reason, and
+		// indistinguishable here on status alone. The guard exists to say what
+		// happened instead of leaking a raw `fatal:` to stderr, so that is what
+		// this pins.
+		assert.match(r.stdout, /not present locally/);
 	} finally {
 		rmSync(dir, { recursive: true, force: true });
 	}
@@ -330,15 +351,27 @@ test("predicate FAILS SAFE when the base ref EXISTS but git cannot diff against 
 });
 
 test("predicate FAILS SAFE (runs) when the changed set cannot be determined", () => {
-	// A repo with no commits makes `git diff HEAD` fail. The predicate must treat
-	// an underivable changed set as "run the stages", never as "nothing changed,
-	// skip". This is the case an `exit 0 = run` convention would get wrong.
-	const dir = mkdtempSync(join(tmpdir(), "go-scope-"));
+	// An unborn HEAD makes `git diff … HEAD` fail. The predicate must treat an
+	// underivable changed set as "run the stages", never as "nothing changed,
+	// skip" — the case an `exit 0 = run` convention would get wrong.
+	//
+	// The setup has to get PAST the two earlier guards to reach the diffs at all:
+	// origin/HEAD set, and its target present. An earlier version of this test
+	// used a fresh repo with no commits and no refs, so it exited at the first
+	// guard and asserted nothing about the diffs.
+	const dir = setupRepo();
 	try {
-		git(dir, "init", "-q");
-		git(dir, "config", "user.email", "gate@example.com");
-		git(dir, "config", "user.name", "gate");
-		write(dir, "backend/foo.go", "package backend\n");
+		// Orphan branch with nothing committed on it: HEAD points at an unborn ref
+		// while origin/HEAD and origin/main remain valid from setupRepo.
+		git(dir, "checkout", "-q", "--orphan", "unborn");
+		write(dir, "backend/foo.go", "package backend\n\nvar Unborn = 1\n");
+
+		// Preconditions: both guards pass, and HEAD really is unborn.
+		assert.equal(git(dir, "symbolic-ref", "refs/remotes/origin/HEAD").trim(), "refs/remotes/origin/main");
+		assert.ok(git(dir, "rev-parse", "--verify", "refs/remotes/origin/main").trim());
+		const head = spawnSync("git", ["rev-parse", "--verify", "--quiet", "HEAD"], { cwd: dir, encoding: "utf8" });
+		assert.notEqual(head.status, 0, "HEAD must be unborn so the diffs actually fail");
+
 		const r = runPredicate(dir);
 		assert.notEqual(r.status, 0, `expected run\nstdout:${r.stdout}\nstderr:${r.stderr}`);
 	} finally {

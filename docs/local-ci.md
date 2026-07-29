@@ -34,6 +34,13 @@ tree. Untracked files and paths marked `assume-unchanged`/`skip-worktree` are
 invisible to it, exactly as they are to `git diff` — none of them can reach a
 commit without becoming visible, so none can escape to the remote unbuilt.
 
+**Accepted limitation:** the predicate trusts local remote-tracking metadata. If
+`origin/HEAD` is set but points somewhere wrong, or `origin/main` is stale, the
+comparison happens against that stale point and a genuine change can look like no
+change. Detecting it would need to contact the remote, which is precisely what a
+fast local gate must not do. `git fetch` and `git remote set-head origin -a` are
+the fix; remote CI is the backstop.
+
 Worth keeping in proportion: remote CI is unscoped, so the blast radius of a
 false skip here is a wasted remote round-trip and a lost local early warning, not
 a broken default branch.
