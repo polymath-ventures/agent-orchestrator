@@ -97,6 +97,9 @@ Non-negotiable. Violating any of these is a bug in your behavior.
    helper, the branch/detach forms, and the session-anchor rules are in
    `agent-instructions/source/35-worktree-recipe.ref.md` — read it when you
    create a worktree.
+
+   For **35-worktree-recipe**, read `agent-instructions/source/35-worktree-recipe.ref.md` when relevant (referenced on demand, not inlined here).
+
 3. **Test gates.** Fast loop per commit. Before push: full CI (build, format, and tests), then rebase against the default branch — clean → push
    (`--force-with-lease` if rewritten); conflicted → park. Never push a stale
    stack.
@@ -207,8 +210,6 @@ Shared skills describe _process_ and resolve the _who/how_ from this contract:
   (ping-pong, convergence) and calls the verdict; the orchestrator fixes.
 - Repo fragments may extend this contract (name a roster, add gates); they may
   not weaken rules 6–9 above.
-
-For **35-worktree-recipe**, read `agent-instructions/source/35-worktree-recipe.ref.md` when relevant (referenced on demand, not inlined here).
 
 ## Operating Principles
 
