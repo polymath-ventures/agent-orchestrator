@@ -227,6 +227,46 @@ test("predicate runs the Go stages for a root go.work, the one input outside bac
 	}
 });
 
+test("predicate FAILS SAFE when the base ref EXISTS but git cannot diff against it", () => {
+	// The case that a passing test suite hid. An earlier draft grouped both diffs
+	// into one `changed="$( git diff …; git diff … )"`. `set -e` does not abort on
+	// a non-final failure inside a command substitution, and the substitution
+	// takes its LAST command's status — so a first diff that died with
+	// `fatal: … no merge base` was swallowed, the result read as empty, and the
+	// Go stages were SKIPPED on a branch adding backend code.
+	//
+	// Every other fail-safe test here exits at the earlier missing-base check, so
+	// none of them reach the diffs at all. This one needs a base ref that EXISTS
+	// and is unusable: an unrelated root commit.
+	const dir = setupRepo({ withBase: false });
+	try {
+		// `git init` picks the initial branch name from init.defaultBranch, which
+		// varies by git version and user config — capture it rather than assume.
+		const branch = git(dir, "branch", "--show-current").trim();
+		git(dir, "checkout", "-q", "--orphan", "otherroot");
+		git(dir, "rm", "-rq", "--cached", ".");
+		write(dir, "unrelated.md", "# unrelated\n");
+		git(dir, "add", "unrelated.md");
+		git(dir, "commit", "-qm", "unrelated root");
+		const unrelated = git(dir, "rev-parse", "HEAD").trim();
+		git(dir, "update-ref", "refs/remotes/origin/main", unrelated);
+		git(dir, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main");
+		git(dir, "checkout", "-q", "-f", branch);
+
+		// Precondition: the ref resolves, so the missing-base guard does NOT fire,
+		// but no merge base exists — otherwise this test would pass for the wrong
+		// reason and go on hiding the defect it exists to catch.
+		assert.ok(git(dir, "rev-parse", "--verify", "origin/main").trim(), "base ref must exist");
+		const mb = spawnSync("git", ["merge-base", "origin/main", "HEAD"], { cwd: dir, encoding: "utf8" });
+		assert.notEqual(mb.status, 0, "histories must be unrelated for this test to mean anything");
+
+		const r = runPredicate(dir);
+		assert.notEqual(r.status, 0, `expected run\nstdout:${r.stdout}\nstderr:${r.stderr}`);
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
 test("predicate FAILS SAFE (runs) when the changed set cannot be determined", () => {
 	// A repo with no commits makes `git diff HEAD` fail. The predicate must treat
 	// an underivable changed set as "run the stages", never as "nothing changed,

@@ -57,21 +57,31 @@ if ! git rev-parse --verify --quiet "$base" >/dev/null; then
 	exit 2
 fi
 
-# Committed on this branch, then tracked working-tree and staged edits. Both are
-# plain assignments, so `set -e` aborts on a git failure (an unusable revision
-# exits 128) rather than letting it read as an empty diff.
-changed="$(
-	git diff --name-only "${base}...HEAD" -- "${go_paths[@]}"
-	git diff --name-only HEAD -- "${go_paths[@]}"
-)"
+# Committed on this branch, then tracked working-tree and staged edits.
+#
+# These MUST be two separate top-level assignments. Grouping them into one
+# `changed="$( git diff …; git diff … )"` silently breaks the fail-safe: `set -e`
+# does not abort on a non-final failure inside a command substitution, and the
+# substitution takes the status of its LAST command — so a first diff that died
+# (`fatal: … no merge base`, on a base ref that exists but shares no history)
+# would be swallowed, the result would read as empty, and the Go stages would be
+# skipped. A top-level assignment whose substitution fails IS governed by
+# `set -e`, so each git failure aborts the script and the caller sees non-zero.
+committed="$(git diff --name-only "${base}...HEAD" -- "${go_paths[@]}")"
+worktree="$(git diff --name-only HEAD -- "${go_paths[@]}")"
 
-if [ -n "$changed" ]; then
-	# First line via parameter expansion rather than a pipeline: `head` in a
-	# pipeline under `pipefail` can SIGPIPE the producing `git` and turn a
-	# successful check into a failure.
-	echo "changed: ${changed%%$'\n'*}"
+# First line via parameter expansion rather than a pipeline: `head` in a pipeline
+# under `pipefail` can SIGPIPE the producing `git` and turn a successful check
+# into a failure. Checked separately so neither has to be concatenated, which
+# would reintroduce the question of which half a leading blank line came from.
+if [ -n "$committed" ]; then
+	echo "changed: ${committed%%$'\n'*}"
+	exit 1
+fi
+if [ -n "$worktree" ]; then
+	echo "changed: ${worktree%%$'\n'*}"
 	exit 1
 fi
 
-echo "no changed paths under backend/, scripts/ci/, or go.work*"
+echo "no changed paths under backend/, scripts/ci/, go.work, or go.work.sum"
 exit 0

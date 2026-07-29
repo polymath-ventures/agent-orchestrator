@@ -71,9 +71,10 @@ format:check` is the fast changed-files-only subset if you just need the format
 check.
 
 The five Go stages are **scoped to the diff** — they run only when the branch
-touches `backend/`, `scripts/ci/`, or a root `go.work*`, and are otherwise skipped
-with the reason printed. Remote CI stays unscoped and remains the real gate. See
-`docs/local-ci.md` before changing that scoping or `scripts/ci/`.
+touches `backend/`, `scripts/ci/`, or a root `go.work`/`go.work.sum`, and are
+otherwise skipped with the reason printed. Remote CI stays unscoped and remains
+the real gate. See `docs/local-ci.md` before changing that scoping or
+`scripts/ci/`.
 
 Optionally install it as a git `pre-push` hook (per-clone, opt-in) so it runs
 automatically on `git push`; bypass a single push with `git push --no-verify`:

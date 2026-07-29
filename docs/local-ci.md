@@ -13,7 +13,8 @@ format/ops-units/lint/build/test/typecheck jobs and does not use
 
 Its five Go stages (`gofmt`, `go build`, `go vet`, `go test -race ./...`,
 golangci-lint) are scoped to the diff by `scripts/ci/go-stages-skippable.sh`:
-they run when the branch touches `backend/`, `scripts/ci/`, or a root `go.work*`,
+they run when the branch touches `backend/`, `scripts/ci/`, or a root `go.work`
+or `go.work.sum`,
 and are otherwise skipped with the reason printed. That trigger set is a superset
 of the Go build's real inputs, all of which live under `backend/` except a
 workspace file, which the toolchain searches parent directories for. The predicate
