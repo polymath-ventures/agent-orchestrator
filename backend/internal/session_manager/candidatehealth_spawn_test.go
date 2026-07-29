@@ -425,20 +425,6 @@ func TestSpawn_PinnedFailureDoesNotMarkDown(t *testing.T) {
 	}
 }
 
-// cancelOnDestroyWorkspace cancels the caller's context from inside workspace
-// teardown, modelling the ordinary case where the caller goes away (or its
-// deadline lapses) while rollback is still in flight. Deterministic on purpose:
-// the invariant under test is about ordering, not about how long teardown takes.
-type cancelOnDestroyWorkspace struct {
-	*fakeWorkspace
-	cancel context.CancelFunc
-}
-
-func (w *cancelOnDestroyWorkspace) Destroy(ctx context.Context, info ports.WorkspaceInfo) error {
-	w.cancel()
-	return w.fakeWorkspace.Destroy(ctx, info)
-}
-
 // Preflight promises to create nothing and change nothing — that is the whole
 // reason a role reconcile may ask it before tearing down the running session.
 // For a WORKER the promise cannot hold: resolveSpawnTarget resolves the mix

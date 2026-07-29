@@ -46,7 +46,6 @@ type lifecycleStack struct {
 	scmDone       <-chan struct{}
 	trackerDone   <-chan struct{}
 	drainDone     <-chan struct{}
-	sweepDone     <-chan struct{}
 }
 
 // startLifecycle constructs the Lifecycle Manager over the store and starts the

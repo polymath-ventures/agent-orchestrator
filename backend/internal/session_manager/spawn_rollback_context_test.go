@@ -412,23 +412,6 @@ func TestCleanupContextReusesAnExistingCleanupBudget(t *testing.T) {
 	}
 }
 
-// ctxHonoringDeleteStore fails the seed-row delete on an already-cancelled
-// context, recording that the row was left behind.
-type ctxHonoringDeleteStore struct {
-	*fakeStore
-	deletedLive   int
-	deleteSkipped int
-}
-
-func (s *ctxHonoringDeleteStore) DeleteSession(ctx context.Context, id domain.SessionID) (bool, error) {
-	if err := ctx.Err(); err != nil {
-		s.deleteSkipped++
-		return false, err
-	}
-	s.deletedLive++
-	return s.fakeStore.DeleteSession(ctx, id)
-}
-
 // ctxHonoringCleaningAgent records whether the agent workspace-cleanup hook
 // actually ran, or was skipped because the context it received was already dead.
 type ctxHonoringCleaningAgent struct {
