@@ -5,4 +5,30 @@
 #
 # Enable:      npm run hooks:install   (points core.hooksPath at .githooks)
 # Bypass once: git push --no-verify
+set -uo pipefail
+
+# Git feeds one "<local ref> <local sha> <remote ref> <remote sha>" line per
+# pushed ref on stdin. The gate scopes its Go stages to the checked-out HEAD, so
+# on a push of anything OTHER than HEAD that scoping is answering about the wrong
+# commit — `git push origin backend-branch` from a docs-only branch would skip
+# the Go stages entirely. Force the full gate there.
+#
+# This restores the pre-scoping behaviour and no more. It does NOT make the gate
+# test the commit being pushed: the Go stages compile the working tree, so
+# pushing a ref you are not standing on has never been verified locally, before
+# this change or after it. See docs/local-ci.md; remote CI is the gate that sees
+# every pushed ref.
+head_sha="$(git rev-parse HEAD 2>/dev/null || true)"
+while read -r _local_ref local_sha _remote_ref _remote_sha; do
+	# Only the local-SHA field is examined. The all-zero SHA is git's deletion
+	# marker and builds nothing, so it is skipped; any other value that is not
+	# HEAD forces, which covers a blank or unparseable field without validating
+	# input git does not emit.
+	case "$local_sha" in
+	0000000000000000000000000000000000000000) continue ;;
+	esac
+	[ "$local_sha" = "$head_sha" ] || CI_LOCAL_FORCE_GO=1
+done
+export CI_LOCAL_FORCE_GO="${CI_LOCAL_FORCE_GO:-}"
+
 exec npm run ci-local

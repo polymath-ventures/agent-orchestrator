@@ -8,7 +8,77 @@ npm run agent-ci
 ```
 
 `npm run ci-local` is the required pre-push parity gate. It mirrors the remote
-format/lint/build/test/typecheck jobs and does not use `@redwoodjs/agent-ci`.
+format/ops-units/lint/build/test/typecheck jobs and does not use
+`@redwoodjs/agent-ci`.
+
+Its five Go stages (`gofmt`, `go build`, `go vet`, `go test -race ./...`,
+golangci-lint) are scoped to the diff by `scripts/ci/go-stages-skippable.sh`:
+they are skipped **only** when the predicate positively establishes that the
+branch touches none of `backend/`, `scripts/ci/`, a root `go.work`, or a root
+`go.work.sum`. Anything else runs them, with the reason printed either way. That
+trigger set is a superset of the Go build's real inputs, all of which live under
+`backend/` except a workspace file, which the toolchain searches parent
+directories for.
+
+The predicate exits `0` for "skippable" and non-zero for everything else,
+including its own failures. The asymmetry is the point: an unchanged branch whose
+base ref is missing, ambiguous, unusable, or whose default branch is unknown
+(`refs/remotes/origin/HEAD` unset — fix with `git remote set-head origin -a`)
+**runs** the stages rather than being skipped, because a skipped race suite and a
+passing one look identical in the output. "Otherwise skipped" would be the wrong
+summary: the skip requires a positive determination, never merely the absence of
+a detected change.
+
+"Touches" means committed on the branch, staged, or edited in the tracked working
+tree. Untracked files and paths marked `assume-unchanged`/`skip-worktree` are
+invisible to it, exactly as they are to `git diff` — none of them can reach a
+commit without becoming visible, so none can escape to the remote unbuilt.
+
+**Accepted limitation — the hook gates the working tree, not the pushed ref.**
+The Go stages compile whatever is checked out, so `git push origin other-branch`
+while standing somewhere else has never verified the commit being pushed, before
+this scoping or after it. The `pre-push` hook does read the ref tuples git gives
+it and forces the full gate whenever a pushed SHA is not `HEAD`, which keeps that
+case no worse than it was — but forcing runs the stages against `HEAD`, not
+against the pushed commit. Closing that properly means checking out each pushed
+SHA or refusing non-`HEAD` pushes, which is a separate change. Remote CI is the
+gate that actually sees every pushed ref.
+
+**Accepted limitation:** the predicate trusts local remote-tracking metadata. If
+`origin/HEAD` is set but points somewhere wrong, or `origin/main` is stale, the
+comparison happens against that stale point and a genuine change can look like no
+change. Detecting it would need to contact the remote, which is precisely what a
+fast local gate must not do. `git fetch` and `git remote set-head origin -a` are
+the fix; remote CI is the backstop.
+
+Worth keeping in proportion: remote CI is unscoped, so the blast radius of a
+false skip here is a wasted remote round-trip and a lost local early warning, not
+a broken default branch.
+
+The predicate asks git directly, via pathspecs on the merge-base diff with the
+default branch and on the tracked working-tree edits. Letting git decide what
+"under `backend/`" means is what keeps it honest: deletions, renames, and paths
+containing spaces or newlines need no special handling, and a branch that only
+_removes_ a backend package is still correctly seen as changing Go.
+
+It deliberately does **not** share a changed-set helper with the Prettier stage,
+though an earlier draft did. The two want opposite policies on the same two
+questions, and the coupling produced a defect on each:
+
+- **Deletions.** Prettier cannot check a path that no longer exists, so it filters
+  deletions out; the Go stages must compile a branch that deleted a package.
+- **A missing base ref.** Prettier degrades to the working tree alone, so the
+  format gate still works in an offline or single-branch clone — missing a few
+  committed files there is a small, visible miss. The Go predicate must not
+  degrade: a branch whose backend changes are already committed has a clean
+  working tree, so that fallback would report nothing and skip the build on code
+  that may not compile. It treats a missing base ref as undecidable and runs.
+
+Remote CI is deliberately unscoped — it is the real gate, it runs on fresh
+machines, and it is not what grows a developer's `~/.cache/go-build`. The local
+build/vet/test invocations also pass `-trimpath`, which stops absolute source
+paths from being baked into compiled output and keeps each live worktree from
+caching its own copy of every first-party package.
 
 `npm run agent-ci` is the repo-approved wrapper around `@redwoodjs/agent-ci`.
 Use it instead of invoking `npx @redwoodjs/agent-ci run --all` directly. The

@@ -18,9 +18,25 @@ test("ci-local aggregator mirrors every CI parity job", () => {
 	assert.match(src, /go vet/); // vet
 	// Anchor to the executable `run` line, not the explanatory comment, so
 	// dropping -race from the actual command would fail this test.
-	assert.match(src, /run "go test -race" bash -c '[^']*go test -race \.\/\.\.\./); // build-test parity
+	assert.match(src, /run "go test -race" bash -c '[^']*go test -trimpath -race \.\/\.\.\./); // build-test parity
 	assert.match(src, /golangci\.sh/); // golangci-lint (pinned, single-sourced)
 	assert.match(src, /frontend:typecheck/); // frontend typecheck
+	assert.match(src, /test:ops/); // ops-units job (go.yml + frontend.yml)
+});
+
+test("ci-local runs the ops unit tests, unconditionally", () => {
+	// go.yml's `ops-units` job and frontend.yml both run `npm run test:ops`; the
+	// gate claimed parity with every CI job while mirroring neither. It matters
+	// here specifically: the coverage for the Go-stage scoping lives in
+	// ops/*.test.mjs, so without this the gate could not verify the change that
+	// teaches it to skip work.
+	const src = read("../scripts/ci/ci-local.sh");
+	const at = src.indexOf("npm run test:ops");
+	assert.ok(at > 0, "the gate should run the ops unit tests");
+	// Node-only and seconds long, so it stays outside the Go-scoped block — its
+	// inputs are the workflow and script files the Go predicate ignores.
+	const scopedAt = src.indexOf("go-stages-skippable.sh");
+	assert.ok(at < scopedAt, "ops tests are cheap; run them before the Go stages");
 });
 
 test("ci-local runs the format check before the slower go steps (fail cheap first)", () => {
@@ -40,6 +56,79 @@ test("ci-local checks for its toolchain before running", () => {
 	}
 });
 
+test("ci-local scopes the Go stages to the diff, and only the Go stages", () => {
+	// The gate's expensive half is Go-only, so it hangs off the scope predicate;
+	// everything else stays unconditional. Getting this boundary wrong in either
+	// direction is a real failure: skipping too much lets a break through, and
+	// skipping too little is the waste this exists to remove.
+	const src = read("../scripts/ci/ci-local.sh");
+	// Anchor to the executable lines, never to prose: comments above the block
+	// name both the predicate and the stages, and matching those would let this
+	// pass while the real structure was wrong.
+	const scopedAt = src.indexOf('if [ "$skip_go" = 1 ]; then');
+	assert.ok(scopedAt > 0, "the gate should branch on the scope decision");
+	const closedAt = src.indexOf("\nfi\n", scopedAt);
+	assert.ok(closedAt > scopedAt, "the scoped block should be closed with a bare `fi`");
+	assert.ok(
+		src.indexOf("bash scripts/ci/go-stages-skippable.sh") > 0,
+		"the decision should come from the predicate script",
+	);
+
+	for (const stage of ["gofmt", "go build", "go vet", "go test -race", "golangci.sh"]) {
+		const at = src.indexOf(stage, scopedAt);
+		assert.ok(at > scopedAt && at < closedAt, `${stage} should sit inside the scoped block`);
+	}
+	// Prettier is already changed-files-scoped on its own and runs first so a
+	// cheap miss fails fast; the frontend typecheck is not a Go stage.
+	assert.ok(src.indexOf("format-check.sh") < scopedAt, "prettier stays unconditional and first");
+	assert.ok(src.indexOf("frontend:typecheck") > closedAt, "frontend typecheck stays unconditional");
+
+	// The skip must be visible in the output, never silent — a silently skipped
+	// race suite is indistinguishable from a passing one.
+	assert.match(src, /go stages skipped/);
+});
+
+test("ci-local passes -trimpath so worktrees share cache entries for their own packages", () => {
+	// Without -trimpath the absolute source path is baked into compiled output, so
+	// each worktree gets its own copy of all 113 first-party packages. Measured: an
+	// identical module built from a second directory adds 12 cache entries without
+	// the flag and 3 with it.
+	const src = read("../scripts/ci/ci-local.sh");
+	assert.match(src, /go build -trimpath \.\/\.\.\./);
+	assert.match(src, /go vet -trimpath \.\/\.\.\./);
+	assert.match(src, /go test -trimpath -race \.\/\.\.\./);
+
+	// Per-command, deliberately not an exported GOFLAGS: that would propagate into
+	// golangci.sh, which `npm run lint` shares and whose per-worktree cache exists
+	// specifically to fix a stale absolute-path bug (#105). Perturbing a
+	// path-rewriting flag through it invites that bug back, and would make the
+	// gate's invocation differ from the one `npm run lint` makes.
+	// Anchor to an assignment, so prose about GOFLAGS does not satisfy the check
+	// while `export GOFLAGS=…` or an inline `GOFLAGS=… go build` would trip it.
+	assert.doesNotMatch(src, /GOFLAGS=/);
+	assert.doesNotMatch(read("../scripts/ci/golangci.sh"), /trimpath/);
+});
+
+test("the Go-stage predicate is self-contained and leaves the Prettier gate alone", () => {
+	// An earlier draft of this change factored the changed-set derivation into a
+	// script shared by both scoped stages. It was a net loss: the two consumers
+	// want OPPOSITE policies on deletions (Prettier cannot check a path that no
+	// longer exists; the Go stages must compile a branch that removed a package)
+	// and OPPOSITE policies on a missing base ref (Prettier degrades to the
+	// working tree; the Go stages must not). Both defects review found came from
+	// that coupling, so the predicate answers its own question and format-check.sh
+	// is untouched by this change.
+	const predicate = read("../scripts/ci/go-stages-skippable.sh");
+	assert.doesNotMatch(predicate, /changed-files\.sh/);
+	assert.match(predicate, /go_paths=\(/);
+
+	// format-check.sh keeps its own derivation, --diff-filter=d included: correct
+	// for Prettier, wrong for the Go stages.
+	const fmt = read("../scripts/ci/format-check.sh");
+	assert.match(fmt, /--diff-filter=d/);
+	assert.doesNotMatch(fmt, /go-stages-skippable|changed-files/);
+});
+
 test("package.json wires the gate scripts", () => {
 	const pkg = JSON.parse(read("../package.json"));
 	assert.equal(pkg.scripts["format:check"], "bash scripts/ci/format-check.sh");
@@ -52,6 +141,20 @@ test("package.json wires the gate scripts", () => {
 test("the optional pre-push hook runs the aggregator", () => {
 	const hook = read("../.githooks/pre-push");
 	assert.match(hook, /npm run ci-local/);
+});
+
+test("ci-local honours the hook's force signal for a push that is not HEAD", () => {
+	// The predicate reasons about the checked-out HEAD, but git will push a ref
+	// you are not standing on. The hook detects that and sets CI_LOCAL_FORCE_GO;
+	// the gate has to actually consult it, or the scoping silently evaluates the
+	// wrong commit. Behaviour is pinned in ops/ci-pre-push-hook.test.mjs.
+	const src = read("../scripts/ci/ci-local.sh");
+	// Executable lines only — a comment naming CI_LOCAL_FORCE_GO sits above both.
+	const forceAt = src.indexOf('if [ -n "${CI_LOCAL_FORCE_GO:-}" ]; then');
+	assert.ok(forceAt > 0, "the gate should test the force signal");
+	// It must be tested BEFORE the predicate runs, or a skippable verdict wins.
+	assert.ok(forceAt < src.indexOf("bash scripts/ci/go-stages-skippable.sh"), "force must short-circuit the predicate");
+	assert.match(read("../.githooks/pre-push"), /CI_LOCAL_FORCE_GO=1/);
 });
 
 test("local golangci-lint pin matches the CI action pin", () => {
