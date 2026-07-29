@@ -21,6 +21,22 @@ test("ci-local aggregator mirrors every CI parity job", () => {
 	assert.match(src, /run "go test -race" bash -c '[^']*go test -trimpath -race \.\/\.\.\./); // build-test parity
 	assert.match(src, /golangci\.sh/); // golangci-lint (pinned, single-sourced)
 	assert.match(src, /frontend:typecheck/); // frontend typecheck
+	assert.match(src, /test:ops/); // ops-units job (go.yml + frontend.yml)
+});
+
+test("ci-local runs the ops unit tests, unconditionally", () => {
+	// go.yml's `ops-units` job and frontend.yml both run `npm run test:ops`; the
+	// gate claimed parity with every CI job while mirroring neither. It matters
+	// here specifically: the coverage for the Go-stage scoping lives in
+	// ops/*.test.mjs, so without this the gate could not verify the change that
+	// teaches it to skip work.
+	const src = read("../scripts/ci/ci-local.sh");
+	const at = src.indexOf("npm run test:ops");
+	assert.ok(at > 0, "the gate should run the ops unit tests");
+	// Node-only and seconds long, so it stays outside the Go-scoped block — its
+	// inputs are the workflow and script files the Go predicate ignores.
+	const scopedAt = src.indexOf("go-stages-skippable.sh");
+	assert.ok(at < scopedAt, "ops tests are cheap; run them before the Go stages");
 });
 
 test("ci-local runs the format check before the slower go steps (fail cheap first)", () => {

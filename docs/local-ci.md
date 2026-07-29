@@ -8,7 +8,24 @@ npm run agent-ci
 ```
 
 `npm run ci-local` is the required pre-push parity gate. It mirrors the remote
-format/lint/build/test/typecheck jobs and does not use `@redwoodjs/agent-ci`.
+format/ops-units/lint/build/test/typecheck jobs and does not use
+`@redwoodjs/agent-ci`.
+
+Its five Go stages (`gofmt`, `go build`, `go vet`, `go test -race ./...`,
+golangci-lint) are scoped to the diff by `scripts/ci/go-stages-skippable.sh`:
+they run when the branch touches `backend/` or `scripts/ci/`, and are otherwise
+skipped with the reason printed. That trigger set is a superset of the Go build's
+real inputs, all of which live under `backend/`. The predicate exits `0` only for
+"skippable" and non-zero for everything else, including its own failures, so an
+underivable changed set runs the stages rather than silently skipping the most
+expensive part of the gate. `scripts/ci/changed-files.sh` derives the changed set
+once and is shared with the Prettier stage so the two can never disagree.
+
+Remote CI is deliberately unscoped — it is the real gate, it runs on fresh
+machines, and it is not what grows a developer's `~/.cache/go-build`. The local
+build/vet/test invocations also pass `-trimpath`, which stops absolute source
+paths from being baked into compiled output and keeps each live worktree from
+caching its own copy of every first-party package.
 
 `npm run agent-ci` is the repo-approved wrapper around `@redwoodjs/agent-ci`.
 Use it instead of invoking `npx @redwoodjs/agent-ci run --all` directly. The

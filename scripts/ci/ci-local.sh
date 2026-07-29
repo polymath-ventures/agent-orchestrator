@@ -40,7 +40,13 @@ run() {
 # 1. Prettier format parity (.github/workflows/prettier.yml) — changed files only.
 run "format (prettier, changed files)" bash scripts/ci/format-check.sh
 
-# 2-6. Backend build-test and lint jobs (.github/workflows/go.yml): gofmt, build,
+# 2. The ops-units job (.github/workflows/go.yml, and again in frontend.yml).
+# Node-only and seconds long, so it runs early and unconditionally: its inputs
+# are the workflow and script files that the Go scope predicate below ignores,
+# and the coverage for that predicate itself lives here.
+run "ops tests" npm run test:ops
+
+# 3-7. Backend build-test and lint jobs (.github/workflows/go.yml): gofmt, build,
 # vet, `go test -race ./...`, and golangci-lint. Use -race to match CI exactly —
 # a data race that CI's race detector would catch must not pass this gate and
 # waste the round-trip.
@@ -84,7 +90,7 @@ else
 	run "golangci-lint" bash scripts/ci/golangci.sh
 fi
 
-# 7. Frontend typecheck (.github/workflows/frontend.yml).
+# 8. Frontend typecheck (.github/workflows/frontend.yml).
 run "frontend typecheck" npm run frontend:typecheck
 
 printf '\n\xe2\x9c\x93 local CI-parity gate passed\n'
