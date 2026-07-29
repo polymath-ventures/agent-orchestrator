@@ -152,7 +152,7 @@ function storeSessionTabs(sessionTabsByOwner: Record<string, string[]>) {
 }
 
 function inspectorState(sessions: Record<string, InspectorSessionState>, sessionId: string): InspectorSessionState {
-	return sessions[sessionId] ?? { isOpen: true, view: "summary" };
+	return sessions[sessionId] ?? { isOpen: false, view: "summary" };
 }
 
 const initialThemePreference = readStoredThemePreference();

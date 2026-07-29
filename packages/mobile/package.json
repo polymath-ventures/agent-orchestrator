@@ -9,7 +9,6 @@
 		"android": "expo run:android",
 		"ios": "expo run:ios",
 		"typecheck": "tsc --noEmit",
-		"test": "node --import tsx --test lib/*.test.ts",
 		"build": "npm run typecheck",
 		"postinstall": "patch-package",
 		"test": "vitest run"
