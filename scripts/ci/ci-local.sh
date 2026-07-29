@@ -40,18 +40,49 @@ run() {
 # 1. Prettier format parity (.github/workflows/prettier.yml) — changed files only.
 run "format (prettier, changed files)" bash scripts/ci/format-check.sh
 
-# 2-5. Backend build-test job (.github/workflows/go.yml): gofmt, build, vet, and
-# `go test -race ./...`. Use -race to match CI exactly — a data race that CI's
-# race detector would catch must not pass this gate and waste the round-trip.
-run "gofmt" bash -c 'cd backend && unformatted=$(gofmt -l .); if [ -n "$unformatted" ]; then echo "these files need gofmt:"; echo "$unformatted"; exit 1; fi'
-run "go build" bash -c 'cd backend && go build ./...'
-run "go vet" bash -c 'cd backend && go vet ./...'
-run "go test -race" bash -c 'cd backend && go test -race ./...'
+# 2-6. Backend build-test and lint jobs (.github/workflows/go.yml): gofmt, build,
+# vet, `go test -race ./...`, and golangci-lint. Use -race to match CI exactly —
+# a data race that CI's race detector would catch must not pass this gate and
+# waste the round-trip.
+#
+# Scoped to the diff, the same way the Prettier stage above already is. These are
+# the expensive stages (the race suite is minutes, not seconds), and a branch
+# that changed no Go input cannot learn anything from re-running them. The
+# predicate reports "skippable" only when it walked the whole changed set and
+# found nothing under backend/ or scripts/ci/; every other outcome, including any
+# internal failure, runs the stages. See scripts/ci/go-stages-skippable.sh.
+#
+# Only the LOCAL gate is scoped. Remote CI stays unconditional — it is the real
+# gate, it runs on fresh machines, and it is not what churns a developer's build
+# cache.
+#
+# `if var="$(cmd)"` is a condition context, so `set -e` does not abort on the
+# non-zero (run) branch, and the variable is assigned either way, which keeps it
+# safe under `set -u`.
+if go_scope_reason="$(bash scripts/ci/go-stages-skippable.sh)"; then
+	printf '\n== go stages skipped (%s) ==\n' "${go_scope_reason:-no Go-relevant changes}"
+else
+	printf '\n== go stages (%s) ==\n' "${go_scope_reason:-changed set undetermined; running}"
 
-# 6. Lint job (.github/workflows/go.yml). scripts/ci/golangci.sh is the single
-# source of the golangci-lint pin (v2.12.2, matching the CI action) and the
-# per-worktree cache; `npm run lint` uses the same script, so they never drift.
-run "golangci-lint" bash scripts/ci/golangci.sh
+	# -trimpath keeps absolute source paths out of compiled output. Without it
+	# every worktree gets its own cache entries for all of this module's own
+	# packages, which is what grows ~/.cache/go-build without bound across the
+	# several worktrees that are routinely live. Dependencies already come from
+	# the module cache at a fixed path and never duplicated.
+	#
+	# Passed per-command rather than as an exported GOFLAGS: an export would
+	# reach scripts/ci/golangci.sh, which `npm run lint` shares and whose
+	# per-worktree cache exists precisely to fix a stale absolute-path bug.
+	run "gofmt" bash -c 'cd backend && unformatted=$(gofmt -l .); if [ -n "$unformatted" ]; then echo "these files need gofmt:"; echo "$unformatted"; exit 1; fi'
+	run "go build" bash -c 'cd backend && go build -trimpath ./...'
+	run "go vet" bash -c 'cd backend && go vet -trimpath ./...'
+	run "go test -race" bash -c 'cd backend && go test -trimpath -race ./...'
+
+	# scripts/ci/golangci.sh is the single source of the golangci-lint pin
+	# (v2.12.2, matching the CI action) and the per-worktree cache; `npm run lint`
+	# uses the same script, so they never drift.
+	run "golangci-lint" bash scripts/ci/golangci.sh
+fi
 
 # 7. Frontend typecheck (.github/workflows/frontend.yml).
 run "frontend typecheck" npm run frontend:typecheck
