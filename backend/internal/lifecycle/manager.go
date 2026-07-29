@@ -277,6 +277,18 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 		return fmt.Errorf("%w: %s", ports.ErrSessionNotFound, id)
 	}
 	now := m.clock()
+	// Generation fence FIRST, before any telemetry is extracted or persisted: a
+	// signal from a stale process generation must not move state OR corrupt
+	// usage/quota totals (including on a terminated session). A supervised launch
+	// stamps the session's RuntimeLaunchID and exports the same id to its hooks,
+	// so a launched session's authentic signals always carry the matching id —
+	// an empty or mismatched id is stale and is dropped. Non-supervised harnesses
+	// leave RuntimeLaunchID empty (superviseAgentProcess), so the guard is inert
+	// for them and their id-less hooks pass through unfenced, exactly as before.
+	if rec.Metadata.RuntimeLaunchID != "" && s.LaunchID != rec.Metadata.RuntimeLaunchID {
+		m.mu.Unlock()
+		return nil
+	}
 	usageEvent, hasUsageEvent := usageTelemetryEvent(rec, s, now)
 	quotas := acceptedQuotaSnapshots(rec, s, now)
 	if rec.IsTerminated {
@@ -288,10 +300,6 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 		if hasUsageEvent {
 			m.emitTelemetry(ctx, usageEvent)
 		}
-		return nil
-	}
-	if s.LaunchID != "" && s.LaunchID != rec.Metadata.RuntimeLaunchID {
-		m.mu.Unlock()
 		return nil
 	}
 	if !s.ExpectedUpdatedAt.IsZero() &&

@@ -79,6 +79,17 @@ func (p *Plugin) EmitsSubmitActivity() bool { return true }
 // ports.ActivitySignaler.
 func (p *Plugin) EmitsBlockedActivity() bool { return true }
 
+// ExitDetectionMode opts Claude Code into AO's process supervisor. Claude Code's
+// hooks report turn boundaries but no reliable session-end event, so an abnormal
+// exit (crash, kill) that omits SessionEnd would otherwise leave the keep-alive
+// terminal looking live indefinitely. Before the upstream sync this was covered
+// by the fork's launch-process liveness sweep; the supervisor replaces it with a
+// stronger signal (the launch id also fences stale-generation callbacks). Codex
+// and Codex Fugu opt in the same way. See ports.AgentExitDetector.
+func (p *Plugin) ExitDetectionMode() ports.AgentExitDetectionMode {
+	return ports.AgentExitDetectionSupervisor
+}
+
 // InHarnessRenameCommand renames a running Claude Code session. It writes the
 // same underlying name as the -n launch flag, so the two doors cannot drift into
 // two different names. See ports.AgentNamer.
