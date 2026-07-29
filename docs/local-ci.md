@@ -34,6 +34,16 @@ tree. Untracked files and paths marked `assume-unchanged`/`skip-worktree` are
 invisible to it, exactly as they are to `git diff` — none of them can reach a
 commit without becoming visible, so none can escape to the remote unbuilt.
 
+**Accepted limitation — the hook gates the working tree, not the pushed ref.**
+The Go stages compile whatever is checked out, so `git push origin other-branch`
+while standing somewhere else has never verified the commit being pushed, before
+this scoping or after it. The `pre-push` hook does read the ref tuples git gives
+it and forces the full gate whenever a pushed SHA is not `HEAD`, which keeps that
+case no worse than it was — but forcing runs the stages against `HEAD`, not
+against the pushed commit. Closing that properly means checking out each pushed
+SHA or refusing non-`HEAD` pushes, which is a separate change. Remote CI is the
+gate that actually sees every pushed ref.
+
 **Accepted limitation:** the predicate trusts local remote-tracking metadata. If
 `origin/HEAD` is set but points somewhere wrong, or `origin/main` is stale, the
 comparison happens against that stale point and a genuine change can look like no

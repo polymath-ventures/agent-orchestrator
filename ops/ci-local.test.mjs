@@ -62,10 +62,17 @@ test("ci-local scopes the Go stages to the diff, and only the Go stages", () => 
 	// direction is a real failure: skipping too much lets a break through, and
 	// skipping too little is the waste this exists to remove.
 	const src = read("../scripts/ci/ci-local.sh");
-	const scopedAt = src.indexOf("go-stages-skippable.sh");
-	assert.ok(scopedAt > 0, "the gate should consult the Go-stage scope predicate");
+	// Anchor to the executable lines, never to prose: comments above the block
+	// name both the predicate and the stages, and matching those would let this
+	// pass while the real structure was wrong.
+	const scopedAt = src.indexOf('if [ "$skip_go" = 1 ]; then');
+	assert.ok(scopedAt > 0, "the gate should branch on the scope decision");
 	const closedAt = src.indexOf("\nfi\n", scopedAt);
 	assert.ok(closedAt > scopedAt, "the scoped block should be closed with a bare `fi`");
+	assert.ok(
+		src.indexOf("bash scripts/ci/go-stages-skippable.sh") > 0,
+		"the decision should come from the predicate script",
+	);
 
 	for (const stage of ["gofmt", "go build", "go vet", "go test -race", "golangci.sh"]) {
 		const at = src.indexOf(stage, scopedAt);
@@ -134,6 +141,20 @@ test("package.json wires the gate scripts", () => {
 test("the optional pre-push hook runs the aggregator", () => {
 	const hook = read("../.githooks/pre-push");
 	assert.match(hook, /npm run ci-local/);
+});
+
+test("ci-local honours the hook's force signal for a push that is not HEAD", () => {
+	// The predicate reasons about the checked-out HEAD, but git will push a ref
+	// you are not standing on. The hook detects that and sets CI_LOCAL_FORCE_GO;
+	// the gate has to actually consult it, or the scoping silently evaluates the
+	// wrong commit. Behaviour is pinned in ops/ci-pre-push-hook.test.mjs.
+	const src = read("../scripts/ci/ci-local.sh");
+	// Executable lines only — a comment naming CI_LOCAL_FORCE_GO sits above both.
+	const forceAt = src.indexOf('if [ -n "${CI_LOCAL_FORCE_GO:-}" ]; then');
+	assert.ok(forceAt > 0, "the gate should test the force signal");
+	// It must be tested BEFORE the predicate runs, or a skippable verdict wins.
+	assert.ok(forceAt < src.indexOf("bash scripts/ci/go-stages-skippable.sh"), "force must short-circuit the predicate");
+	assert.match(read("../.githooks/pre-push"), /CI_LOCAL_FORCE_GO=1/);
 });
 
 test("local golangci-lint pin matches the CI action pin", () => {

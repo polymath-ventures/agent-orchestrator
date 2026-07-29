@@ -65,7 +65,19 @@ run "ops tests" npm run test:ops
 # `if var="$(cmd)"` is a condition context, so `set -e` does not abort on the
 # non-zero (run) branch, and the variable is assigned either way, which keeps it
 # safe under `set -u`.
-if go_scope_reason="$(bash scripts/ci/go-stages-skippable.sh)"; then
+# CI_LOCAL_FORCE_GO is set by .githooks/pre-push when the push targets a ref
+# other than the checked-out HEAD, because the predicate below reasons about HEAD
+# and would otherwise scope by the wrong commit's diff.
+if [ -n "${CI_LOCAL_FORCE_GO:-}" ]; then
+	go_scope_reason="forced: pushing a ref other than the checked-out HEAD"
+	skip_go=0
+elif go_scope_reason="$(bash scripts/ci/go-stages-skippable.sh)"; then
+	skip_go=1
+else
+	skip_go=0
+fi
+
+if [ "$skip_go" = 1 ]; then
 	printf '\n== go stages skipped (%s) ==\n' "${go_scope_reason:-no Go-relevant changes}"
 else
 	printf '\n== go stages (%s) ==\n' "${go_scope_reason:-changed set undetermined; running}"
