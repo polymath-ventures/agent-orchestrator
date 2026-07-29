@@ -41,10 +41,14 @@ function write(dir, rel, body) {
 }
 
 // A throwaway repo whose committed baseline contains one file of every shape the
-// predicate has to reason about. No remote is configured, so the default-branch
-// lookup falls back and the changed set comes from the working tree — the tests
-// that need the committed half wire up `origin/main` themselves.
-function setupRepo() {
+// predicate has to reason about.
+//
+// `withBase` wires refs/remotes/origin/{main,HEAD} at the baseline commit, which
+// is the normal state of any real checkout. It defaults to true because a repo
+// WITHOUT a base ref is itself a "cannot decide → run" condition now, so testing
+// the skippable cases without one would assert against a state that can no longer
+// produce a skip. The no-base case gets its own explicit test below.
+function setupRepo({ withBase = true } = {}) {
 	const dir = mkdtempSync(join(tmpdir(), "go-scope-"));
 	git(dir, "init", "-q");
 	git(dir, "config", "user.email", "gate@example.com");
@@ -59,6 +63,11 @@ function setupRepo() {
 	write(dir, "frontend/backend-client.ts", "export const x = 1;\n");
 	git(dir, "add", "-A");
 	git(dir, "commit", "-qm", "base");
+	if (withBase) {
+		const base = git(dir, "rev-parse", "HEAD").trim();
+		git(dir, "update-ref", "refs/remotes/origin/main", base);
+		git(dir, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main");
+	}
 	return dir;
 }
 
@@ -150,10 +159,6 @@ test("predicate sees backend changes that are already COMMITTED on the branch", 
 	// would report "nothing changed" here and skip the suite.
 	const dir = setupRepo();
 	try {
-		const base = git(dir, "rev-parse", "HEAD").trim();
-		git(dir, "update-ref", "refs/remotes/origin/main", base);
-		git(dir, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main");
-
 		write(dir, "backend/foo.go", "package backend\n\nvar Y = 2\n");
 		git(dir, "add", "backend/foo.go");
 		git(dir, "commit", "-qm", "backend change on the branch");
@@ -176,6 +181,47 @@ test("predicate matches on the leading path segment, not a substring", () => {
 		write(dir, "frontend/backend-client.ts", "export const x = 2;\n");
 		const r = runPredicate(dir);
 		assert.equal(r.status, 0, `expected skippable\nstdout:${r.stdout}\nstderr:${r.stderr}`);
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test("predicate FAILS SAFE when the base ref is missing and the change is committed", () => {
+	// The nastiest shape, and the one a shared changed-set helper invites: the
+	// branch's backend changes are COMMITTED, so the working tree is clean, and
+	// `origin/main` is absent (single-branch clone, unfetched remote, shallow
+	// checkout). Deriving the changed set from the working tree alone then reports
+	// nothing, and the Go stages get skipped on a branch that may not compile.
+	//
+	// Prettier degrades gracefully in exactly this situation on purpose — missing
+	// a few committed files is a small, visible miss. A skip-the-build decision
+	// cannot borrow that tolerance, which is why the predicate passes
+	// --require-base and this case must RUN.
+	const dir = setupRepo({ withBase: false });
+	try {
+		write(dir, "backend/foo.go", "package backend\n\nvar Z = 3\n");
+		git(dir, "add", "backend/foo.go");
+		git(dir, "commit", "-qm", "committed backend change, no base ref");
+		assert.equal(git(dir, "status", "--porcelain").trim(), "", "working tree must be clean");
+
+		const r = runPredicate(dir);
+		assert.notEqual(r.status, 0, `expected run\nstdout:${r.stdout}\nstderr:${r.stderr}`);
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test("predicate runs the Go stages for a root go.work, the one input outside backend/", () => {
+	// The toolchain searches parent directories for a workspace file, so a
+	// go.work added at the repo root changes module selection for a build run
+	// from backend/ — the only Go input that would not match `backend/*`.
+	const dir = setupRepo();
+	try {
+		write(dir, "go.work", "go 1.21\n\nuse ./backend\n");
+		git(dir, "add", "go.work");
+		const r = runPredicate(dir);
+		assert.notEqual(r.status, 0, `expected run\nstdout:${r.stdout}\nstderr:${r.stderr}`);
+		assert.match(r.stdout, /go\.work/);
 	} finally {
 		rmSync(dir, { recursive: true, force: true });
 	}

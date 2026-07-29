@@ -13,13 +13,31 @@ format/ops-units/lint/build/test/typecheck jobs and does not use
 
 Its five Go stages (`gofmt`, `go build`, `go vet`, `go test -race ./...`,
 golangci-lint) are scoped to the diff by `scripts/ci/go-stages-skippable.sh`:
-they run when the branch touches `backend/` or `scripts/ci/`, and are otherwise
-skipped with the reason printed. That trigger set is a superset of the Go build's
-real inputs, all of which live under `backend/`. The predicate exits `0` only for
-"skippable" and non-zero for everything else, including its own failures, so an
-underivable changed set runs the stages rather than silently skipping the most
-expensive part of the gate. `scripts/ci/changed-files.sh` derives the changed set
-once and is shared with the Prettier stage so the two can never disagree.
+they run when the branch touches `backend/`, `scripts/ci/`, or a root `go.work*`,
+and are otherwise skipped with the reason printed. That trigger set is a superset
+of the Go build's real inputs, all of which live under `backend/` except a
+workspace file, which the toolchain searches parent directories for. The predicate
+exits `0` only for "skippable" and non-zero for everything else, including its own
+failures, so an underivable changed set runs the stages rather than silently
+skipping the most expensive part of the gate.
+
+`scripts/ci/changed-files.sh` derives the changed set once and is shared with the
+Prettier stage so the two can never disagree about what the branch touched. It is
+the merge-base diff against the default branch UNION the tracked working-tree
+edits, and it reports deletions — a branch that only removes a backend package
+still has to compile.
+
+The two consumers deliberately take **different policies on a missing base ref**,
+which is what `changed-files.sh --require-base` selects between:
+
+- Prettier degrades gracefully. With no `origin/main` it checks the working tree
+  alone, so the format gate still works in an offline or single-branch clone;
+  missing a few committed files there is a small and visible miss.
+- The Go predicate passes `--require-base` and refuses to degrade. A branch whose
+  backend changes are already committed has a clean working tree, so falling back
+  to the working tree alone would report an empty changed set and skip the build
+  on a branch that may not compile. A missing base ref is undecidable, so the
+  stages run.
 
 Remote CI is deliberately unscoped — it is the real gate, it runs on fresh
 machines, and it is not what grows a developer's `~/.cache/go-build`. The local

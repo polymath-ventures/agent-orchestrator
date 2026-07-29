@@ -23,12 +23,16 @@
 # silently skip the gate's most expensive and most load-bearing stage, and a
 # skipped race suite looks identical to a passing one in the output.
 #
-# Trigger set: `backend/` and `scripts/ci/`. Everything the Go build reads lives
-# under backend/ — sources, go.mod/go.sum, sqlc.yaml, the .sql and testdata
-# fixtures, and all six //go:embed roots — so a leading-segment match on backend/
-# is a strict superset of enumerating those inputs, and stays correct when a
-# seventh embed root is added. scripts/ci/ is included so a change to the gate
-# itself is exercised by the gate.
+# Trigger set: `backend/`, `scripts/ci/`, and a root `go.work*`. Every Go input
+# this repo has today lives under backend/ — sources, go.mod/go.sum, sqlc.yaml,
+# the .sql and testdata fixtures, and all six //go:embed roots — so a
+# leading-segment match on backend/ is a strict superset of enumerating them, and
+# stays correct when a seventh embed root is added. scripts/ci/ is included so a
+# change to the gate itself is exercised by the gate. `go.work*` is the one Go
+# input that would sit OUTSIDE backend/: the toolchain searches parent
+# directories for it, so a workspace file added at the root changes module
+# selection for a build run from backend/. None exists today; matching it costs
+# one alternation and keeps the superset property true rather than aspirational.
 set -euo pipefail
 
 # Resolve the sibling helper relative to THIS script, before cd'ing anywhere: the
@@ -45,7 +49,11 @@ cd "$(git rev-parse --show-toplevel)"
 tmp="$(mktemp)"
 trap 'rm -f "$tmp"' EXIT
 
-if ! bash "$script_dir/changed-files.sh" >"$tmp"; then
+# --require-base: unlike Prettier, this predicate must not degrade to the
+# working tree alone when the base ref is missing. A branch whose backend changes
+# are already committed has a clean working tree, so the changed set would look
+# empty and the stages would be skipped on a branch that may not compile.
+if ! bash "$script_dir/changed-files.sh" --require-base >"$tmp"; then
 	echo "could not determine the changed set"
 	exit 2
 fi
@@ -58,12 +66,12 @@ fi
 # loop body runs in the current shell and `exit` exits the script.
 while IFS= read -r -d '' f; do
 	case "$f" in
-	backend/* | scripts/ci/*)
+	backend/* | scripts/ci/* | go.work | go.work.sum)
 		echo "changed: $f"
 		exit 1
 		;;
 	esac
 done <"$tmp"
 
-echo "no changed paths under backend/ or scripts/ci/"
+echo "no changed paths under backend/, scripts/ci/, or go.work*"
 exit 0
