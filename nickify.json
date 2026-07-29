@@ -1,34 +1,31 @@
 {
-  "schema": 1,
-  "repo": "polymath-ventures/agent-orchestrator",
-  "clients": [
-    "claude-code",
-    "codex"
-  ],
-  "subsystems": {
-    "beads": {
-      "enabled": true
-    },
-    "openspec": {
-      "enabled": true
-    },
-    "sx": {
-      "enabled": true
-    },
-    "agent_instructions": {
-      "enabled": true,
-      "standard_version": 1,
-      "opt_outs": {
-        "agent-instructions/agent-overrides/agy.md": {
-          "reason": "repo clients are claude-code and codex only"
-        }
-      }
-    },
-    "tools": {
-      "enabled": true
-    },
-    "hooks": {
-      "enabled": true
-    }
-  }
+	"schema": 1,
+	"repo": "polymath-ventures/agent-orchestrator",
+	"clients": ["claude-code", "codex"],
+	"subsystems": {
+		"beads": {
+			"enabled": true
+		},
+		"openspec": {
+			"enabled": true
+		},
+		"sx": {
+			"enabled": true
+		},
+		"agent_instructions": {
+			"enabled": true,
+			"standard_version": 2,
+			"opt_outs": {
+				"agent-instructions/agent-overrides/agy.md": {
+					"reason": "repo clients are claude-code and codex only"
+				}
+			}
+		},
+		"tools": {
+			"enabled": true
+		},
+		"hooks": {
+			"enabled": true
+		}
+	}
 }
