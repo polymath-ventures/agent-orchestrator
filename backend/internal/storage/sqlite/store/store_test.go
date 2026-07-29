@@ -560,6 +560,79 @@ func TestSessionRenameUpdatesDisplayName(t *testing.T) {
 	}
 }
 
+func TestSessionTerminateOnPRMergePolicyRoundTripAndCDC(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+	r, _ := s.CreateSession(ctx, sampleRecord("mer"))
+
+	base, _ := s.LatestSeq(ctx)
+	updatedAt := r.UpdatedAt.Add(time.Minute)
+	ok, err := s.SetSessionTerminateOnPRMerge(ctx, r.ID, true, updatedAt)
+	if err != nil || !ok {
+		t.Fatalf("enable terminate-on-merge: ok=%v err=%v", ok, err)
+	}
+	got, found, err := s.GetSession(ctx, r.ID)
+	if err != nil || !found {
+		t.Fatalf("get session: found=%v err=%v", found, err)
+	}
+	if !got.TerminateOnPRMerge || !got.UpdatedAt.Equal(updatedAt) {
+		t.Fatalf("policy not persisted: %+v", got)
+	}
+
+	evs, err := s.EventsAfter(ctx, base, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(evs) != 1 || string(evs[0].Type) != "session_updated" {
+		t.Fatalf("policy change events = %+v, want one session_updated", evs)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(evs[0].Payload, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if enabled, ok := payload["terminateOnPrMerge"].(bool); !ok || !enabled {
+		t.Fatalf("terminateOnPrMerge payload = %#v, want true", payload["terminateOnPrMerge"])
+	}
+
+	ok, err = s.SetSessionTerminateOnPRMerge(ctx, "mer-missing", true, updatedAt)
+	if err != nil || ok {
+		t.Fatalf("missing policy update: ok=%v err=%v", ok, err)
+	}
+}
+
+func TestSessionRuntimeLaunchIDRoundTrip(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+	rec := sampleRecord("mer")
+	rec.Metadata.RuntimeHandleID = "tmux-1"
+	rec.Metadata.RuntimeLaunchID = "launch-1"
+
+	created, err := s.CreateSession(ctx, rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.Metadata.RuntimeLaunchID != "launch-1" {
+		t.Fatalf("created launch id = %q", created.Metadata.RuntimeLaunchID)
+	}
+	created.Metadata.RuntimeLaunchID = "launch-2"
+	if err := s.UpdateSession(ctx, created); err != nil {
+		t.Fatal(err)
+	}
+	got, found, err := s.GetSession(ctx, created.ID)
+	if err != nil || !found {
+		t.Fatalf("get: found=%v err=%v", found, err)
+	}
+	if got.Metadata.RuntimeLaunchID != "launch-2" {
+		t.Fatalf("updated launch id = %q", got.Metadata.RuntimeLaunchID)
+	}
+	listed, err := s.ListSessions(ctx, "mer")
+	if err != nil || len(listed) != 1 || listed[0].Metadata.RuntimeLaunchID != "launch-2" {
+		t.Fatalf("listed sessions = %+v err=%v", listed, err)
+	}
+}
+
 func TestSessionUpdateActivityAndTermination(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
@@ -627,7 +700,7 @@ func TestPRCRUD(t *testing.T) {
 
 	pr := domain.PullRequest{
 		URL: "https://gh/pr/1", SessionID: r.ID, Number: 1,
-		Review: domain.ReviewRequired, CI: domain.CIFailing, Mergeability: domain.MergeBlocked, UpdatedAt: now,
+		Review: domain.ReviewRequired, CI: domain.CIFailing, Mergeability: domain.MergeBlocked, UpdatedAt: now, StateChangedAt: now,
 	}
 	if err := s.WritePR(ctx, pr, nil, nil); err != nil {
 		t.Fatal(err)
@@ -1219,43 +1292,5 @@ func TestUpsertSessionWorktreeEmptyStateDefaultsToActive(t *testing.T) {
 	}
 	if got.State != "active" {
 		t.Fatalf("State = %q, want %q", got.State, "active")
-	}
-}
-
-// runtime_token and launch_command must survive the SQLite round-trip: the
-// stale-hook guard and the reaper's launch-process probe both read them from
-// rehydrated records, so an unpersisted value silently disarms both exactly
-// when they matter — after a daemon restart.
-func TestSessionRuntimeProbeFieldsRoundTrip(t *testing.T) {
-	s := newTestStore(t)
-	ctx := context.Background()
-	seedProject(t, s, "mer")
-
-	rec := sampleRecord("mer")
-	rec.Metadata.RuntimeToken = "tok-abc123"
-	rec.Metadata.LaunchCommand = "claude"
-	created, err := s.CreateSession(ctx, rec)
-	if err != nil {
-		t.Fatal(err)
-	}
-	got, ok, err := s.GetSession(ctx, created.ID)
-	if err != nil || !ok {
-		t.Fatalf("get: ok=%v err=%v", ok, err)
-	}
-	if got.Metadata.RuntimeToken != "tok-abc123" || got.Metadata.LaunchCommand != "claude" {
-		t.Fatalf("insert round-trip: token=%q command=%q", got.Metadata.RuntimeToken, got.Metadata.LaunchCommand)
-	}
-
-	got.Metadata.RuntimeToken = "tok-def456"
-	got.Metadata.LaunchCommand = "codex"
-	if err := s.UpdateSession(ctx, got); err != nil {
-		t.Fatal(err)
-	}
-	again, ok, err := s.GetSession(ctx, created.ID)
-	if err != nil || !ok {
-		t.Fatalf("re-get: ok=%v err=%v", ok, err)
-	}
-	if again.Metadata.RuntimeToken != "tok-def456" || again.Metadata.LaunchCommand != "codex" {
-		t.Fatalf("update round-trip: token=%q command=%q", again.Metadata.RuntimeToken, again.Metadata.LaunchCommand)
 	}
 }

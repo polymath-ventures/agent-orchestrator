@@ -44,11 +44,11 @@ const (
 type setActivityAPIRequest struct {
 	State          string                 `json:"state,omitempty"`
 	Harness        string                 `json:"harness,omitempty"`
-	RuntimeToken   string                 `json:"runtimeToken,omitempty"`
 	Event          string                 `json:"event,omitempty"`
 	ToolName       string                 `json:"toolName,omitempty"`
 	ToolUseID      string                 `json:"toolUseId,omitempty"`
 	AgentSessionID string                 `json:"agentSessionId,omitempty"`
+	LaunchID       string                 `json:"launchId,omitempty"`
 	Usage          *usageAPIRequest       `json:"usage,omitempty"`
 	Quotas         []domain.QuotaSnapshot `json:"quotas,omitempty"`
 }
@@ -174,11 +174,11 @@ func (c *commandContext) runHook(ctx context.Context, agent, event string) error
 	toolName, toolUseID := activityMeta(payload)
 	path := "sessions/" + url.PathEscape(sessionID) + "/activity"
 	req := setActivityAPIRequest{
-		RuntimeToken:   strings.TrimSpace(os.Getenv("AO_RUNTIME_TOKEN")),
 		Event:          event,
 		ToolName:       toolName,
 		ToolUseID:      toolUseID,
 		AgentSessionID: agentSessionID,
+		LaunchID:       validLaunchID(os.Getenv("AO_RUNTIME_LAUNCH_ID")),
 	}
 	if hasActivity {
 		req.State = string(state)
@@ -220,6 +220,14 @@ func currentWorkingDir() string {
 		return ""
 	}
 	return cwd
+}
+
+func validLaunchID(value string) string {
+	value = strings.TrimSpace(value)
+	if !sessionIDPattern.MatchString(value) {
+		return ""
+	}
+	return value
 }
 
 func shouldEmitSessionStartContext(agent, event string) bool {

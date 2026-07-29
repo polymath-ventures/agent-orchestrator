@@ -54,6 +54,7 @@ frontend/.tanstack/
 
 # Local tooling (not for the team)
 .codegraph/
+.gocache/
 .cursor/
 
 # OS

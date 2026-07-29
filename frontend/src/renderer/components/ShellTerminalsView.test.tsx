@@ -11,6 +11,7 @@ const shellMocks = vi.hoisted(() => ({
 
 vi.mock("../hooks/useShellTerminals", () => ({
 	useCloseShellTerminal: () => ({ mutate: shellMocks.closeShellTerminal }),
+	useRenameShellTerminal: () => ({ mutate: vi.fn() }),
 	useShellTerminals: () => ({ data: shellMocks.shellTerminals }),
 }));
 

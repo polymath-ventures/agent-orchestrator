@@ -1,6 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
 import type { components } from "../../api/schema";
 import { apiClient, hasTrustedApiBaseUrl } from "../lib/api-client";
+import { mockWorkspaces } from "../lib/mock-data";
+import { usesPreviewWorkspaceData } from "../lib/preview-mode";
+import { captureRendererEvent } from "../lib/telemetry";
 import {
 	FLEET_WORKSPACE_ID,
 	type PauseState,
@@ -39,6 +42,16 @@ function toPullRequestFacts(pr: components["schemas"]["SessionPRFacts"]): PullRe
 
 export const workspaceQueryKey = ["workspaces"] as const;
 
+const reportedUnknownSessionFields = new Set<string>();
+
+function reportUnknownSessionField(field: "status" | "activity", value?: string): void {
+	const reason = value ? "unrecognized" : "missing";
+	const key = `${field}:${reason}`;
+	if (reportedUnknownSessionFields.has(key)) return;
+	reportedUnknownSessionFields.add(key);
+	void captureRendererEvent("ao.renderer.session_state_unknown", { field, reason });
+}
+
 // e2e seam (dev:web only): the Playwright fake-agent harness injects
 // `window.__aoFakeAgent` (see e2e/support/fake-bridge.ts) to drive a
 // deterministic, mutable session timeline off the SSE refetch path. Compiled
@@ -47,7 +60,7 @@ export const workspaceQueryKey = ["workspaces"] as const;
 type FakeAgentSeam = { snapshot: () => WorkspaceSummary[] };
 
 async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
-	if (import.meta.env.VITE_NO_ELECTRON === "1") {
+	if (usesPreviewWorkspaceData) {
 		const fake =
 			typeof window !== "undefined"
 				? (window as unknown as { __aoFakeAgent?: FakeAgentSeam }).__aoFakeAgent
@@ -55,7 +68,13 @@ async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
 		if (fake) return fake.snapshot();
 	}
 	if (!hasTrustedApiBaseUrl()) {
-		return [];
+		// Web-first fork: build:web sets VITE_NO_ELECTRON=1 for the PRODUCTION
+		// supervisor, which talks to a real daemon over same-origin (a trusted
+		// base URL). So real-daemon web mode reaches the fetch below. Only a
+		// genuinely daemon-less preview (no trusted base URL) falls back to the
+		// upstream mock workspaces; production web mode never serves mock data.
+		if (usesPreviewWorkspaceData) return mockWorkspaces;
+		throw new Error("AO daemon API is not ready");
 	}
 
 	const [{ data: projectsData, error: projectsError }, { data: sessionsData, error: sessionsError }] =
@@ -96,6 +115,13 @@ function toWorkspaceSession(
 	workspaceId: string,
 	workspaceName: string,
 ): WorkspaceSession {
+	const status = toSessionStatus(session.status, session.isTerminated);
+	const scmStatus = session.scmStatus ? toSessionStatus(session.scmStatus) : undefined;
+	const activity = toSessionActivity(session.activity);
+	if (status === "unknown") reportUnknownSessionField("status", session.status);
+	if (!activity || activity.state === "unknown") {
+		reportUnknownSessionField("activity", session.activity?.state);
+	}
 	return {
 		id: session.id,
 		terminalHandleId: session.terminalHandleId,
@@ -106,10 +132,13 @@ function toWorkspaceSession(
 		provider: toAgentProvider(session.harness),
 		kind: toSessionKind(session.kind),
 		branch: session.branch || undefined,
-		status: toSessionStatus(session.status, session.isTerminated),
+		status,
+		scmStatus,
+		isTerminated: session.isTerminated,
+		terminateOnPrMerge: session.terminateOnPrMerge ?? false,
 		createdAt: session.createdAt,
 		updatedAt: session.updatedAt,
-		activity: toSessionActivity(session.activity),
+		activity,
 		previewUrl: session.previewUrl,
 		previewRevision: session.previewRevision,
 		prs: (session.prs ?? []).map(toPullRequestFacts),

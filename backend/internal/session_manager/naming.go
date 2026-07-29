@@ -166,31 +166,29 @@ type nameSender func(ctx context.Context, id domain.SessionID, msg string) (sess
 // agent before any name is typed into it.
 //
 // This is a security boundary, not a nicety. AO keeps a session's pane alive
-// after the agent exits by exec'ing an interactive shell into it, so the pane
-// outlives the process AO thinks it is talking to — and a session whose agent
-// has died is not marked terminated until the reaper notices. A name delivered
-// in that window is not text in a TUI, it is a command line in a shell, and a
-// name is the one field an operator types freely. Confirming the agent is still
-// there is what makes the whole naming path unable to execute anything, rather
-// than relying on every future name being harmless.
+// after the agent exits, so the pane (and its IsAlive) outlives the process AO
+// thinks it is talking to, and a session whose agent has died is not marked
+// terminated until the reaper notices. A name delivered in that window is not
+// text in a TUI, it is a command line in the shell reading the pane, and a name
+// is the one field an operator types freely. So this probes the SUPERVISED
+// WORKLOAD — the agent process itself — not merely pane liveness, which is
+// exactly the distinction the reaper's workload probe draws.
 //
-// It fails closed: without proof, no write. A runtime that cannot answer loses
-// harness naming and keeps AO's own name, which is the pre-change behavior.
+// It fails closed: without proof, no write. A runtime that cannot answer (no
+// SupervisedProcessInspector capability) loses harness naming and keeps AO's own
+// name, which is the pre-change behavior.
 func (m *Manager) agentStillRunning(ctx context.Context, rec domain.SessionRecord) bool {
-	prober, ok := m.runtime.(launchProcessProber)
+	inspector, ok := m.runtime.(ports.SupervisedProcessInspector)
 	if !ok {
 		m.logger.Warn("session name not delivered: runtime cannot confirm the agent is still running",
 			"sessionID", rec.ID)
 		return false
 	}
-	command := strings.TrimSpace(rec.Metadata.LaunchCommand)
-	if command == "" {
-		m.logger.Warn("session name not delivered: no recorded launch command to confirm against",
-			"sessionID", rec.ID)
-		return false
-	}
-	running, err := prober.IsRunningCommand(ctx, ports.RuntimeHandle{ID: rec.Metadata.RuntimeHandleID}, command)
-	if err != nil || !running {
+	alive, err := inspector.IsSupervisedProcessAlive(ctx, ports.RuntimeHandle{ID: rec.Metadata.RuntimeHandleID}, ports.SupervisedProcessRef{
+		SessionID: rec.ID,
+		LaunchID:  rec.Metadata.RuntimeLaunchID,
+	})
+	if err != nil || !alive {
 		m.logger.Warn("session name not delivered: the pane is no longer running the agent",
 			"sessionID", rec.ID, "error", err)
 		return false

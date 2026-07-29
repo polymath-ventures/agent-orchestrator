@@ -176,6 +176,7 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 					getStatus: async () => status,
 					start: async () => status,
 					stop: async () => ({ state: "stopped" }),
+					restart: async () => status,
 					onStatus: (listener: (s: typeof status) => void) => {
 						listener(status);
 						return unsubscribe();
@@ -216,9 +217,15 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 					get: async () => ({ enabled: false, channel: "latest", nightlyAck: false, feature: null }),
 					set: async () => undefined,
 				},
+				keybindings: {
+					get: async () => ({}),
+					set: async (overrides) => overrides,
+					setRecording: async () => undefined,
+				},
 				updates: {
 					getStatus: async () => ({ state: "idle" }),
 					check: async () => undefined,
+					returnHome: async () => undefined,
 					download: async () => undefined,
 					install: async () => undefined,
 					onStatus: unsubscribe,
@@ -534,6 +541,7 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 					getStatus: async () => status,
 					start: async () => status,
 					stop: async () => ({ state: "stopped" }),
+					restart: async () => status,
 					onStatus: (listener: (s: typeof status) => void) => {
 						listener(status);
 						return unsubscribe();
@@ -567,9 +575,15 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 					get: async () => ({ enabled: false, channel: "latest", nightlyAck: false, feature: null }),
 					set: async () => undefined,
 				},
+				keybindings: {
+					get: async () => ({}),
+					set: async (overrides) => overrides,
+					setRecording: async () => undefined,
+				},
 				updates: {
 					getStatus: async () => ({ state: "idle" }),
 					check: async () => undefined,
+					returnHome: async () => undefined,
 					download: async () => undefined,
 					install: async () => undefined,
 					onStatus: unsubscribe,

@@ -17,7 +17,7 @@ func TestBuild_MatchesEmbedded(t *testing.T) {
 		t.Fatalf("Build: %v", err)
 	}
 	embedded := apispec.Default().YAML()
-	if !bytes.Equal(got, embedded) {
+	if !bytes.Equal(normalizeYAML(got), normalizeYAML(embedded)) {
 		t.Fatalf("embedded openapi.yaml is stale — run `go generate ./...` and commit.\n"+
 			"len(fresh)=%d len(embedded)=%d", len(got), len(embedded))
 	}
@@ -81,4 +81,8 @@ func TestBuildIncludesReviewerCapabilityOnAgentInventory(t *testing.T) {
 	if !bytes.Contains(agentInfo, []byte("reviewerCapable:")) {
 		t.Fatalf("generated AgentInfo schema missing reviewerCapable: %s", agentInfo)
 	}
+}
+
+func normalizeYAML(in []byte) []byte {
+	return bytes.ReplaceAll(in, []byte("\r\n"), []byte("\n"))
 }

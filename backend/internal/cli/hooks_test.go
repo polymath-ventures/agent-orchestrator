@@ -58,7 +58,6 @@ func capturedState(t *testing.T, capture *activityCapture) string {
 
 func TestHooks_NotificationReportsBlocked(t *testing.T) {
 	t.Setenv("AO_SESSION_ID", "ao-7")
-	t.Setenv("AO_RUNTIME_TOKEN", "runtime-token-7")
 	cfg := setConfigEnv(t)
 	srv, capture := activityServer(t, http.StatusOK, `{"ok":true,"sessionId":"ao-7","state":"blocked"}`)
 	writeRunFileFor(t, cfg, srv)
@@ -75,9 +74,6 @@ func TestHooks_NotificationReportsBlocked(t *testing.T) {
 	}
 	if got := capturedState(t, capture); got != "blocked" {
 		t.Errorf("state = %q, want blocked", got)
-	}
-	if !strings.Contains(capture.body, `"runtimeToken":"runtime-token-7"`) {
-		t.Fatalf("body = %s, want runtimeToken from AO_RUNTIME_TOKEN", capture.body)
 	}
 }
 
@@ -114,6 +110,29 @@ func TestHooks_SessionEndReportsExited(t *testing.T) {
 	}
 	if got := capturedState(t, capture); got != "exited" {
 		t.Errorf("state = %q, want exited", got)
+	}
+}
+
+func TestHooks_ThreadsRuntimeLaunchID(t *testing.T) {
+	t.Setenv("AO_SESSION_ID", "ao-7")
+	t.Setenv("AO_RUNTIME_LAUNCH_ID", "launch-3")
+	cfg := setConfigEnv(t)
+	srv, capture := activityServer(t, http.StatusOK, `{"ok":true}`)
+	writeRunFileFor(t, cfg, srv)
+
+	_, _, err := executeCLI(t, Deps{
+		In:           strings.NewReader(`{}`),
+		ProcessAlive: func(int) bool { return true },
+	}, "hooks", "codex", "stop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var req setActivityAPIRequest
+	if err := json.Unmarshal([]byte(capture.body), &req); err != nil {
+		t.Fatal(err)
+	}
+	if req.LaunchID != "launch-3" {
+		t.Fatalf("launch id = %q, want launch-3", req.LaunchID)
 	}
 }
 

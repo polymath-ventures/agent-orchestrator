@@ -1,18 +1,18 @@
 import { useCanGoBack, useRouter } from "@tanstack/react-router";
 import { ArrowLeft, ArrowRight, PanelLeft } from "lucide-react";
 import { useEffect, useState } from "react";
+import { isLinuxPlatform } from "../lib/platform";
 import { isMacDesktopChrome } from "../lib/runtime-environment";
 import { useSidebar } from "./ui/sidebar";
 
 const isMac = isMacDesktopChrome();
+const isLinux = isLinuxPlatform();
 const noDragStyle = isMac ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperties) : undefined;
 
-// macOS-only sidebar chrome cluster (sidebar toggle + history arrows). Lives
-// in the Sidebar header below the traffic lights while windowed; in native
-// fullscreen the clearance pad drops so this cluster sits near the top edge.
-// The toggle is pinned in the icon-rail column so it never moves during
-// expand/collapse; history arrows sit absolutely to its right and only fade
-// in when expanded.
+// Sidebar chrome cluster (sidebar toggle + history arrows). It stays fixed while
+// the sidebar expands, collapses, or appears as a hover preview. macOS pins it
+// beside the traffic lights; Linux has no traffic lights, so it sits at the
+// sidebar's top-left. (Windows keeps these controls in its own titlebar.)
 // The installed router has no useCanGoForward, and deriving one as
 // `__TSR_index < history.length - 1` (the upstream hook's approach) is wrong
 // here: window.history.length also counts entries the router never created —
@@ -36,7 +36,15 @@ function useCanGoForward(): boolean {
 	return canGoForward;
 }
 
-export function TitlebarNav({ historyLocked = false }: { historyLocked?: boolean }) {
+export function TitlebarNav({
+	historyLocked = false,
+	isFullScreen = false,
+	onSidebarPreviewEnter,
+}: {
+	historyLocked?: boolean;
+	isFullScreen?: boolean;
+	onSidebarPreviewEnter?: React.PointerEventHandler<HTMLButtonElement>;
+}) {
 	// Drive the sidebar through the SidebarProvider context, not the ui-store
 	// bool: the context toggle is viewport-aware. Below MOBILE_BREAKPOINT the
 	// sidebar is a Sheet controlled by `openMobile`, so the store bool never
@@ -48,16 +56,29 @@ export function TitlebarNav({ historyLocked = false }: { historyLocked?: boolean
 	const canGoBack = useCanGoBack();
 	const canGoForward = useCanGoForward();
 
-	if (!isMac) return null;
+	if (!isMac && !isLinux) return null;
+
+	// macOS: pinned beside the traffic lights, nudged down so the toggle/arrows
+	// share a centerline with the native dots (y: 12). Linux: no traffic lights,
+	// so it sits at the sidebar's top-left within the reserved titlebar band.
+	const leftClass = !isMac
+		? "left-1.5"
+		: isFullScreen
+			? "left-titlebar-cluster-left-fullscreen"
+			: "left-titlebar-cluster-left";
+	// Linux: match the framed board titlebar's y (mac inset 2px + surface border
+	// 1px) so the cluster shares its centerline with the project title.
+	const topClass = !isMac ? "top-0.75" : isFullScreen ? "top-0" : "top-0.5";
 
 	return (
 		<div
-			className="titlebar-nav fixed top-0 left-titlebar-cluster-left z-titlebar flex h-toolbar items-center gap-1"
+			className={`fixed ${topClass} ${leftClass} z-titlebar flex h-traffic-light-clearance items-center gap-1`}
 			style={noDragStyle}
 		>
 			<TitlebarButton
 				label={isSidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
 				onClick={toggleSidebar}
+				onPointerEnter={onSidebarPreviewEnter}
 				title={`${isSidebarOpen ? "Collapse" : "Expand"} sidebar · ⌘B`}
 			>
 				<PanelLeft className="size-icon-lg" aria-hidden="true" />
@@ -88,6 +109,7 @@ function TitlebarButton({
 	disabled,
 	tabIndex,
 	onClick,
+	onPointerEnter,
 	children,
 }: {
 	label: string;
@@ -95,6 +117,7 @@ function TitlebarButton({
 	disabled?: boolean;
 	tabIndex?: number;
 	onClick: () => void;
+	onPointerEnter?: React.PointerEventHandler<HTMLButtonElement>;
 	children: React.ReactNode;
 }) {
 	return (
@@ -104,6 +127,8 @@ function TitlebarButton({
 			className="grid size-control-md place-items-center rounded-md text-passive transition-colors hover:bg-interactive-hover hover:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:bg-transparent disabled:hover:text-passive"
 			disabled={disabled}
 			onClick={onClick}
+			onPointerEnter={onPointerEnter}
+			style={noDragStyle}
 			tabIndex={tabIndex}
 			title={title}
 			type="button"
