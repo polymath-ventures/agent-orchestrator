@@ -70,10 +70,11 @@ golangci install needed), and `npm run frontend:typecheck`. `npm run
 format:check` is the fast changed-files-only subset if you just need the format
 check.
 
-The five Go stages are **scoped to the diff** — they run only when the branch
-touches `backend/`, `scripts/ci/`, or a root `go.work`/`go.work.sum`, and are
-otherwise skipped with the reason printed. Remote CI stays unscoped and remains
-the real gate. See `docs/local-ci.md` before changing that scoping or
+The five Go stages are **scoped to the diff** — they are skipped only when the
+gate positively establishes the branch touches none of `backend/`, `scripts/ci/`,
+a root `go.work`, or a root `go.work.sum`; anything else, including an unusable
+base ref, runs them. The reason is printed either way. Remote CI stays unscoped
+and remains the real gate. See `docs/local-ci.md` before changing that scoping or
 `scripts/ci/`.
 
 Optionally install it as a git `pre-push` hook (per-clone, opt-in) so it runs

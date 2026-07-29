@@ -13,14 +13,19 @@ format/ops-units/lint/build/test/typecheck jobs and does not use
 
 Its five Go stages (`gofmt`, `go build`, `go vet`, `go test -race ./...`,
 golangci-lint) are scoped to the diff by `scripts/ci/go-stages-skippable.sh`:
-they run when the branch touches `backend/`, `scripts/ci/`, or a root `go.work`
-or `go.work.sum`,
-and are otherwise skipped with the reason printed. That trigger set is a superset
-of the Go build's real inputs, all of which live under `backend/` except a
-workspace file, which the toolchain searches parent directories for. The predicate
-exits `0` only for "skippable" and non-zero for everything else, including its own
-failures, so an underivable changed set runs the stages rather than silently
-skipping the most expensive part of the gate.
+they are skipped **only** when the predicate positively establishes that the
+branch touches none of `backend/`, `scripts/ci/`, a root `go.work`, or a root
+`go.work.sum`. Anything else runs them, with the reason printed either way. That
+trigger set is a superset of the Go build's real inputs, all of which live under
+`backend/` except a workspace file, which the toolchain searches parent
+directories for.
+
+The predicate exits `0` for "skippable" and non-zero for everything else,
+including its own failures. The asymmetry is the point: an unchanged branch whose
+base ref is missing, ambiguous, or unusable **runs** the stages rather than being
+skipped, because a skipped race suite and a passing one look identical in the
+output. Note that "otherwise skipped" would be the wrong summary — the skip
+requires a positive determination, never merely the absence of a detected change.
 
 The predicate asks git directly, via pathspecs on the merge-base diff with the
 default branch and on the tracked working-tree edits. Letting git decide what

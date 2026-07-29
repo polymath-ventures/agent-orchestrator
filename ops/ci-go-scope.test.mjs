@@ -227,6 +227,36 @@ test("predicate runs the Go stages for a root go.work, the one input outside bac
 	}
 });
 
+test("predicate is immune to a local branch that shadows the remote base ref", () => {
+	// `origin/main` is ambiguous: git searches refs/heads/ before refs/remotes/,
+	// so a local branch literally named `origin/main` wins. Git resolves it with
+	// only a warning on stderr and exit 0 — so using the short form silently
+	// diffed against the wrong commit. With that branch pointing at HEAD both
+	// diffs come back empty and a committed backend change is skipped.
+	// Using the fully qualified refs/remotes/origin/... makes this unrepresentable.
+	const dir = setupRepo();
+	try {
+		write(dir, "backend/foo.go", "package backend\n\nvar Shadowed = 1\n");
+		git(dir, "add", "backend/foo.go");
+		git(dir, "commit", "-qm", "committed backend change");
+		// The decoy: a local branch named origin/main, at HEAD rather than at base.
+		git(dir, "update-ref", "refs/heads/origin/main", git(dir, "rev-parse", "HEAD").trim());
+
+		// Precondition: the short name really does resolve to the local branch, or
+		// this test would pass without exercising the ambiguity at all.
+		const short = git(dir, "rev-parse", "origin/main").trim();
+		const local = git(dir, "rev-parse", "refs/heads/origin/main").trim();
+		const remote = git(dir, "rev-parse", "refs/remotes/origin/main").trim();
+		assert.notEqual(local, remote, "the decoy must differ from the real base");
+		assert.equal(short, local, "short form must resolve to the shadowing local branch");
+
+		const r = runPredicate(dir);
+		assert.notEqual(r.status, 0, `expected run\nstdout:${r.stdout}\nstderr:${r.stderr}`);
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
 test("predicate FAILS SAFE when the base ref EXISTS but git cannot diff against it", () => {
 	// The case that a passing test suite hid. An earlier draft grouped both diffs
 	// into one `changed="$( git diff …; git diff … )"`. `set -e` does not abort on
