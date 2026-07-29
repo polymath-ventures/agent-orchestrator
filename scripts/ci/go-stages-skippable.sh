@@ -49,14 +49,26 @@ cd "$repo_root"
 # the question. A constant, non-empty array is safe under `set -u` on bash 3.2.
 go_paths=(backend scripts/ci go.work go.work.sum)
 
-# Derive the default branch from the remote HEAD — never assume "main". Keep the
-# ref FULLY QUALIFIED: the short form `origin/main` is ambiguous, because
-# refs/heads/ is searched before refs/remotes/, so a local branch literally named
-# `origin/main` shadows the remote-tracking ref. Git resolves it to the local one
-# with only a warning on stderr and exit 0 — which, if that branch points at
-# HEAD, makes both diffs empty and skips the build on committed backend changes.
-# refs/remotes/origin/... resolves to exactly one ref by construction.
-base="$(git symbolic-ref --quiet refs/remotes/origin/HEAD 2>/dev/null || echo refs/remotes/origin/main)"
+# Derive the default branch from the remote HEAD, and if that is unknown treat
+# the base as undecidable rather than guessing. Falling back to a hardcoded
+# refs/remotes/origin/main is the same mistake as treating a missing base ref as
+# an empty diff: on a repo whose default is `master`, a stale origin/main would
+# silently become the comparison point and skip committed backend changes.
+# origin/HEAD is genuinely often unset (it is a local convenience ref that fetch
+# does not maintain), so this is reachable — and the cost of being wrong is a
+# skipped build, while the cost of bailing out is one extra honest gate run.
+#
+# Keep the ref FULLY QUALIFIED: the short form `origin/main` is ambiguous,
+# because refs/heads/ is searched before refs/remotes/, so a local branch
+# literally named `origin/main` shadows the remote-tracking ref. Git resolves it
+# to the local one with only a warning on stderr and exit 0 — which, if that
+# branch points at HEAD, makes both diffs empty and skips the build on committed
+# backend changes. refs/remotes/origin/... resolves to exactly one ref.
+if ! base="$(git symbolic-ref --quiet refs/remotes/origin/HEAD 2>/dev/null)"; then
+	echo "refs/remotes/origin/HEAD is not set, so the default branch is unknown;" \
+		"run 'git remote set-head origin -a' to let this gate scope itself"
+	exit 4
+fi
 
 # A missing base ref is undecidable, not "nothing changed". Without it the
 # committed half of the branch is invisible, and a branch whose Go changes are

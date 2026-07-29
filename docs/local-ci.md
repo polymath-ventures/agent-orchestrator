@@ -22,10 +22,21 @@ directories for.
 
 The predicate exits `0` for "skippable" and non-zero for everything else,
 including its own failures. The asymmetry is the point: an unchanged branch whose
-base ref is missing, ambiguous, or unusable **runs** the stages rather than being
-skipped, because a skipped race suite and a passing one look identical in the
-output. Note that "otherwise skipped" would be the wrong summary — the skip
-requires a positive determination, never merely the absence of a detected change.
+base ref is missing, ambiguous, unusable, or whose default branch is unknown
+(`refs/remotes/origin/HEAD` unset — fix with `git remote set-head origin -a`)
+**runs** the stages rather than being skipped, because a skipped race suite and a
+passing one look identical in the output. "Otherwise skipped" would be the wrong
+summary: the skip requires a positive determination, never merely the absence of
+a detected change.
+
+"Touches" means committed on the branch, staged, or edited in the tracked working
+tree. Untracked files and paths marked `assume-unchanged`/`skip-worktree` are
+invisible to it, exactly as they are to `git diff` — none of them can reach a
+commit without becoming visible, so none can escape to the remote unbuilt.
+
+Worth keeping in proportion: remote CI is unscoped, so the blast radius of a
+false skip here is a wasted remote round-trip and a lost local early warning, not
+a broken default branch.
 
 The predicate asks git directly, via pathspecs on the merge-base diff with the
 default branch and on the tracked working-tree edits. Letting git decide what

@@ -112,11 +112,11 @@ test("predicate runs the Go stages for a modified backend .go file", () => {
 });
 
 test("predicate runs the Go stages for a DELETE-only backend change", () => {
-	// `git diff --diff-filter=d` excludes deletions. Reusing that filter for the
-	// predicate would report an empty changed set for a branch that removed a
-	// package — skipping the build that would have caught it. This is why
-	// changed-files.sh drops the filter and leaves existence checks to the one
-	// consumer that needs them (Prettier).
+	// A branch that only REMOVES a package still has to compile. Prettier's gate
+	// filters deletions out with `--diff-filter=d`, correctly — it cannot check a
+	// path that no longer exists — and an early draft of this predicate borrowed
+	// that filter, which made a delete-only branch look unchanged and skipped the
+	// build that would have caught it. Plain pathspecs report deletions.
 	const dir = setupRepo();
 	try {
 		git(dir, "rm", "-q", "backend/foo.go");
@@ -222,6 +222,38 @@ test("predicate runs the Go stages for a root go.work, the one input outside bac
 		const r = runPredicate(dir);
 		assert.notEqual(r.status, 0, `expected run\nstdout:${r.stdout}\nstderr:${r.stderr}`);
 		assert.match(r.stdout, /go\.work/);
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
+});
+
+test("predicate refuses to GUESS the default branch when origin/HEAD is unset", () => {
+	// origin/HEAD is a local convenience ref that fetch does not maintain, so it
+	// is often absent. An earlier draft fell back to a hardcoded
+	// refs/remotes/origin/main. On a repo whose default is `master`, a stale
+	// origin/main then silently became the comparison point — and if it sat at the
+	// branch tip, a committed backend change diffed clean and the build was
+	// skipped. Same class as treating a missing base ref as an empty diff: an
+	// undecidable base being treated as decidable.
+	const dir = setupRepo({ withBase: false });
+	try {
+		write(dir, "backend/foo.go", "package backend\n\nvar Guessed = 1\n");
+		git(dir, "add", "backend/foo.go");
+		git(dir, "commit", "-qm", "committed backend change");
+		// A stale origin/main at the tip — the decoy the old fallback would pick.
+		git(dir, "update-ref", "refs/remotes/origin/main", git(dir, "rev-parse", "HEAD").trim());
+		// ...but origin/HEAD is deliberately NOT set, so the default is unknown.
+		const sym = spawnSync("git", ["symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"], {
+			cwd: dir,
+			encoding: "utf8",
+		});
+		assert.notEqual(sym.status, 0, "origin/HEAD must be unset for this test to mean anything");
+
+		const r = runPredicate(dir);
+		assert.notEqual(r.status, 0, `expected run\nstdout:${r.stdout}\nstderr:${r.stderr}`);
+		// The message has to tell the user how to restore the optimization, or the
+		// safe behaviour just looks like the gate ignoring its own scoping.
+		assert.match(r.stdout, /git remote set-head/);
 	} finally {
 		rmSync(dir, { recursive: true, force: true });
 	}
