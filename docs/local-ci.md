@@ -21,23 +21,24 @@ exits `0` only for "skippable" and non-zero for everything else, including its o
 failures, so an underivable changed set runs the stages rather than silently
 skipping the most expensive part of the gate.
 
-`scripts/ci/changed-files.sh` derives the changed set once and is shared with the
-Prettier stage so the two can never disagree about what the branch touched. It is
-the merge-base diff against the default branch UNION the tracked working-tree
-edits, and it reports deletions — a branch that only removes a backend package
-still has to compile.
+The predicate asks git directly, via pathspecs on the merge-base diff with the
+default branch and on the tracked working-tree edits. Letting git decide what
+"under `backend/`" means is what keeps it honest: deletions, renames, and paths
+containing spaces or newlines need no special handling, and a branch that only
+_removes_ a backend package is still correctly seen as changing Go.
 
-The two consumers deliberately take **different policies on a missing base ref**,
-which is what `changed-files.sh --require-base` selects between:
+It deliberately does **not** share a changed-set helper with the Prettier stage,
+though an earlier draft did. The two want opposite policies on the same two
+questions, and the coupling produced a defect on each:
 
-- Prettier degrades gracefully. With no `origin/main` it checks the working tree
-  alone, so the format gate still works in an offline or single-branch clone;
-  missing a few committed files there is a small and visible miss.
-- The Go predicate passes `--require-base` and refuses to degrade. A branch whose
-  backend changes are already committed has a clean working tree, so falling back
-  to the working tree alone would report an empty changed set and skip the build
-  on a branch that may not compile. A missing base ref is undecidable, so the
-  stages run.
+- **Deletions.** Prettier cannot check a path that no longer exists, so it filters
+  deletions out; the Go stages must compile a branch that deleted a package.
+- **A missing base ref.** Prettier degrades to the working tree alone, so the
+  format gate still works in an offline or single-branch clone — missing a few
+  committed files there is a small, visible miss. The Go predicate must not
+  degrade: a branch whose backend changes are already committed has a clean
+  working tree, so that fallback would report nothing and skip the build on code
+  that may not compile. It treats a missing base ref as undecidable and runs.
 
 Remote CI is deliberately unscoped — it is the real gate, it runs on fresh
 machines, and it is not what grows a developer's `~/.cache/go-build`. The local

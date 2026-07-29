@@ -155,30 +155,6 @@ test("format-check fails loudly instead of false-passing when the changed-file q
 	}
 });
 
-test("format-check passes when the branch only deletes a file", () => {
-	// The changed-set derivation dropped `--diff-filter=d` so the Go-stage scope
-	// predicate can see deletions (a branch that only removes a backend package
-	// still has to be compiled). Prettier must not regress on that: a deleted path
-	// no longer exists, so the existence filter is what keeps it out of the
-	// command line. Without that filter Prettier errors on the missing path.
-	const dir = setupRepo();
-	try {
-		writeFileSync(join(dir, "extra.md"), "# Extra\n\nBody\n"); // prettier-clean
-		git(dir, "add", "extra.md");
-		git(dir, "commit", "-qm", "add a second file");
-		git(dir, "rm", "-q", "extra.md");
-
-		const r = runGate(dir);
-		assert.ok(
-			!/No files matching the pattern/.test(r.stdout + r.stderr),
-			`gate passed a deleted path to Prettier\nstdout:${r.stdout}\nstderr:${r.stderr}`,
-		);
-		assert.equal(r.status, 0, `expected zero exit\nstdout:${r.stdout}\nstderr:${r.stderr}`);
-	} finally {
-		rmSync(dir, { recursive: true, force: true });
-	}
-});
-
 test("format-check mirrors the prettier CI job command shape", () => {
 	const src = readFileSync(scriptPath, "utf8");
 	assert.match(src, /prettier@3/);

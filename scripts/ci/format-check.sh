@@ -8,41 +8,50 @@
 # Prettier honors .prettierignore (generated files, and backend/ which uses
 # gofmt), so this stays quiet on exactly the files CI also skips.
 #
-# The changed set comes from scripts/ci/changed-files.sh, which is shared with
-# the Go-stage scope predicate so the two stages can never disagree about what
-# this branch touches.
+# Changed set = files committed on this branch relative to the merge-base with
+# the default branch (the exact set CI checks) UNION tracked working-tree/staged
+# edits (so the gate also catches unformatted files before they are committed).
+# Untracked scratch files are excluded to keep the gate quiet.
 set -euo pipefail
 
-# Resolve the sibling helper relative to THIS script, before cd'ing anywhere —
-# the behavioral tests run this gate against throwaway repos that contain no
-# scripts/ci/ of their own.
-script_dir="$(cd "$(dirname "$0")" && pwd)"
-
 cd "$(git rev-parse --show-toplevel)"
+
+# Derive the default branch from the remote HEAD — never assume "main".
+default_ref="$(git symbolic-ref --quiet refs/remotes/origin/HEAD 2>/dev/null || echo refs/remotes/origin/main)"
+base="${default_ref#refs/remotes/}" # e.g. origin/main
+
+changed_files() {
+	# Committed vs the merge-base with the default branch — the exact set CI
+	# checks. Skipped when the base ref is not present locally (e.g. not fetched,
+	# or a fresh throwaway repo) so the gate still works offline.
+	if git rev-parse --verify --quiet "$base" >/dev/null; then
+		git diff --name-only -z --diff-filter=d "${base}...HEAD"
+	fi
+	# Tracked working-tree + staged edits not yet committed.
+	git diff --name-only -z --diff-filter=d HEAD
+}
 
 # Collect the NUL-delimited names into an array. This stays portable to macOS's
 # stock bash 3.2 / BSD userland (no GNU `sort -z`, no `xargs --no-run-if-empty`).
 # Duplicates across the two diff sets are harmless — Prettier just checks a file
 # twice.
 #
-# Write the helper's output to a temp file first (not a `< <(...)` process
+# Write changed_files to a temp file first (not a `< <(...)` process
 # substitution): a process substitution runs asynchronously outside `pipefail`,
 # so a failing `git diff` would be swallowed into a false pass. A plain
-# redirection of a `set -euo pipefail` child is covered by `set -e` here, so a
-# producer failure still aborts the gate.
+# redirection is covered by `set -e`, so a producer failure aborts the gate.
 # Track the count in a scalar `n` and expand `${files[@]}` only when it is
 # non-zero, because bash 3.2 treats an empty array as unset under `set -u`.
 tmp="$(mktemp)"
 trap 'rm -f "$tmp"' EXIT
-bash "$script_dir/changed-files.sh" >"$tmp"
+changed_files >"$tmp"
 
-# Skip paths that no longer exist in the working tree — deleted files, and a file
-# the committed set (base...HEAD) lists that a LATER uncommitted change renamed
-# or removed. Prettier treats a missing path as an error rather than a no-op, so
-# without this the gate fails on any branch that deletes a file, or renames one
-# it also added. This is the only place that filtering belongs: the shared
-# changed-set helper deliberately reports deletions, because the Go-stage scope
-# predicate has to compile a branch that removed a package.
+# Skip paths that no longer exist in the working tree. The committed set
+# (base...HEAD) legitimately lists a file that a LATER uncommitted change
+# renamed or removed, and Prettier treats a missing path as an error rather
+# than a no-op — so without this the gate fails on any branch that renames a
+# file it also added. --diff-filter=d only excludes deletions within each diff,
+# which does not cover that cross-set case.
 files=()
 n=0
 while IFS= read -r -d '' f; do

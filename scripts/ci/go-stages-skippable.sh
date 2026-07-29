@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 #
 # go-stages-skippable.sh — decides whether the local pre-push gate's Go stages
-# (gofmt, build, vet, `go test -race`, golangci-lint) can be skipped for this
-# branch. `go test -race ./...` alone is the better part of five minutes on this
-# module, so running it for a branch that changed only markdown buys nothing and
-# has, in practice, killed reviewer sessions mid-suite.
+# (gofmt, build, vet, `go test -race ./...`, golangci-lint) can be skipped for
+# this branch. `go test -race ./...` alone is the better part of five minutes on
+# this module, so running it for a branch that changed only markdown buys nothing
+# and has, in practice, killed reviewer sessions mid-suite.
 #
 # Only the LOCAL gate is scoped. Remote CI stays unconditional: it is the real
 # gate, it runs on fresh machines, and it is not what churns a developer's build
@@ -14,64 +14,64 @@
 #     exit non-zero = run them                       (reason on stdout)
 #
 # The inversion is deliberate and load-bearing. The only path that reaches
-# `exit 0` is the one that walked the entire changed set and positively found
-# nothing Go-relevant. Everything else — an underivable changed set, a mktemp
-# failure, a `set -e` abort, this script being absent or unreadable — exits
-# non-zero and therefore RUNS the stages. Failing safe is a structural property
-# of the convention rather than something each caller has to remember. The
-# obvious spelling (`exit 0` = run) would invert exactly that: any crash would
-# silently skip the gate's most expensive and most load-bearing stage, and a
-# skipped race suite looks identical to a passing one in the output.
-#
-# Trigger set: `backend/`, `scripts/ci/`, and a root `go.work*`. Every Go input
-# this repo has today lives under backend/ — sources, go.mod/go.sum, sqlc.yaml,
-# the .sql and testdata fixtures, and all six //go:embed roots — so a
-# leading-segment match on backend/ is a strict superset of enumerating them, and
-# stays correct when a seventh embed root is added. scripts/ci/ is included so a
-# change to the gate itself is exercised by the gate. `go.work*` is the one Go
-# input that would sit OUTSIDE backend/: the toolchain searches parent
-# directories for it, so a workspace file added at the root changes module
-# selection for a build run from backend/. None exists today; matching it costs
-# one alternation and keeps the superset property true rather than aspirational.
+# `exit 0` is the one that positively established the branch changes nothing
+# Go-relevant. Everything else — a missing base ref, an unusable revision, a
+# `set -e` abort, this script being absent or unreadable — exits non-zero and
+# therefore RUNS the stages. Failing safe is a structural property of the
+# convention rather than something each caller has to remember. The obvious
+# spelling (`exit 0` = run) would invert exactly that: any crash would silently
+# skip the gate's most expensive stage, and a skipped race suite looks identical
+# to a passing one in the output.
 set -euo pipefail
-
-# Resolve the sibling helper relative to THIS script, before cd'ing anywhere: the
-# repo being inspected is not necessarily the repo this script lives in (the
-# behavioral tests run it against throwaway repos that have no scripts/ci/).
-script_dir="$(cd "$(dirname "$0")" && pwd)"
 
 cd "$(git rev-parse --show-toplevel)"
 
-# Write to a temp file rather than reading from a process substitution: a process
-# substitution runs asynchronously outside `pipefail`, so a failing `git diff`
-# would be swallowed and read as an empty changed set — i.e. "nothing changed,
-# skip the suite", the precise failure this script must never produce.
-tmp="$(mktemp)"
-trap 'rm -f "$tmp"' EXIT
+# Everything the Go build reads lives under backend/ — sources, go.mod/go.sum,
+# sqlc.yaml, the .sql and testdata fixtures, and all six //go:embed roots — so
+# naming the directory is a strict superset of enumerating those inputs and stays
+# correct when a seventh embed root is added. scripts/ci is included so a change
+# to the gate itself is exercised by the gate. go.work/go.work.sum are the only
+# Go inputs that would sit outside backend/: the toolchain searches parent
+# directories for a workspace file, so one added at the root changes module
+# selection for a build run from backend/. None exists today.
+#
+# These are git pathspecs, not string matching, which is what keeps this honest:
+# git decides what "under backend/" means, so deletions, renames, and paths
+# containing spaces, quotes, or newlines are all handled by the tool that owns
+# the question. A constant, non-empty array is safe under `set -u` on bash 3.2.
+go_paths=(backend scripts/ci go.work go.work.sum)
 
-# --require-base: unlike Prettier, this predicate must not degrade to the
-# working tree alone when the base ref is missing. A branch whose backend changes
-# are already committed has a clean working tree, so the changed set would look
-# empty and the stages would be skipped on a branch that may not compile.
-if ! bash "$script_dir/changed-files.sh" --require-base >"$tmp"; then
-	echo "could not determine the changed set"
+# Derive the default branch from the remote HEAD — never assume "main".
+default_ref="$(git symbolic-ref --quiet refs/remotes/origin/HEAD 2>/dev/null || echo refs/remotes/origin/main)"
+base="${default_ref#refs/remotes/}" # e.g. origin/main
+
+# A missing base ref is undecidable, not "nothing changed". Without it the
+# committed half of the branch is invisible, and a branch whose Go changes are
+# already committed has a clean working tree — so treating this as an empty diff
+# would skip the build on code that may not compile. Prettier's own gate
+# deliberately degrades to the working tree here, because missing a few committed
+# files is a small and visible miss; a skip-the-build decision cannot borrow that
+# tolerance.
+if ! git rev-parse --verify --quiet "$base" >/dev/null; then
+	echo "base ref '$base' is not present locally; cannot tell what this branch changed"
 	exit 2
 fi
 
-# `case` with a `backend/*` pattern anchors to the leading path segment. A
-# substring match would drag docs/backend-notes.md and frontend/backend-client.ts
-# into the trigger set and re-introduce the waste this script removes.
-#
-# Redirect the loop's input (`done <"$tmp"`) instead of piping into it, so the
-# loop body runs in the current shell and `exit` exits the script.
-while IFS= read -r -d '' f; do
-	case "$f" in
-	backend/* | scripts/ci/* | go.work | go.work.sum)
-		echo "changed: $f"
-		exit 1
-		;;
-	esac
-done <"$tmp"
+# Committed on this branch, then tracked working-tree and staged edits. Both are
+# plain assignments, so `set -e` aborts on a git failure (an unusable revision
+# exits 128) rather than letting it read as an empty diff.
+changed="$(
+	git diff --name-only "${base}...HEAD" -- "${go_paths[@]}"
+	git diff --name-only HEAD -- "${go_paths[@]}"
+)"
+
+if [ -n "$changed" ]; then
+	# First line via parameter expansion rather than a pipeline: `head` in a
+	# pipeline under `pipefail` can SIGPIPE the producing `git` and turn a
+	# successful check into a failure.
+	echo "changed: ${changed%%$'\n'*}"
+	exit 1
+fi
 
 echo "no changed paths under backend/, scripts/ci/, or go.work*"
 exit 0

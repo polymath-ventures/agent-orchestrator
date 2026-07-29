@@ -244,12 +244,17 @@ test("predicate FAILS SAFE (runs) when the changed set cannot be determined", ()
 	}
 });
 
-test("predicate resolves its helper relative to itself, not to the inspected repo", () => {
-	// It runs against throwaway repos that contain no scripts/ci/ of their own, so
-	// a repo-relative lookup of changed-files.sh would break every case above —
-	// and, worse, would fail-safe its way to a green-looking "run" verdict for the
-	// wrong reason. Pin the sibling resolution explicitly.
+test("predicate asks git what changed rather than string-matching paths itself", () => {
+	// The pathspec form is why the cases above hold without any parsing: git owns
+	// the definition of "under backend/", so deletions, renames, and names
+	// containing spaces or newlines need no special handling. A `case`/glob over
+	// `git diff --name-only -z` output would have to re-answer all of that, and
+	// each of those is a way to under-report a change and skip the build.
 	const src = readFileSync(scriptPath, "utf8");
-	assert.match(src, /dirname "\$0"/);
-	assert.doesNotMatch(src, /bash scripts\/ci\/changed-files\.sh/);
+	assert.match(src, /go_paths=\(backend scripts\/ci go\.work go\.work\.sum\)/);
+	assert.match(src, /git diff --name-only "\$\{base\}\.\.\.HEAD" -- "\$\{go_paths\[@\]\}"/);
+	assert.match(src, /git diff --name-only HEAD -- "\$\{go_paths\[@\]\}"/);
+	// No `--diff-filter`: it would hide deletions, and a branch that only removes
+	// a backend package still has to compile.
+	assert.doesNotMatch(src, /--diff-filter/);
 });

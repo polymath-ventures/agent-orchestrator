@@ -102,28 +102,24 @@ test("ci-local passes -trimpath so worktrees share cache entries for their own p
 	assert.doesNotMatch(read("../scripts/ci/golangci.sh"), /trimpath/);
 });
 
-test("the changed-set derivation lives in exactly one place", () => {
-	// format-check.sh and the Go-stage predicate must never disagree about what
-	// the branch changed, so neither derives it itself.
-	const shared = read("../scripts/ci/changed-files.sh");
-	assert.match(shared, /git diff --name-only -z/);
-	for (const consumer of ["format-check.sh", "go-stages-skippable.sh"]) {
-		const src = read(`../scripts/ci/${consumer}`);
-		// The derivation itself, not prose mentioning `git diff` — both consumers
-		// carry comments explaining why the shared helper is invoked the way it is.
-		assert.doesNotMatch(
-			src,
-			/git diff --name-only/,
-			`${consumer} should consume changed-files.sh, not re-derive the set`,
-		);
-		assert.match(src, /changed-files\.sh/);
-	}
-	// Deletions must survive into the shared set: a branch that only removes a
-	// backend package still has to be compiled. Anchored to the invocation, since
-	// the file's own comment explains why the filter was dropped. The behavioral
-	// proof is the delete-only case in ops/ci-go-scope.test.mjs; this just keeps
-	// the filter from being reinstated in a passing-looking way.
-	assert.doesNotMatch(shared, /git diff --name-only -z --diff-filter/);
+test("the Go-stage predicate is self-contained and leaves the Prettier gate alone", () => {
+	// An earlier draft of this change factored the changed-set derivation into a
+	// script shared by both scoped stages. It was a net loss: the two consumers
+	// want OPPOSITE policies on deletions (Prettier cannot check a path that no
+	// longer exists; the Go stages must compile a branch that removed a package)
+	// and OPPOSITE policies on a missing base ref (Prettier degrades to the
+	// working tree; the Go stages must not). Both defects review found came from
+	// that coupling, so the predicate answers its own question and format-check.sh
+	// is untouched by this change.
+	const predicate = read("../scripts/ci/go-stages-skippable.sh");
+	assert.doesNotMatch(predicate, /changed-files\.sh/);
+	assert.match(predicate, /go_paths=\(/);
+
+	// format-check.sh keeps its own derivation, --diff-filter=d included: correct
+	// for Prettier, wrong for the Go stages.
+	const fmt = read("../scripts/ci/format-check.sh");
+	assert.match(fmt, /--diff-filter=d/);
+	assert.doesNotMatch(fmt, /go-stages-skippable|changed-files/);
 });
 
 test("package.json wires the gate scripts", () => {
