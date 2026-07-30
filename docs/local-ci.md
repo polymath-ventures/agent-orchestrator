@@ -8,8 +8,8 @@ npm run agent-ci
 ```
 
 `npm run ci-local` is the required pre-push parity gate. It mirrors the remote
-format/ops-units/lint/build/test/typecheck jobs and does not use
-`@redwoodjs/agent-ci`.
+format/ops-units/lint/build/test/typecheck jobs and the frontend renderer vitest
+suite, and does not use `@redwoodjs/agent-ci`.
 
 Its five Go stages (`gofmt`, `go build`, `go vet`, `go test -race ./...`,
 golangci-lint) are scoped to the diff by `scripts/ci/go-stages-skippable.sh`:
@@ -79,6 +79,56 @@ machines, and it is not what grows a developer's `~/.cache/go-build`. The local
 build/vet/test invocations also pass `-trimpath`, which stops absolute source
 paths from being baked into compiled output and keeps each live worktree from
 caching its own copy of every first-party package.
+
+## Frontend stages
+
+After the Go block the gate runs two frontend stages, both unconditional (they
+are Node-only and fast, and neither hangs off the Go scope predicate):
+
+1. `npm run frontend:typecheck` — the frontend `tsc --noEmit`.
+2. `npm run frontend:test` — the renderer **vitest** unit suite (`vitest run`),
+   mirroring frontend.yml's "Run vitest suite" step.
+
+The vitest stage was added after the GH #220 upstream sync: an
+inspector-default-state regression passed `ci-local` (which typechecked the
+frontend but never ran its unit tests) and only broke on remote CI — six
+`SessionView.test.tsx` failures plus browser-mode e2e specs — exactly the wasted
+round-trip this gate exists to prevent. It runs **unconditionally** rather than
+behind frontend-touched scoping: vitest is fast, and running it always is
+simpler and less fragile than another scope predicate (the diff-scoping added
+value only for the minutes-long Go race suite). It sits **after** the typecheck
+so a cheaper type error fails first.
+
+### Browser-mode e2e is a manual opt-in step, not part of the gate
+
+The browser-mode Playwright e2e (`frontend/e2e`, `npm run test:e2e`) is
+**deliberately excluded** from `ci-local`. Unlike vitest it is expensive and
+host-sensitive:
+
+- It builds the production web bundle (`npm run build:web`) and starts a
+  same-origin server per run (`frontend/playwright.config.ts`, 180s timeout).
+- It needs a Playwright browser download (`npx playwright install --with-deps
+chromium`).
+- Its port is hardcoded to `5173` in `frontend/playwright.config.ts`
+  (`baseURL`, `AO_WEB_PUBLIC_URL`, and `webServer.port`), which is frequently
+  taken on shared hosts. There is no port override today; free the port first,
+  or rely on remote CI.
+
+Making every push pay that cost would break the gate's fail-fast, cheapest-first
+contract for little local benefit — remote CI (`.github/workflows/frontend.yml`)
+runs the browser-mode e2e on every PR that touches its path filters
+(`frontend/**`, `ops/**`, `scripts/ci/**`, `package.json`, and the workflow
+itself) and is the real gate. Run it manually when a change plausibly affects
+the browser flow:
+
+```bash
+cd frontend
+npm run test:e2e
+```
+
+If e2e is ever promoted into `ci-local`, it must first gain a configurable port
+(an `AO_WEB_PORT`-style override threaded through `playwright.config.ts`) and
+handle the built-bundle prerequisite; that is out of scope for the vitest stage.
 
 `npm run agent-ci` is the repo-approved wrapper around `@redwoodjs/agent-ci`.
 Use it instead of invoking `npx @redwoodjs/agent-ci run --all` directly. The

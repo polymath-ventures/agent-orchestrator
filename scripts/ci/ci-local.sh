@@ -105,4 +105,19 @@ fi
 # 8. Frontend typecheck (.github/workflows/frontend.yml).
 run "frontend typecheck" npm run frontend:typecheck
 
+# 9. Frontend vitest unit suite (.github/workflows/frontend.yml "Run vitest
+# suite"). Mirrored here because the gate typechecked the frontend but never ran
+# its unit tests, so a frontend unit regression (the #220 SessionView.test.tsx
+# failures) passed locally and only broke on remote CI — the wasted round-trip
+# this gate exists to prevent. Vitest is fast and self-contained, so like the
+# typecheck it runs unconditionally rather than behind fragile frontend-touched
+# scoping, and sits after the typecheck so a cheaper type error fails first.
+#
+# The slower browser-mode Playwright e2e (frontend/e2e) is deliberately NOT in
+# this gate — it needs a built web bundle, a Playwright browser download, and a
+# free port (5173 is hardcoded in frontend/playwright.config.ts). It stays a
+# manual opt-in step; see docs/local-ci.md. Remote CI (frontend.yml) runs it on
+# every frontend-touching PR.
+run "frontend vitest" npm run frontend:test
+
 printf '\n\xe2\x9c\x93 local CI-parity gate passed\n'
