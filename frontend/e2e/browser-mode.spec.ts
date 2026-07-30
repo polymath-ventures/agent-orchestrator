@@ -15,7 +15,8 @@ test("browser mode uses daemon-shaped data and hides desktop updater actions", a
 test("browser mode opens a real mux websocket for terminal panes", async ({ page }) => {
 	const fixtures = await installBrowserModeApiFixtures(page);
 	await page.goto("/#/projects/api-gateway/sessions/refactor-mux");
-	await page.getByRole("button", { name: "Open inspector panel" }).click();
+	// Upstream's worker inspector rail defaults open, so its Summary tab is
+	// already mounted; the terminal pane opens the mux socket regardless.
 	await expect(page.getByRole("tab", { name: "Summary" })).toBeVisible();
 	await expect.poll(() => fixtures.muxConnections).toBeGreaterThan(0);
 });

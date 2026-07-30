@@ -9,8 +9,8 @@ test("the inspector rail stacks every PR a session owns, actionable-first", asyn
 	await page.goto("/");
 	await page.getByRole("button", { name: "Open auth stack" }).click();
 	await expect(page).toHaveURL(/sessions\/stacked-auth/);
-	await page.getByRole("button", { name: "Open inspector panel" }).click();
 
+	// Upstream's worker inspector rail defaults open, so it is already mounted.
 	const inspector = page.locator("#inspector");
 	await expect(inspector).toBeVisible();
 
