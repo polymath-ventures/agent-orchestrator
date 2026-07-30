@@ -21,6 +21,7 @@ test("ci-local aggregator mirrors every CI parity job", () => {
 	assert.match(src, /run "go test -race" bash -c '[^']*go test -trimpath -race \.\/\.\.\./); // build-test parity
 	assert.match(src, /golangci\.sh/); // golangci-lint (pinned, single-sourced)
 	assert.match(src, /frontend:typecheck/); // frontend typecheck
+	assert.match(src, /frontend:test/); // frontend vitest unit suite (frontend.yml "Run vitest suite")
 	assert.match(src, /test:ops/); // ops-units job (go.yml + frontend.yml)
 });
 
@@ -79,13 +80,40 @@ test("ci-local scopes the Go stages to the diff, and only the Go stages", () => 
 		assert.ok(at > scopedAt && at < closedAt, `${stage} should sit inside the scoped block`);
 	}
 	// Prettier is already changed-files-scoped on its own and runs first so a
-	// cheap miss fails fast; the frontend typecheck is not a Go stage.
+	// cheap miss fails fast; the frontend typecheck and vitest are not Go stages.
 	assert.ok(src.indexOf("format-check.sh") < scopedAt, "prettier stays unconditional and first");
 	assert.ok(src.indexOf("frontend:typecheck") > closedAt, "frontend typecheck stays unconditional");
+	assert.ok(src.indexOf("frontend:test") > closedAt, "frontend vitest stays unconditional");
 
 	// The skip must be visible in the output, never silent — a silently skipped
 	// race suite is indistinguishable from a passing one.
 	assert.match(src, /go stages skipped/);
+});
+
+test("ci-local runs the frontend vitest suite, unconditionally, after the typecheck", () => {
+	// frontend.yml runs the renderer vitest suite ("Run vitest suite": `npx vitest
+	// run`) on top of the typecheck. The gate mirrored only the typecheck, so a
+	// frontend unit regression (the #220 SessionView.test.tsx failures) passed the
+	// local gate and only broke on remote CI — the wasted round-trip this gate
+	// exists to prevent. It runs unconditionally like the typecheck (vitest is
+	// fast; ao-7ra's decision default prefers that over fragile frontend scoping)
+	// and sits after the typecheck so a cheaper type error fails first.
+	const src = read("../scripts/ci/ci-local.sh");
+	const typecheckAt = src.indexOf("frontend:typecheck");
+	const vitestAt = src.indexOf("frontend:test");
+	assert.ok(vitestAt > 0, "the gate should run the frontend vitest suite");
+	assert.ok(vitestAt > typecheckAt, "vitest runs after the cheaper typecheck");
+	// Outside the Go-scoped block, so it always runs.
+	const closedAt = src.indexOf("\nfi\n", src.indexOf('if [ "$skip_go" = 1 ]; then'));
+	assert.ok(vitestAt > closedAt, "vitest is unconditional, not gated on the Go scope");
+	// Anchor to the WHOLE executable line, not just the token: the gate must fail
+	// closed on a vitest failure, so a later `|| true` or `|| :` that swallowed
+	// the exit code (defeating the whole point) has to trip this test.
+	assert.match(src, /\nrun "frontend vitest" npm run frontend:test\n/);
+	// And the delegated script must actually be the non-watch vitest run — a
+	// `vitest` watch invocation would hang the gate instead of gating it.
+	const fe = JSON.parse(read("../frontend/package.json"));
+	assert.match(fe.scripts.test, /^vitest run\b/);
 });
 
 test("ci-local passes -trimpath so worktrees share cache entries for their own packages", () => {
@@ -133,6 +161,9 @@ test("package.json wires the gate scripts", () => {
 	const pkg = JSON.parse(read("../package.json"));
 	assert.equal(pkg.scripts["format:check"], "bash scripts/ci/format-check.sh");
 	assert.equal(pkg.scripts["ci-local"], "bash scripts/ci/ci-local.sh");
+	// The gate calls `npm run frontend:test`; keep it single-sourced here, the
+	// same way frontend:typecheck delegates into the frontend workspace.
+	assert.equal(pkg.scripts["frontend:test"], "npm --prefix frontend run test");
 	assert.match(pkg.scripts["hooks:install"], /core\.hooksPath .githooks/);
 	// lint shares the single golangci source with the gate.
 	assert.match(pkg.scripts.lint, /scripts\/ci\/golangci\.sh/);

@@ -9,6 +9,7 @@
 		"agent-ci:clean": "bash scripts/ci/agent-ci-clean.sh",
 		"hooks:install": "git config core.hooksPath .githooks",
 		"frontend:typecheck": "npm --prefix frontend run typecheck",
+		"frontend:test": "npm --prefix frontend run test",
 		"test:ops": "node --test ops/*.test.mjs",
 		"sqlc": "cd backend && go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 generate",
 		"api:spec": "cd backend && go generate ./internal/httpd/apispec/...",
