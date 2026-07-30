@@ -35,6 +35,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/binaryutil"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	aoprocess "github.com/aoagents/agent-orchestrator/backend/internal/process"
 )
 
 const (
@@ -77,6 +78,17 @@ func (p *Plugin) EmitsSubmitActivity() bool { return true }
 // claude-code (and its hook-delegators) carry this trio; see
 // ports.ActivitySignaler.
 func (p *Plugin) EmitsBlockedActivity() bool { return true }
+
+// ExitDetectionMode opts Claude Code into AO's process supervisor. Claude Code's
+// hooks report turn boundaries but no reliable session-end event, so an abnormal
+// exit (crash, kill) that omits SessionEnd would otherwise leave the keep-alive
+// terminal looking live indefinitely. Before the upstream sync this was covered
+// by the fork's launch-process liveness sweep; the supervisor replaces it with a
+// stronger signal (the launch id also fences stale-generation callbacks). Codex
+// and Codex Fugu opt in the same way. See ports.AgentExitDetector.
+func (p *Plugin) ExitDetectionMode() ports.AgentExitDetectionMode {
+	return ports.AgentExitDetectionSupervisor
+}
 
 // InHarnessRenameCommand renames a running Claude Code session. It writes the
 // same underlying name as the -n launch flag, so the two doors cannot drift into
@@ -405,7 +417,7 @@ func (p *Plugin) AuthStatus(ctx context.Context) (ports.AgentAuthStatus, error) 
 	probeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 
-	out, err := exec.CommandContext(probeCtx, binary, "auth", "status").CombinedOutput()
+	out, err := aoprocess.CommandContext(probeCtx, binary, "auth", "status").CombinedOutput()
 	if probeCtx.Err() != nil {
 		return ports.AgentAuthStatusUnknown, probeCtx.Err()
 	}

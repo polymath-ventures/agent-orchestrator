@@ -5,18 +5,21 @@ SELECT COALESCE(MAX(num), 0) + 1 AS next FROM sessions WHERE project_id = ?;
 INSERT INTO sessions (
     id, project_id, num, issue_id, kind, harness, display_name,
     activity_state, activity_last_at, first_signal_at, is_terminated,
-    branch, workspace_path, runtime_handle_id, agent_session_id, prompt,
-    preview_url, preview_revision, model, effort, mix_selected, mix_bucket_model, runtime_token, launch_command,
-    prompt_policy_hash, cleanup_generation, created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+    branch, workspace_path, workspace_repo_path, runtime_handle_id,
+    runtime_launch_id, agent_session_id, prompt,
+    preview_url, preview_revision, model, effort, mix_selected, mix_bucket_model,
+    prompt_policy_hash, terminate_on_pr_merge, cleanup_generation, created_at, updated_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 -- name: UpdateSession :exec
 UPDATE sessions SET
     issue_id = ?, kind = ?, harness = ?, display_name = ?,
     activity_state = ?, activity_last_at = ?, first_signal_at = ?, is_terminated = ?,
-    branch = ?, workspace_path = ?, runtime_handle_id = ?, agent_session_id = ?, prompt = ?,
-    preview_url = ?, preview_revision = ?, model = ?, effort = ?, mix_selected = ?, mix_bucket_model = ?, runtime_token = ?,
-    launch_command = ?, prompt_policy_hash = ?, cleanup_generation = ?, updated_at = ?
+    branch = ?, workspace_path = ?, workspace_repo_path = ?, runtime_handle_id = ?,
+    runtime_launch_id = ?, agent_session_id = ?, prompt = ?,
+    preview_url = ?, preview_revision = ?, model = ?, effort = ?, mix_selected = ?,
+    mix_bucket_model = ?, prompt_policy_hash = ?, terminate_on_pr_merge = ?,
+    cleanup_generation = ?, updated_at = ?
 WHERE id = ?;
 
 -- name: GetSession :one
@@ -24,8 +27,9 @@ SELECT id, COALESCE(project_id, '') AS project_id, num, issue_id, kind, harness,
        activity_state, activity_last_at, is_terminated, branch, workspace_path,
        runtime_handle_id, agent_session_id, prompt, created_at, updated_at,
        display_name, first_signal_at, preview_url, preview_revision, model,
-       mix_selected, runtime_token, launch_command, effort, prompt_policy_hash,
-       mix_bucket_model, cleanup_generation
+       mix_selected, effort, prompt_policy_hash,
+       mix_bucket_model, cleanup_generation, runtime_launch_id, workspace_repo_path,
+       terminate_on_pr_merge
 FROM sessions WHERE id = ?;
 
 -- name: ListSessionsByProject :many
@@ -33,8 +37,9 @@ SELECT id, COALESCE(project_id, '') AS project_id, num, issue_id, kind, harness,
        activity_state, activity_last_at, is_terminated, branch, workspace_path,
        runtime_handle_id, agent_session_id, prompt, created_at, updated_at,
        display_name, first_signal_at, preview_url, preview_revision, model,
-       mix_selected, runtime_token, launch_command, effort, prompt_policy_hash,
-       mix_bucket_model, cleanup_generation
+       mix_selected, effort, prompt_policy_hash,
+       mix_bucket_model, cleanup_generation, runtime_launch_id, workspace_repo_path,
+       terminate_on_pr_merge
 FROM sessions WHERE project_id = ? ORDER BY num;
 
 -- name: ListAllSessions :many
@@ -42,8 +47,9 @@ SELECT id, COALESCE(project_id, '') AS project_id, num, issue_id, kind, harness,
        activity_state, activity_last_at, is_terminated, branch, workspace_path,
        runtime_handle_id, agent_session_id, prompt, created_at, updated_at,
        display_name, first_signal_at, preview_url, preview_revision, model,
-       mix_selected, runtime_token, launch_command, effort, prompt_policy_hash,
-       mix_bucket_model, cleanup_generation
+       mix_selected, effort, prompt_policy_hash,
+       mix_bucket_model, cleanup_generation, runtime_launch_id, workspace_repo_path,
+       terminate_on_pr_merge
 FROM sessions ORDER BY COALESCE(project_id, ''), num;
 
 
@@ -55,6 +61,9 @@ UPDATE sessions SET display_name = ?, updated_at = ? WHERE id = ?;
 -- so a repeated `ao preview <same-url>` still trips the sessions_cdc_update
 -- trigger and the desktop browser panel re-navigates / refreshes.
 UPDATE sessions SET preview_url = ?, preview_revision = preview_revision + 1, updated_at = ? WHERE id = ?;
+
+-- name: SetSessionTerminateOnPRMerge :execrows
+UPDATE sessions SET terminate_on_pr_merge = ?, updated_at = ? WHERE id = ?;
 
 -- name: SessionIsSeed :one
 -- SessionIsSeed reports whether the session id matches a row still in seed

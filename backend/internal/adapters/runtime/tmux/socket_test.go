@@ -97,15 +97,6 @@ func TestEveryTmuxInvocationCarriesSocketPath(t *testing.T) {
 			},
 		},
 		{
-			name:    "IsRunningCommand",
-			outputs: [][]byte{[]byte("1234\n")},
-			run: func(t *testing.T, r *Runtime) {
-				if _, err := r.IsRunningCommand(context.Background(), ports.RuntimeHandle{ID: "sess-1"}, "claude"); err != nil {
-					t.Fatalf("IsRunningCommand: %v", err)
-				}
-			},
-		},
-		{
 			name: "SendMessage",
 			run: func(t *testing.T, r *Runtime) {
 				if err := r.SendMessage(context.Background(), ports.RuntimeHandle{ID: "sess-1"}, "hello"); err != nil {
@@ -152,7 +143,7 @@ func TestAttachCommandCarriesSocketPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("attachCommand: %v", err)
 	}
-	want := []string{r.binary, "-S", SocketPath(dataDir), "-u", "attach-session", "-t", "sess-1"}
+	want := []string{r.binary, "-S", SocketPath(dataDir), "-u", "-T", "RGB", "attach-session", "-t", "sess-1"}
 	if strings.Join(argv, " ") != strings.Join(want, " ") {
 		t.Fatalf("attach argv = %v, want %v", argv, want)
 	}

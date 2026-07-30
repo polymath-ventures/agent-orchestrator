@@ -32,22 +32,18 @@ func (s fakeSessions) ListAllSessions(context.Context) ([]domain.SessionRecord, 
 }
 
 type fakeRuntime struct {
-	alive      bool
-	err        error
-	running    bool
-	runErr     error
-	gotCommand *string
+	alive         bool
+	err           error
+	workloadAlive bool
+	workloadErr   error
 }
 
 func (r fakeRuntime) IsAlive(context.Context, ports.RuntimeHandle) (bool, error) {
 	return r.alive, r.err
 }
 
-func (r fakeRuntime) IsRunningCommand(_ context.Context, _ ports.RuntimeHandle, command string) (bool, error) {
-	if r.gotCommand != nil {
-		*r.gotCommand = command
-	}
-	return r.running, r.runErr
+func (r fakeRuntime) IsSupervisedProcessAlive(context.Context, ports.RuntimeHandle, ports.SupervisedProcessRef) (bool, error) {
+	return r.workloadAlive, r.workloadErr
 }
 
 func probableSession(id domain.SessionID) domain.SessionRecord {
@@ -67,24 +63,53 @@ func newReaper(lcm *fakeLCM, sessions fakeSessions, rt fakeRuntime) *Reaper {
 func TestTick_ReportsAliveProbe(t *testing.T) {
 	lcm := &fakeLCM{}
 	sessions := fakeSessions{rows: []domain.SessionRecord{probableSession("mer-1")}}
-	if err := newReaper(lcm, sessions, fakeRuntime{alive: true, running: true}).Tick(ctx); err != nil {
+	if err := newReaper(lcm, sessions, fakeRuntime{alive: true}).Tick(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if lcm.observed["mer-1"].Probe != ports.ProbeAlive {
-		t.Fatalf("want alive probe, got %q", lcm.observed["mer-1"].Probe)
+	if got := lcm.observed["mer-1"]; got.Runtime != ports.ProbeAlive || got.Workload != ports.ProbeFailed {
+		t.Fatalf("want alive runtime with unsupported workload, got %+v", got)
 	}
 }
 
-func TestTick_ReportsAgentExitedForCodexWhenPaneStaysAlive(t *testing.T) {
+func TestTick_ReportsSupervisedWorkloadExit(t *testing.T) {
 	lcm := &fakeLCM{}
-	sess := probableSession("mer-1")
-	sess.Harness = domain.HarnessCodex
-	sessions := fakeSessions{rows: []domain.SessionRecord{sess}}
-	if err := newReaper(lcm, sessions, fakeRuntime{alive: true, running: false}).Tick(ctx); err != nil {
+	session := probableSession("mer-1")
+	session.Metadata.RuntimeLaunchID = "launch-1"
+	sessions := fakeSessions{rows: []domain.SessionRecord{session}}
+	if err := newReaper(lcm, sessions, fakeRuntime{alive: true, workloadAlive: false}).Tick(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if lcm.observed["mer-1"].Probe != ports.ProbeAgentExited {
-		t.Fatalf("want agent_exited probe, got %q", lcm.observed["mer-1"].Probe)
+	got := lcm.observed["mer-1"]
+	if got.Runtime != ports.ProbeAlive || got.Workload != ports.ProbeDead || got.LaunchID != "launch-1" {
+		t.Fatalf("unexpected supervised workload facts: %+v", got)
+	}
+}
+
+func TestTick_ReportsSupervisedWorkloadAlive(t *testing.T) {
+	lcm := &fakeLCM{}
+	session := probableSession("mer-1")
+	session.Metadata.RuntimeLaunchID = "launch-1"
+	sessions := fakeSessions{rows: []domain.SessionRecord{session}}
+	if err := newReaper(lcm, sessions, fakeRuntime{alive: true, workloadAlive: true}).Tick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	got := lcm.observed["mer-1"]
+	if got.Runtime != ports.ProbeAlive || got.Workload != ports.ProbeAlive {
+		t.Fatalf("unexpected supervised workload facts: %+v", got)
+	}
+}
+
+func TestTick_ReportsWorkloadProbeErrorAsFailed(t *testing.T) {
+	lcm := &fakeLCM{}
+	session := probableSession("mer-1")
+	session.Metadata.RuntimeLaunchID = "launch-1"
+	sessions := fakeSessions{rows: []domain.SessionRecord{session}}
+	if err := newReaper(lcm, sessions, fakeRuntime{alive: true, workloadErr: errors.New("ps unavailable")}).Tick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	got := lcm.observed["mer-1"]
+	if got.Runtime != ports.ProbeAlive || got.Workload != ports.ProbeFailed {
+		t.Fatalf("workload probe error must remain inconclusive, got %+v", got)
 	}
 }
 
@@ -94,8 +119,8 @@ func TestTick_ReportsProbeErrorAsFailed(t *testing.T) {
 	if err := newReaper(lcm, sessions, fakeRuntime{err: errors.New("tmux gone")}).Tick(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if lcm.observed["mer-1"].Probe != ports.ProbeFailed {
-		t.Fatalf("probe error must be reported as failed, got %q", lcm.observed["mer-1"].Probe)
+	if got := lcm.observed["mer-1"]; got.Runtime != ports.ProbeFailed || got.Workload != ports.ProbeFailed {
+		t.Fatalf("probe error must report failed facts, got %+v", got)
 	}
 }
 
@@ -121,25 +146,5 @@ func TestTick_SkipsSessionWithoutHandle(t *testing.T) {
 	}
 	if _, probed := lcm.observed["mer-1"]; probed {
 		t.Fatal("a session without a runtime handle must be skipped")
-	}
-}
-
-// The launch-process sweep must probe with the session's persisted launch
-// command: an empty command degrades pgrep to "any child of the pane shell
-// counts as the agent", which is exactly the false-alive class the sweep
-// exists to catch.
-func TestTick_LaunchSweepUsesPersistedCommand(t *testing.T) {
-	lcm := &fakeLCM{}
-	sess := probableSession("mer-1")
-	sess.Harness = domain.HarnessCodex
-	sess.Metadata.LaunchCommand = "codex"
-	sessions := fakeSessions{rows: []domain.SessionRecord{sess}}
-	var got string
-	rt := fakeRuntime{alive: true, running: true, gotCommand: &got}
-	if err := newReaper(lcm, sessions, rt).Tick(ctx); err != nil {
-		t.Fatal(err)
-	}
-	if got != "codex" {
-		t.Fatalf("probe command = %q, want the persisted launch command", got)
 	}
 }

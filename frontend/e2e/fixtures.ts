@@ -5,6 +5,7 @@ const now = "2026-07-20T18:00:00.000Z";
 type ShellTerminalFixture = {
 	handleId: string;
 	projectId?: string;
+	sessionId?: string;
 	workingDir: string;
 	title: string;
 	createdAt: string;
@@ -76,11 +77,15 @@ export async function installBrowserModeApiFixtures(page: Page) {
 			return route.fulfill({ json: { shellTerminals: state.shellTerminals } });
 		}
 		if (route.request().method() !== "POST") return route.fallback();
-		const body = (route.request().postDataJSON() ?? {}) as { projectId?: string };
+		const body = (route.request().postDataJSON() ?? {}) as { projectId?: string; sessionId?: string };
 		state.shellSeq += 1;
+		// Echo sessionId back like the daemon does: a session-scoped shell only
+		// surfaces in that session's own tab strip (SessionView filters on it), so
+		// a shell opened from a session pane must carry the scope to appear there.
 		const shellTerminal = {
 			handleId: `shellterm-fixture-${state.shellSeq}`,
 			projectId: body.projectId,
+			sessionId: body.sessionId,
 			workingDir: `/Users/me/${body.projectId ?? ".ao"}`,
 			title: body.projectId ?? "shell",
 			createdAt: new Date().toISOString(),

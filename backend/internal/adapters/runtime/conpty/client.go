@@ -6,7 +6,6 @@ package conpty
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net"
 	"syscall"
 	"time"
@@ -156,26 +155,26 @@ func clientGetOutput(addr string, lines int) (string, error) {
 // death. Mirrors ptyHostIsAlive from pty-client.ts on the alive path: host
 // reachable == alive, regardless of the inner agent's alive field.
 func clientIsAlive(addr string) (alive bool, transientErr error) {
-	return clientStatusAlive(addr, false)
+	_, hostAlive, err := clientStatus(addr)
+	return hostAlive, err
 }
 
-func clientIsProcessAlive(addr string) (alive bool, transientErr error) {
-	return clientStatusAlive(addr, true)
-}
-
-func clientStatusAlive(addr string, useInnerAlive bool) (alive bool, transientErr error) {
+// clientStatus returns both pty-host reachability and the state of the child
+// process managed by that host. A reachable host remains the runtime after its
+// child exits.
+func clientStatus(addr string) (status StatusPayload, hostAlive bool, transientErr error) {
 	conn, err := dialHost(addr, isAliveTimeout)
 	if err != nil {
 		// A dial timeout is transient (the loopback hiccupped). A refused
 		// connection means nothing is listening -> definitively gone. Any
 		// other dial failure is treated as transient ("when unsure, retry").
 		if isTimeout(err) {
-			return false, err
+			return StatusPayload{}, false, err
 		}
 		if isConnRefused(err) {
-			return false, nil
+			return StatusPayload{}, false, nil
 		}
-		return false, err
+		return StatusPayload{}, false, err
 	}
 	defer func() { _ = conn.Close() }()
 
@@ -185,24 +184,20 @@ func clientStatusAlive(addr string, useInnerAlive bool) (alive bool, transientEr
 	if _, err := conn.Write(statusReqFrame); err != nil {
 		// We connected, then the write failed: connected-then-failed I/O is
 		// transient (the host may still be up; the conn was disrupted).
-		return false, err
+		return StatusPayload{}, false, err
 	}
 
-	aliveC := make(chan bool, 1)
-	var statusErr error
+	type statusResult struct {
+		payload StatusPayload
+		err     error
+	}
+	statusC := make(chan statusResult, 1)
 	parser := NewMessageParser(func(msgType byte, payload []byte) {
 		if msgType == MsgStatusRes {
 			var sp StatusPayload
-			if err := json.Unmarshal(payload, &sp); err != nil {
-				statusErr = fmt.Errorf("conpty status: decode response: %w", err)
-				return
-			}
-			alive := true
-			if useInnerAlive {
-				alive = sp.Alive
-			}
+			decodeErr := json.Unmarshal(payload, &sp)
 			select {
-			case aliveC <- alive:
+			case statusC <- statusResult{payload: sp, err: decodeErr}:
 			default:
 			}
 		}
@@ -215,12 +210,12 @@ func clientStatusAlive(addr string, useInnerAlive bool) (alive bool, transientEr
 		if n > 0 {
 			parser.Feed(buf[:n])
 		}
-		if statusErr != nil {
-			return false, statusErr
-		}
 		select {
-		case result := <-aliveC:
-			return result, nil
+		case result := <-statusC:
+			if result.err != nil {
+				return StatusPayload{}, false, result.err
+			}
+			return result.payload, true, nil
 		default:
 		}
 		if err != nil {
@@ -229,12 +224,15 @@ func clientStatusAlive(addr string, useInnerAlive bool) (alive bool, transientEr
 		}
 	}
 	select {
-	case result := <-aliveC:
-		return result, nil
+	case result := <-statusC:
+		if result.err != nil {
+			return StatusPayload{}, false, result.err
+		}
+		return result.payload, true, nil
 	default:
 		// Connected but never got a STATUS_RES: read timeout or mid-read EOF.
 		// lastErr is the error that broke the read loop (always non-nil here).
-		return false, lastErr
+		return StatusPayload{}, false, lastErr
 	}
 }
 

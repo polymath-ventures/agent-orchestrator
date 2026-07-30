@@ -4,8 +4,6 @@ package sessionmanager
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -18,6 +16,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/agentconfig"
 	"github.com/aoagents/agent-orchestrator/backend/internal/candidatehealth"
@@ -34,6 +34,8 @@ var (
 	ErrNotFound         = errors.New("session: not found")
 	ErrNotRestorable    = errors.New("session: not restorable (not terminal)")
 	ErrTerminated       = errors.New("session: terminated")
+	ErrAgentExited      = errors.New("session: agent exited")
+	ErrAgentNotExited   = errors.New("session: agent has not exited")
 	ErrIncompleteHandle = errors.New("session: incomplete teardown handle")
 	// ErrProjectNotResolvable means the spawn's project has no usable repo
 	// (unregistered, archived, or missing a path). The API maps it to a 400.
@@ -80,6 +82,9 @@ var (
 	// session. The API maps it to a 409 so a double-submit does not race two
 	// teardown/relaunch cycles over one worktree.
 	ErrSwitchInProgress = errors.New("session: switch already in progress")
+	// ErrResumeInProgress prevents concurrent resume requests from replacing the
+	// same runtime twice.
+	ErrResumeInProgress = errors.New("session: agent resume already in progress")
 	// ErrAwaitingDecision means the session is paused on a pending
 	// permission/approval dialog. Send refuses to paste into it: the runtime
 	// appends Enter after every paste, and an Enter into a decision dialog
@@ -117,9 +122,8 @@ const (
 	EnvSessionID = "AO_SESSION_ID"
 	EnvProjectID = "AO_PROJECT_ID"
 	EnvIssueID   = "AO_ISSUE_ID"
-	// EnvRuntimeToken scopes activity hooks to the runtime generation that
-	// launched them so stale hooks cannot mutate a replacement session.
-	EnvRuntimeToken = "AO_RUNTIME_TOKEN" // #nosec G101 -- env var name, not a credential value.
+	// EnvRuntimeLaunchID identifies the current supervised agent generation.
+	EnvRuntimeLaunchID = "AO_RUNTIME_LAUNCH_ID"
 	// EnvDataDir tells a spawned agent's AO hook commands where the store lives.
 	EnvDataDir = "AO_DATA_DIR"
 )
@@ -136,8 +140,34 @@ const candidateSurfaceWorkerMix = "worker_mix"
 const hookBinaryName = "ao"
 
 type lifecycleRecorder interface {
+	PrepareLaunch(id domain.SessionID, launchID string) error
+	CancelLaunch(id domain.SessionID, launchID string)
 	MarkSpawned(ctx context.Context, id domain.SessionID, metadata domain.SessionMetadata) error
 	MarkTerminated(ctx context.Context, id domain.SessionID) error
+}
+
+// ShellTerminalCloser gates a session's scoped shell terminals around every
+// path that releases its worktree (Kill, Cleanup, RetireForReplacement, the
+// reconcile/shutdown save-and-teardown path), so none of them removes a
+// worktree out from under a shell whose cwd still points into it — on Windows
+// an open handle on that directory can even make the removal itself fail.
+//
+// BeginSessionTeardown drains the session's open shells and, on success,
+// blocks any new OpenShellTerminal for that session until the returned
+// release function is called — the caller MUST call it exactly once
+// (typically via defer) once its own worktree work finishes, whatever the
+// outcome. That release is tied to this specific acquisition (a fresh
+// closure), not looked up by session id, so it can never be confused with — or
+// release — a different, unrelated Begin for the same session. An error from
+// BeginSessionTeardown means some scoped runtime could not be confirmed dead;
+// the caller MUST NOT touch the worktree in that case, and release is nil (the
+// gate already released itself on that error path).
+//
+// Late-bound via SetShellTerminalCloser: shellterm.Service is built after
+// Session Manager during boot (see daemon.startShellTerminals), mirroring why
+// lifecycle.Manager takes its completion terminator the same way.
+type ShellTerminalCloser interface {
+	BeginSessionTeardown(ctx context.Context, id domain.SessionID) (release func(), err error)
 }
 
 type runtimeController interface {
@@ -147,10 +177,6 @@ type runtimeController interface {
 	// IsAlive reports whether the handle's runtime session still exists. Used by
 	// Reconcile on boot to adopt crash-surviving sessions and reap leaked ones.
 	IsAlive(ctx context.Context, handle ports.RuntimeHandle) (bool, error)
-}
-
-type launchProcessProber interface {
-	IsRunningCommand(context.Context, ports.RuntimeHandle, string) (bool, error)
 }
 
 // RestoreMode reports whether a restore continued an agent-native transcript or
@@ -231,14 +257,14 @@ type Manager struct {
 	// executable resolves the daemon's own binary (os.Executable in
 	// production); its directory is prepended to spawned sessions' PATH so the
 	// workspace hook commands resolve back to this daemon. Tests inject a stub.
-	executable func() (string, error)
+	executable  func() (string, error)
+	newLaunchID func() string
+	resumeMu    sync.Mutex
+	resuming    map[domain.SessionID]struct{}
 	// sendConfirm bounds the best-effort post-send confirmation that the session
 	// actually became active (the agent accepted the prompt). New fills in the
 	// sendConfirm* defaults; tests in this package shrink the timings directly.
 	sendConfirm sendConfirmConfig
-	// launchProbe bounds the process-health probe that rejects a spawn whose
-	// agent exited immediately. New fills in the defaults; tests can shrink them.
-	launchProbe launchProbeConfig
 	logger      *slog.Logger
 	// health is the worker-mix candidate-health circuit breaker. Selection calls
 	// it to skip down buckets; Spawn marks a mix-selected bucket down on a
@@ -256,6 +282,41 @@ type Manager struct {
 	// can admit workers independently.
 	spawnLocksMu sync.Mutex
 	spawnLocks   map[domain.ProjectID]*sync.Mutex
+
+	// shellTerminalsMu guards shellTerminals: it is late-bound (see
+	// ShellTerminalCloser) after Manager already exists, so a setter mutates it
+	// under lock rather than through the constructor.
+	shellTerminalsMu sync.Mutex
+	shellTerminals   ShellTerminalCloser
+}
+
+// SetShellTerminalCloser wires every worktree-releasing path to gate the
+// session's scoped shell terminals shut first. Safe to leave unset: a nil
+// closer makes beginShellTerminalTeardown a no-op (release=nil, err=nil),
+// which is what every test in this package that does not care about shell
+// terminals relies on.
+func (m *Manager) SetShellTerminalCloser(closer ShellTerminalCloser) {
+	m.shellTerminalsMu.Lock()
+	defer m.shellTerminalsMu.Unlock()
+	m.shellTerminals = closer
+}
+
+// beginShellTerminalTeardown starts the shell-terminal gate for id ahead of
+// releasing its worktree. release==nil, err==nil means no closer is wired
+// (nothing to gate; proceed exactly as before this mechanism existed).
+// err!=nil means some scoped shell terminal could not be confirmed closed —
+// the caller MUST NOT touch the worktree, and release is nil (the gate
+// already released itself). On success release is non-nil and tied to this
+// specific acquisition; the caller MUST call it exactly once, typically via
+// defer, once its own worktree work finishes.
+func (m *Manager) beginShellTerminalTeardown(ctx context.Context, id domain.SessionID) (release func(), err error) {
+	m.shellTerminalsMu.Lock()
+	closer := m.shellTerminals
+	m.shellTerminalsMu.Unlock()
+	if closer == nil {
+		return nil, nil
+	}
+	return closer.BeginSessionTeardown(ctx, id)
 }
 
 // sendConfirmConfig bounds the best-effort activity-confirmation loop run after
@@ -281,18 +342,7 @@ const (
 	sendConfirmPollInterval    = 300 * time.Millisecond
 	sendConfirmAttemptDeadline = 2 * time.Second
 	sendConfirmMaxAttempts     = 3
-
-	launchCommandProbeRetryDelay = 200 * time.Millisecond
-	launchCommandProbeAttempts   = 3
 )
-
-// launchProbeConfig bounds the post-launch process-health probe. A slow start
-// is an infra condition, not agent death, so the probe retries over a bounded
-// grace window before rejecting a spawn.
-type launchProbeConfig struct {
-	retryDelay time.Duration
-	attempts   int
-}
 
 // Deps are the collaborators a Session Manager needs; New wires them together.
 type Deps struct {
@@ -314,6 +364,8 @@ type Deps struct {
 	// hookPATH). Production wiring leaves this nil; tests inject a stub so they
 	// control what the test binary appears to be.
 	Executable func() (string, error)
+	// NewLaunchID overrides supervised-process generation for deterministic tests.
+	NewLaunchID func() string
 	// Logger receives spawn-time diagnostics (e.g. when the session PATH
 	// cannot be pinned to the daemon binary). Nil defaults to slog.Default().
 	Logger *slog.Logger
@@ -331,23 +383,21 @@ type Deps struct {
 // time.Now when Deps.Clock is nil.
 func New(d Deps) *Manager {
 	m := &Manager{
-		runtime:    d.Runtime,
-		agents:     d.Agents,
-		workspace:  d.Workspace,
-		store:      d.Store,
-		lcm:        d.Lifecycle,
-		dataDir:    d.DataDir,
-		clock:      d.Clock,
-		lookPath:   d.LookPath,
-		executable: d.Executable,
+		runtime:     d.Runtime,
+		agents:      d.Agents,
+		workspace:   d.Workspace,
+		store:       d.Store,
+		lcm:         d.Lifecycle,
+		dataDir:     d.DataDir,
+		clock:       d.Clock,
+		lookPath:    d.LookPath,
+		executable:  d.Executable,
+		newLaunchID: d.NewLaunchID,
+		resuming:    make(map[domain.SessionID]struct{}),
 		sendConfirm: sendConfirmConfig{
 			pollInterval:    sendConfirmPollInterval,
 			attemptDeadline: sendConfirmAttemptDeadline,
 			maxAttempts:     sendConfirmMaxAttempts,
-		},
-		launchProbe: launchProbeConfig{
-			retryDelay: launchCommandProbeRetryDelay,
-			attempts:   launchCommandProbeAttempts,
 		},
 		logger:         d.Logger,
 		health:         d.Health,
@@ -371,6 +421,9 @@ func New(d Deps) *Manager {
 	}
 	if m.executable == nil {
 		m.executable = os.Executable
+	}
+	if m.newLaunchID == nil {
+		m.newLaunchID = uuid.NewString
 	}
 	if m.logger == nil {
 		m.logger = slog.Default()
@@ -639,8 +692,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	// post-create commands (e.g. `pnpm install`) before the agent launches.
 	if !projectlessPrime {
 		if err := m.provisionWorkspace(ctx, project, ws.Path); err != nil {
-			m.destroySpawnWorkspace(ctx, ws, workspaceProject)
-			m.rollbackSpawnSeedRow(ctx, id)
+			m.rollbackSeedSpawnWorkspace(ctx, rec, ws, workspaceProject, false)
 			return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: provision: %w", id, err)
 		}
 	}
@@ -653,8 +705,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	if len(cfg.Attachments) > 0 {
 		refs, err := writeSpawnAttachments(ws.Path, cfg.Attachments)
 		if err != nil {
-			m.destroySpawnWorkspace(ctx, ws, workspaceProject)
-			m.rollbackSpawnSeedRow(ctx, id)
+			m.rollbackSeedSpawnWorkspace(ctx, rec, ws, workspaceProject, false)
 			return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: attachments: %w", id, err)
 		}
 		// Keep the attachments dir out of git status. Best-effort: the images are
@@ -667,22 +718,15 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 
 	agent, ok := m.agents.Agent(cfg.Harness)
 	if !ok {
-		m.destroySpawnWorkspace(ctx, ws, workspaceProject)
-		m.rollbackSpawnSeedRow(ctx, id)
+		m.rollbackSeedSpawnWorkspace(ctx, rec, ws, workspaceProject, false)
 		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: no agent adapter for harness %q", id, cfg.Harness)
 	}
 	agentConfig.Model = launchModelForBucket(cfg.Harness, cfg.Model, target.mixSelected)
-	runtimeToken, err := newRuntimeToken()
-	if err != nil {
-		m.rollbackSpawnSeedRow(ctx, id)
-		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: runtime token: %w", id, err)
-	}
-	env := m.runtimeEnv(id, cfg.ProjectID, cfg.IssueID, runtimeToken, project.Config.Env)
+	env := m.runtimeEnv(id, cfg.ProjectID, cfg.IssueID, project.Config.Env)
 	m.augmentAgentRuntimeEnv(agent, env)
 	if err := m.prepareWorkspace(ctx, agent, id, ws.Path, systemPrompt, systemPromptFile, agentConfig, env); err != nil {
 		m.markMixCandidateDown(ctx, target.mixSelected, cfg, agentConfig.Effort, err)
-		m.destroySpawnWorkspace(ctx, ws, workspaceProject)
-		m.rollbackSpawnSeedRow(ctx, id)
+		m.rollbackSeedSpawnWorkspace(ctx, rec, ws, workspaceProject, false)
 		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: %w", id, err)
 	}
 	launchCfg := ports.LaunchConfig{
@@ -700,8 +744,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	}
 	delivery, err := agent.GetPromptDeliveryStrategy(ctx, launchCfg)
 	if err != nil {
-		m.rollbackPreparedSpawnWorkspace(ctx, rec, ws, workspaceProject)
-		m.rollbackSpawnSeedRow(ctx, id)
+		m.rollbackSeedSpawnWorkspace(ctx, rec, ws, workspaceProject, true)
 		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: prompt delivery: %w", id, err)
 	}
 	if delivery == ports.PromptDeliveryAfterStart {
@@ -719,8 +762,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		if errors.Is(err, ports.ErrAgentBinaryNotFound) {
 			m.markMixCandidateDown(ctx, target.mixSelected, cfg, agentConfig.Effort, err)
 		}
-		m.rollbackPreparedSpawnWorkspace(ctx, rec, ws, workspaceProject)
-		m.rollbackSpawnSeedRow(ctx, id)
+		m.rollbackSeedSpawnWorkspace(ctx, rec, ws, workspaceProject, true)
 		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: launch command: %w", id, err)
 	}
 	// Pre-flight: confirm argv[0] actually exists on PATH (or as an absolute
@@ -732,11 +774,20 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		// and rollback (workspace destroy + seed delete) can run long enough for a
 		// live-at-failure context to expire, which would wrongly suppress the fault.
 		m.markMixCandidateDown(ctx, target.mixSelected, cfg, agentConfig.Effort, err)
-		m.rollbackPreparedSpawnWorkspace(ctx, rec, ws, workspaceProject)
-		m.rollbackSpawnSeedRow(ctx, id)
+		m.rollbackSeedSpawnWorkspace(ctx, rec, ws, workspaceProject, true)
 		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: %w", id, err)
 	}
 	m.augmentRuntimePATHForLaunchBinary(ctx, env, argv)
+	argv, launchID, err := m.superviseAgentProcess(agent, id, env, argv)
+	if err != nil {
+		m.rollbackSeedSpawnWorkspace(ctx, rec, ws, workspaceProject, true)
+		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: supervisor: %w", id, err)
+	}
+	if err := m.lcm.PrepareLaunch(id, launchID); err != nil {
+		m.rollbackSeedSpawnWorkspace(ctx, rec, ws, workspaceProject, true)
+		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: prepare launch: %w", id, err)
+	}
+	defer m.lcm.CancelLaunch(id, launchID)
 	handle, err := m.runtime.Create(ctx, ports.RuntimeConfig{
 		SessionID:     id,
 		WorkspacePath: ws.Path,
@@ -745,35 +796,22 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	})
 	if err != nil {
 		m.markMixCandidateDown(ctx, target.mixSelected, cfg, agentConfig.Effort, err)
-		m.rollbackPreparedSpawnWorkspace(ctx, rec, ws, workspaceProject)
-		m.rollbackSpawnSeedRow(ctx, id)
+		m.rollbackSeedSpawnWorkspace(ctx, rec, ws, workspaceProject, true)
 		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: runtime: %w", id, err)
 	}
 
-	if err := m.verifyLaunchCommandRunning(ctx, handle, launchProcessCommand(argv)); err != nil {
-		// Mark down before rollback: attribution is decided at failure time, and
-		// MarkDownForAttempt reads the caller context. Rollback runs detached, so
-		// it legitimately outlives a caller that has gone away — marking down
-		// afterwards would let that departure erase the evidence.
-		m.markMixCandidateDown(ctx, target.mixSelected, cfg, agentConfig.Effort, err)
-		m.destroyFailedLaunchRuntime(ctx, handle)
-		m.rollbackPreparedSpawnWorkspace(ctx, rec, ws, workspaceProject)
-		m.rollbackSpawnSeedRow(ctx, id)
-		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: launch process: %w", id, err)
-	}
 	metadata := domain.SessionMetadata{
 		Branch:            ws.Branch,
 		WorkspacePath:     ws.Path,
 		WorkspaceRepoPath: ws.RepoPath,
 		RuntimeHandleID:   handle.ID,
-		RuntimeToken:      runtimeToken,
-		LaunchCommand:     launchProcessCommand(argv),
+		RuntimeLaunchID:   launchID,
 		Prompt:            prompt,
 		PromptPolicyHash:  promptPolicyHash(systemPrompt),
 	}
 	if err := m.lcm.MarkSpawned(ctx, id, metadata); err != nil {
-		m.destroyFailedLaunchRuntime(ctx, handle)
-		m.rollbackPreparedSpawnWorkspace(ctx, rec, ws, workspaceProject)
+		runtimeDestroyed := m.destroyFailedLaunchRuntime(ctx, handle)
+		m.rollbackPreparedSpawnWorkspace(ctx, rec, ws, workspaceProject, runtimeDestroyed)
 		m.markSpawnFailedTerminated(ctx, id)
 		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: completed: %w", id, err)
 	}
@@ -782,28 +820,28 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	// than with a rename typed into a turn already in flight.
 	if err := m.deliverNameForSpawn(ctx, agent, launchCfg, handle, id, cfg.DisplayName); err != nil {
 		if !m.forgiveSpawnNameFailure(ctx, handle, id, err) {
-			m.destroyFailedLaunchRuntime(ctx, handle)
-			m.rollbackPreparedSpawnWorkspace(ctx, rec, ws, workspaceProject)
-			m.markSpawnFailedTerminatedWithoutWorkspace(ctx, id)
+			runtimeDestroyed := m.destroyFailedLaunchRuntime(ctx, handle)
+			workspaceDestroyed := m.rollbackPreparedSpawnWorkspace(ctx, rec, ws, workspaceProject, runtimeDestroyed)
+			if runtimeDestroyed && workspaceDestroyed {
+				m.markSpawnFailedTerminatedWithoutWorkspace(ctx, id)
+			} else {
+				m.markSpawnFailedTerminated(ctx, id)
+			}
 			return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: deliver name: %w", id, err)
 		}
 	}
 	if delivery == ports.PromptDeliveryAfterStart && prompt != "" {
 		if err := m.deliverAfterStartPrompt(ctx, agent, launchCfg, handle, id, prompt); err != nil {
 			m.markMixCandidateDown(ctx, target.mixSelected, cfg, agentConfig.Effort, err)
-			m.destroyFailedLaunchRuntime(ctx, handle)
-			m.rollbackPreparedSpawnWorkspace(ctx, rec, ws, workspaceProject)
-			m.markSpawnFailedTerminatedWithoutWorkspace(ctx, id)
+			runtimeDestroyed := m.destroyFailedLaunchRuntime(ctx, handle)
+			workspaceDestroyed := m.rollbackPreparedSpawnWorkspace(ctx, rec, ws, workspaceProject, runtimeDestroyed)
+			if runtimeDestroyed && workspaceDestroyed {
+				m.markSpawnFailedTerminatedWithoutWorkspace(ctx, id)
+			} else {
+				m.markSpawnFailedTerminated(ctx, id)
+			}
 			return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: deliver prompt: %w", id, err)
 		}
-	}
-	if err := m.verifyLaunchCommandRunning(ctx, handle, launchProcessCommand(argv)); err != nil {
-		// Mark down before rollback, for the reason on the probe branch above.
-		m.markMixCandidateDown(ctx, target.mixSelected, cfg, agentConfig.Effort, err)
-		m.destroyFailedLaunchRuntime(ctx, handle)
-		m.rollbackPreparedSpawnWorkspace(ctx, rec, ws, workspaceProject)
-		m.markSpawnFailedTerminatedWithoutWorkspace(ctx, id)
-		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: launch process: %w", id, err)
 	}
 	m.recoverMixCandidate(project.Config, cfg, requestedHarness, requestedModel, agentConfig.Effort, target.mixSelected)
 	rec, err = m.getRecord(ctx, id)
@@ -999,12 +1037,20 @@ func (m *Manager) destroyPartialWorkspaceProject(ctx context.Context, adapter po
 // relaunch already created. Detached from the caller's cancellation for the
 // reason in cleanupContext: the common trigger for these rollbacks is that the
 // caller went away, and a skipped destroy leaks a live agent session.
-func (m *Manager) destroyFailedLaunchRuntime(ctx context.Context, handle ports.RuntimeHandle) {
+// destroyFailedLaunchRuntime reaps the runtime session of a spawn/restore that
+// is rolling back. It runs on a detached cleanup context so the tmux session is
+// still killed when the caller's request context has already been cancelled —
+// otherwise a disconnected caller leaves the pane live with no durable record,
+// the orphan the rollback exists to prevent. Reports whether the destroy took
+// effect so the workspace-preserving half knows whether the runtime is gone.
+func (m *Manager) destroyFailedLaunchRuntime(ctx context.Context, handle ports.RuntimeHandle) bool {
 	cleanupCtx, cancel := cleanupContext(ctx)
 	defer cancel()
 	if err := m.runtime.Destroy(cleanupCtx, handle); err != nil {
 		m.logger.Warn("rollback: destroy runtime session", "handle", handle.ID, "error", err)
+		return false
 	}
+	return true
 }
 
 func (m *Manager) destroySpawnWorkspace(ctx context.Context, ws ports.WorkspaceInfo, workspaceProject *ports.WorkspaceProjectInfo) bool {
@@ -1022,13 +1068,46 @@ func (m *Manager) destroySpawnWorkspace(ctx context.Context, ws ports.WorkspaceI
 	return err == nil
 }
 
-func (m *Manager) rollbackPreparedSpawnWorkspace(ctx context.Context, rec domain.SessionRecord, ws ports.WorkspaceInfo, workspaceProject *ports.WorkspaceProjectInfo) {
-	// Derived here rather than left to the two callees: it makes this pair of
-	// teardowns share one cleanup budget instead of restarting the clock each.
-	cleanupCtx, cancel := cleanupContext(ctx)
-	defer cancel()
-	if m.destroySpawnWorkspace(cleanupCtx, ws, workspaceProject) {
-		m.cleanupAgentWorkspace(cleanupCtx, rec, ws.Path)
+func (m *Manager) rollbackPreparedSpawnWorkspace(ctx context.Context, rec domain.SessionRecord, ws ports.WorkspaceInfo, workspaceProject *ports.WorkspaceProjectInfo, runtimeDestroyed bool) bool {
+	if m.destroySpawnWorkspace(ctx, ws, workspaceProject) {
+		m.cleanupAgentWorkspace(ctx, rec, ws.Path)
+		return true
+	}
+	m.preserveFailedSpawnWorkspace(ctx, rec.ID, ws, runtimeDestroyed)
+	return false
+}
+
+func (m *Manager) rollbackSeedSpawnWorkspace(ctx context.Context, rec domain.SessionRecord, ws ports.WorkspaceInfo, workspaceProject *ports.WorkspaceProjectInfo, prepared bool) {
+	if m.destroySpawnWorkspace(ctx, ws, workspaceProject) {
+		if prepared {
+			m.cleanupAgentWorkspace(ctx, rec, ws.Path)
+		}
+		m.rollbackSpawnSeedRow(ctx, rec.ID)
+		return
+	}
+	m.preserveFailedSpawnWorkspace(ctx, rec.ID, ws, true)
+	m.markSpawnFailedTerminated(ctx, rec.ID)
+}
+
+func (m *Manager) preserveFailedSpawnWorkspace(ctx context.Context, id domain.SessionID, ws ports.WorkspaceInfo, runtimeDestroyed bool) {
+	rec, ok, err := m.store.GetSession(ctx, id)
+	if err != nil {
+		m.logger.Warn("spawn rollback: failed to load session for preserved workspace", "sessionID", id, "workspacePath", ws.Path, "error", err)
+		return
+	}
+	if !ok {
+		m.logger.Warn("spawn rollback: session missing for preserved workspace", "sessionID", id, "workspacePath", ws.Path)
+		return
+	}
+	rec.Metadata.Branch = ws.Branch
+	rec.Metadata.WorkspacePath = ws.Path
+	rec.Metadata.WorkspaceRepoPath = ws.RepoPath
+	if runtimeDestroyed {
+		rec.Metadata.RuntimeHandleID = ""
+		rec.Metadata.RuntimeLaunchID = ""
+	}
+	if err := m.store.UpdateSession(ctx, rec); err != nil {
+		m.logger.Warn("spawn rollback: failed to record preserved workspace", "sessionID", id, "workspacePath", ws.Path, "error", err)
 	}
 }
 
@@ -1628,6 +1707,33 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 		// that fails returns before this point and reclaims nothing.
 		m.destroyUncoveredChildWorktrees(teardownCtx, rec)
 	}
+	// Gate shut any shell terminal scoped to this session BEFORE the worktree
+	// goes away: an open shell whose cwd is that directory can otherwise
+	// survive the removal (and on Windows can even block it — an open handle
+	// on a directory refuses deletion), or a concurrent Open could land a new
+	// one in the same race window. A runtime that cannot be confirmed dead
+	// stops Kill here — same shape as a dirty-workspace refusal — rather than
+	// letting the worktree disappear out from under it.
+	if ws.Path != "" {
+		release, err := m.beginShellTerminalTeardown(ctx, id)
+		if err != nil {
+			// Same shape as the dirty-workspace refusal below: the worktree is
+			// left alone, but the restore marker still must not survive a user
+			// kill, or the next boot's RestoreAll could resurrect a session the
+			// user explicitly terminated (#2319).
+			if err := m.store.DeleteSessionWorktrees(ctx, id); err != nil {
+				m.logger.Warn("kill: delete restore marker failed", "sessionID", id, "error", err)
+			}
+			if err := m.lcm.MarkTerminated(ctx, id); err != nil {
+				return false, fmt.Errorf("kill %s: %w", id, err)
+			}
+			m.cleanupSystemPromptDir(id)
+			return false, nil
+		}
+		if release != nil {
+			defer release()
+		}
+	}
 	freed := false
 	if workspaceProject {
 		cleaned, err := m.destroyWorkspaceProjectRows(teardownCtx, workspaceProjectRows)
@@ -1766,6 +1872,20 @@ func (m *Manager) RetireForReplacement(ctx context.Context, id domain.SessionID)
 		}
 		return clearErr
 	}
+	// Gate shut this session's scoped shell terminals before either branch
+	// below force-removes its worktree (or worktrees, for a workspace
+	// project). Unlike Kill there is no dirty-refusal path here — retirement
+	// always force-destroys — so a shell that cannot be confirmed closed fails
+	// the whole retirement instead of silently force-removing ground out from
+	// under it.
+	release, closeErr := m.beginShellTerminalTeardown(ctx, id)
+	if closeErr != nil {
+		return fmt.Errorf("retire replacement %s: %w", id, closeErr)
+	}
+	if release != nil {
+		defer release()
+	}
+
 	if rows, ok, rowErr := m.workspaceProjectRows(ctx, rec); rowErr != nil {
 		return fmt.Errorf("retire replacement %s: workspace rows: %w", id, rowErr)
 	} else if ok {
@@ -1906,20 +2026,82 @@ func (m *Manager) RestoreWithMode(ctx context.Context, id domain.SessionID) (Res
 }
 
 func (m *Manager) relaunchRestoredSession(ctx context.Context, rec domain.SessionRecord, project domain.ProjectRecord, ws ports.WorkspaceInfo) (RestoreResult, error) {
+	return m.relaunchSession(ctx, "restore", rec, project, ws, nil)
+}
+
+// ResumeAgentWithMode replaces an exited agent inside its still-live session.
+// Unlike RestoreWithMode, it preserves the existing worktree and terminal
+// identity and never changes the durable terminated flag as an intermediate
+// step.
+func (m *Manager) ResumeAgentWithMode(ctx context.Context, id domain.SessionID) (RestoreResult, error) {
+	if !m.beginAgentResume(id) {
+		return RestoreResult{}, fmt.Errorf("resume agent %s: %w", id, ErrResumeInProgress)
+	}
+	defer m.endAgentResume(id)
+
+	rec, ok, err := m.store.GetSession(ctx, id)
+	if err != nil {
+		return RestoreResult{}, fmt.Errorf("resume agent %s: %w", id, err)
+	}
+	if !ok {
+		return RestoreResult{}, fmt.Errorf("resume agent %s: %w", id, ErrNotFound)
+	}
+	if rec.IsTerminated {
+		return RestoreResult{}, fmt.Errorf("resume agent %s: %w", id, ErrTerminated)
+	}
+	if rec.Activity.State != domain.ActivityExited {
+		return RestoreResult{}, fmt.Errorf("resume agent %s: %w", id, ErrAgentNotExited)
+	}
+	meta := rec.Metadata
+	if meta.WorkspacePath == "" || meta.Branch == "" || meta.RuntimeHandleID == "" {
+		return RestoreResult{}, fmt.Errorf("resume agent %s: %w", id, ErrIncompleteHandle)
+	}
+
+	project, err := m.loadProject(ctx, rec.ProjectID)
+	if err != nil {
+		return RestoreResult{}, fmt.Errorf("resume agent %s: %w", id, err)
+	}
+	ws := ports.WorkspaceInfo{
+		Path:      meta.WorkspacePath,
+		Branch:    meta.Branch,
+		SessionID: rec.ID,
+		ProjectID: rec.ProjectID,
+	}
+	handle := ports.RuntimeHandle{ID: meta.RuntimeHandleID}
+	return m.relaunchSession(ctx, "resume agent", rec, project, ws, &handle)
+}
+
+func (m *Manager) beginAgentResume(id domain.SessionID) bool {
+	m.resumeMu.Lock()
+	defer m.resumeMu.Unlock()
+	if _, exists := m.resuming[id]; exists {
+		return false
+	}
+	m.resuming[id] = struct{}{}
+	return true
+}
+
+func (m *Manager) endAgentResume(id domain.SessionID) {
+	m.resumeMu.Lock()
+	delete(m.resuming, id)
+	m.resumeMu.Unlock()
+}
+
+func (m *Manager) relaunchSession(ctx context.Context, operation string, rec domain.SessionRecord, project domain.ProjectRecord, ws ports.WorkspaceInfo, restartHandle *ports.RuntimeHandle) (RestoreResult, error) {
 	agent, ok := m.agents.Agent(rec.Harness)
 	if !ok {
-		return RestoreResult{}, fmt.Errorf("restore %s: no agent adapter for harness %q", rec.ID, rec.Harness)
+		return RestoreResult{}, fmt.Errorf("%s %s: no agent adapter for harness %q", operation, rec.ID, rec.Harness)
 	}
 	// The system prompt is derived, not persisted: recompute it so a restored
 	// session keeps its standing instructions across the relaunch.
 	systemPrompt, err := m.buildSystemPrompt(ctx, rec.Kind, rec.ProjectID)
 	if err != nil {
-		return RestoreResult{}, fmt.Errorf("restore %s: system prompt: %w", rec.ID, err)
+		return RestoreResult{}, fmt.Errorf("%s %s: system prompt: %w", operation, rec.ID, err)
 	}
 	systemPromptFile, err := m.prepareSystemPromptFile(rec.ID, rec.Harness, systemPrompt)
 	if err != nil {
 		m.cleanupSystemPromptDir(rec.ID)
-		return RestoreResult{}, fmt.Errorf("restore %s: system prompt file: %w", rec.ID, err)
+		return RestoreResult{}, fmt.Errorf("%s %s: system prompt file: %w", operation, rec.ID, err)
 	}
 
 	// Restore re-applies the project's resolved agent config so a configured
@@ -1942,43 +2124,53 @@ func (m *Manager) relaunchRestoredSession(ctx context.Context, rec domain.Sessio
 	if rec.Effort != "" {
 		agentConfig.Effort = rec.Effort
 	}
-	runtimeToken, err := newRuntimeToken()
-	if err != nil {
-		return RestoreResult{}, fmt.Errorf("restore %s: runtime token: %w", rec.ID, err)
-	}
-	env := m.runtimeEnv(rec.ID, rec.ProjectID, rec.IssueID, runtimeToken, project.Config.Env)
+	env := m.runtimeEnv(rec.ID, rec.ProjectID, rec.IssueID, project.Config.Env)
 	m.augmentAgentRuntimeEnv(agent, env)
 	if err := m.prepareWorkspace(ctx, agent, rec.ID, ws.Path, systemPrompt, systemPromptFile, agentConfig, env); err != nil {
-		return RestoreResult{}, fmt.Errorf("restore %s: %w", rec.ID, err)
+		return RestoreResult{}, fmt.Errorf("%s %s: %w", operation, rec.ID, err)
 	}
 	argv, delivery, mode, err := restoreArgv(ctx, agent, rec.ID, ws.Path, rec.Metadata, systemPrompt, systemPromptFile, agentConfig, rec.Kind, rec.Harness, m.dataDir)
 	if err != nil {
 		m.cleanupSystemPromptDir(rec.ID)
-		return RestoreResult{}, fmt.Errorf("restore %s: %w", rec.ID, err)
+		return RestoreResult{}, fmt.Errorf("%s %s: %w", operation, rec.ID, err)
+	}
+	if err := m.validateAgentBinary(argv); err != nil {
+		m.cleanupSystemPromptDir(rec.ID)
+		return RestoreResult{}, fmt.Errorf("%s %s: %w", operation, rec.ID, err)
 	}
 	m.augmentRuntimePATHForLaunchBinary(ctx, env, argv)
-	handle, err := m.runtime.Create(ctx, ports.RuntimeConfig{
+	argv, launchID, err := m.superviseAgentProcess(agent, rec.ID, env, argv)
+	if err != nil {
+		m.cleanupSystemPromptDir(rec.ID)
+		return RestoreResult{}, fmt.Errorf("%s %s: supervisor: %w", operation, rec.ID, err)
+	}
+	if err := m.lcm.PrepareLaunch(rec.ID, launchID); err != nil {
+		m.cleanupSystemPromptDir(rec.ID)
+		return RestoreResult{}, fmt.Errorf("%s %s: prepare launch: %w", operation, rec.ID, err)
+	}
+	defer m.lcm.CancelLaunch(rec.ID, launchID)
+	runtimeCfg := ports.RuntimeConfig{
 		SessionID:     rec.ID,
 		WorkspacePath: ws.Path,
 		Argv:          argv,
 		Env:           env,
-	})
+	}
+	var handle ports.RuntimeHandle
+	if restartHandle == nil {
+		handle, err = m.runtime.Create(ctx, runtimeCfg)
+	} else {
+		handle, err = m.restartRuntime(ctx, *restartHandle, runtimeCfg)
+	}
 	if err != nil {
 		m.cleanupSystemPromptDir(rec.ID)
-		return RestoreResult{}, fmt.Errorf("restore %s: runtime: %w", rec.ID, err)
-	}
-	if err := m.verifyLaunchCommandRunning(ctx, handle, launchProcessCommand(argv)); err != nil {
-		m.destroyFailedLaunchRuntime(ctx, handle)
-		m.cleanupSystemPromptDir(rec.ID)
-		return RestoreResult{}, fmt.Errorf("restore %s: launch process: %w", rec.ID, err)
+		return RestoreResult{}, fmt.Errorf("%s %s: runtime: %w", operation, rec.ID, err)
 	}
 	metadata := domain.SessionMetadata{
 		Branch:            ws.Branch,
 		WorkspacePath:     ws.Path,
 		WorkspaceRepoPath: ws.RepoPath,
 		RuntimeHandleID:   handle.ID,
-		RuntimeToken:      runtimeToken,
-		LaunchCommand:     launchProcessCommand(argv),
+		RuntimeLaunchID:   launchID,
 		AgentSessionID:    rec.Metadata.AgentSessionID,
 		Prompt:            rec.Metadata.Prompt,
 		PromptPolicyHash:  promptPolicyHash(systemPrompt),
@@ -1986,7 +2178,7 @@ func (m *Manager) relaunchRestoredSession(ctx context.Context, rec domain.Sessio
 	if err := m.lcm.MarkSpawned(ctx, rec.ID, metadata); err != nil {
 		m.destroyFailedLaunchRuntime(ctx, handle)
 		m.cleanupSystemPromptDir(rec.ID)
-		return RestoreResult{}, fmt.Errorf("restore %s: completed: %w", rec.ID, err)
+		return RestoreResult{}, fmt.Errorf("%s %s: completed: %w", operation, rec.ID, err)
 	}
 	restoreLaunchCfg := ports.LaunchConfig{
 		DataDir:          m.dataDir,
@@ -2013,24 +2205,33 @@ func (m *Manager) relaunchRestoredSession(ctx context.Context, rec domain.Sessio
 	if delivery == ports.PromptDeliveryAfterStart && rec.Metadata.Prompt != "" {
 		launchCfg := restoreLaunchCfg
 		if err := m.deliverAfterStartPrompt(ctx, agent, launchCfg, handle, rec.ID, rec.Metadata.Prompt); err != nil {
-			m.destroyFailedLaunchRuntime(ctx, handle)
-			m.markSpawnFailedTerminated(ctx, rec.ID)
-			return RestoreResult{}, fmt.Errorf("restore %s: deliver prompt: %w", rec.ID, err)
+			_ = m.runtime.Destroy(ctx, handle)
+			_ = m.lcm.MarkTerminated(ctx, rec.ID)
+			m.cleanupSystemPromptDir(rec.ID)
+			return RestoreResult{}, fmt.Errorf("%s %s: deliver prompt: %w", operation, rec.ID, err)
 		}
-	}
-	if err := m.verifyLaunchCommandRunning(ctx, handle, launchProcessCommand(argv)); err != nil {
-		// MarkSpawned above already flipped the restored row live, so parking it
-		// terminated is what keeps a destroyed runtime from leaving a live-looking
-		// row behind. The pre-MarkSpawned branch has nothing to undo.
-		m.destroyFailedLaunchRuntime(ctx, handle)
-		m.markSpawnFailedTerminated(ctx, rec.ID)
-		return RestoreResult{}, fmt.Errorf("restore %s: launch process: %w", rec.ID, err)
 	}
 	updated, err := m.getRecord(ctx, rec.ID)
 	if err != nil {
 		return RestoreResult{}, err
 	}
 	return RestoreResult{Session: updated, Mode: mode}, nil
+}
+
+func (m *Manager) restartRuntime(ctx context.Context, handle ports.RuntimeHandle, cfg ports.RuntimeConfig) (ports.RuntimeHandle, error) {
+	alive, err := m.runtime.IsAlive(ctx, handle)
+	if err != nil {
+		return ports.RuntimeHandle{}, fmt.Errorf("probe existing runtime: %w", err)
+	}
+	if alive {
+		if restarter, ok := m.runtime.(ports.RuntimeRestarter); ok {
+			return restarter.Restart(ctx, handle, cfg)
+		}
+		if err := m.runtime.Destroy(ctx, handle); err != nil {
+			return ports.RuntimeHandle{}, fmt.Errorf("destroy existing runtime: %w", err)
+		}
+	}
+	return m.runtime.Create(ctx, cfg)
 }
 
 func (m *Manager) getRecord(ctx context.Context, id domain.SessionID) (domain.SessionRecord, error) {
@@ -2090,6 +2291,18 @@ func (m *Manager) SaveAndTeardownAll(ctx context.Context) error {
 // ForceDestroy; if either capture or the DB write fails, ForceDestroy is
 // not called.
 func (m *Manager) saveAndTeardownOne(ctx context.Context, rec domain.SessionRecord, destroyRuntime bool) error {
+	// Gate shut this session's scoped shell terminals before either branch
+	// below force-removes its worktree. Both SaveAndTeardownAll and
+	// reconcileLive only reach here for a session with a real workspace, so
+	// there is always a worktree to protect.
+	release, closeErr := m.beginShellTerminalTeardown(ctx, rec.ID)
+	if closeErr != nil {
+		return fmt.Errorf("save %s: %w", rec.ID, closeErr)
+	}
+	if release != nil {
+		defer release()
+	}
+
 	if rows, ok, err := m.workspaceProjectRows(ctx, rec); err != nil {
 		return fmt.Errorf("save %s: workspace rows: %w", rec.ID, err)
 	} else if ok {
@@ -2681,8 +2894,8 @@ func (m *Manager) applyWorkspaceProjectPreserved(ctx context.Context, rows []por
 
 // Send delivers a message to a running session's agent through the guarded
 // pane-write primitive, then best-effort confirms the agent actually accepted
-// it. The guard refuses delivery into a session that is gone, terminated, or
-// paused on a permission decision (pasting there could answer the dialog);
+// it. The guard refuses delivery into a session that is gone, terminated, has
+// an exited agent, or is paused on a permission decision;
 // those refusals surface as typed sentinels so the API reports why instead of
 // silently dropping the message. AO has no delivery ack: the messenger returns
 // nil the moment the runtime paste + Enter commands exit 0, and for a large
@@ -2705,6 +2918,8 @@ func (m *Manager) Send(ctx context.Context, id domain.SessionID, message string)
 		return fmt.Errorf("send %s: %w", id, ErrNotFound)
 	case sessionguard.SuppressedTerminated:
 		return fmt.Errorf("send %s: %w", id, ErrTerminated)
+	case sessionguard.SuppressedExited:
+		return fmt.Errorf("send %s: %w", id, ErrAgentExited)
 	case sessionguard.SuppressedAwaitingUser:
 		return fmt.Errorf("send %s: %w", id, ErrAwaitingDecision)
 	}
@@ -2823,6 +3038,7 @@ func (m *Manager) confirmActive(ctx context.Context, guard *sessionguard.Guard, 
 			return
 		}
 		if attempt >= m.sendConfirm.maxAttempts {
+			m.logger.Warn("send: activity confirmation budget exhausted", "sessionID", id, "attempts", attempt)
 			return
 		}
 		// Timed out with budget remaining: the previous Enter did not land.
@@ -2930,34 +3146,57 @@ func (m *Manager) Cleanup(ctx context.Context, project domain.ProjectID) (Cleanu
 		if h := runtimeHandle(rec.Metadata); h.ID != "" {
 			_ = m.runtime.Destroy(ctx, h) // best effort; usually already gone
 		}
-		if rows, ok, rowErr := m.workspaceProjectRows(ctx, rec); rowErr != nil {
-			m.logger.Warn("cleanup: workspace rows failed", "sessionID", rec.ID, "error", rowErr)
-			result.Skipped = append(result.Skipped, CleanupSkip{SessionID: rec.ID, Reason: "workspace teardown failed"})
+		if reason := m.cleanupOne(ctx, rec, ws); reason != "" {
+			result.Skipped = append(result.Skipped, CleanupSkip{SessionID: rec.ID, Reason: reason})
 			continue
-		} else if ok {
-			if _, err := m.destroyWorkspaceProjectRows(ctx, rows); err != nil {
-				if !errors.Is(err, ports.ErrWorkspaceDirty) {
-					m.logger.Warn("cleanup: workspace teardown failed", "sessionID", rec.ID, "path", ws.Path, "error", err)
-				}
-				result.Skipped = append(result.Skipped, CleanupSkip{SessionID: rec.ID, Reason: cleanupSkipReason(err)})
-				continue
-			}
-			m.cleanupAgentWorkspace(ctx, rec, ws.Path)
-		} else if err := m.workspace.Destroy(ctx, ws); err != nil {
-			if !errors.Is(err, ports.ErrWorkspaceDirty) {
-				// The public reason stays a fixed string (the raw error carries
-				// internal filesystem paths); the full cause lands here.
-				m.logger.Warn("cleanup: workspace teardown failed", "sessionID", rec.ID, "path", ws.Path, "error", err)
-			}
-			result.Skipped = append(result.Skipped, CleanupSkip{SessionID: rec.ID, Reason: cleanupSkipReason(err)})
-			continue
-		} else {
-			m.cleanupAgentWorkspace(ctx, rec, ws.Path)
 		}
 		m.cleanupSystemPromptDir(rec.ID)
 		result.Cleaned = append(result.Cleaned, rec.ID)
 	}
 	return result, nil
+}
+
+// cleanupOne reclaims one terminated session's workspace, gating shut any
+// shell terminal scoped to it first (same ordering as Kill). Split out of
+// Cleanup's loop so the release function's defer is scoped to one session's
+// call, not deferred across every iteration until Cleanup itself returns.
+// Returns "" when the workspace was reclaimed; a non-empty reason means it was
+// left alone this run (Cleanup records it in Skipped and can retry on a later
+// call) — most commonly because a scoped shell terminal could not be
+// confirmed closed, so reclaiming would pull the ground out from under it.
+func (m *Manager) cleanupOne(ctx context.Context, rec domain.SessionRecord, ws ports.WorkspaceInfo) (skipReason string) {
+	release, closeErr := m.beginShellTerminalTeardown(ctx, rec.ID)
+	if closeErr != nil {
+		m.logger.Warn("cleanup: shell terminal still open", "sessionID", rec.ID, "error", closeErr)
+		return "shell terminal still open"
+	}
+	if release != nil {
+		defer release()
+	}
+
+	if rows, ok, rowErr := m.workspaceProjectRows(ctx, rec); rowErr != nil {
+		m.logger.Warn("cleanup: workspace rows failed", "sessionID", rec.ID, "error", rowErr)
+		return "workspace teardown failed"
+	} else if ok {
+		if _, err := m.destroyWorkspaceProjectRows(ctx, rows); err != nil {
+			if !errors.Is(err, ports.ErrWorkspaceDirty) {
+				m.logger.Warn("cleanup: workspace teardown failed", "sessionID", rec.ID, "path", ws.Path, "error", err)
+			}
+			return cleanupSkipReason(err)
+		}
+		m.cleanupAgentWorkspace(ctx, rec, ws.Path)
+		return ""
+	}
+	if err := m.workspace.Destroy(ctx, ws); err != nil {
+		if !errors.Is(err, ports.ErrWorkspaceDirty) {
+			// The public reason stays a fixed string (the raw error carries
+			// internal filesystem paths); the full cause lands here.
+			m.logger.Warn("cleanup: workspace teardown failed", "sessionID", rec.ID, "path", ws.Path, "error", err)
+		}
+		return cleanupSkipReason(err)
+	}
+	m.cleanupAgentWorkspace(ctx, rec, ws.Path)
+	return ""
 }
 
 // cleanupSkipReason renders a workspace teardown refusal as a short
@@ -3445,15 +3684,14 @@ func workspaceRepoList(repos []domain.WorkspaceRepoRecord) string {
 // spawnEnv builds the runtime environment: the per-project env vars first, then
 // the AO-internal vars last so they always win (a project cannot override
 // AO_SESSION_ID and friends).
-func spawnEnv(id domain.SessionID, project domain.ProjectID, issue domain.IssueID, dataDir, runtimeToken string, projectEnv map[string]string) map[string]string {
-	env := make(map[string]string, len(projectEnv)+5)
+func spawnEnv(id domain.SessionID, project domain.ProjectID, issue domain.IssueID, dataDir string, projectEnv map[string]string) map[string]string {
+	env := make(map[string]string, len(projectEnv)+4)
 	for k, v := range projectEnv {
 		env[k] = v
 	}
 	env[EnvSessionID] = string(id)
 	env[EnvProjectID] = string(project)
 	env[EnvIssueID] = string(issue)
-	env[EnvRuntimeToken] = runtimeToken
 	env[EnvDataDir] = dataDir
 	return env
 }
@@ -3465,8 +3703,8 @@ func spawnEnv(id domain.SessionID, project domain.ProjectID, issue domain.IssueI
 // command, which fails every callback and silently kills activity tracking).
 // When the pin cannot be applied the inherited PATH is kept and a warning is
 // logged so the degradation isn't silent.
-func (m *Manager) runtimeEnv(id domain.SessionID, project domain.ProjectID, issue domain.IssueID, runtimeToken string, projectEnv map[string]string) map[string]string {
-	env := spawnEnv(id, project, issue, m.dataDir, runtimeToken, projectEnv)
+func (m *Manager) runtimeEnv(id domain.SessionID, project domain.ProjectID, issue domain.IssueID, projectEnv map[string]string) map[string]string {
+	env := spawnEnv(id, project, issue, m.dataDir, projectEnv)
 	path, err := HookPATH(m.executable, os.Getenv, projectEnv)
 	if err != nil {
 		m.logger.Warn("session PATH not pinned to the daemon binary; `ao hooks` callbacks may resolve to a different ao and activity tracking will stall",
@@ -3475,64 +3713,6 @@ func (m *Manager) runtimeEnv(id domain.SessionID, project domain.ProjectID, issu
 	}
 	env["PATH"] = path
 	return env
-}
-
-func newRuntimeToken() (string, error) {
-	var b [16]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(b[:]), nil
-}
-
-func (m *Manager) verifyLaunchCommandRunning(ctx context.Context, handle ports.RuntimeHandle, command string) error {
-	prober, ok := m.runtime.(launchProcessProber)
-	if !ok {
-		return nil
-	}
-	attempts := m.launchProbe.attempts
-	if attempts < 1 {
-		attempts = 1
-	}
-	var lastErr error
-	for attempt := 1; attempt <= attempts; attempt++ {
-		running, err := prober.IsRunningCommand(ctx, handle, command)
-		if err != nil {
-			alive, aliveErr := m.runtime.IsAlive(ctx, handle)
-			if alive && aliveErr == nil {
-				m.logger.Warn("spawn: launch-process probe failed but runtime session is alive; keeping session",
-					"handle", handle.ID, "command", command, "error", err)
-				return nil
-			}
-			if aliveErr != nil {
-				return errors.Join(err, fmt.Errorf("session liveness probe: %w", aliveErr))
-			}
-			return err
-		}
-		if running {
-			return nil
-		}
-		lastErr = fmt.Errorf("%q was not running after %d launch-process probe attempts", command, attempts)
-		if attempt < attempts {
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-time.After(m.launchProbe.retryDelay):
-			}
-		}
-	}
-	return lastErr
-}
-
-func launchProcessCommand(argv []string) string {
-	bin, ok := launchBinary(argv)
-	if ok {
-		return bin
-	}
-	if len(argv) == 0 {
-		return ""
-	}
-	return argv[0]
 }
 
 // HookPATH builds the PATH value pinned into a spawned session: the daemon
@@ -3737,9 +3917,9 @@ func (m *Manager) cleanupAgentWorkspace(ctx context.Context, rec domain.SessionR
 	// bounded cleanup context once an irreversible step has committed the row to
 	// finishing. Inheriting that context keeps the agent hook, marker clear, and
 	// terminal write on the same budget instead of restarting it here.
-	env := spawnEnv(rec.ID, rec.ProjectID, rec.IssueID, m.dataDir, rec.Metadata.RuntimeToken, nil)
+	env := spawnEnv(rec.ID, rec.ProjectID, rec.IssueID, m.dataDir, nil)
 	if project, err := m.loadProject(ctx, rec.ProjectID); err == nil {
-		env = m.runtimeEnv(rec.ID, rec.ProjectID, rec.IssueID, rec.Metadata.RuntimeToken, project.Config.Env)
+		env = m.runtimeEnv(rec.ID, rec.ProjectID, rec.IssueID, project.Config.Env)
 	} else {
 		m.logger.Warn("workspace cleanup: project env unavailable; agent cleanup using AO env only",
 			"sessionID", rec.ID, "projectID", rec.ProjectID, "error", err)
@@ -3771,6 +3951,8 @@ func (m *Manager) deliverAfterStartPrompt(ctx context.Context, agent ports.Agent
 		return fmt.Errorf("send %s: %w", id, ErrNotFound)
 	case sessionguard.SuppressedTerminated:
 		return fmt.Errorf("send %s: %w", id, ErrTerminated)
+	case sessionguard.SuppressedExited:
+		return fmt.Errorf("send %s: %w", id, ErrAgentExited)
 	case sessionguard.SuppressedAwaitingUser:
 		return fmt.Errorf("send %s: %w", id, ErrAwaitingDecision)
 	case sessionguard.SuppressedUnknown:
@@ -4147,6 +4329,27 @@ func (m *Manager) validateRuntimePrerequisites() error {
 		return fmt.Errorf("%w: tmux required on macOS/Linux but not in PATH", ports.ErrRuntimePrerequisite)
 	}
 	return nil
+}
+
+func (m *Manager) superviseAgentProcess(agent ports.Agent, id domain.SessionID, env map[string]string, argv []string) ([]string, string, error) {
+	detector, ok := agent.(ports.AgentExitDetector)
+	if !ok || detector.ExitDetectionMode() != ports.AgentExitDetectionSupervisor {
+		delete(env, EnvRuntimeLaunchID)
+		return argv, "", nil
+	}
+	executable, err := m.executable()
+	if err != nil {
+		return nil, "", fmt.Errorf("resolve AO executable: %w", err)
+	}
+	launchID := m.newLaunchID()
+	if strings.TrimSpace(launchID) == "" {
+		return nil, "", errors.New("generated empty launch id")
+	}
+	env[EnvRuntimeLaunchID] = launchID
+	wrapped := make([]string, 0, 8+len(argv))
+	wrapped = append(wrapped, executable, "agent-process", "supervise", "--session", string(id), "--launch", launchID, "--")
+	wrapped = append(wrapped, argv...)
+	return wrapped, launchID, nil
 }
 
 func runtimeHandle(meta domain.SessionMetadata) ports.RuntimeHandle {

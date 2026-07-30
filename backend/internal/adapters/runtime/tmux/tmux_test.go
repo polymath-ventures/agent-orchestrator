@@ -3,7 +3,9 @@ package tmux
 import (
 	"context"
 	"errors"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -20,6 +22,7 @@ type fakeRunner struct {
 	outputs [][]byte
 	err     error
 	errs    []error
+	hook    func(context.Context, int) error
 }
 
 type runnerCall struct {
@@ -28,7 +31,7 @@ type runnerCall struct {
 	args []string
 }
 
-func (f *fakeRunner) Run(_ context.Context, env []string, name string, args ...string) ([]byte, error) {
+func (f *fakeRunner) Run(ctx context.Context, env []string, name string, args ...string) ([]byte, error) {
 	f.calls = append(f.calls, runnerCall{env: append([]string(nil), env...), name: name, args: append([]string(nil), args...)})
 	var out []byte
 	if len(f.outputs) > 0 {
@@ -39,6 +42,11 @@ func (f *fakeRunner) Run(_ context.Context, env []string, name string, args ...s
 	if len(f.errs) > 0 {
 		err = f.errs[0]
 		f.errs = f.errs[1:]
+	}
+	if f.hook != nil {
+		if hookErr := f.hook(ctx, len(f.calls)); hookErr != nil {
+			return out, hookErr
+		}
 	}
 	if err != nil {
 		return out, err
@@ -82,6 +90,19 @@ func commandExitError(t *testing.T, code string) *exec.ExitError {
 	return exitErr
 }
 
+// countCalls returns how many of fr's recorded calls invoked the given tmux
+// subcommand (args[0]), e.g. "display-message" for pane cwd verification
+// probes.
+func countCalls(fr *fakeRunner, subcommand string) int {
+	n := 0
+	for _, c := range fr.calls {
+		if len(c.args) > 0 && c.args[0] == subcommand {
+			n++
+		}
+	}
+	return n
+}
+
 // -- Options / New tests --
 
 func TestNewDefaultsToPortableShell(t *testing.T) {
@@ -100,12 +121,70 @@ func TestNewPicksUpShellFromEnv(t *testing.T) {
 	}
 }
 
+// TestExecRunnerRunsFromStableDir is the direct regression test for Fix 1:
+// execRunner.Run must pin cmd.Dir to os.TempDir() rather than inheriting
+// whatever the daemon process's own cwd happens to be. The first tmux CLI
+// call auto-starts the persistent tmux server, which then keeps that cwd for
+// its entire lifetime (issue #2775); without this pin a daemon started from a
+// Squirrel/ShipIt staging directory permanently poisons the server once that
+// staging directory is deleted by the next auto-update. This runs the real
+// execRunner (not the fakeRunner test seam every other test in this file
+// uses), so it is the only test that would catch a regression here.
+func TestExecRunnerRunsFromStableDir(t *testing.T) {
+	out, err := (execRunner{}).Run(context.Background(), nil, "sh", "-c", "pwd")
+	if err != nil {
+		t.Fatalf("execRunner.Run: %v", err)
+	}
+	got := strings.TrimSpace(string(out))
+
+	// Resolve symlinks on both sides: macOS reports os.TempDir() under
+	// /var/folders/... but pwd (and everything else) sees the real path under
+	// /private/var/folders/..., so a raw string comparison would spuriously
+	// fail there.
+	gotResolved, err := filepath.EvalSymlinks(got)
+	if err != nil {
+		t.Fatalf("resolve pwd output %q: %v", got, err)
+	}
+	wantResolved, err := filepath.EvalSymlinks(os.TempDir())
+	if err != nil {
+		t.Fatalf("resolve os.TempDir() %q: %v", os.TempDir(), err)
+	}
+	if gotResolved != wantResolved {
+		t.Fatalf("execRunner ran from %q, want os.TempDir() %q", got, os.TempDir())
+	}
+}
+
+// TestExecRunnerFallsBackWhenTempDirMissing pins the guard on Fix 1's pin.
+// os.TempDir() returns $TMPDIR without checking it exists, so a stale or bogus
+// TMPDIR would otherwise set cmd.Dir to a dead path and fail EVERY tmux command
+// with "chdir <dir>: no such file or directory" — the same dead-cwd failure
+// #2775 was about, just moved. Run must degrade to a directory that exists.
+func TestExecRunnerFallsBackWhenTempDirMissing(t *testing.T) {
+	t.Setenv("TMPDIR", filepath.Join(t.TempDir(), "deleted-by-an-update"))
+	if _, err := os.Stat(os.TempDir()); !os.IsNotExist(err) {
+		t.Fatalf("precondition: os.TempDir() %q should not exist, stat err = %v", os.TempDir(), err)
+	}
+
+	out, err := (execRunner{}).Run(context.Background(), nil, "sh", "-c", "pwd")
+	if err != nil {
+		t.Fatalf("execRunner.Run with a missing TMPDIR: %v", err)
+	}
+	got := strings.TrimSpace(string(out))
+	if info, err := os.Stat(got); err != nil || !info.IsDir() {
+		t.Fatalf("execRunner ran from %q, want an existing directory (stat err = %v)", got, err)
+	}
+}
+
 // -- command builder tests --
 
 func TestCommandBuilders(t *testing.T) {
 	if got, want := newSessionArgs("sess-1", "/tmp/ws", "/bin/sh", `echo hi; exec "${SHELL:-/bin/sh}" -i`),
 		[]string{"new-session", "-d", "-s", "sess-1", "-x", "220", "-y", "50", "-c", "/tmp/ws", "/bin/sh", "-c", `echo hi; exec "${SHELL:-/bin/sh}" -i`}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("newSessionArgs = %#v, want %#v", got, want)
+	}
+	if got, want := respawnPaneArgs("sess-1", "/tmp/ws", "/bin/sh", "echo hi"),
+		[]string{"respawn-pane", "-k", "-t", "sess-1:0.0", "-c", "/tmp/ws", "/bin/sh", "-c", "echo hi"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("respawnPaneArgs = %#v, want %#v", got, want)
 	}
 	// set-option uses pane-targeting (no = prefix).
 	if got, want := setStatusOffArgs("sess-1"), []string{"set-option", "-t", "sess-1", "status", "off"}; !reflect.DeepEqual(got, want) {
@@ -126,6 +205,9 @@ func TestCommandBuilders(t *testing.T) {
 	}
 	if got, want := hasSessionArgs("sess-1"), []string{"has-session", "-t", "=sess-1"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("hasSessionArgs = %#v, want %#v", got, want)
+	}
+	if got, want := panePIDArgs("sess-1"), []string{"display-message", "-p", "-t", "sess-1:0.0", "#{pane_pid}"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("panePIDArgs = %#v, want %#v", got, want)
 	}
 	// list-panes reaps whole-session (-s) with exact-match target and prints pane pids.
 	if got, want := listPanePIDsArgs("sess-1"), []string{"list-panes", "-s", "-t", "=sess-1", "-F", "#{pane_pid}"}; !reflect.DeepEqual(got, want) {
@@ -314,6 +396,7 @@ func TestCreateLaunchCommandExportsEnvVars(t *testing.T) {
 		Argv:          []string{"myagent"},
 		Env: map[string]string{
 			"AO_SESSION_ID": "sess-1",
+			"COLORTERM":     "ansi",
 			"ODD":           "can't",
 			"PATH":          "/custom/bin:/usr/bin",
 		},
@@ -324,7 +407,9 @@ func TestCreateLaunchCommandExportsEnvVars(t *testing.T) {
 	args := fr.calls[0].args
 	launchCmd := args[len(args)-1]
 	for _, want := range []string{
+		"unset NO_COLOR;",
 		"export AO_SESSION_ID='sess-1';",
+		"export COLORTERM='truecolor';",
 		"export ODD='can'\\''t';",
 		"export PATH='/custom/bin:/usr/bin';",
 	} {
@@ -334,9 +419,33 @@ func TestCreateLaunchCommandExportsEnvVars(t *testing.T) {
 	}
 }
 
+func TestBuildLaunchCommandPreservesExplicitNoColor(t *testing.T) {
+	launchCmd := buildLaunchCommand(ports.RuntimeConfig{
+		WorkspacePath: "/tmp/ws",
+		Argv:          []string{"myagent"},
+		Env:           map[string]string{"NO_COLOR": "1"},
+	})
+
+	if !strings.Contains(launchCmd, "export NO_COLOR='1';") {
+		t.Fatalf("launch command does not preserve configured NO_COLOR: %q", launchCmd)
+	}
+	if strings.Contains(launchCmd, "unset NO_COLOR;") {
+		t.Fatalf("launch command unsets configured NO_COLOR: %q", launchCmd)
+	}
+	if !strings.Contains(launchCmd, "export COLORTERM='truecolor';") {
+		t.Fatalf("launch command does not advertise true color: %q", launchCmd)
+	}
+}
+
 func TestCreateDestroysAndReturnsErrorWhenPaneCWDDoesNotMatch(t *testing.T) {
 	r, fr := newTestRuntime(0)
-	fr.outputs = [][]byte{nil, []byte("/deleted/shipit\n")}
+	// new-session, then a stale pane cwd on every one of the paneCwdVerifyAttempts
+	// retries: the pane never settles on the workspace, so Create must exhaust
+	// all attempts and fail with the typed mismatch error.
+	fr.outputs = [][]byte{nil}
+	for i := 0; i < paneCwdVerifyAttempts; i++ {
+		fr.outputs = append(fr.outputs, []byte("/deleted/shipit\n"))
+	}
 
 	_, err := r.Create(context.Background(), ports.RuntimeConfig{
 		SessionID:     "sess-1",
@@ -346,14 +455,89 @@ func TestCreateDestroysAndReturnsErrorWhenPaneCWDDoesNotMatch(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), `started in "/deleted/shipit", want "/tmp/ws"`) {
 		t.Fatalf("Create err = %v, want pane cwd mismatch", err)
 	}
-	hasKill := false
-	for _, c := range fr.calls {
-		if len(c.args) > 0 && c.args[0] == "kill-session" {
-			hasKill = true
-		}
+	if !errors.Is(err, ports.ErrRuntimeWorkspaceCwdMismatch) {
+		t.Fatalf("Create err = %v, want wrapped ports.ErrRuntimeWorkspaceCwdMismatch", err)
 	}
-	if !hasKill {
+	if got := countCalls(fr, "display-message"); got != paneCwdVerifyAttempts {
+		t.Fatalf("pane cwd verification attempts = %d, want %d", got, paneCwdVerifyAttempts)
+	}
+	if countCalls(fr, "kill-session") == 0 {
 		t.Fatal("expected kill-session cleanup call when pane cwd verification fails")
+	}
+}
+
+// TestVerifyPaneWorkingDirectoryKeepsMismatchErrorAfterLaterProbeFailure pins
+// Fix 2's sticky-sentinel behavior: once an attempt has observed a genuine cwd
+// mismatch, a later attempt that fails to even probe the pane (a transient
+// tmux CLI error, not a mismatch) must not overwrite that classifiable error.
+// Losing it would make the caller fall back to an opaque, unclassifiable
+// error and regress the whole point of Fix 4 (mapping to a typed apierr).
+func TestVerifyPaneWorkingDirectoryKeepsMismatchErrorAfterLaterProbeFailure(t *testing.T) {
+	r, _ := newTestRuntime(0)
+	fr := &fakeRunnerSequence{
+		results: []fakeRunnerResult{
+			{out: []byte("/deleted/shipit\n")},                // attempt 1: mismatch
+			{err: errors.New("tmux: lost server connection")}, // attempt 2: probe failure
+		},
+	}
+	r.runner = fr
+
+	err := r.verifyPaneWorkingDirectory(context.Background(), "sess-1", "/tmp/ws")
+	if err == nil {
+		t.Fatal("verifyPaneWorkingDirectory: got nil, want error")
+	}
+	if !errors.Is(err, ports.ErrRuntimeWorkspaceCwdMismatch) {
+		t.Fatalf("verifyPaneWorkingDirectory err = %v, want wrapped ports.ErrRuntimeWorkspaceCwdMismatch (the mismatch must survive the later probe failure)", err)
+	}
+}
+
+// TestVerifyPaneWorkingDirectoryRetriesUntilMatch pins the retry behavior Fix 2
+// depends on: buildLaunchCommand's `cd <workspace> || exit;` guard corrects a
+// pane's cwd asynchronously, so the first sample right after `new-session` can
+// still show the tmux server's (possibly poisoned) cwd even though the pane is
+// about to land in the right place. Create must not fail on that stale first
+// sample if a later sample matches.
+func TestVerifyPaneWorkingDirectoryRetriesUntilMatch(t *testing.T) {
+	r, fr := newTestRuntime(0)
+	// new-session, then a stale sample, then a matching sample.
+	fr.outputs = [][]byte{nil, []byte("/deleted/shipit\n"), []byte("/tmp/ws\n"), nil, nil, nil}
+
+	h, err := r.Create(context.Background(), ports.RuntimeConfig{
+		SessionID:     "sess-1",
+		WorkspacePath: "/tmp/ws",
+		Argv:          []string{"myagent"},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if h.ID != "sess-1" {
+		t.Fatalf("handle ID = %q, want sess-1", h.ID)
+	}
+	if got := countCalls(fr, "display-message"); got != 2 {
+		t.Fatalf("pane cwd verification attempts = %d, want 2 (stale then matching)", got)
+	}
+}
+
+// TestVerifyPaneWorkingDirectoryHonorsCancellation ensures the retry loop's
+// select on ctx.Done() actually aborts a pending retry instead of always
+// sleeping out the full retry budget.
+func TestVerifyPaneWorkingDirectoryHonorsCancellation(t *testing.T) {
+	r, fr := newTestRuntime(0)
+	fr.outputs = [][]byte{[]byte("/deleted/shipit\n")}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := r.verifyPaneWorkingDirectory(ctx, "sess-1", "/tmp/ws")
+	if err == nil {
+		t.Fatal("verifyPaneWorkingDirectory: got nil, want context cancellation error")
+	}
+	// The first attempt runs before the retry-delay select is reached, so one
+	// verification call happens even though ctx is already canceled; the
+	// second attempt's select must observe ctx.Done() rather than waiting out
+	// paneCwdVerifyRetryDelay.
+	if got := countCalls(fr, "display-message"); got != 1 {
+		t.Fatalf("pane cwd verification attempts = %d, want 1 (canceled before the first retry)", got)
 	}
 }
 
@@ -424,6 +608,75 @@ func (f *fakeRunnerSelectiveErr) Run(_ context.Context, env []string, name strin
 	return nil, nil
 }
 
+// fakeRunnerResult is one scripted response for fakeRunnerSequence: either out
+// bytes (success) or err (failure).
+type fakeRunnerResult struct {
+	out []byte
+	err error
+}
+
+// fakeRunnerSequence returns each result in results in order for successive
+// Run calls, repeating the last result once results is exhausted. It ignores
+// which tmux subcommand was invoked, which is enough for tests that only
+// care about a fixed sequence of successes/failures across retries.
+type fakeRunnerSequence struct {
+	calls   []runnerCall
+	results []fakeRunnerResult
+}
+
+func (f *fakeRunnerSequence) Run(_ context.Context, env []string, name string, args ...string) ([]byte, error) {
+	f.calls = append(f.calls, runnerCall{env: append([]string(nil), env...), name: name, args: append([]string(nil), args...)})
+	idx := len(f.calls) - 1
+	if idx >= len(f.results) {
+		idx = len(f.results) - 1
+	}
+	res := f.results[idx]
+	return res.out, res.err
+}
+
+func TestRestartRespawnsExistingPaneAndPreservesHandle(t *testing.T) {
+	r, fr := newTestRuntime(0)
+	handle := ports.RuntimeHandle{ID: "sess-1"}
+	cfg := ports.RuntimeConfig{
+		SessionID:     "sess-1",
+		WorkspacePath: "/tmp/ws",
+		Argv:          []string{"codex", "resume", "native-1"},
+		Env:           map[string]string{"AO_SESSION_ID": "sess-1"},
+	}
+
+	got, err := r.Restart(context.Background(), handle, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != handle {
+		t.Fatalf("Restart handle = %+v, want %+v", got, handle)
+	}
+	if len(fr.calls) != 2 {
+		t.Fatalf("calls = %d, want respawn + liveness probe", len(fr.calls))
+	}
+	if args := fr.calls[0].args; len(args) < 6 || args[0] != "respawn-pane" || args[1] != "-k" || args[3] != "sess-1:0.0" || args[5] != "/tmp/ws" {
+		t.Fatalf("respawn args = %#v", args)
+	}
+	if args := fr.calls[1].args; !reflect.DeepEqual(args, hasSessionArgs("sess-1")) {
+		t.Fatalf("liveness args = %#v, want %#v", args, hasSessionArgs("sess-1"))
+	}
+}
+
+func TestRestartRejectsMismatchedSessionHandle(t *testing.T) {
+	r, fr := newTestRuntime(0)
+	_, err := r.Restart(context.Background(), ports.RuntimeHandle{ID: "sess-1"}, ports.RuntimeConfig{
+		SessionID:     "sess-2",
+		WorkspacePath: "/tmp/ws",
+		Argv:          []string{"codex"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "does not match") {
+		t.Fatalf("Restart error = %v, want handle mismatch", err)
+	}
+	if len(fr.calls) != 0 {
+		t.Fatalf("runtime called after validation failure: %+v", fr.calls)
+	}
+}
+
 // -- Destroy tests --
 
 func TestDestroyIsIdempotentWhenSessionMissing(t *testing.T) {
@@ -485,6 +738,70 @@ func TestDestroyArgs(t *testing.T) {
 	}
 	if got, want := fr.calls[1].args, killSessionArgs("sess-1"); !reflect.DeepEqual(got, want) {
 		t.Fatalf("destroy args = %#v, want %#v", got, want)
+	}
+}
+
+func TestIsSupervisedProcessAliveFindsExactDescendant(t *testing.T) {
+	r, fr := newTestRuntime(0)
+	fr.outputs = [][]byte{
+		[]byte("100\n"),
+		[]byte("100 1 /bin/sh -c launch\n101 100 /opt/ao agent-process supervise --session sess-1 --launch launch-2 -- codex\n102 101 codex\n"),
+	}
+
+	alive, err := r.IsSupervisedProcessAlive(context.Background(), ports.RuntimeHandle{ID: "sess-1"}, ports.SupervisedProcessRef{
+		SessionID: "sess-1",
+		LaunchID:  "launch-2",
+	})
+	if err != nil || !alive {
+		t.Fatalf("IsSupervisedProcessAlive = (%v, %v), want (true, nil)", alive, err)
+	}
+	if len(fr.calls) != 2 || fr.calls[1].name != "ps" {
+		t.Fatalf("calls = %#v, want tmux pane lookup followed by ps", fr.calls)
+	}
+}
+
+func TestIsSupervisedProcessAliveRejectsStaleAndUnrelatedProcesses(t *testing.T) {
+	entries, err := parseProcessTable("100 1 /bin/sh\n101 100 /opt/ao agent-process supervise --session sess-1 --launch launch-old -- codex\n200 1 /opt/ao agent-process supervise --session sess-1 --launch launch-new -- codex\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if containsSupervisor(entries, 100, "sess-1", "launch-new") {
+		t.Fatal("stale descendant or matching process outside the pane tree was accepted")
+	}
+	if containsManagedWorkload(entries, 100, "sess-1", "launch-new") {
+		t.Fatal("stale supervised generation was accepted as a manual workload")
+	}
+	if !containsSupervisor(entries, 100, "sess-1", "launch-old") {
+		t.Fatal("exact supervised descendant was not found")
+	}
+}
+
+func TestIsSupervisedProcessAliveFindsManualRelaunchFromPreservedShell(t *testing.T) {
+	entries, err := parseProcessTable("100 1 /bin/zsh -i\n101 100 codex resume native-1\n102 101 codex worker\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsManagedWorkload(entries, 100, "sess-1", "launch-2") {
+		t.Fatal("workload relaunched from the preserved shell was not found")
+	}
+}
+
+func TestIsSupervisedProcessAliveRejectsBarePreservedShell(t *testing.T) {
+	entries, err := parseProcessTable("100 1 /bin/zsh -i\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if containsManagedWorkload(entries, 100, "sess-1", "launch-2") {
+		t.Fatal("bare preserved shell was accepted as a live workload")
+	}
+}
+
+func TestIsSupervisedProcessAliveRejectsInvalidPanePID(t *testing.T) {
+	r, fr := newTestRuntime(0)
+	fr.outputs = [][]byte{[]byte("not-a-pid\n")}
+
+	if _, err := r.IsSupervisedProcessAlive(context.Background(), ports.RuntimeHandle{ID: "sess-1"}, ports.SupervisedProcessRef{}); err == nil {
+		t.Fatal("invalid pane pid should remain an inconclusive probe error")
 	}
 }
 
@@ -608,90 +925,6 @@ func TestIsAliveReportsOtherExitFailuresAsProbeErrors(t *testing.T) {
 	}
 }
 
-func TestIsRunningCommandMatchesExpectedChildCommand(t *testing.T) {
-	r, fr := newTestRuntime(0)
-	fr.outputs = [][]byte{[]byte("123\n"), []byte("456\n")}
-
-	running, err := r.IsRunningCommand(context.Background(), ports.RuntimeHandle{ID: "sess-1"}, "/usr/local/bin/codex")
-	if err != nil {
-		t.Fatalf("IsRunningCommand: %v", err)
-	}
-	if !running {
-		t.Fatal("running = false, want true when expected command child is present")
-	}
-	if got, want := fr.calls[0].args, paneProcessArgs("sess-1"); !reflect.DeepEqual(got, want) {
-		t.Fatalf("pane process args = %#v, want %#v", got, want)
-	}
-	if got, want := fr.calls[1].name, "pgrep"; got != want {
-		t.Fatalf("process probe command = %q, want %q", got, want)
-	}
-	if got, want := fr.calls[1].args, []string{"-P", "123", "-f", "/usr/local/bin/codex"}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("process probe args = %#v, want %#v", got, want)
-	}
-}
-
-// tmux reports pane_current_command=sh for AO's wrapper shell even while the
-// real agent remains alive below it. Liveness must therefore ignore that field
-// and inspect the pane PID's process tree for the expected agent executable.
-func TestIsRunningCommandKeepsLiveAgentWhenPaneCurrentCommandIsShell(t *testing.T) {
-	r, fr := newTestRuntime(0)
-	// The correct implementation asks tmux only for pane_pid (123), then pgrep
-	// finds the live codex descendant (456). A pane_current_command value of
-	// "sh" is deliberately not consulted and cannot override this evidence.
-	fr.outputs = [][]byte{[]byte("123\n"), []byte("456\n")}
-
-	running, err := r.IsRunningCommand(context.Background(), ports.RuntimeHandle{ID: "sess-shell"}, "codex")
-	if err != nil {
-		t.Fatalf("IsRunningCommand: %v", err)
-	}
-	if !running {
-		t.Fatal("running = false, want true for live codex descendant under shell pane")
-	}
-	if len(fr.calls) != 2 {
-		t.Fatalf("runner calls = %#v, want tmux pane-pid lookup plus process-tree probe", fr.calls)
-	}
-	if got := strings.Join(fr.calls[0].args, " "); strings.Contains(got, "pane_current_command") {
-		t.Fatalf("tmux probe %q consulted pane_current_command; shell wrapper must not decide liveness", got)
-	}
-	if got, want := fr.calls[0].args, paneProcessArgs("sess-shell"); !reflect.DeepEqual(got, want) {
-		t.Fatalf("pane process args = %#v, want %#v", got, want)
-	}
-	if got, want := fr.calls[1].args, []string{"-P", "123", "-f", "codex"}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("process-tree args = %#v, want %#v", got, want)
-	}
-}
-
-func TestIsRunningCommandReturnsFalseWhenExpectedChildMissing(t *testing.T) {
-	r, fr := newTestRuntime(0)
-	fr.outputs = [][]byte{[]byte("123\n"), nil}
-	fr.errs = []error{nil, commandExitError(t, "1")}
-
-	running, err := r.IsRunningCommand(context.Background(), ports.RuntimeHandle{ID: "sess-1"}, "codex")
-	if err != nil {
-		t.Fatalf("IsRunningCommand: %v", err)
-	}
-	if running {
-		t.Fatal("running = true, want false when pane has no expected command child")
-	}
-	if got, want := fr.calls[1].args, []string{"-P", "123", "-f", "codex"}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("process probe args = %#v, want %#v", got, want)
-	}
-}
-
-func TestIsRunningCommandReportsPgrepErrors(t *testing.T) {
-	r, fr := newTestRuntime(0)
-	fr.outputs = [][]byte{[]byte("123\n"), nil}
-	fr.errs = []error{nil, commandExitError(t, "2")}
-
-	running, err := r.IsRunningCommand(context.Background(), ports.RuntimeHandle{ID: "sess-1"}, "codex")
-	if err == nil {
-		t.Fatal("IsRunningCommand err = nil, want probe error for pgrep failure")
-	}
-	if running {
-		t.Fatal("running = true on probe failure")
-	}
-}
-
 // -- SendMessage tests --
 
 func TestSendMessageChunksAndSendsEnter(t *testing.T) {
@@ -809,6 +1042,72 @@ func TestSendMessageEnterSurvivesCallerCancel(t *testing.T) {
 	}
 }
 
+func TestSendMessageRemainingChunksSurviveCallerCancel(t *testing.T) {
+	r, fr := newTestRuntime(5)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	secondChunkStarted := make(chan struct{})
+	callerCancelled := make(chan struct{})
+	go func() {
+		<-secondChunkStarted
+		cancel()
+		close(callerCancelled)
+	}()
+	fr.hook = func(runCtx context.Context, call int) error {
+		if call != 2 {
+			return nil
+		}
+		close(secondChunkStarted)
+		<-callerCancelled
+		return runCtx.Err()
+	}
+
+	if err := r.SendMessage(ctx, ports.RuntimeHandle{ID: "sess-1"}, "helloworld"); err != nil {
+		t.Fatalf("SendMessage cancelled after first chunk: %v", err)
+	}
+	if ctx.Err() != context.Canceled {
+		t.Fatalf("caller context error = %v, want context.Canceled", ctx.Err())
+	}
+	if len(fr.calls) != 3 {
+		t.Fatalf("calls = %d, want 3 (two chunks + Enter)", len(fr.calls))
+	}
+	if got, want := fr.calls[1].args, sendKeysLiteralArgs("sess-1", "world"); !reflect.DeepEqual(got, want) {
+		t.Fatalf("chunk 2 args = %#v, want %#v", got, want)
+	}
+	if got, want := fr.calls[2].args, sendEnterArgs("sess-1"); !reflect.DeepEqual(got, want) {
+		t.Fatalf("Enter args = %#v, want %#v", got, want)
+	}
+}
+
+func TestSendMessageCompletionBudgetScalesWithChunks(t *testing.T) {
+	const commandTimeout = 5 * time.Second
+	const enterDelay = 300 * time.Millisecond
+	if got, want := sendCompletionBudget(1, commandTimeout, enterDelay), 5*time.Second+enterDelay; got != want {
+		t.Fatalf("single-chunk completion budget = %s, want %s", got, want)
+	}
+	if got, want := sendCompletionBudget(4, commandTimeout, enterDelay), 20*time.Second+enterDelay; got != want {
+		t.Fatalf("four-chunk completion budget = %s, want %s", got, want)
+	}
+}
+
+func TestSendMessageCancellationBeforeFirstChunkAborts(t *testing.T) {
+	r, fr := newTestRuntime(5)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	fr.hook = func(runCtx context.Context, _ int) error {
+		return runCtx.Err()
+	}
+
+	err := r.SendMessage(ctx, ports.RuntimeHandle{ID: "sess-1"}, "helloworld")
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("SendMessage error = %v, want context.Canceled", err)
+	}
+	if len(fr.calls) != 1 {
+		t.Fatalf("calls = %d, want 1 (first chunk attempt only)", len(fr.calls))
+	}
+}
+
 func TestInterruptSendsCtrlC(t *testing.T) {
 	r, fr := newTestRuntime(0)
 	if err := r.Interrupt(context.Background(), ports.RuntimeHandle{ID: "sess-1"}); err != nil {
@@ -876,7 +1175,7 @@ func TestAttachCommandReturnsExpectedArgv(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AttachCommand: %v", err)
 	}
-	want := []string{"/usr/bin/tmux", "-u", "attach-session", "-t", "sess-1"}
+	want := []string{"/usr/bin/tmux", "-u", "-T", "RGB", "attach-session", "-t", "sess-1"}
 	if !reflect.DeepEqual(argv, want) {
 		t.Fatalf("argv = %#v, want %#v", argv, want)
 	}
@@ -891,13 +1190,13 @@ func TestAttachCommandRejectsInvalidHandle(t *testing.T) {
 }
 
 func TestAttachEnvForcesUsableTerm(t *testing.T) {
-	env := attachEnv([]string{"PATH=/bin", "TERM=dumb", "SHELL=/bin/sh"})
-	if got, want := env, []string{"PATH=/bin", "TERM=xterm-256color", "SHELL=/bin/sh"}; !reflect.DeepEqual(got, want) {
+	env := attachEnv([]string{"PATH=/bin", "TERM=dumb", "COLORTERM=ansi", "SHELL=/bin/sh"})
+	if got, want := env, []string{"PATH=/bin", "TERM=xterm-256color", "COLORTERM=truecolor", "SHELL=/bin/sh"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("attachEnv = %#v, want %#v", got, want)
 	}
 
 	env = attachEnv([]string{"PATH=/bin"})
-	if got, want := env, []string{"PATH=/bin", "TERM=xterm-256color"}; !reflect.DeepEqual(got, want) {
+	if got, want := env, []string{"PATH=/bin", "TERM=xterm-256color", "COLORTERM=truecolor"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("attachEnv without TERM = %#v, want %#v", got, want)
 	}
 }

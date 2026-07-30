@@ -33,6 +33,56 @@ Fork-only examples include ops/systemd/Tailscale integration, Codex Fugu
 support, and SDLC files. Upstream-candidate work should be narrow enough to
 submit directly to upstream after review.
 
+## Fork Features To Preserve (sync checklist)
+
+The default posture on an upstream sync is **absorb upstream and shape fork
+changes into it** — take upstream's structure, UX, and mechanisms, and re-apply
+only the named features below. When upstream and the fork both changed the same
+area, this list decides what must survive; everything not on it may follow
+upstream. Each item names the feature and the concrete thing a sync must keep
+working (not a specific UI shape unless stated).
+
+1. **Web client as a first-class client.** The browser-served renderer
+   (`ops/ao-web-server.mjs`, `npm run build:web`, `VITE_NO_ELECTRON`) must stay
+   fully servable and usable in a plain browser, on par with Electron. No
+   web-path dependence on `window.ao`, Electron preload, or Electron-only daemon
+   fields. The `frontend/e2e/*.spec.ts` **browser-mode** suite is the guard —
+   keep it green and meaningful. UX shape may follow upstream; browser
+   functionality may not regress.
+2. **Terminal auto-focus.** A terminal pane takes keyboard focus when it appears
+   or is selected, so the user types without clicking (`focusRequest`/`autoFocus`,
+   `data-terminal-tab` + `focusActiveTerminalTab`, plus the Ctrl+F6
+   exit-focus escape hatch).
+3. **Quota & usage tracking.** Per-turn usage telemetry and quota snapshots from
+   agent hooks (`usageTelemetryEvent`, `acceptedQuotaSnapshots`, the quota
+   probers under `service/agent/quota`), plus model-health / candidate-health.
+   This is mechanism-independent — re-layer it onto whatever signal path upstream
+   uses.
+4. **Harness/agent setup & selection.** The agent-selection catalog and per-role
+   model+effort tuples and worker-mix UI (`selectableAgentCatalog`,
+   `HarnessModelRow`, `WorkerMixFields`, `lib/agent-selection.ts`, tracker
+   intake), and the fork-only **codex-fugu** harness.
+5. **Fleet & Prime.** The projectless "AO Fleet" workspace (`FLEET_WORKSPACE_ID`,
+   projectless-prime sessions), worker-mix percentages, fleet pause, and the
+   daemon-global Prime supervisor.
+6. **Scratch projects** and persisted per-session model/effort/mix.
+7. **Bug fixes.** Any fork divergence that fixes a real bug beats re-absorbing
+   the upstream behavior it fixed.
+8. **Ops / SDLC infrastructure.** `ops/deploy.sh` + the web server + systemd /
+   Tailscale wiring; the Prettier CI the fork keeps (upstream removed it); and
+   the agent SDLC files (`CLAUDE.md`, `.claude/skills`, Beads, OpenSpec,
+   `agent-instructions/`).
+
+**Explicitly NOT fork-specific — absorb upstream freely** (do not spend a sync
+preserving these; they were merged toward upstream and re-preserving them
+creates conflicts): runtime-generation fencing and agent-exit detection (the
+fork adopted upstream's `runtime_launch_id` / `AgentExitDetector`; the old
+`RuntimeToken` generation-fence and `LaunchCommand` liveness sweep are gone);
+worker-idle orchestrator nudges (removed, matching upstream); shell-terminal
+session-scoping (upstream's model); and the UX shape of the inspector rail, the
+reviews panel, the terminal tab strip, and mobile chrome (upstream's — the fork
+requires only that these stay functional in the web client, per item 1).
+
 ## Browser Mode On The Tailnet
 
 The fork ships a small browser-mode web server for headless hosts. It serves the

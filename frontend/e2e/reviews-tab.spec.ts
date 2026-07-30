@@ -12,19 +12,21 @@ test("the Reviews tab renders the reviewer panel for a session that owns PRs", a
 	await page.goto("/");
 	await page.getByRole("button", { name: "Open auth stack" }).click();
 	await expect(page).toHaveURL(/sessions\/stacked-auth/);
-	await page.getByRole("button", { name: "Open inspector panel" }).click();
 
+	// Upstream's worker inspector rail defaults open, so it is already mounted.
 	const inspector = page.locator("#inspector");
 	await expect(inspector).toBeVisible();
 
 	await inspector.getByRole("tab", { name: "Reviews" }).click();
 
 	// The reviewer card surfaces the harness, its approved verdict, and both
-	// actions — never the empty state, since this session owns a PR.
+	// actions — never the empty state, since this session owns a PR. Upstream
+	// renders the verdict as a badge inside the (default-open) per-PR review row
+	// rather than an aggregate testid.
 	await expect(inspector.getByText("No pull request opened yet.")).toHaveCount(0);
 	const reviewsSection = inspector.getByTestId("inspector-section").filter({ hasText: "Reviews" });
 	await expect(reviewsSection.getByText("codex")).toBeVisible();
-	await expect(reviewsSection.getByTestId("review-aggregate-verdict")).toHaveText("Approved");
+	await expect(reviewsSection.getByText("Approved", { exact: true })).toBeVisible();
 	await expect(reviewsSection.getByRole("button", { name: "Re-run review" })).toBeVisible();
 	await expect(reviewsSection.getByRole("button", { name: "Open terminal" })).toBeVisible();
 });
@@ -33,8 +35,8 @@ test("the Reviews tab shows the empty state for a session with no PRs", async ({
 	await page.goto("/");
 	await page.getByRole("button", { name: "Open Split terminal mux responsibilities" }).click();
 	await expect(page).toHaveURL(/sessions\/refactor-mux/);
-	await page.getByRole("button", { name: "Open inspector panel" }).click();
 
+	// Upstream's worker inspector rail defaults open, so it is already mounted.
 	const inspector = page.locator("#inspector");
 	await expect(inspector).toBeVisible();
 
@@ -46,8 +48,8 @@ test("reviewer terminal activation and back-to-agent activation focus the select
 	await page.goto("/");
 	await page.getByRole("button", { name: "Open auth stack" }).click();
 	await expect(page).toHaveURL(/sessions\/stacked-auth/);
-	await page.getByRole("button", { name: "Open inspector panel" }).click();
 
+	// Upstream's worker inspector rail defaults open, so it is already mounted.
 	const inspector = page.locator("#inspector");
 	await inspector.getByRole("tab", { name: "Reviews" }).click();
 	await inspector.getByRole("button", { name: "Open terminal" }).click();

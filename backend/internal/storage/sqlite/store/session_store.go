@@ -61,7 +61,9 @@ func (s *Store) createProjectlessPrimeSession(ctx context.Context, rec domain.Se
 		params.IsTerminated,
 		params.Branch,
 		params.WorkspacePath,
+		params.WorkspaceRepoPath,
 		params.RuntimeHandleID,
+		params.RuntimeLaunchID,
 		params.AgentSessionID,
 		params.Prompt,
 		params.PreviewURL,
@@ -70,9 +72,9 @@ func (s *Store) createProjectlessPrimeSession(ctx context.Context, rec domain.Se
 		params.Effort,
 		params.MixSelected,
 		params.MixBucketModel,
-		params.RuntimeToken,
-		params.LaunchCommand,
 		params.PromptPolicyHash,
+		params.TerminateOnPRMerge,
+		params.CleanupGeneration,
 		params.CreatedAt,
 		params.UpdatedAt,
 	); err != nil {
@@ -85,10 +87,11 @@ const insertProjectlessPrimeSessionSQL = `
 INSERT INTO sessions (
     id, project_id, num, issue_id, kind, harness, display_name,
     activity_state, activity_last_at, first_signal_at, is_terminated,
-    branch, workspace_path, runtime_handle_id, agent_session_id, prompt,
-    preview_url, preview_revision, model, effort, mix_selected, mix_bucket_model, runtime_token, launch_command,
-    prompt_policy_hash, created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    branch, workspace_path, workspace_repo_path, runtime_handle_id,
+    runtime_launch_id, agent_session_id, prompt,
+    preview_url, preview_revision, model, effort, mix_selected, mix_bucket_model,
+    prompt_policy_hash, terminate_on_pr_merge, cleanup_generation, created_at, updated_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 // UpdateSession writes the full mutable state of an existing session. The
 // id/project/num/created_at are immutable and not touched here.
@@ -130,6 +133,22 @@ func (s *Store) SetSessionPreviewURL(ctx context.Context, id domain.SessionID, p
 	})
 	if err != nil {
 		return false, fmt.Errorf("set preview url for session %s: %w", id, err)
+	}
+	return rows > 0, nil
+}
+
+// SetSessionTerminateOnPRMerge updates the user's merge-completion lifecycle
+// policy. It returns ok=false when the session id does not exist.
+func (s *Store) SetSessionTerminateOnPRMerge(ctx context.Context, id domain.SessionID, terminate bool, updatedAt time.Time) (bool, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	rows, err := s.qw.SetSessionTerminateOnPRMerge(ctx, gen.SetSessionTerminateOnPRMergeParams{
+		ID:                 id,
+		TerminateOnPRMerge: terminate,
+		UpdatedAt:          updatedAt,
+	})
+	if err != nil {
+		return false, fmt.Errorf("set terminate-on-pr-merge for session %s: %w", id, err)
 	}
 	return rows > 0, nil
 }
@@ -262,19 +281,20 @@ func rowToRecord(row gen.Session) domain.SessionRecord {
 			State:          row.ActivityState,
 			LastActivityAt: row.ActivityLastAt,
 		},
-		FirstSignalAt: nullTimeToTime(row.FirstSignalAt),
-		IsTerminated:  row.IsTerminated,
+		FirstSignalAt:      nullTimeToTime(row.FirstSignalAt),
+		IsTerminated:       row.IsTerminated,
+		TerminateOnPRMerge: row.TerminateOnPRMerge,
 		Metadata: domain.SessionMetadata{
-			Branch:           row.Branch,
-			WorkspacePath:    row.WorkspacePath,
-			RuntimeHandleID:  row.RuntimeHandleID,
-			RuntimeToken:     row.RuntimeToken,
-			LaunchCommand:    row.LaunchCommand,
-			AgentSessionID:   row.AgentSessionID,
-			Prompt:           row.Prompt,
-			PromptPolicyHash: row.PromptPolicyHash,
-			PreviewURL:       row.PreviewURL,
-			PreviewRevision:  row.PreviewRevision,
+			Branch:            row.Branch,
+			WorkspacePath:     row.WorkspacePath,
+			WorkspaceRepoPath: row.WorkspaceRepoPath,
+			RuntimeHandleID:   row.RuntimeHandleID,
+			RuntimeLaunchID:   row.RuntimeLaunchID,
+			AgentSessionID:    row.AgentSessionID,
+			Prompt:            row.Prompt,
+			PromptPolicyHash:  row.PromptPolicyHash,
+			PreviewURL:        row.PreviewURL,
+			PreviewRevision:   row.PreviewRevision,
 		},
 		CleanupGeneration: row.CleanupGeneration,
 		CreatedAt:         row.CreatedAt,
@@ -285,65 +305,67 @@ func rowToRecord(row gen.Session) domain.SessionRecord {
 func recordToInsert(rec domain.SessionRecord, num int64) gen.InsertSessionParams {
 	activity := normalActivity(rec.Activity, rec.CreatedAt)
 	return gen.InsertSessionParams{
-		ID:                rec.ID,
-		ProjectID:         rec.ProjectID,
-		Num:               num,
-		IssueID:           rec.IssueID,
-		Kind:              rec.Kind,
-		Harness:           rec.Harness,
-		Model:             rec.Model,
-		Effort:            string(rec.Effort),
-		MixSelected:       rec.MixSelected,
-		MixBucketModel:    rec.MixBucketModel,
-		DisplayName:       rec.DisplayName,
-		ActivityState:     activity.State,
-		ActivityLastAt:    activity.LastActivityAt,
-		FirstSignalAt:     timeToNullTime(rec.FirstSignalAt),
-		IsTerminated:      rec.IsTerminated,
-		Branch:            rec.Metadata.Branch,
-		WorkspacePath:     rec.Metadata.WorkspacePath,
-		RuntimeHandleID:   rec.Metadata.RuntimeHandleID,
-		RuntimeToken:      rec.Metadata.RuntimeToken,
-		LaunchCommand:     rec.Metadata.LaunchCommand,
-		AgentSessionID:    rec.Metadata.AgentSessionID,
-		Prompt:            rec.Metadata.Prompt,
-		PromptPolicyHash:  rec.Metadata.PromptPolicyHash,
-		PreviewURL:        rec.Metadata.PreviewURL,
-		PreviewRevision:   rec.Metadata.PreviewRevision,
-		CleanupGeneration: rec.CleanupGeneration,
-		CreatedAt:         rec.CreatedAt,
-		UpdatedAt:         rec.UpdatedAt,
+		ID:                 rec.ID,
+		ProjectID:          rec.ProjectID,
+		Num:                num,
+		IssueID:            rec.IssueID,
+		Kind:               rec.Kind,
+		Harness:            rec.Harness,
+		Model:              rec.Model,
+		Effort:             string(rec.Effort),
+		MixSelected:        rec.MixSelected,
+		MixBucketModel:     rec.MixBucketModel,
+		DisplayName:        rec.DisplayName,
+		ActivityState:      activity.State,
+		ActivityLastAt:     activity.LastActivityAt,
+		FirstSignalAt:      timeToNullTime(rec.FirstSignalAt),
+		IsTerminated:       rec.IsTerminated,
+		Branch:             rec.Metadata.Branch,
+		WorkspacePath:      rec.Metadata.WorkspacePath,
+		WorkspaceRepoPath:  rec.Metadata.WorkspaceRepoPath,
+		RuntimeHandleID:    rec.Metadata.RuntimeHandleID,
+		RuntimeLaunchID:    rec.Metadata.RuntimeLaunchID,
+		AgentSessionID:     rec.Metadata.AgentSessionID,
+		Prompt:             rec.Metadata.Prompt,
+		PromptPolicyHash:   rec.Metadata.PromptPolicyHash,
+		PreviewURL:         rec.Metadata.PreviewURL,
+		PreviewRevision:    rec.Metadata.PreviewRevision,
+		TerminateOnPRMerge: rec.TerminateOnPRMerge,
+		CleanupGeneration:  rec.CleanupGeneration,
+		CreatedAt:          rec.CreatedAt,
+		UpdatedAt:          rec.UpdatedAt,
 	}
 }
 
 func recordToUpdate(rec domain.SessionRecord) gen.UpdateSessionParams {
 	activity := normalActivity(rec.Activity, rec.UpdatedAt)
 	return gen.UpdateSessionParams{
-		ID:                rec.ID,
-		IssueID:           rec.IssueID,
-		Kind:              rec.Kind,
-		Harness:           rec.Harness,
-		Model:             rec.Model,
-		Effort:            string(rec.Effort),
-		MixSelected:       rec.MixSelected,
-		MixBucketModel:    rec.MixBucketModel,
-		DisplayName:       rec.DisplayName,
-		ActivityState:     activity.State,
-		ActivityLastAt:    activity.LastActivityAt,
-		FirstSignalAt:     timeToNullTime(rec.FirstSignalAt),
-		IsTerminated:      rec.IsTerminated,
-		Branch:            rec.Metadata.Branch,
-		WorkspacePath:     rec.Metadata.WorkspacePath,
-		RuntimeHandleID:   rec.Metadata.RuntimeHandleID,
-		RuntimeToken:      rec.Metadata.RuntimeToken,
-		LaunchCommand:     rec.Metadata.LaunchCommand,
-		AgentSessionID:    rec.Metadata.AgentSessionID,
-		Prompt:            rec.Metadata.Prompt,
-		PromptPolicyHash:  rec.Metadata.PromptPolicyHash,
-		PreviewURL:        rec.Metadata.PreviewURL,
-		PreviewRevision:   rec.Metadata.PreviewRevision,
-		CleanupGeneration: rec.CleanupGeneration,
-		UpdatedAt:         rec.UpdatedAt,
+		ID:                 rec.ID,
+		IssueID:            rec.IssueID,
+		Kind:               rec.Kind,
+		Harness:            rec.Harness,
+		Model:              rec.Model,
+		Effort:             string(rec.Effort),
+		MixSelected:        rec.MixSelected,
+		MixBucketModel:     rec.MixBucketModel,
+		DisplayName:        rec.DisplayName,
+		ActivityState:      activity.State,
+		ActivityLastAt:     activity.LastActivityAt,
+		FirstSignalAt:      timeToNullTime(rec.FirstSignalAt),
+		IsTerminated:       rec.IsTerminated,
+		Branch:             rec.Metadata.Branch,
+		WorkspacePath:      rec.Metadata.WorkspacePath,
+		WorkspaceRepoPath:  rec.Metadata.WorkspaceRepoPath,
+		RuntimeHandleID:    rec.Metadata.RuntimeHandleID,
+		RuntimeLaunchID:    rec.Metadata.RuntimeLaunchID,
+		AgentSessionID:     rec.Metadata.AgentSessionID,
+		Prompt:             rec.Metadata.Prompt,
+		PromptPolicyHash:   rec.Metadata.PromptPolicyHash,
+		PreviewURL:         rec.Metadata.PreviewURL,
+		PreviewRevision:    rec.Metadata.PreviewRevision,
+		TerminateOnPRMerge: rec.TerminateOnPRMerge,
+		CleanupGeneration:  rec.CleanupGeneration,
+		UpdatedAt:          rec.UpdatedAt,
 	}
 }
 

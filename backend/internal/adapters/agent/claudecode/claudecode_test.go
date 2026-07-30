@@ -19,6 +19,16 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
+// Claude Code must opt into AO's process supervisor so an abnormal agent exit
+// (no SessionEnd) is still detected on a keep-alive terminal. The supervisor
+// also stamps the launch id that fences stale-generation callbacks. See GH #220.
+func TestExitDetectionModeIsSupervisor(t *testing.T) {
+	p := &Plugin{}
+	if got := p.ExitDetectionMode(); got != ports.AgentExitDetectionSupervisor {
+		t.Fatalf("ExitDetectionMode() = %q, want %q", got, ports.AgentExitDetectionSupervisor)
+	}
+}
+
 func TestAvailableModelsReturnsMaintainedAliasesWithoutRunningClaude(t *testing.T) {
 	p := &Plugin{resolvedBinary: filepath.Join(t.TempDir(), "must-not-run")}
 

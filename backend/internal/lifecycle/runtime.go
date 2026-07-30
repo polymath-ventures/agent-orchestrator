@@ -24,10 +24,7 @@ func hasRecentActivity(a domain.Activity, now time.Time, window time.Duration) b
 
 func runtimeClearlyDead(f ports.RuntimeFacts, activity domain.Activity, now time.Time, window time.Duration) bool {
 	observedAt := timeOr(f.ObservedAt, now)
-	if f.Probe == ports.ProbeAgentExited {
-		return true
-	}
-	return f.Probe == ports.ProbeDead && !hasRecentActivity(activity, observedAt, window)
+	return f.Runtime == ports.ProbeDead && !hasRecentActivity(activity, observedAt, window)
 }
 
 func timeOr(t, fallback time.Time) time.Time {

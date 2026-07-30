@@ -47,16 +47,13 @@ type runtimeProber interface {
 	IsAlive(context.Context, ports.RuntimeHandle) (bool, error)
 }
 
-type runtimeProcessProber interface {
-	IsRunningCommand(context.Context, ports.RuntimeHandle, string) (bool, error)
-}
-
 // Reaper is the polling timer. Construct it with New; start the background
 // goroutine with Start, or drive a single cycle synchronously with Tick.
 type Reaper struct {
 	sink     runtimeObservationSink
 	sessions sessionSource
 	runtime  runtimeProber
+	workload ports.SupervisedProcessInspector
 	tick     time.Duration
 	clock    func() time.Time
 	logger   *slog.Logger
@@ -72,6 +69,9 @@ func New(sink runtimeObservationSink, sessions sessionSource, runtime runtimePro
 		tick:     cfg.Tick,
 		clock:    cfg.Clock,
 		logger:   cfg.Logger,
+	}
+	if workload, ok := runtime.(ports.SupervisedProcessInspector); ok {
+		r.workload = workload
 	}
 	if r.tick <= 0 {
 		r.tick = DefaultTickInterval
@@ -152,51 +152,42 @@ func (r *Reaper) probeOne(ctx context.Context, sess domain.SessionRecord, now ti
 		return
 	}
 	alive, probeErr := r.runtime.IsAlive(ctx, handle)
-	facts := ports.RuntimeFacts{ObservedAt: now}
+	facts := ports.RuntimeFacts{ObservedAt: now, LaunchID: sess.Metadata.RuntimeLaunchID, Workload: ports.ProbeFailed}
 	switch {
 	case probeErr != nil:
 		// Failed probe must NOT be collapsed to alive — that would let a
 		// transient tmux outage hide a really-dead session, and a
 		// transient adapter bug terminate a really-alive one. Report failed
 		// and let the LCM arbitrate.
-		facts.Probe = ports.ProbeFailed
+		facts.Runtime = ports.ProbeFailed
 		r.logger.Debug("reaper: probe error reported as failed fact",
 			"session", sess.ID, "err", probeErr)
-	case alive:
-		if sess.Harness.RequiresLaunchProcessLivenessSweep() {
-			running, err := r.launchProcessRunning(ctx, handle, sess.Metadata.LaunchCommand)
-			switch {
-			case err != nil:
-				facts.Probe = ports.ProbeFailed
-				r.logger.Debug("reaper: launch-process probe error reported as failed fact",
-					"session", sess.ID, "err", err)
-			case running:
-				facts.Probe = ports.ProbeAlive
-			default:
-				facts.Probe = ports.ProbeAgentExited
-			}
-		} else {
-			facts.Probe = ports.ProbeAlive
-		}
+	case !alive:
+		facts.Runtime = ports.ProbeDead
 	default:
-		facts.Probe = ports.ProbeDead
+		facts.Runtime = ports.ProbeAlive
+		if facts.LaunchID != "" && r.workload != nil {
+			workloadAlive, workloadErr := r.workload.IsSupervisedProcessAlive(ctx, handle, ports.SupervisedProcessRef{
+				SessionID: sess.ID,
+				LaunchID:  facts.LaunchID,
+			})
+			switch {
+			case workloadErr != nil:
+				facts.Workload = ports.ProbeFailed
+				r.logger.Debug("reaper: workload probe error reported as failed fact",
+					"session", sess.ID, "launch", facts.LaunchID, "err", workloadErr)
+			case workloadAlive:
+				facts.Workload = ports.ProbeAlive
+			default:
+				facts.Workload = ports.ProbeDead
+			}
+		}
 	}
 
 	if err := r.sink.ApplyRuntimeObservation(ctx, sess.ID, facts); err != nil {
 		r.logger.Error("reaper: ApplyRuntimeObservation failed",
 			"session", sess.ID, "err", err)
 	}
-}
-
-// launchProcessRunning probes whether the session's launch process is still
-// running. command is the persisted launch argv[0]; empty (legacy rows spawned
-// before it was recorded) degrades to the unfiltered any-child probe.
-func (r *Reaper) launchProcessRunning(ctx context.Context, handle ports.RuntimeHandle, command string) (bool, error) {
-	prober, ok := r.runtime.(runtimeProcessProber)
-	if !ok {
-		return true, nil
-	}
-	return prober.IsRunningCommand(ctx, handle, command)
 }
 
 // handleFromRecord reconstructs the RuntimeHandle stored on the session by

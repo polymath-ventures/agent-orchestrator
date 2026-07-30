@@ -38,10 +38,10 @@ test("mobile: browser topbar toggle opens the sidebar without macOS titlebar chr
 
 	await page.screenshot({ path: testInfo.outputPath("mobile-sidebar-open.png") });
 
-	// The topbar is inert while the modal Sheet is open; use the visible
-	// in-Sheet collapse toggle to prove the sidebar still closes via a real
-	// sidebar control (the overlay/Escape remain available too).
-	await sheet.getByRole("button", { name: "Collapse sidebar" }).click();
+	// The topbar is inert while the modal Sheet is open (its overlay intercepts
+	// the opener), so dismiss the way a mobile user does — tapping the backdrop
+	// outside the Sheet — and prove the sidebar closes.
+	await page.mouse.click(375, 420);
 	await expect(sheet).toBeHidden();
 	await expect(projectsLabel).toBeHidden();
 });

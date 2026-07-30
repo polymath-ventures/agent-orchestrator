@@ -9,8 +9,8 @@ test("the inspector rail stacks every PR a session owns, actionable-first", asyn
 	await page.goto("/");
 	await page.getByRole("button", { name: "Open auth stack" }).click();
 	await expect(page).toHaveURL(/sessions\/stacked-auth/);
-	await page.getByRole("button", { name: "Open inspector panel" }).click();
 
+	// Upstream's worker inspector rail defaults open, so it is already mounted.
 	const inspector = page.locator("#inspector");
 	await expect(inspector).toBeVisible();
 
@@ -18,6 +18,8 @@ test("the inspector rail stacks every PR a session owns, actionable-first", asyn
 	await expect(inspector.getByText("Pull requests (3)")).toBeVisible();
 
 	// One card per PR, ordered open → draft → merged (the merged base sinks).
+	// Upstream's PRSummaryCard drops the fork testid; each card leads with a
+	// "PR #<n>" label, so assert those in order.
 	const prSection = inspector.getByTestId("inspector-section").filter({ hasText: "Pull requests (3)" });
-	await expect(prSection.getByTestId("inspector-pr-card")).toHaveText([/PR #41/, /PR #42/, /PR #40/]);
+	await expect(prSection.getByText(/^PR #\d+$/)).toHaveText([/PR #41/, /PR #42/, /PR #40/]);
 });

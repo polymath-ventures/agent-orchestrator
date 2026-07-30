@@ -5,6 +5,7 @@ import { aoBridge } from "../../lib/bridge";
 import { formatTimeCompact } from "../../lib/format-time";
 import { hasElectronBridge } from "../../lib/runtime-environment";
 import { useUpdateStatus } from "../../hooks/useUpdateStatus";
+import { useUiStore } from "../../stores/ui-store";
 import type { UpdateChannel, UpdateSettings, UpdateState, UpdateStatus } from "../../../main/update-settings";
 import { ConfirmDialog } from "../ConfirmDialog";
 import { Badge } from "../ui/badge";
@@ -27,6 +28,9 @@ const CHANNEL_OPTIONS: { value: PrimaryValue; label: string }[] = [
 	{ value: "nightly", label: "Nightly (Pre-release)" },
 	{ value: "feature", label: "Feature Releases" },
 ];
+
+// Feature Releases is developer-only; hide it entirely unless Developer Mode is on.
+const NON_FEATURE_CHANNEL_OPTIONS = CHANNEL_OPTIONS.filter((option) => option.value !== "feature");
 
 const DEFAULT_SETTINGS: UpdateSettings = { enabled: false, channel: "latest", nightlyAck: false, feature: null };
 
@@ -68,6 +72,8 @@ function DesktopUpdatesSection() {
 	const [showFeature, setShowFeature] = useState(false);
 	const [pendingPin, setPendingPin] = useState<{ pr: number; title: string } | null>(null);
 
+	const developerMode = useUiStore((state) => state.developerMode);
+
 	const status = useUpdateStatus();
 	// Set only for the owned pin/home transition request, so unrelated hourly
 	// updater events cannot auto-progress through download/install.
@@ -108,7 +114,9 @@ function DesktopUpdatesSection() {
 		},
 	});
 
-	const primaryValue: PrimaryValue = form.feature != null || showFeature ? "feature" : form.channel;
+	// With Developer Mode off the "feature" value has no matching option, so fall
+	// back to the home channel to keep the dropdown showing a valid selection.
+	const primaryValue: PrimaryValue = developerMode && (form.feature != null || showFeature) ? "feature" : form.channel;
 
 	const setEnabled = (enabled: boolean) => {
 		const next = { ...formRef.current, enabled };
@@ -151,21 +159,27 @@ function DesktopUpdatesSection() {
 			void queryClient.invalidateQueries({ queryKey: updateSettingsQueryKey });
 		} catch {
 			if (autoProgressRef.current === requestId) autoProgressRef.current = null;
+			// The optimistic form update may now disagree with disk; re-sync to truth.
+			void queryClient.invalidateQueries({ queryKey: updateSettingsQueryKey });
 		}
 	};
 
 	const handleReturnToHome = async () => {
 		setShowFeature(false);
-		const next = { ...formRef.current, feature: null };
-		setForm(next);
+		// Optimistic; the main process clears the pin against persisted state.
+		setForm({ ...formRef.current, feature: null });
 		const requestId = nextUpdateRequestId();
 		autoProgressRef.current = requestId;
 		handledStatusRef.current = null;
 		try {
-			await aoBridge.updates.check({ settings: next, requestId });
+			// Single updater-serialized op: clears the pin and checks the home channel
+			// atomically, so a concurrent settings-write cannot restore the pin.
+			await aoBridge.updates.returnHome(requestId);
 			void queryClient.invalidateQueries({ queryKey: updateSettingsQueryKey });
 		} catch {
 			if (autoProgressRef.current === requestId) autoProgressRef.current = null;
+			// The optimistic form update may now disagree with disk; re-sync to truth.
+			void queryClient.invalidateQueries({ queryKey: updateSettingsQueryKey });
 		}
 	};
 
@@ -174,23 +188,31 @@ function DesktopUpdatesSection() {
 		queryFn: () => aoBridge.featureBuilds.getActive(),
 	});
 	const activeBuild = activeQuery.data ?? null;
+	// Show the escape hatch whenever a feature build is running. When Developer Mode
+	// is off, also surface a merely-pinned build: the pin stays effective in the
+	// main-process updater while the picker is hidden, so it must never be silent.
+	// With Developer Mode on the visible picker already shows the pin, so Updates
+	// behaves exactly as before (banner only for a running build).
+	const featurePr = activeBuild?.pr ?? (developerMode ? null : (form.feature?.pr ?? null));
 
 	return (
 		<>
 			<SettingsSection title="Updates" sectionId="updates">
-				{activeBuild && (
+				{featurePr != null && (
 					<div className="flex flex-col gap-2">
 						<div className="settings-row-bar h-auto min-h-(--size-settings-row) flex-wrap gap-2">
-							<Badge variant="accent">PR #{activeBuild.pr}</Badge>
+							<Badge variant="accent">PR #{featurePr}</Badge>
 							<span className="min-w-0 flex-1 text-sm leading-5 text-settings-label">
-								You are on PR #{activeBuild.pr}'s build.
+								{activeBuild
+									? `You are on PR #${featurePr}'s build.`
+									: `PR #${featurePr} is pinned but not yet installed.`}
 							</span>
 							<Button type="button" variant="outline" size="sm" onClick={() => void handleReturnToHome()}>
 								Return to {form.channel === "nightly" ? "Nightly" : "Stable"}
 							</Button>
 						</div>
 						<p className="px-1 text-xs text-settings-muted">
-							Automatic updates, if enabled, will return you to your home channel on the next check.
+							Automatic updates, if enabled, keep tracking PR #{featurePr} until you return home or the build retires.
 						</p>
 					</div>
 				)}
@@ -209,7 +231,7 @@ function DesktopUpdatesSection() {
 					<SettingsOptionMenu
 						aria-label="Updates channel"
 						value={primaryValue}
-						options={CHANNEL_OPTIONS}
+						options={developerMode ? CHANNEL_OPTIONS : NON_FEATURE_CHANNEL_OPTIONS}
 						onChange={handlePrimaryChannel}
 						disabled={!form.enabled || save.isPending}
 					/>

@@ -115,6 +115,12 @@ func (p *Plugin) EmitsSubmitActivity() bool { return true }
 // ports.ActivitySignaler.
 func (p *Plugin) EmitsBlockedActivity() bool { return false }
 
+// ExitDetectionMode opts Codex into AO's process supervisor. Codex hooks
+// expose turn boundaries but no reliable session-end event.
+func (p *Plugin) ExitDetectionMode() ports.AgentExitDetectionMode {
+	return ports.AgentExitDetectionSupervisor
+}
+
 // SteersActiveTurn is true: submitting input to the codex TUI mid-turn steers
 // the running turn rather than being swallowed or queued, so AO may write an
 // unsolicited coordination message into an active codex session. See
@@ -170,6 +176,7 @@ var _ ports.AgentNamer = (*Plugin)(nil)
 var _ ports.AgentAuthChecker = (*Plugin)(nil)
 var _ ports.AgentModelValidator = (*Plugin)(nil)
 var _ ports.AgentQuotaProber = (*Plugin)(nil)
+var _ ports.TerminalActivityDetector = (*Plugin)(nil)
 
 // Manifest returns the adapter's static self-description.
 func (p *Plugin) Manifest() adapters.Manifest {

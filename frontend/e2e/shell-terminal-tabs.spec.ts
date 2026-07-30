@@ -9,25 +9,31 @@ import { installBrowserModeApiFixtures } from "./fixtures";
 test("opens, selects, and closes standalone shell terminals from the tab strip", async ({ page }) => {
 	await installBrowserModeApiFixtures(page);
 	await page.goto("/#/projects/api-gateway/sessions/refactor-mux");
-	await expect(page.getByRole("button", { name: "New terminal" })).toBeVisible();
 
+	// Upstream replaced the standalone "New terminal" button with an "Add tab"
+	// dropdown whose "Terminal" item opens a session-scoped shell. A session pane
+	// starts with only its own tab, so no shell close buttons yet.
+	const addTab = page.getByRole("button", { name: "Add tab" });
+	await expect(addTab).toBeVisible();
 	const closeButtons = page.getByRole("button", { name: /^Close terminal / });
+	await expect(closeButtons).toHaveCount(0);
+
+	// The Add-tab menu opens a shell and makes it the active pane.
+	await addTab.click();
+	await page.getByRole("menuitem", { name: "Terminal" }).click();
 	await expect(closeButtons).toHaveCount(1);
-	const initialCount = await closeButtons.count();
 
-	// The topbar action opens a shell and makes it the active pane.
-	await page.getByRole("button", { name: "New terminal" }).click();
-	await expect(closeButtons).toHaveCount(initialCount + 1);
-
-	// Selecting the session tab hands the pane back to the agent. Matched by
-	// its accessible name: the tab's label is the session title.
-	const sessionTab = page.getByRole("button", { name: "Split terminal mux responsibilities", exact: true }).last();
+	// Selecting the session tab hands the pane back to the agent. Matched by its
+	// accessible name (the session title), scoped to the terminal pane so the
+	// sidebar's same-named session row does not collide.
+	const pane = page.locator(".terminal-pane-frame");
+	const sessionTab = pane.getByRole("button", { name: "Split terminal mux responsibilities", exact: true });
 	await sessionTab.click();
 	await expect(sessionTab).toHaveAttribute("aria-current", "true");
 
 	// Closing a shell removes exactly its own tab.
 	await closeButtons.last().click();
-	await expect(closeButtons).toHaveCount(initialCount);
+	await expect(closeButtons).toHaveCount(0);
 });
 
 // Regression: the open request used to be consumed by the session view, which

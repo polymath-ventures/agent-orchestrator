@@ -41,7 +41,7 @@ describe("useOpenShellTerminal", () => {
 		});
 
 		await act(async () => {
-			await result.current.mutateAsync(undefined, { onSuccess });
+			await result.current.mutateAsync({}, { onSuccess });
 		});
 
 		expect(onSuccess).toHaveBeenCalled();
