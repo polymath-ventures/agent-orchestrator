@@ -115,6 +115,11 @@ export function ShellTerminalTab({ shell, isActive, onSelect, onClose, onRename 
 				<button
 					ref={ref}
 					aria-current={isActive}
+					// Marks this as a terminal tab so the pane's exit-focus shortcut
+					// (Ctrl+F6) can hand focus back to the active tab. Both this shell
+					// tab and CenterPane's SessionPaneTab carry it; only the active one
+					// is aria-current, so the exit-focus query resolves uniquely.
+					data-terminal-tab="true"
 					className={cn(
 						"min-w-flex-min max-w-shell-tab-max select-none truncate font-mono text-control font-semibold transition-colors",
 						isActive ? "text-foreground" : "text-passive hover:text-foreground",

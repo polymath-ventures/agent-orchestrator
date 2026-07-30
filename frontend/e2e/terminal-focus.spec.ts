@@ -53,12 +53,13 @@ test("focus follows the terminal when another shell tab is selected", async ({ p
 	await page.getByRole("button", { name: "New terminal" }).click();
 	await expect(page.getByRole("button", { name: /^Close terminal / })).toHaveCount(2);
 
-	// Tabs are scoped by their working-dir title: the sidebar project button
-	// carries the same accessible name as the first tab. Asserting which tab is
+	// Tabs carry data-terminal-tab; the sidebar project button shares the first
+	// tab's accessible name, so scope to the tab marker and distinguish by label
+	// (existing shell "api-gateway", opened shell "shell"). Asserting which tab is
 	// current before and after the click keeps this from passing while some other
 	// terminal is the one on screen.
-	const existing = page.locator('button[title="/Users/me/api-gateway"]');
-	const opened = page.locator('button[title="/Users/me/.ao"]');
+	const existing = page.locator('[data-terminal-tab="true"]').filter({ hasText: "api-gateway" });
+	const opened = page.locator('[data-terminal-tab="true"]').filter({ hasText: "shell" });
 	await expect(opened).toHaveAttribute("aria-current", "true");
 
 	await existing.click();
@@ -68,17 +69,26 @@ test("focus follows the terminal when another shell tab is selected", async ({ p
 });
 
 // The same shells also live in a session's tab strip, reached by the same
-// controls; #131 applies there identically.
+// controls; #131 applies there identically. Upstream scopes a session pane's
+// shells to that session, so open one from the pane's Add-tab menu, hand the
+// pane back to the agent, then reselect the shell and prove focus follows it.
 test("focus follows a shell selected from a session's tab strip", async ({ page }) => {
 	await installBrowserModeApiFixtures(page);
 	await page.goto("/#/projects/api-gateway/sessions/refactor-mux");
 	await expect(page.getByTestId("session-terminal")).toBeVisible();
 
-	const shellTab = page.getByRole("button", {
-		name: "api-gateway",
-		exact: true,
-		description: "/Users/me/api-gateway",
-	});
+	await page.getByRole("button", { name: "Add tab" }).click();
+	await page.getByRole("menuitem", { name: "Terminal" }).click();
+
+	// Scope tab lookups to the terminal pane so the sidebar's same-named controls
+	// do not collide.
+	const pane = page.locator(".terminal-pane-frame");
+	const sessionTab = pane.getByRole("button", { name: "Split terminal mux responsibilities", exact: true });
+	const shellTab = pane.getByRole("button", { name: "api-gateway", exact: true });
+
+	await sessionTab.click();
+	await expect(sessionTab).toHaveAttribute("aria-current", "true");
+
 	await shellTab.click();
 	await expect(shellTab).toHaveAttribute("aria-current", "true");
 

@@ -20,11 +20,13 @@ test("the Reviews tab renders the reviewer panel for a session that owns PRs", a
 	await inspector.getByRole("tab", { name: "Reviews" }).click();
 
 	// The reviewer card surfaces the harness, its approved verdict, and both
-	// actions — never the empty state, since this session owns a PR.
+	// actions — never the empty state, since this session owns a PR. Upstream
+	// renders the verdict as a badge inside the (default-open) per-PR review row
+	// rather than an aggregate testid.
 	await expect(inspector.getByText("No pull request opened yet.")).toHaveCount(0);
 	const reviewsSection = inspector.getByTestId("inspector-section").filter({ hasText: "Reviews" });
 	await expect(reviewsSection.getByText("codex")).toBeVisible();
-	await expect(reviewsSection.getByTestId("review-aggregate-verdict")).toHaveText("Approved");
+	await expect(reviewsSection.getByText("Approved", { exact: true })).toBeVisible();
 	await expect(reviewsSection.getByRole("button", { name: "Re-run review" })).toBeVisible();
 	await expect(reviewsSection.getByRole("button", { name: "Open terminal" })).toBeVisible();
 });
