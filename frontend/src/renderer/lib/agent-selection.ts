@@ -11,6 +11,35 @@ export type AgentInventory = {
 
 export type AgentSelectionCatalog = AgentInventory;
 
+// When a role's configured harness has fully dropped out of the polled catalog
+// (the daemon degrades per-harness), the picker displays Claude Code instead of
+// a stale/unavailable harness. This is the single default fallback harness.
+export const FALLBACK_DISPLAY_HARNESS = "claude-code";
+
+// Does the catalog carry this harness id anywhere — supported, installed, or
+// authorized? A harness that appears in `supported` only (not installed or
+// authorized) still counts as present and is left displayed as-is.
+export function harnessPresentInCatalog(catalog: AgentInventory | undefined, id: string): boolean {
+	if (!id) return false;
+	for (const agents of [catalog?.supported, catalog?.installed, catalog?.authorized]) {
+		if (agents?.some((agent) => agent.id === id)) return true;
+	}
+	return false;
+}
+
+// The harness a picker should *display* for a configured selection. Display-only:
+// callers must not write the result back into saved form state. Returns the
+// configured id unchanged when it is present in the catalog (or empty, or the
+// catalog has not been polled yet); otherwise falls back to Claude Code because
+// the configured harness has disappeared from the polled catalog.
+export function effectiveDisplayHarness(configuredHarnessId: string, catalog: AgentInventory | undefined): string {
+	if (!configuredHarnessId) return configuredHarnessId;
+	// An unpolled catalog is not evidence of absence; never fall back mid-load.
+	if (catalog === undefined) return configuredHarnessId;
+	if (harnessPresentInCatalog(catalog, configuredHarnessId)) return configuredHarnessId;
+	return FALLBACK_DISPLAY_HARNESS;
+}
+
 export type AgentSelectionOptions = {
 	current?: string;
 	currentLabel?: string;

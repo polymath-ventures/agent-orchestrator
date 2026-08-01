@@ -435,6 +435,52 @@ describe("ProjectSettingsForm", () => {
 		expect(await screen.findByText(/different model family than the worker/i)).toBeInTheDocument();
 	});
 
+	it("displays Claude Code for a configured harness that has dropped out of the catalog, without rewriting the saved config", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			configETag: "etag-ghost",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "",
+			defaultBranch: "main",
+			config: {
+				// ghost-harness is absent from agentCatalogResponse entirely.
+				worker: { agent: "ghost-harness" },
+				orchestrator: { agent: "claude-code" },
+			},
+		});
+
+		renderSettings();
+
+		const workerAgent = await screen.findByRole("combobox", { name: "Default worker agent" });
+		await waitFor(() => expect(workerAgent).toHaveTextContent("Claude Code"));
+
+		// Saving without touching the picker preserves the original configured
+		// harness — the fallback is display-only.
+		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
+		const body = putMock.mock.calls[0]?.[1]?.body;
+		expect(body.config.worker.agent).toBe("ghost-harness");
+	}, 20_000);
+
+	it("explains that unavailable harnesses fall back to Claude Code", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "",
+			defaultBranch: "main",
+			config: { worker: { agent: "codex" }, orchestrator: { agent: "claude-code" } },
+		});
+
+		renderSettings();
+
+		expect(await screen.findByText(/polled from the server/i)).toBeInTheDocument();
+	});
+
 	it("surfaces a fail-closed inspector error instead of a prompt", async () => {
 		getMock.mockImplementation(async (path: string) => {
 			if (path === "/api/v1/agents") return agentCatalogResponse;
@@ -794,23 +840,20 @@ describe("ProjectSettingsForm", () => {
 	});
 
 	it("restarts when the saved orchestrator agent already differs from the running orchestrator", async () => {
-		getMock.mockResolvedValue({
-			data: {
-				status: "ok",
-				project: {
-					id: "proj-1",
-					name: "Project One",
-					kind: "single_repo",
-					path: "/repo/project-one",
-					repo: "",
-					defaultBranch: "main",
-					config: {
-						worker: { agent: "codex" },
-						orchestrator: { agent: "goose" },
-					},
-				},
+		// Serve a real agent catalog (goose is present) so the orchestrator picker
+		// deterministically displays "goose" instead of the disappeared-harness
+		// Claude Code fallback.
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "",
+			defaultBranch: "main",
+			config: {
+				worker: { agent: "codex" },
+				orchestrator: { agent: "goose" },
 			},
-			error: undefined,
 		});
 
 		renderSettings("proj-1", [

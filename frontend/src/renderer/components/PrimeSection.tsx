@@ -5,7 +5,11 @@ import type { components } from "../../api/schema";
 import { agentsQueryOptions } from "../hooks/useAgentsQuery";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { useModelAvailabilityQuery, useRefreshModelAvailability } from "../hooks/useModelAvailabilityQuery";
-import { filterModelAvailabilityToSelectableAgents, modelAvailabilityFromAgentInventory } from "../lib/agent-selection";
+import {
+	effectiveDisplayHarness,
+	filterModelAvailabilityToSelectableAgents,
+	modelAvailabilityFromAgentInventory,
+} from "../lib/agent-selection";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { primeSettingsQueryKey, primeSettingsQueryOptions } from "../hooks/usePrimeSettingsQuery";
 import { ModelAvailabilityField, type ModelSelection } from "./ModelAvailabilityField";
@@ -74,8 +78,11 @@ export function PrimeSection() {
 	});
 
 	const busy = query.isLoading || mutation.isPending;
+	// Display-only: if the saved Prime harness has dropped out of the polled
+	// catalog, show Claude Code instead of the stale harness. `form.agent` (the
+	// saved value) is untouched here; only an explicit user selection updates it.
 	const modelSelection: ModelSelection = {
-		harness: form.agent ?? "",
+		harness: effectiveDisplayHarness(form.agent ?? "", agentsQuery.data),
 		model: form.agentConfig?.model ?? "",
 		effort: form.agentConfig?.effort ?? "",
 	};

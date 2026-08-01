@@ -286,6 +286,57 @@ describe("PrimeSection", () => {
 		});
 	});
 
+	it("displays Claude Code when the saved Prime harness has dropped out of the catalog, preserving the saved harness on save", async () => {
+		const user = userEvent.setup();
+		primeSettings = {
+			...primeSettings,
+			agent: "ghost-harness",
+			agentConfig: { model: "ghost-model", effort: "high", permissions: "auto" },
+		};
+		agentCatalog = {
+			supported: [
+				...(agentCatalog.supported ?? []),
+				{ id: "claude-code", label: "Claude Code", reviewerCapable: true },
+			],
+			installed: [
+				...(agentCatalog.installed ?? []),
+				{ id: "claude-code", label: "Claude Code", authStatus: "authorized", reviewerCapable: true },
+			],
+			authorized: [
+				...(agentCatalog.authorized ?? []),
+				{ id: "claude-code", label: "Claude Code", authStatus: "authorized", reviewerCapable: true },
+			],
+		};
+		modelAvailabilityResult = {
+			data: {
+				...modelAvailability,
+				harnesses: [
+					...modelAvailability.harnesses,
+					{
+						id: "claude-code",
+						label: "Claude Code",
+						reviewerCapable: true,
+						catalogSource: "known-set",
+						catalogVerified: false,
+						models: [],
+					},
+				],
+			},
+			error: undefined,
+		};
+
+		renderPrimeSection();
+
+		await waitFor(() => expect(screen.getByLabelText("Harness")).toHaveValue("claude-code"));
+
+		await user.click(screen.getByRole("button", { name: "Save Prime" }));
+
+		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
+		expect(putMock).toHaveBeenCalledWith("/api/v1/prime/settings", {
+			body: { settings: expect.objectContaining({ agent: "ghost-harness" }) },
+		});
+	});
+
 	it("rejects wake intervals outside the supported minute range before saving", async () => {
 		const user = userEvent.setup();
 		renderPrimeSection();
