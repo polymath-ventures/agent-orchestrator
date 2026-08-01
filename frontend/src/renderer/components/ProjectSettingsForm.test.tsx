@@ -57,7 +57,7 @@ const agentCatalogResponse = {
 		supported: [
 			{ id: "claude-code", label: "Claude Code", reviewerCapable: true },
 			{ id: "codex", label: "Codex", reviewerCapable: true },
-			{ id: "codex-fugu", label: "Codex Fugu", reviewerCapable: false },
+			{ id: "codex-fugu", label: "Codex Fugu", reviewerCapable: true },
 			{ id: "goose", label: "Goose", reviewerCapable: false },
 			{ id: "kiro", label: "Kiro", reviewerCapable: false },
 			{ id: "opencode", label: "OpenCode", reviewerCapable: true },
@@ -65,7 +65,7 @@ const agentCatalogResponse = {
 		installed: [
 			{ id: "claude-code", label: "Claude Code", authStatus: "authorized", reviewerCapable: true },
 			{ id: "codex", label: "Codex", authStatus: "authorized", reviewerCapable: true },
-			{ id: "codex-fugu", label: "Codex Fugu", authStatus: "authorized", reviewerCapable: false },
+			{ id: "codex-fugu", label: "Codex Fugu", authStatus: "authorized", reviewerCapable: true },
 			{ id: "goose", label: "Goose", authStatus: "authorized", reviewerCapable: false },
 			{ id: "kiro", label: "Kiro", authStatus: "unknown", reviewerCapable: false },
 			{ id: "opencode", label: "OpenCode", authStatus: "authorized", reviewerCapable: true },
@@ -73,7 +73,7 @@ const agentCatalogResponse = {
 		authorized: [
 			{ id: "claude-code", label: "Claude Code", authStatus: "authorized", reviewerCapable: true },
 			{ id: "codex", label: "Codex", authStatus: "authorized", reviewerCapable: true },
-			{ id: "codex-fugu", label: "Codex Fugu", authStatus: "authorized", reviewerCapable: false },
+			{ id: "codex-fugu", label: "Codex Fugu", authStatus: "authorized", reviewerCapable: true },
 			{ id: "goose", label: "Goose", authStatus: "authorized", reviewerCapable: false },
 			{ id: "opencode", label: "OpenCode", authStatus: "authorized", reviewerCapable: true },
 		],
@@ -112,7 +112,7 @@ const modelCatalogResponse = {
 			{
 				id: "codex-fugu",
 				label: "Codex Fugu",
-				reviewerCapable: false,
+				reviewerCapable: true,
 				catalogSource: "adapter",
 				catalogVerified: true,
 				models: [{ model: "fugu", label: "Fugu", efforts: ["xhigh"], verified: true, status: "reachable" }],
@@ -396,6 +396,43 @@ describe("ProjectSettingsForm", () => {
 		expect(await screen.findByRole("combobox", { name: "Default reviewer agent" })).toHaveTextContent(
 			"Automatic independent reviewer",
 		);
+	});
+
+	it("offers Codex Fugu as a selectable reviewer", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "",
+			defaultBranch: "main",
+			config: { worker: { agent: "codex" }, orchestrator: { agent: "claude-code" } },
+		});
+
+		renderSettings();
+
+		const reviewerAgent = await screen.findByRole("combobox", { name: "Default reviewer agent" });
+		await userEvent.click(reviewerAgent);
+		const options = await screen.findAllByRole("option");
+		const fugu = options.find((option) => option.textContent === "Codex Fugu");
+		expect(fugu).toBeDefined();
+		expect(fugu).not.toHaveAttribute("aria-disabled", "true");
+	});
+
+	it("explains what the automatic independent reviewer does", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "",
+			defaultBranch: "main",
+			config: { worker: { agent: "codex" }, orchestrator: { agent: "claude-code" } },
+		});
+
+		renderSettings();
+
+		expect(await screen.findByText(/different model family than the worker/i)).toBeInTheDocument();
 	});
 
 	it("surfaces a fail-closed inspector error instead of a prompt", async () => {
@@ -1096,7 +1133,7 @@ describe("ProjectSettingsForm", () => {
 		await userEvent.keyboard("{Escape}");
 		const reviewerHarness = screen.getByRole("combobox", { name: "Default reviewer agent" });
 		await userEvent.click(reviewerHarness);
-		expect(screen.queryByRole("option", { name: "Codex Fugu" })).not.toBeInTheDocument();
+		expect(await screen.findByRole("option", { name: "Codex Fugu" })).toBeInTheDocument();
 		await userEvent.keyboard("{Escape}");
 
 		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
@@ -1170,8 +1207,12 @@ describe("ProjectSettingsForm", () => {
 		await userEvent.click(reviewerHarness);
 		expect(await screen.findByRole("option", { name: "Codex" })).toBeInTheDocument();
 		expect(screen.getByRole("option", { name: "OpenCode" })).toBeInTheDocument();
+		expect(screen.getByRole("option", { name: "Codex Fugu" })).toBeInTheDocument();
+		// Goose is not reviewer-capable but is preserved because it is the current
+		// (legacy) reviewer selection; Kiro is non-capable and not current, so the
+		// capability filter drops it.
 		expect(screen.getByRole("option", { name: "Goose" })).toBeInTheDocument();
-		expect(screen.queryByRole("option", { name: "Codex Fugu" })).not.toBeInTheDocument();
+		expect(screen.queryByRole("option", { name: "Kiro" })).not.toBeInTheDocument();
 	});
 
 	it("restores each worker harness pair and clears a harness with no saved pair", async () => {

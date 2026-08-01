@@ -132,7 +132,8 @@ func TestListReturnsInitialSupportedInventoryWithoutProbing(t *testing.T) {
 func TestInventoryDerivesReviewerCapabilityFromHarness(t *testing.T) {
 	svc := NewWithAgents([]agentregistry.HarnessAgent{
 		harnessAuthAgent(string(domain.HarnessOpenCode), "OpenCode", ports.AgentAuthStatusAuthorized, nil),
-		harnessAuthAgent(string(domain.HarnessCodexFugu), "Codex Fugu", ports.AgentAuthStatusUnauthorized, nil),
+		harnessAuthAgent(string(domain.HarnessCodexFugu), "Codex Fugu", ports.AgentAuthStatusAuthorized, nil),
+		harnessAuthAgent(string(domain.HarnessGrok), "Grok", ports.AgentAuthStatusAuthorized, nil),
 	})
 
 	initial, err := svc.List(context.Background())
@@ -174,7 +175,8 @@ func TestInventoryDerivesReviewerCapabilityFromHarness(t *testing.T) {
 		want bool
 	}{
 		{id: string(domain.HarnessOpenCode), want: true},
-		{id: string(domain.HarnessCodexFugu), want: false},
+		{id: string(domain.HarnessCodexFugu), want: true},
+		{id: string(domain.HarnessGrok), want: false},
 	} {
 		got, err := svc.Probe(context.Background(), tc.id)
 		if err != nil {
@@ -201,8 +203,14 @@ func assertReviewerCapabilities(t *testing.T, infos []Info) {
 	if !byID[string(domain.HarnessOpenCode)].ReviewerCapable {
 		t.Fatalf("opencode = %#v, want reviewer capable", byID[string(domain.HarnessOpenCode)])
 	}
-	if byID[string(domain.HarnessCodexFugu)].ReviewerCapable {
-		t.Fatalf("codex-fugu = %#v, want worker-only", byID[string(domain.HarnessCodexFugu)])
+	// Codex Fugu is a distinct review family and a registered reviewer harness,
+	// so it is reviewer capable alongside plain Codex.
+	if !byID[string(domain.HarnessCodexFugu)].ReviewerCapable {
+		t.Fatalf("codex-fugu = %#v, want reviewer capable", byID[string(domain.HarnessCodexFugu)])
+	}
+	// Grok is not in the reviewer vocabulary, so it stays worker-only.
+	if byID[string(domain.HarnessGrok)].ReviewerCapable {
+		t.Fatalf("grok = %#v, want worker-only", byID[string(domain.HarnessGrok)])
 	}
 }
 

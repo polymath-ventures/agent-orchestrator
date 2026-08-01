@@ -12,19 +12,29 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
-// Reviewer is the codex code-review adapter.
+// Reviewer is the codex code-review adapter. It backs both plain Codex and
+// Codex Fugu: the review invocation is identical, only the underlying worker
+// agent binary (and therefore the reported harness) differs.
 type Reviewer struct {
-	agent ports.Agent
+	agent   ports.Agent
+	harness domain.ReviewerHarness
 }
 
 // New builds the codex reviewer adapter.
 func New() *Reviewer {
-	return &Reviewer{agent: workeragent.New()}
+	return &Reviewer{agent: workeragent.New(), harness: domain.ReviewerCodex}
+}
+
+// NewFugu builds the Codex Fugu reviewer adapter. Fugu is a distinct review
+// family (for review independence) that runs through the same read-only
+// sandboxed Codex review path.
+func NewFugu() *Reviewer {
+	return &Reviewer{agent: workeragent.NewFugu(), harness: domain.ReviewerCodexFugu}
 }
 
 // Harness identifies this reviewer in the reviewer registry.
 func (r *Reviewer) Harness() domain.ReviewerHarness {
-	return domain.ReviewerCodex
+	return r.harness
 }
 
 var _ ports.Reviewer = (*Reviewer)(nil)
