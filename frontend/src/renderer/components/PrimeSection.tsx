@@ -78,11 +78,14 @@ export function PrimeSection() {
 	});
 
 	const busy = query.isLoading || mutation.isPending;
-	// Display-only: if the saved Prime harness has dropped out of the polled
-	// catalog, show Claude Code instead of the stale harness. `form.agent` (the
-	// saved value) is untouched here; only an explicit user selection updates it.
+	// Display-only: if the saved Prime harness has dropped out of the polled model
+	// catalog (the daemon omits a harness whose binary is missing), show Claude
+	// Code instead of the stale harness. Keyed on the raw polled availability, not
+	// the inventory — a missing harness lingers in the inventory but is absent from
+	// the catalog. `form.agent` (the saved value) is untouched here; only an
+	// explicit user selection updates it.
 	const modelSelection: ModelSelection = {
-		harness: effectiveDisplayHarness(form.agent ?? "", agentsQuery.data),
+		harness: effectiveDisplayHarness(form.agent ?? "", modelAvailabilityQuery.data),
 		model: form.agentConfig?.model ?? "",
 		effort: form.agentConfig?.effort ?? "",
 	};

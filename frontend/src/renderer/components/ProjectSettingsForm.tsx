@@ -692,11 +692,13 @@ function HarnessModelRow({
 	onRefreshModels: () => void | Promise<unknown>;
 	onChange: (selection: ModelSelection) => void;
 }) {
-	// Display-only: if the configured harness has dropped out of the polled
-	// catalog, the picker shows Claude Code instead of the stale harness. The
-	// saved form state is never rewritten here — only an explicit user selection
-	// (changeHarness) mutates it.
-	const displayHarness = effectiveDisplayHarness(selection.harness, agentCatalog);
+	// Display-only: if the configured harness has dropped out of the polled model
+	// catalog (the daemon omits a harness whose binary is missing), the picker
+	// shows Claude Code instead of the stale harness. Keyed on `availability`, not
+	// the inventory — a missing harness lingers in the inventory's supported set
+	// but is absent from availability. The saved form state is never rewritten
+	// here — only an explicit user selection (changeHarness) mutates it.
+	const displayHarness = effectiveDisplayHarness(selection.harness, availability);
 	const scopedAvailability = filterModelAvailabilityToSelectableAgents(availability, agentCatalog, {
 		current: displayHarness,
 		reviewerOnly,

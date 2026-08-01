@@ -435,20 +435,38 @@ describe("ProjectSettingsForm", () => {
 		expect(await screen.findByText(/different model family than the worker/i)).toBeInTheDocument();
 	});
 
-	it("displays Claude Code for a configured harness that has dropped out of the catalog, without rewriting the saved config", async () => {
-		mockProject({
-			id: "proj-1",
-			name: "Project One",
-			configETag: "etag-ghost",
-			kind: "single_repo",
-			path: "/repo/project-one",
-			repo: "",
-			defaultBranch: "main",
-			config: {
-				// ghost-harness is absent from agentCatalogResponse entirely.
-				worker: { agent: "ghost-harness" },
-				orchestrator: { agent: "claude-code" },
+	it("displays Claude Code when the configured harness is omitted from the degraded model catalog, without rewriting the saved config", async () => {
+		// The real degradation case: opencode's binary is gone, so the daemon omits
+		// it from /api/v1/agents/models — but it is STILL in the /api/v1/agents
+		// inventory's supported list. Keying the fallback off the inventory would
+		// miss this; it must key off the polled model catalog.
+		const degradedModelCatalog = {
+			data: {
+				...modelCatalogResponse.data,
+				harnesses: modelCatalogResponse.data.harnesses.filter((h) => h.id !== "opencode"),
 			},
+			error: undefined,
+		};
+		getMock.mockImplementation(async (path: string) => {
+			if (path === "/api/v1/agents") return agentCatalogResponse; // opencode present in `supported`
+			if (path === "/api/v1/agents/models") return degradedModelCatalog; // opencode omitted
+			if (path.includes("/roles/") && path.endsWith("/prompt")) return { data: { prompt: "" }, error: undefined };
+			return {
+				data: {
+					status: "ok",
+					project: {
+						id: "proj-1",
+						name: "Project One",
+						configETag: "etag-degraded",
+						kind: "single_repo",
+						path: "/repo/project-one",
+						repo: "",
+						defaultBranch: "main",
+						config: { worker: { agent: "opencode" }, orchestrator: { agent: "claude-code" } },
+					},
+				},
+				error: undefined,
+			};
 		});
 
 		renderSettings();
@@ -462,7 +480,7 @@ describe("ProjectSettingsForm", () => {
 
 		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
 		const body = putMock.mock.calls[0]?.[1]?.body;
-		expect(body.config.worker.agent).toBe("ghost-harness");
+		expect(body.config.worker.agent).toBe("opencode");
 	}, 20_000);
 
 	it("explains that unavailable harnesses fall back to Claude Code", async () => {
