@@ -462,6 +462,7 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 						availability={effectiveModelAvailability}
 						allowDefaultHarness
 						defaultHarnessLabel="Automatic independent reviewer"
+						description="Automatic independent reviewer picks a reviewer from a different model family than the worker, so every change gets an independent review. Choose a specific harness to override that."
 						disabled={agentSelectorsDisabled}
 						reviewerOnly
 						isRefreshingModels={isRefreshingModels || modelAvailabilityQuery.isFetching}
@@ -660,6 +661,7 @@ function HarnessModelRow({
 	allowDefaultHarness = false,
 	allowScalar = false,
 	defaultHarnessLabel = "Project default",
+	description,
 	disabled = false,
 	reviewerOnly = false,
 	invalidHarness = false,
@@ -677,6 +679,7 @@ function HarnessModelRow({
 	allowDefaultHarness?: boolean;
 	allowScalar?: boolean;
 	defaultHarnessLabel?: string;
+	description?: string;
 	disabled?: boolean;
 	reviewerOnly?: boolean;
 	invalidHarness?: boolean;
@@ -705,40 +708,43 @@ function HarnessModelRow({
 	};
 
 	return (
-		<div className="grid gap-3 rounded-md border border-border px-3 py-3 md:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
-			<RequiredAgentField
-				id={`${id}-harness`}
-				value={harnessValue}
-				placeholder={`Select ${harnessLabel.toLowerCase()}`}
-				label={harnessLabel}
-				authorized={scopedCatalog.authorized}
-				installed={scopedCatalog.installed}
-				supported={scopedCatalog.supported}
-				disabled={disabled}
-				invalid={invalidHarness}
-				onChange={changeHarness}
-				// ModelAvailabilityField's header row is exactly h-control-form tall (the
-				// refresh button's height token), so pin this label to the same token —
-				// not a hand-matched pixel value — to keep the two columns' controls on
-				// the same row regardless of future header changes.
-				labelClassName="flex h-control-form items-center"
-				fieldGapClassName="gap-2"
-			/>
-			<ModelAvailabilityField
-				id={id}
-				label={modelLabel}
-				value={selection}
-				onChange={onChange}
-				availability={scopedAvailability}
-				configuredPins={configuredPins}
-				disabled={disabled || (selection.harness === "" && !allowScalar)}
-				isRefreshing={isRefreshingModels}
-				onRefresh={onRefreshModels}
-				showHarness={false}
-				fieldLabelsVisible={false}
-				emptyLabel="Inherit default"
-				showManualModelNotice
-			/>
+		<div className="rounded-md border border-border px-3 py-3">
+			<div className="grid gap-3 md:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
+				<RequiredAgentField
+					id={`${id}-harness`}
+					value={harnessValue}
+					placeholder={`Select ${harnessLabel.toLowerCase()}`}
+					label={harnessLabel}
+					authorized={scopedCatalog.authorized}
+					installed={scopedCatalog.installed}
+					supported={scopedCatalog.supported}
+					disabled={disabled}
+					invalid={invalidHarness}
+					onChange={changeHarness}
+					// ModelAvailabilityField's header row is exactly h-control-form tall (the
+					// refresh button's height token), so pin this label to the same token —
+					// not a hand-matched pixel value — to keep the two columns' controls on
+					// the same row regardless of future header changes.
+					labelClassName="flex h-control-form items-center"
+					fieldGapClassName="gap-2"
+				/>
+				<ModelAvailabilityField
+					id={id}
+					label={modelLabel}
+					value={selection}
+					onChange={onChange}
+					availability={scopedAvailability}
+					configuredPins={configuredPins}
+					disabled={disabled || (selection.harness === "" && !allowScalar)}
+					isRefreshing={isRefreshingModels}
+					onRefresh={onRefreshModels}
+					showHarness={false}
+					fieldLabelsVisible={false}
+					emptyLabel="Inherit default"
+					showManualModelNotice
+				/>
+			</div>
+			{description ? <p className="mt-2 text-xs leading-row text-muted-foreground">{description}</p> : null}
 		</div>
 	);
 }

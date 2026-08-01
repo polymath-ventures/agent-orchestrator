@@ -12,6 +12,7 @@ type ReviewerHarness string
 const (
 	ReviewerClaudeCode ReviewerHarness = "claude-code"
 	ReviewerCodex      ReviewerHarness = "codex"
+	ReviewerCodexFugu  ReviewerHarness = "codex-fugu"
 	ReviewerOpenCode   ReviewerHarness = "opencode"
 )
 
@@ -20,6 +21,7 @@ const (
 var AllReviewerHarnesses = []ReviewerHarness{
 	ReviewerClaudeCode,
 	ReviewerCodex,
+	ReviewerCodexFugu,
 	ReviewerOpenCode,
 }
 
@@ -41,6 +43,8 @@ func (h ReviewerHarness) AgentHarness() AgentHarness {
 		return HarnessClaudeCode
 	case ReviewerCodex:
 		return HarnessCodex
+	case ReviewerCodexFugu:
+		return HarnessCodexFugu
 	case ReviewerOpenCode:
 		return HarnessOpenCode
 	default:

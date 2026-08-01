@@ -180,6 +180,9 @@ func TestModelAvailabilityMarksReviewerCapabilityFromDomainVocabulary(t *testing
 		harnessCatalogAgent(domain.HarnessCodexFugu, "Codex Fugu", &catalogProbeAgent{
 			catalog: []ports.ModelCatalogEntry{{ID: "fugu", Label: "Fugu"}},
 		}),
+		harnessCatalogAgent(domain.HarnessGrok, "Grok", &catalogProbeAgent{
+			catalog: []ports.ModelCatalogEntry{{ID: "grok", Label: "Grok"}},
+		}),
 	})
 
 	got, err := svc.ModelAvailability(context.Background(), ModelAvailabilityRequest{Force: true})
@@ -193,8 +196,14 @@ func TestModelAvailabilityMarksReviewerCapabilityFromDomainVocabulary(t *testing
 	if !byID[string(domain.HarnessOpenCode)].ReviewerCapable {
 		t.Fatalf("opencode = %#v, want reviewer capable", byID[string(domain.HarnessOpenCode)])
 	}
-	if byID[string(domain.HarnessCodexFugu)].ReviewerCapable {
-		t.Fatalf("codex-fugu = %#v, want worker-only", byID[string(domain.HarnessCodexFugu)])
+	// Codex Fugu is a registered reviewer harness (distinct review family), so it
+	// derives reviewer capability from the domain vocabulary like plain Codex.
+	if !byID[string(domain.HarnessCodexFugu)].ReviewerCapable {
+		t.Fatalf("codex-fugu = %#v, want reviewer capable", byID[string(domain.HarnessCodexFugu)])
+	}
+	// Grok is not in the reviewer vocabulary, so it stays worker-only.
+	if byID[string(domain.HarnessGrok)].ReviewerCapable {
+		t.Fatalf("grok = %#v, want worker-only", byID[string(domain.HarnessGrok)])
 	}
 }
 

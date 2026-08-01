@@ -54,3 +54,16 @@ func TestNewResolverResolvesShippedReviewers(t *testing.T) {
 		t.Error("resolver returned an adapter for an unknown harness")
 	}
 }
+
+// TestResolverResolvesCodexFugu pins that Codex Fugu is a registered reviewer,
+// so a project can pick it explicitly instead of only through the automatic
+// cross-family default.
+func TestResolverResolvesCodexFugu(t *testing.T) {
+	resolver, err := NewResolver()
+	if err != nil {
+		t.Fatalf("NewResolver: %v", err)
+	}
+	if _, ok := resolver.Reviewer(domain.ReviewerHarness("codex-fugu")); !ok {
+		t.Fatal("codex-fugu has no registered reviewer adapter")
+	}
+}

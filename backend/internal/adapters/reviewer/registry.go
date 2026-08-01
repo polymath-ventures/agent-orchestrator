@@ -25,6 +25,7 @@ func Constructors() []Adapter {
 	return []Adapter{
 		claudecode.New(),
 		codex.New(),
+		codex.NewFugu(),
 		opencode.New(),
 	}
 }
