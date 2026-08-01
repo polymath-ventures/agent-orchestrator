@@ -474,6 +474,11 @@ describe("ProjectSettingsForm", () => {
 		const workerAgent = await screen.findByRole("combobox", { name: "Default worker agent" });
 		await waitFor(() => expect(workerAgent).toHaveTextContent("Claude Code"));
 
+		// The model/effort field is disabled while the harness display has fallen
+		// back, so edits can't silently apply to the now-missing harness under a
+		// "Claude Code" label.
+		expect(document.getElementById("worker-model-model")).toBeDisabled();
+
 		// Saving without touching the picker preserves the original configured
 		// harness — the fallback is display-only.
 		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));

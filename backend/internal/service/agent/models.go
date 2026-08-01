@@ -189,8 +189,8 @@ func (s *Service) freshModelAvailability(ctx context.Context, req ModelAvailabil
 			if firstCatalogErr == nil {
 				firstCatalogErr = err
 			}
-			slog.Warn("model catalog unavailable; omitting harness from availability",
-				"harness", item.Harness, "err", err)
+			slog.WarnContext(ctx, "model catalog unavailable; omitting harness from availability",
+				"harness", string(item.Harness), "err", err)
 			continue
 		}
 		harnessIndex := len(harnesses)

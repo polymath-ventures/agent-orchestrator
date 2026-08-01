@@ -699,6 +699,14 @@ function HarnessModelRow({
 	// but is absent from availability. The saved form state is never rewritten
 	// here — only an explicit user selection (changeHarness) mutates it.
 	const displayHarness = effectiveDisplayHarness(selection.harness, availability);
+	// When the display has fallen back to Claude Code because the configured
+	// harness disappeared, the harness shown and the saved harness diverge. Do not
+	// let the model/effort field keep editing the now-missing harness underneath a
+	// "Claude Code" label: show it empty and disabled until the user explicitly
+	// picks a harness (which resets both through changeHarness). Saved state stays
+	// untouched — this is still display-only.
+	const harnessFellBack = displayHarness !== selection.harness;
+	const modelFieldValue = harnessFellBack ? { harness: displayHarness, model: "", effort: "" } : selection;
 	const scopedAvailability = filterModelAvailabilityToSelectableAgents(availability, agentCatalog, {
 		current: displayHarness,
 		reviewerOnly,
@@ -750,11 +758,11 @@ function HarnessModelRow({
 				<ModelAvailabilityField
 					id={id}
 					label={modelLabel}
-					value={selection}
+					value={modelFieldValue}
 					onChange={onChange}
 					availability={scopedAvailability}
 					configuredPins={configuredPins}
-					disabled={disabled || (selection.harness === "" && !allowScalar)}
+					disabled={disabled || (selection.harness === "" && !allowScalar) || harnessFellBack}
 					isRefreshing={isRefreshingModels}
 					onRefresh={onRefreshModels}
 					showHarness={false}

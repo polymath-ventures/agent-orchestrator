@@ -84,10 +84,16 @@ export function PrimeSection() {
 	// the inventory — a missing harness lingers in the inventory but is absent from
 	// the catalog. `form.agent` (the saved value) is untouched here; only an
 	// explicit user selection updates it.
+	const primeDisplayHarness = effectiveDisplayHarness(form.agent ?? "", modelAvailabilityQuery.data);
+	// When the display falls back to Claude Code, blank the model/effort too so the
+	// field is internally consistent (Claude Code + empty) rather than showing the
+	// missing harness's stale model under a "Claude Code" label. `form.agent` and
+	// the saved config stay untouched until the user actively edits the field.
+	const primeHarnessFellBack = primeDisplayHarness !== (form.agent ?? "");
 	const modelSelection: ModelSelection = {
-		harness: effectiveDisplayHarness(form.agent ?? "", modelAvailabilityQuery.data),
-		model: form.agentConfig?.model ?? "",
-		effort: form.agentConfig?.effort ?? "",
+		harness: primeDisplayHarness,
+		model: primeHarnessFellBack ? "" : (form.agentConfig?.model ?? ""),
+		effort: primeHarnessFellBack ? "" : (form.agentConfig?.effort ?? ""),
 	};
 	const inventoryModelAvailability = modelAvailabilityFromAgentInventory(agentsQuery.data, {
 		current: modelSelection.harness,
