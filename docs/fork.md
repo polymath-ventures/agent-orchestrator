@@ -52,7 +52,13 @@ working (not a specific UI shape unless stated).
 2. **Terminal auto-focus.** A terminal pane takes keyboard focus when it appears
    or is selected, so the user types without clicking (`focusRequest`/`autoFocus`,
    `data-terminal-tab` + `focusActiveTerminalTab`, plus the Ctrl+F6
-   exit-focus escape hatch).
+   exit-focus escape hatch). Sync anchors: `SessionView` issues session-route
+   focus requests, `TerminalPane` gates and preserves them until an attachable
+   terminal handle exists, `XtermTerminal` focuses xterm's helper textarea, and
+   `ShellTerminalsView`/`CenterPane` pass activation requests for shell and
+   session-tab selection. Regression coverage lives in
+   `frontend/e2e/terminal-focus.spec.ts` and the matching component tests.
+   Reference issues/PRs: #131, #136, #230.
 3. **Quota & usage tracking.** Per-turn usage telemetry and quota snapshots from
    agent hooks (`usageTelemetryEvent`, `acceptedQuotaSnapshots`, the quota
    probers under `service/agent/quota`), plus model-health / candidate-health.
