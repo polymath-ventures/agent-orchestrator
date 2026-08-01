@@ -252,6 +252,13 @@ export function SessionView({ sessionId, tabOwnerSessionId }: SessionViewProps) 
 		setFilesPoppedOut(false);
 	}, [sessionId]);
 
+	// #131: opening/selecting a session route is a user activation of the
+	// terminal surface. Send that activation at the route owner, then let
+	// TerminalPane preserve it until xterm has a handle to focus.
+	useEffect(() => {
+		requestTerminalFocus();
+	}, [requestTerminalFocus, sessionId]);
+
 	// The pane shows one terminal at a time, so selecting a shell or the reviewer
 	// takes the agent's terminal off screen while the route still points here.
 	// Publish which one is showing: the notification runtime lives outside this
@@ -343,6 +350,7 @@ export function SessionView({ sessionId, tabOwnerSessionId }: SessionViewProps) 
 		inspectorDefaultSizeRef.current = isInspectorOpen ? `${initialSplitPercent()}%` : "0%";
 	}
 	const inspectorDefaultSize = inspectorDefaultSizeRef.current ?? "0%";
+	const centerPopOutOpen = browserPoppedOut || filesPoppedOut;
 
 	useEffect(() => {
 		if (!hasInspector) return;
@@ -447,7 +455,7 @@ export function SessionView({ sessionId, tabOwnerSessionId }: SessionViewProps) 
 						session={session}
 						projectSessions={projectSessions}
 						shellTerminals={shellTerminals}
-						focusRequest={terminalFocusRequest}
+						focusRequest={centerPopOutOpen ? undefined : terminalFocusRequest}
 						tabOwnerSessionId={ownerSessionId}
 						terminalTarget={terminalTarget}
 						theme={theme}
