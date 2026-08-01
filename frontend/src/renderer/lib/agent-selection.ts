@@ -11,6 +11,32 @@ export type AgentInventory = {
 
 export type AgentSelectionCatalog = AgentInventory;
 
+// When a role's configured harness has dropped out of the polled model catalog
+// (the daemon degrades per-harness and omits a harness whose binary is missing),
+// the picker displays Claude Code instead of a stale/unavailable harness. This
+// is the single default fallback harness.
+export const FALLBACK_DISPLAY_HARNESS = "claude-code";
+
+// The harness a picker should *display* for a configured selection. Display-only:
+// callers must not write the result back into saved form state.
+//
+// The signal is the polled model-availability response — NOT the raw agent
+// inventory. A missing-binary harness (e.g. opencode) is still listed in the
+// inventory's `supported` set, but the daemon omits it from `/api/v1/agents/models`,
+// so keying off availability is what actually catches the per-harness degradation
+// this fixes. Returns the configured id unchanged when it is empty, when the
+// catalog has not been polled yet (undefined — absence is not evidence of
+// removal), or when the catalog still carries it; otherwise falls back to Claude.
+export function effectiveDisplayHarness(
+	configuredHarnessId: string,
+	availability: AgentModelAvailabilityResponse | undefined,
+): string {
+	if (!configuredHarnessId) return configuredHarnessId;
+	if (availability === undefined) return configuredHarnessId;
+	const present = (availability.harnesses ?? []).some((harness) => harness.id === configuredHarnessId);
+	return present ? configuredHarnessId : FALLBACK_DISPLAY_HARNESS;
+}
+
 export type AgentSelectionOptions = {
 	current?: string;
 	currentLabel?: string;

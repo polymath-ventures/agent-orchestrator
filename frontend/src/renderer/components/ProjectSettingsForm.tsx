@@ -13,6 +13,7 @@ import { apiClient, apiErrorMessage } from "../lib/api-client";
 import {
 	agentDisplayLabel,
 	type AgentInfo,
+	effectiveDisplayHarness,
 	filterModelAvailabilityToSelectableAgents,
 	modelAvailabilityFromAgentInventory,
 	selectableAgentCatalog,
@@ -383,6 +384,10 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 						Each role keeps an independent harness-native model and effort pair. Switching harnesses restores that
 						harness's saved pair or clears the fields when none exists.
 					</p>
+					<p className="text-xs leading-row text-muted-foreground">
+						Harnesses are polled from the server. If a harness becomes unavailable without a settings change, it is
+						dropped from the list and the selection falls back to Claude Code.
+					</p>
 					<HarnessModelRow
 						id="project-model"
 						harnessLabel="Project model harness"
@@ -687,21 +692,43 @@ function HarnessModelRow({
 	onRefreshModels: () => void | Promise<unknown>;
 	onChange: (selection: ModelSelection) => void;
 }) {
+	// Display-only: if the configured harness has dropped out of the polled model
+	// catalog (the daemon omits a harness whose binary is missing), the picker
+	// shows Claude Code instead of the stale harness. Keyed on `availability`, not
+	// the inventory — a missing harness lingers in the inventory's supported set
+	// but is absent from availability. The saved form state is never rewritten
+	// here — only an explicit user selection (changeHarness) mutates it.
+	const displayHarness = effectiveDisplayHarness(selection.harness, availability);
+	// When the display has fallen back to Claude Code because the configured
+	// harness disappeared, the harness shown and the saved harness diverge. Do not
+	// let the model/effort field keep editing the now-missing harness underneath a
+	// "Claude Code" label: show it empty and disabled until the user explicitly
+	// picks a harness (which resets both through changeHarness). Saved state stays
+	// untouched — this is still display-only.
+	const harnessFellBack = displayHarness !== selection.harness;
+	const modelFieldValue = harnessFellBack ? { harness: displayHarness, model: "", effort: "" } : selection;
 	const scopedAvailability = filterModelAvailabilityToSelectableAgents(availability, agentCatalog, {
-		current: selection.harness,
+		current: displayHarness,
 		reviewerOnly,
 	});
 	const defaultAgent = allowDefaultHarness
 		? { id: DEFAULT_HARNESS_ID, label: defaultHarnessLabel, authStatus: "authorized" as const, reviewerCapable: false }
 		: undefined;
 	const scopedCatalog = selectableAgentCatalog(agentCatalog, {
-		current: selection.harness,
-		currentLabel: selection.harness ? agentDisplayLabel(agentCatalog, availability, selection.harness) : undefined,
+		current: displayHarness,
+		currentLabel: displayHarness ? agentDisplayLabel(agentCatalog, availability, displayHarness) : undefined,
 		reviewerOnly,
 		includeDefault: defaultAgent,
 	});
-	const harnessValue = allowDefaultHarness && selection.harness === "" ? DEFAULT_HARNESS_ID : selection.harness;
+	const harnessValue = allowDefaultHarness && displayHarness === "" ? DEFAULT_HARNESS_ID : displayHarness;
 	const changeHarness = (rawHarness: string) => {
+		// RequiredAgentField never renders an item whose value is the empty string
+		// (the default/automatic choice uses DEFAULT_HARNESS_ID). So a raw "" here
+		// is never a user selection — it is Radix Select clearing itself when the
+		// currently-displayed item unmounts, which happens when a configured harness
+		// drops out of the catalog and the display falls back to Claude Code. Honor
+		// the display-only contract: ignore it so saved state is not rewritten.
+		if (rawHarness === "") return;
 		const harness = rawHarness === DEFAULT_HARNESS_ID ? "" : rawHarness;
 		const saved = configuredPins.find((pin) => pin.harness === harness);
 		onChange({ harness, model: saved?.model ?? "", effort: saved?.effort ?? "" });
@@ -731,11 +758,11 @@ function HarnessModelRow({
 				<ModelAvailabilityField
 					id={id}
 					label={modelLabel}
-					value={selection}
+					value={modelFieldValue}
 					onChange={onChange}
 					availability={scopedAvailability}
 					configuredPins={configuredPins}
-					disabled={disabled || (selection.harness === "" && !allowScalar)}
+					disabled={disabled || (selection.harness === "" && !allowScalar) || harnessFellBack}
 					isRefreshing={isRefreshingModels}
 					onRefresh={onRefreshModels}
 					showHarness={false}

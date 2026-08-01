@@ -5,7 +5,11 @@ import type { components } from "../../api/schema";
 import { agentsQueryOptions } from "../hooks/useAgentsQuery";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { useModelAvailabilityQuery, useRefreshModelAvailability } from "../hooks/useModelAvailabilityQuery";
-import { filterModelAvailabilityToSelectableAgents, modelAvailabilityFromAgentInventory } from "../lib/agent-selection";
+import {
+	effectiveDisplayHarness,
+	filterModelAvailabilityToSelectableAgents,
+	modelAvailabilityFromAgentInventory,
+} from "../lib/agent-selection";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { primeSettingsQueryKey, primeSettingsQueryOptions } from "../hooks/usePrimeSettingsQuery";
 import { ModelAvailabilityField, type ModelSelection } from "./ModelAvailabilityField";
@@ -74,10 +78,22 @@ export function PrimeSection() {
 	});
 
 	const busy = query.isLoading || mutation.isPending;
+	// Display-only: if the saved Prime harness has dropped out of the polled model
+	// catalog (the daemon omits a harness whose binary is missing), show Claude
+	// Code instead of the stale harness. Keyed on the raw polled availability, not
+	// the inventory — a missing harness lingers in the inventory but is absent from
+	// the catalog. `form.agent` (the saved value) is untouched here; only an
+	// explicit user selection updates it.
+	const primeDisplayHarness = effectiveDisplayHarness(form.agent ?? "", modelAvailabilityQuery.data);
+	// When the display falls back to Claude Code, blank the model/effort too so the
+	// field is internally consistent (Claude Code + empty) rather than showing the
+	// missing harness's stale model under a "Claude Code" label. `form.agent` and
+	// the saved config stay untouched until the user actively edits the field.
+	const primeHarnessFellBack = primeDisplayHarness !== (form.agent ?? "");
 	const modelSelection: ModelSelection = {
-		harness: form.agent ?? "",
-		model: form.agentConfig?.model ?? "",
-		effort: form.agentConfig?.effort ?? "",
+		harness: primeDisplayHarness,
+		model: primeHarnessFellBack ? "" : (form.agentConfig?.model ?? ""),
+		effort: primeHarnessFellBack ? "" : (form.agentConfig?.effort ?? ""),
 	};
 	const inventoryModelAvailability = modelAvailabilityFromAgentInventory(agentsQuery.data, {
 		current: modelSelection.harness,
