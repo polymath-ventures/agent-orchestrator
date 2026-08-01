@@ -64,6 +64,32 @@ func TestModelAvailabilityCatalogFailureIsNeverEmptySuccess(t *testing.T) {
 	}
 }
 
+func TestModelAvailabilityOmitsUnprobeableHarnessButKeepsHealthy(t *testing.T) {
+	// One harness whose binary is missing must not take the whole catalog down:
+	// it is omitted and the healthy harness's catalog is still returned.
+	healthy := &catalogProbeAgent{catalog: []ports.ModelCatalogEntry{{ID: "gpt-5-codex", Label: "GPT-5 Codex"}}}
+	broken := &catalogProbeAgent{catalogErr: errors.New("opencode: agent: binary not found on PATH")}
+	svc := NewWithAgents([]agentregistry.HarnessAgent{
+		harnessCatalogAgent(domain.HarnessCodex, "Codex", healthy),
+		harnessCatalogAgent(domain.HarnessOpenCode, "OpenCode", broken),
+	})
+
+	got, err := svc.ModelAvailability(context.Background(), ModelAvailabilityRequest{Force: true})
+	if err != nil {
+		t.Fatalf("ModelAvailability() = error %v, want 200 with the healthy harness", err)
+	}
+	ids := map[string]bool{}
+	for _, h := range got.Harnesses {
+		ids[h.ID] = true
+	}
+	if !ids[string(domain.HarnessCodex)] {
+		t.Fatalf("healthy codex harness missing; harnesses=%#v", got.Harnesses)
+	}
+	if ids[string(domain.HarnessOpenCode)] {
+		t.Fatalf("un-probeable opencode harness must be omitted, not present; harnesses=%#v", got.Harnesses)
+	}
+}
+
 func TestModelAvailabilityCatalogFailureUsesVisibleConfiguredPinFallback(t *testing.T) {
 	agent := &catalogProbeAgent{
 		catalogErr:  errors.New("refresh failed"),
