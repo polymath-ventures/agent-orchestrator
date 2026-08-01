@@ -36,7 +36,7 @@ Remove the worktree in cleanup after landing or parking.
 
 - `ops/**`, `docs/fork.md`, `.github/CODEOWNERS`, SDLC dotfiles (`.beads/`, `openspec/`, `agent-instructions/`): **ours** (fork-only surfaces).
 - Surfaces the fork never touched: **theirs**.
-- Both-sides files: **blend** — upstream as base, fork fixes reapplied; explicitly check whether upstream's version _supersedes_ a fork fix, and say so.
+- Both-sides files: **blend** — upstream as base, fork fixes reapplied; explicitly check whether upstream's version _supersedes_ a fork fix, and say so. The authority for _which_ fork behavior must survive a blend is the **`docs/fork.md` → "Fork Features To Preserve" checklist** — reapply every named feature that lives in a both-sides file (e.g. the codex-fugu **reviewer** registration in `domain.AllReviewerHarnesses` + the `codex.NewFugu()` adapter). If a blend would drop a checklist item, it is a STOP condition (step 4), not a silent "theirs".
 
 ### 4. STOP conditions → park (step 7), never resolve unilaterally
 

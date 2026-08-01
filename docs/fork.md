@@ -61,7 +61,11 @@ working (not a specific UI shape unless stated).
 4. **Harness/agent setup & selection.** The agent-selection catalog and per-role
    model+effort tuples and worker-mix UI (`selectableAgentCatalog`,
    `HarnessModelRow`, `WorkerMixFields`, `lib/agent-selection.ts`, tracker
-   intake), and the fork-only **codex-fugu** harness.
+   intake), and the fork-only **codex-fugu** harness — as both a worker and a
+   **reviewer** (`domain.ReviewerCodexFugu` in `AllReviewerHarnesses`, the
+   `codex.NewFugu()` reviewer adapter, so the Settings "Default reviewer agent"
+   picker offers it). These live in shared upstream files, so re-apply the fugu
+   reviewer registration on any sync that touches them.
 5. **Fleet & Prime.** The projectless "AO Fleet" workspace (`FLEET_WORKSPACE_ID`,
    projectless-prime sessions), worker-mix percentages, fleet pause, and the
    daemon-global Prime supervisor.
