@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strings"
 	"sync"
@@ -172,6 +173,7 @@ func (s *Service) freshModelAvailability(ctx context.Context, req ModelAvailabil
 	pinned := modelPinSet(req.Pins)
 	harnesses := make([]HarnessModels, 0, len(s.agents))
 	probes := make([]modelProbeTarget, 0, len(req.Pins))
+	var firstCatalogErr error
 
 	for _, item := range s.agents {
 		if err := ctx.Err(); err != nil {
@@ -179,7 +181,17 @@ func (s *Service) freshModelAvailability(ctx context.Context, req ModelAvailabil
 		}
 		candidates, source, reason, catalogVerified, err := s.modelCandidates(ctx, item, pins[item.Harness])
 		if err != nil {
-			return ModelAvailabilityResponse{}, err
+			// A harness whose catalog cannot be built — its binary is missing, or
+			// its probe failed with no cached/known/pinned fallback — is omitted
+			// from the response rather than failing the whole endpoint, so one
+			// unavailable harness never takes every catalog down with it. The
+			// visible-error guard below still fires when NO harness survives.
+			if firstCatalogErr == nil {
+				firstCatalogErr = err
+			}
+			slog.Warn("model catalog unavailable; omitting harness from availability",
+				"harness", item.Harness, "err", err)
+			continue
 		}
 		harnessIndex := len(harnesses)
 		models := make([]ModelAvailability, 0, len(candidates))
@@ -222,6 +234,14 @@ func (s *Service) freshModelAvailability(ctx context.Context, req ModelAvailabil
 			CatalogVerified: catalogVerified,
 			Models:          models,
 		})
+	}
+
+	// Never present a totally-empty catalog as success: if every harness failed
+	// to probe, surface the first failure instead of an empty 200. This preserves
+	// the deliberate never-empty-success guard while still degrading gracefully
+	// whenever at least one harness produced a catalog.
+	if len(harnesses) == 0 && firstCatalogErr != nil {
+		return ModelAvailabilityResponse{}, firstCatalogErr
 	}
 
 	s.classifyPinnedModels(ctx, harnesses, probes)
