@@ -711,30 +711,54 @@ describe("SessionView", () => {
 		expect(useUiStore.getState().inspectorSessions["sess-orch"]).toBeUndefined();
 	});
 
-	it("requests terminal focus when reselecting the already-active session terminal", () => {
-		render(<SessionView sessionId="sess-1" />);
-
-		act(() => centerPaneProps.value.onSelectSessionTerminal?.());
+	it("requests terminal focus when an orchestrator session route becomes active", () => {
+		render(<SessionView sessionId="sess-orch" />);
 
 		expect(centerPaneProps.value.terminalTarget?.kind).toBe("worker");
 		expect(centerPaneProps.value.focusRequest).toBe(1);
 	});
 
-	it("does not reset focus request nonces across session navigation", () => {
+	it("requests terminal focus when navigating to a pinned session tab", () => {
+		useUiStore.getState().addSessionTab("sess-1", "sess-2");
 		const { rerender } = render(<SessionView sessionId="sess-1" />);
-		act(() => centerPaneProps.value.onSelectSessionTerminal?.());
 		expect(centerPaneProps.value.focusRequest).toBe(1);
 
-		rerender(<SessionView sessionId="sess-2" />);
-		act(() => centerPaneProps.value.onSelectSessionTerminal?.());
+		rerender(<SessionView sessionId="sess-2" tabOwnerSessionId="sess-1" />);
 
 		expect(centerPaneProps.value.terminalTarget?.kind).toBe("worker");
 		expect(centerPaneProps.value.focusRequest).toBe(2);
 	});
 
+	it("requests terminal focus when reselecting the already-active session terminal", () => {
+		render(<SessionView sessionId="sess-1" />);
+		const initialFocusRequest = centerPaneProps.value.focusRequest;
+
+		act(() => centerPaneProps.value.onSelectSessionTerminal?.());
+
+		expect(centerPaneProps.value.terminalTarget?.kind).toBe("worker");
+		expect(centerPaneProps.value.focusRequest).toBe((initialFocusRequest ?? 0) + 1);
+	});
+
+	it("does not reset focus request nonces across session navigation", () => {
+		const { rerender } = render(<SessionView sessionId="sess-1" />);
+		const initialFocusRequest = centerPaneProps.value.focusRequest;
+		act(() => centerPaneProps.value.onSelectSessionTerminal?.());
+		const reselectedFocusRequest = centerPaneProps.value.focusRequest;
+		expect(reselectedFocusRequest).toBe((initialFocusRequest ?? 0) + 1);
+
+		rerender(<SessionView sessionId="sess-2" />);
+		const navigatedFocusRequest = centerPaneProps.value.focusRequest;
+		expect(navigatedFocusRequest).toBe((reselectedFocusRequest ?? 0) + 1);
+		act(() => centerPaneProps.value.onSelectSessionTerminal?.());
+
+		expect(centerPaneProps.value.terminalTarget?.kind).toBe("worker");
+		expect(centerPaneProps.value.focusRequest).toBe((navigatedFocusRequest ?? 0) + 1);
+	});
+
 	it("requests terminal focus when opening a reviewer terminal and returning to agent", () => {
 		act(() => useUiStore.getState().setInspectorOpen("sess-1", true));
 		render(<SessionView sessionId="sess-1" />);
+		const initialFocusRequest = centerPaneProps.value.focusRequest;
 
 		fireEvent.click(screen.getByRole("button", { name: "open reviewer terminal" }));
 
@@ -743,17 +767,19 @@ describe("SessionView", () => {
 			handleId: "reviewer-1",
 			harness: "codex",
 		});
-		expect(centerPaneProps.value.focusRequest).toBe(1);
+		const reviewerFocusRequest = centerPaneProps.value.focusRequest;
+		expect(reviewerFocusRequest).toBe((initialFocusRequest ?? 0) + 1);
 
 		act(() => centerPaneProps.value.onSelectWorkerTerminal?.());
 
 		expect(centerPaneProps.value.terminalTarget?.kind).toBe("worker");
-		expect(centerPaneProps.value.focusRequest).toBe(2);
+		expect(centerPaneProps.value.focusRequest).toBe((reviewerFocusRequest ?? 0) + 1);
 	});
 
 	it("maximizes the browser over the whole app window and returns to the rail", () => {
 		act(() => useUiStore.getState().setInspectorOpen("sess-1", true));
 		render(<SessionView sessionId="sess-1" />);
+		const routeFocusRequest = centerPaneProps.value.focusRequest;
 
 		expect(screen.getByText("terminal center")).toBeInTheDocument();
 		fireEvent.click(screen.getByRole("button", { name: "pop browser" }));
@@ -761,10 +787,12 @@ describe("SessionView", () => {
 		// The maximized overlay appears; the terminal stays mounted behind it.
 		expect(screen.getByRole("button", { name: "browser center" })).toBeInTheDocument();
 		expect(screen.getByText("terminal center")).toBeInTheDocument();
+		expect(centerPaneProps.value.focusRequest).toBeUndefined();
 
 		fireEvent.click(screen.getByRole("button", { name: "browser center" }));
 		expect(screen.queryByRole("button", { name: "browser center" })).not.toBeInTheDocument();
 		expect(screen.getByText("terminal center")).toBeInTheDocument();
+		expect(centerPaneProps.value.focusRequest).toBe(routeFocusRequest);
 		expect(browserDestroy).not.toHaveBeenCalled();
 	});
 
@@ -790,6 +818,7 @@ describe("SessionView", () => {
 
 		expect(screen.getByRole("button", { name: "files center" })).toBeInTheDocument();
 		expect(screen.getByText("terminal center")).toBeInTheDocument();
+		expect(centerPaneProps.value.focusRequest).toBeUndefined();
 
 		fireEvent.click(screen.getByRole("button", { name: "files center" }));
 		expect(screen.queryByRole("button", { name: "files center" })).not.toBeInTheDocument();

@@ -95,16 +95,53 @@ test("focus follows a shell selected from a session's tab strip", async ({ page 
 	await expect.poll(() => activeElementClass(page)).toContain("xterm-helper-textarea");
 });
 
-// Deliberate scope: only the terminals screen opts in. A session pane also
-// mounts behind pop-out overlays and re-keys when a background poll assigns a
-// starting session its terminal handle, so it must keep waiting for a click.
-test("a session terminal does not grab focus on arrival", async ({ page }) => {
+// Reopened #131. The previous fix covered the standalone terminals screen and
+// shell tabs, but opening a project's orchestrator session still left focus on
+// the route control instead of the xterm helper textarea.
+test("opening an orchestrator session focuses its terminal on arrival", async ({ page }) => {
 	await installBrowserModeApiFixtures(page);
-	await page.goto("/#/projects/api-gateway/sessions/refactor-mux");
-	// Wait for the helper textarea itself, not just the pane: the pane's testid
-	// exists before xterm's mount effect runs, so asserting on it alone would
-	// pass in the window before the effect that could have taken focus.
+	await page.goto("/#/projects/api-gateway/sessions/orch-api-gateway");
 	await expect(page.locator(".xterm-helper-textarea")).toBeAttached();
 
+	await expect.poll(() => activeElementClass(page)).toContain("xterm-helper-textarea");
+});
+
+test("a pending session terminal does not focus behind a browser pop-out when its handle arrives", async ({ page }) => {
+	test.setTimeout(35_000);
+	const fixtures = await installBrowserModeApiFixtures(page);
+	let terminalHandleReady = false;
+	await page.route("**/api/v1/sessions", (route) => {
+		if (route.request().method() !== "GET") return route.fallback();
+		return route.fulfill({
+			json: {
+				sessions: [
+					{
+						activity: { lastActivityAt: "2026-07-20T18:00:00.000Z", state: "active" },
+						branch: "refactor/mux",
+						createdAt: "2026-07-20T18:00:00.000Z",
+						displayName: "Split terminal mux responsibilities",
+						harness: "codex",
+						id: "refactor-mux",
+						isTerminated: false,
+						kind: "worker",
+						projectId: "api-gateway",
+						prs: [],
+						status: "working",
+						terminalHandleId: terminalHandleReady ? "term-refactor-mux" : undefined,
+						updatedAt: "2026-07-20T18:00:00.000Z",
+					},
+				],
+			},
+		});
+	});
+
+	await page.goto("/#/projects/api-gateway/sessions/refactor-mux");
+	await expect(page.getByText("Preparing the worker terminal")).toBeVisible();
+	await page.getByRole("tab", { name: "Browser" }).click();
+	await page.getByRole("button", { name: "Pop out" }).click();
+	await expect(page.getByTestId("browser-panel").getByRole("button", { name: "Return to panel" })).toBeVisible();
+
+	terminalHandleReady = true;
+	await expect.poll(() => fixtures.muxConnections, { timeout: 20_000 }).toBeGreaterThan(0);
 	expect(await activeElementClass(page)).not.toContain("xterm-helper-textarea");
 });

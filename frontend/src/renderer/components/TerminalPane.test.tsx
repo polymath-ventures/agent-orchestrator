@@ -187,6 +187,61 @@ describe("TerminalPane autoFocus", () => {
 			view.restore();
 		}
 	});
+
+	it("does not treat a reviewer target as attachable when no session is loaded", () => {
+		const view = renderPane();
+		try {
+			view.rerender(
+				<QueryClientProvider client={view.queryClient}>
+					<TerminalPane
+						autoFocus
+						daemonReady
+						fontSize={12}
+						terminalTarget={{ kind: "reviewer", handleId: "reviewer-1", harness: "codex" }}
+						theme="dark"
+					/>
+				</QueryClientProvider>,
+			);
+
+			expect(terminalProps.value.autoFocus).toBe(false);
+			expect(screen.getByText("Agent Orchestrator")).toBeInTheDocument();
+			expect(screen.getByText("No session selected. Pick a worker to attach its terminal.")).toBeInTheDocument();
+		} finally {
+			view.restore();
+		}
+	});
+
+	it("preserves a user focus request until a pending session receives its terminal handle", () => {
+		const view = renderPane(worker);
+		try {
+			view.rerender(
+				<QueryClientProvider client={view.queryClient}>
+					<TerminalPane autoFocus daemonReady focusRequest={1} fontSize={12} session={worker} theme="dark" />
+				</QueryClientProvider>,
+			);
+
+			expect(terminalProps.value.autoFocus).toBe(false);
+			expect(terminalProps.value.focusRequest).toBeUndefined();
+
+			view.rerender(
+				<QueryClientProvider client={view.queryClient}>
+					<TerminalPane
+						autoFocus
+						daemonReady
+						focusRequest={1}
+						fontSize={12}
+						session={{ ...worker, terminalHandleId: "term-1" }}
+						theme="dark"
+					/>
+				</QueryClientProvider>,
+			);
+
+			expect(terminalProps.value.autoFocus).toBe(true);
+			expect(terminalProps.value.focusRequest).toBe(1);
+		} finally {
+			view.restore();
+		}
+	});
 });
 
 describe("TerminalPane empty states", () => {

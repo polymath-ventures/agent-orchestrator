@@ -22,14 +22,19 @@ type TerminalPaneProps = {
 	terminalTarget?: TerminalTarget;
 	fontSize: number;
 	/**
-	 * The mount means the user switched to this terminal, so it should take the
-	 * keyboard rather than wait for a click. Opt-in: a pane also mounts behind a
-	 * pop-out overlay, and re-keys in the background when a starting session is
-	 * finally assigned a terminal handle — neither should move focus.
+	 * The owner says the user activated this terminal surface, so it should take
+	 * the keyboard rather than wait for a click. If that activation happens before
+	 * a session has a terminal handle, TerminalPane preserves the focus request
+	 * until the handle exists; background handle arrivals without a request still
+	 * do not move focus.
 	 */
 	autoFocus?: boolean;
 	focusRequest?: number;
 	onExitFocus?: () => void;
+};
+
+type AttachedTerminalProps = TerminalPaneProps & {
+	terminalHandleId?: string;
 };
 
 export function TerminalPane({
@@ -43,15 +48,21 @@ export function TerminalPane({
 	onExitFocus,
 }: TerminalPaneProps) {
 	const previousFocusRequestRef = useRef<number | undefined>(undefined);
+	const terminalHandleId =
+		terminalTarget?.kind === "shell"
+			? terminalTarget.handleId
+			: terminalTarget?.kind === "reviewer"
+				? session
+					? terminalTarget.handleId
+					: undefined
+				: session?.terminalHandleId;
 	const focusRequestIsFresh = focusRequest !== undefined && focusRequest !== previousFocusRequestRef.current;
 	useEffect(() => {
-		if (focusRequest !== undefined) previousFocusRequestRef.current = focusRequest;
-	}, [focusRequest]);
-	const effectiveAutoFocus = Boolean(autoFocus) && (focusRequest === undefined || focusRequestIsFresh);
-	const terminalKey =
-		terminalTarget?.kind === "reviewer" || terminalTarget?.kind === "shell"
-			? terminalTarget.handleId
-			: (session?.terminalHandleId ?? "empty");
+		if (terminalHandleId && focusRequest !== undefined) previousFocusRequestRef.current = focusRequest;
+	}, [focusRequest, terminalHandleId]);
+	const effectiveAutoFocus =
+		Boolean(autoFocus) && Boolean(terminalHandleId) && (focusRequest === undefined || focusRequestIsFresh);
+	const terminalKey = terminalHandleId ?? "empty";
 
 	return (
 		<AttachedTerminal
@@ -63,6 +74,7 @@ export function TerminalPane({
 			daemonReady={daemonReady}
 			fontSize={fontSize}
 			terminalTarget={terminalTarget}
+			terminalHandleId={terminalHandleId}
 			onExitFocus={onExitFocus}
 		/>
 	);
@@ -95,11 +107,10 @@ function AttachedTerminal({
 	autoFocus,
 	focusRequest,
 	onExitFocus,
-}: TerminalPaneProps) {
+	terminalHandleId,
+}: AttachedTerminalProps) {
 	const attachSession =
-		session && terminalTarget?.kind === "reviewer"
-			? { ...session, terminalHandleId: terminalTarget.handleId }
-			: session;
+		session && terminalTarget?.kind === "reviewer" && terminalHandleId ? { ...session, terminalHandleId } : session;
 	// One terminal instance per handle-scoped pane lifetime. TerminalPane keys this
 	// component by terminal handle, so session switches get a fresh xterm + mux
 	// hook state instead of reusing a potentially stale screen/input binding.
@@ -114,7 +125,7 @@ function AttachedTerminal({
 	const restoreSessionById = useRestoreSession();
 	// A shell pane has no session, so it hands the hook its handle directly
 	// instead of reading one off `attachSession`.
-	const shellTerminalHandleId = terminalTarget?.kind === "shell" ? terminalTarget.handleId : undefined;
+	const shellTerminalHandleId = terminalTarget?.kind === "shell" ? terminalHandleId : undefined;
 	// Glow the Browser tab when the agent prints a URL in this worker's terminal
 	// (e.g. a pushed-PR link). Detection only badges — the user still chooses to
 	// open it — and is skipped while they are already looking at the Browser tab.
@@ -141,7 +152,7 @@ function AttachedTerminal({
 		shellTerminalHandleId,
 		onOutput: watchLinks ? handleOutput : undefined,
 	});
-	const handleId = shellTerminalHandleId ?? attachSession?.terminalHandleId;
+	const handleId = terminalHandleId;
 	const provider = terminalTarget?.kind === "reviewer" ? terminalTarget.harness : session?.provider;
 	const hadAttachmentRef = useRef(false);
 	const isSessionActive = session ? sessionIsActive(session) : false;
@@ -310,12 +321,7 @@ function AttachedTerminal({
 			<div className="relative min-h-0 flex-1 p-2">
 				<XtermTerminal
 					ariaLabel={terminalTarget?.kind === "shell" ? "Shell terminal" : "Session terminal"}
-					// No handle means no PTY behind the pane and the empty-state overlay
-					// covering it, so focusing would swallow keystrokes into nothing.
-					// Today's opt-in call sites are shell targets, which always carry a
-					// handle; this keeps the prop's contract true for any owner that opts
-					// a handle-less pane in later.
-					autoFocus={Boolean(autoFocus) && !showEmptyState}
+					autoFocus={autoFocus}
 					focusRequest={showEmptyState ? undefined : focusRequest}
 					fontSize={fontSize}
 					onError={handleInitError}
