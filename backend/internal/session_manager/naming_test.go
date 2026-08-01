@@ -140,10 +140,10 @@ func TestSpawnDegradesTheNameWhenTheTitleIsUnavailable(t *testing.T) {
 	}
 }
 
-// A harness with a launch-time naming flag is named atomically with process
-// start, so the spawn must not follow up with a post-start write it does not
-// need — that write is the pane-readiness race this avoids entirely.
-func TestSpawnPrefersTheLaunchArgumentAndSkipsThePostStartWrite(t *testing.T) {
+// A harness with a launch-time naming flag still takes the universal in-harness
+// rename after readiness. The launch flag is an accelerator for early surfaces,
+// not proof that the durable app-visible store has been updated.
+func TestSpawnUsesTheLaunchArgumentThenRedeliversTheNameInHarness(t *testing.T) {
 	var launched string
 	m, _, _, msg := newNamingManager(launchNamedAgent{lastLaunchName: &launched})
 
@@ -154,10 +154,9 @@ func TestSpawnPrefersTheLaunchArgumentAndSkipsThePostStartWrite(t *testing.T) {
 	if launched != rec.DisplayName {
 		t.Fatalf("launch config display name = %q, want the persisted name %q", launched, rec.DisplayName)
 	}
-	for _, sent := range msg.msgs {
-		if strings.HasPrefix(sent, "/rename") {
-			t.Fatalf("post-start writes = %v, want no rename when argv carried the name", msg.msgs)
-		}
+	want := "/rename " + rec.DisplayName
+	if len(msg.msgs) != 1 || msg.msgs[0] != want {
+		t.Fatalf("post-start writes = %v, want the universal rename %q", msg.msgs, want)
 	}
 }
 
@@ -446,34 +445,52 @@ func (a goesActiveWhileWaitingAgent) PromptReadinessHints(context.Context, ports
 
 // The spawn write is solicited — it is part of creating the session, into a TUI
 // drawn moments earlier — so it must NOT inherit the rename path's idle-only
-// policy. A codex worker takes its prompt in argv and is routinely mid-turn by
-// the time the harness reports ready; refusing there would leave exactly the
-// sessions this change exists for permanently unnamed.
-func TestSpawnDeliversTheNameEvenWhenTheAgentIsAlreadyWorking(t *testing.T) {
-	st := newFakeStore()
-	st.projects["mer"] = domain.ProjectRecord{
-		ID:     "mer",
-		Config: domain.ProjectConfig{SessionPrefix: "ao", Worker: domain.RoleOverride{Harness: domain.HarnessClaudeCode}},
-	}
-	rt := &fakeRuntime{aliveByHandle: map[string]bool{"h1": true}}
-	msg := &fakeMessenger{}
-	m := New(Deps{
-		Runtime:   rt,
-		Agents:    agentsFor{agent: goesActiveWhileWaitingAgent{store: st, id: "mer-1"}},
-		Workspace: &fakeWorkspace{},
-		Store:     st,
-		Messenger: msg,
-		Lifecycle: &fakeLCM{store: st},
-		LookPath:  func(string) (string, error) { return "/bin/true", nil },
-	})
+// policy. A worker whose prompt rides argv may already be mid-turn by the time
+// the harness reports ready, or it may have already finished and be sitting at
+// the next prompt. Both states must still get the app-visible rename.
+func TestSpawnDeliversTheNameAfterReadinessDuringActiveOrIdlePromptStates(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		agent func(*fakeStore) ports.Agent
+	}{
+		{
+			name:  "active",
+			agent: func(st *fakeStore) ports.Agent { return goesActiveWhileWaitingAgent{store: st, id: "mer-1"} },
+		},
+		{
+			name: "waiting_input",
+			agent: func(st *fakeStore) ports.Agent {
+				return blockedAwareWaitingAgent{awaitsUserWhileWaitingAgent: awaitsUserWhileWaitingAgent{store: st, id: "mer-1", state: domain.ActivityWaitingInput}}
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st := newFakeStore()
+			st.projects["mer"] = domain.ProjectRecord{
+				ID:     "mer",
+				Config: domain.ProjectConfig{SessionPrefix: "ao", Worker: domain.RoleOverride{Harness: domain.HarnessClaudeCode}},
+			}
+			rt := &fakeRuntime{aliveByHandle: map[string]bool{"h1": true}}
+			msg := &fakeMessenger{}
+			m := New(Deps{
+				Runtime:   rt,
+				Agents:    agentsFor{agent: tc.agent(st)},
+				Workspace: &fakeWorkspace{},
+				Store:     st,
+				Messenger: msg,
+				Lifecycle: &fakeLCM{store: st},
+				LookPath:  func(string) (string, error) { return "/bin/true", nil },
+			})
 
-	rec, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, IssueID: "150", IssueTitle: "Unified session naming"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := "/rename " + rec.DisplayName
-	if len(msg.msgs) != 1 || msg.msgs[0] != want {
-		t.Fatalf("writes = %v, want the spawn-time name %q delivered despite the active turn", msg.msgs, want)
+			rec, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, IssueID: "150", IssueTitle: "Unified session naming"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := "/rename " + rec.DisplayName
+			if len(msg.msgs) != 1 || msg.msgs[0] != want {
+				t.Fatalf("writes = %v, want the spawn-time name %q delivered in %s", msg.msgs, want, tc.name)
+			}
+		})
 	}
 }
 
@@ -510,33 +527,99 @@ func (a awaitsUserWhileWaitingAgent) PromptReadinessHints(context.Context, ports
 	return ports.PromptReadinessHints{}, nil
 }
 
-// A spawn tolerates an active session but must still refuse one awaiting the
-// human: the paste plus Enter that delivers a name would answer the dialog.
-func TestSpawnDoesNotWriteANameIntoAPendingDecision(t *testing.T) {
-	for _, state := range []domain.ActivityState{domain.ActivityBlocked, domain.ActivityWaitingInput} {
-		t.Run(string(state), func(t *testing.T) {
-			st := newFakeStore()
-			st.projects["mer"] = domain.ProjectRecord{
-				ID:     "mer",
-				Config: domain.ProjectConfig{SessionPrefix: "ao", Worker: domain.RoleOverride{Harness: domain.HarnessClaudeCode}},
-			}
-			rt := &fakeRuntime{aliveByHandle: map[string]bool{"h1": true}}
-			msg := &fakeMessenger{}
-			m := New(Deps{
-				Runtime:   rt,
-				Agents:    agentsFor{agent: awaitsUserWhileWaitingAgent{store: st, id: "mer-1", state: state}},
-				Workspace: &fakeWorkspace{},
-				Store:     st,
-				Messenger: msg,
-				Lifecycle: &fakeLCM{store: st},
-				LookPath:  func(string) (string, error) { return "/bin/true", nil },
-			})
+type blockedAwareWaitingAgent struct {
+	awaitsUserWhileWaitingAgent
+}
 
-			if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, IssueID: "150"}); err != nil {
+func (blockedAwareWaitingAgent) EmitsSubmitActivity() bool  { return true }
+func (blockedAwareWaitingAgent) EmitsBlockedActivity() bool { return true }
+
+// A spawn tolerates an active or known-idle-prompt session but must still refuse
+// one awaiting a permission decision: the paste plus Enter that delivers a name
+// would answer the dialog.
+func TestSpawnDoesNotWriteANameIntoAPendingDecision(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{
+		ID:     "mer",
+		Config: domain.ProjectConfig{SessionPrefix: "ao", Worker: domain.RoleOverride{Harness: domain.HarnessClaudeCode}},
+	}
+	rt := &fakeRuntime{aliveByHandle: map[string]bool{"h1": true}}
+	msg := &fakeMessenger{}
+	m := New(Deps{
+		Runtime:   rt,
+		Agents:    agentsFor{agent: awaitsUserWhileWaitingAgent{store: st, id: "mer-1", state: domain.ActivityBlocked}},
+		Workspace: &fakeWorkspace{},
+		Store:     st,
+		Messenger: msg,
+		Lifecycle: &fakeLCM{store: st},
+		LookPath:  func(string) (string, error) { return "/bin/true", nil },
+	})
+
+	if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, IssueID: "150"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.msgs) != 0 {
+		t.Fatalf("writes = %v, want none while the session is blocked", msg.msgs)
+	}
+}
+
+func TestSpawnSuppressesWaitingInputWhenTheHarnessCannotReportBlockedDecisions(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{
+		ID:     "mer",
+		Config: domain.ProjectConfig{SessionPrefix: "ao", Worker: domain.RoleOverride{Harness: domain.HarnessClaudeCode}},
+	}
+	rt := &fakeRuntime{aliveByHandle: map[string]bool{"h1": true}}
+	msg := &fakeMessenger{}
+	m := New(Deps{
+		Runtime:   rt,
+		Agents:    agentsFor{agent: awaitsUserWhileWaitingAgent{store: st, id: "mer-1", state: domain.ActivityWaitingInput}},
+		Workspace: &fakeWorkspace{},
+		Store:     st,
+		Messenger: msg,
+		Lifecycle: &fakeLCM{store: st},
+		LookPath:  func(string) (string, error) { return "/bin/true", nil },
+	})
+
+	if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, IssueID: "150"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.msgs) != 0 {
+		t.Fatalf("writes = %v, want none while waiting_input could be a permission dialog", msg.msgs)
+	}
+}
+
+func TestRestoreKeepsRenameSuppressedAtIdlePrompt(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		state     domain.ActivityState
+		wantWrite bool
+	}{
+		{name: "idle_prompt", state: domain.ActivityWaitingInput},
+		{name: "idle", state: domain.ActivityIdle, wantWrite: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m, st, _, msg := newNamingManager(launchNamedAgent{})
+			rec := liveNamedSession("ao #7 renamed", domain.ActivityIdle)
+			rec.IsTerminated = true
+			rec.Activity = domain.Activity{State: domain.ActivityExited}
+			rec.Metadata.WorkspacePath = "/ws/mer-1"
+			rec.Metadata.Branch = "ao/mer-1/root"
+			rec.Metadata.AgentSessionID = "native-1"
+			st.sessions["mer-1"] = rec
+			m.agents = agentsFor{agent: awaitsUserWhileWaitingAgent{store: st, id: "mer-1", state: tc.state}}
+
+			if _, err := m.RestoreWithMode(ctx, "mer-1"); err != nil {
 				t.Fatal(err)
 			}
-			if len(msg.msgs) != 0 {
-				t.Fatalf("writes = %v, want none while the session is %s", msg.msgs, state)
+			gotWrite := false
+			for _, sent := range msg.msgs {
+				if strings.HasPrefix(sent, "/rename ") {
+					gotWrite = true
+				}
+			}
+			if gotWrite != tc.wantWrite {
+				t.Fatalf("writes = %v, want restore rename write = %v", msg.msgs, tc.wantWrite)
 			}
 		})
 	}

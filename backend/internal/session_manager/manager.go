@@ -815,10 +815,13 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		m.markSpawnFailedTerminated(ctx, id)
 		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: completed: %w", id, err)
 	}
-	// Name before prompt: the rename is instant, and leaving the prompt as the
-	// last thing written means the session ends up working on its task rather
-	// than with a rename typed into a turn already in flight.
-	if err := m.deliverNameForSpawn(ctx, agent, launchCfg, handle, id, cfg.DisplayName); err != nil {
+	// Name before any after-start prompt: the rename is instant, and when the
+	// prompt also rides the pane, leaving that prompt as the last write means
+	// the session starts on its task rather than with a rename in flight. A
+	// prompt carried in argv may already be active by readiness time; the
+	// in-harness rename path is still required because launch naming is only an
+	// accelerator for early surfaces, not the app-visible delivery mechanism.
+	if err := m.deliverNameAfterStart(ctx, agent, launchCfg, handle, id, cfg.DisplayName, m.spawnNameSender(agent)); err != nil {
 		if !m.forgiveSpawnNameFailure(ctx, handle, id, err) {
 			runtimeDestroyed := m.destroyFailedLaunchRuntime(ctx, handle)
 			workspaceDestroyed := m.rollbackPreparedSpawnWorkspace(ctx, rec, ws, workspaceProject, runtimeDestroyed)
@@ -2198,7 +2201,7 @@ func (m *Manager) relaunchSession(ctx context.Context, operation string, rec dom
 	// name — a divergence reintroduced by the very lifecycle event meant to
 	// preserve the session. The resume command carries no launch-time name flag,
 	// so this always takes the in-harness path.
-	if err := m.deliverNameAfterStart(ctx, agent, restoreLaunchCfg, handle, rec.ID, rec.DisplayName); err != nil {
+	if err := m.deliverNameAfterStart(ctx, agent, restoreLaunchCfg, handle, rec.ID, rec.DisplayName, m.messenger.Nudge); err != nil {
 		m.logger.Warn("restore: session name not delivered to the harness; AO's name stands",
 			"sessionID", rec.ID, "error", err)
 	}

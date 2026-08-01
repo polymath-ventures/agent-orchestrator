@@ -90,9 +90,10 @@ func (p *Plugin) ExitDetectionMode() ports.AgentExitDetectionMode {
 	return ports.AgentExitDetectionSupervisor
 }
 
-// InHarnessRenameCommand renames a running Claude Code session. It writes the
-// same underlying name as the -n launch flag, so the two doors cannot drift into
-// two different names. See ports.AgentNamer.
+// InHarnessRenameCommand renames a running Claude Code session. This is the
+// durable app-visible naming path; the -n launch flag is only an early
+// accelerator, so spawn still redelivers the same AO-owned name here after
+// readiness. See ports.AgentNamer.
 func (p *Plugin) InHarnessRenameCommand(name string) (string, bool) {
 	safe, ok := ports.DeliverableName(name)
 	if !ok {
