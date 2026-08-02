@@ -12,11 +12,13 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/runtimeselect"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/tmux"
+	"github.com/aoagents/agent-orchestrator/backend/internal/browserruntime"
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/daemon/supervisor"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -26,10 +28,12 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/notify"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	"github.com/aoagents/agent-orchestrator/backend/internal/preview"
+	"github.com/aoagents/agent-orchestrator/backend/internal/previewserver"
 	"github.com/aoagents/agent-orchestrator/backend/internal/push"
 	"github.com/aoagents/agent-orchestrator/backend/internal/roleprompt"
 	"github.com/aoagents/agent-orchestrator/backend/internal/runfile"
 	agentsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/agent"
+	browsersvc "github.com/aoagents/agent-orchestrator/backend/internal/service/browser"
 	devimportsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/devimport"
 	importsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/importer"
 	notificationsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/notification"
@@ -55,6 +59,21 @@ func Run() error {
 	}
 
 	log := newLogger()
+	browserRuntimeToken := strings.TrimSpace(os.Getenv(browserruntime.RuntimeTokenEnv))
+	if browserRuntimeToken == "" {
+		browserRuntimeToken, err = browserruntime.NewToken()
+		if err != nil {
+			return err
+		}
+		if err := os.Setenv(browserruntime.RuntimeTokenEnv, browserRuntimeToken); err != nil {
+			return fmt.Errorf("set browser runtime token: %w", err)
+		}
+	}
+	browserAuthority, err := browsersvc.LoadAuthority(cfg.DataDir)
+	if err != nil {
+		return fmt.Errorf("load browser capability authority: %w", err)
+	}
+	browserBroker := browserruntime.New(log, browserRuntimeToken)
 
 	// Fail fast only if a daemon is genuinely still serving the recorded port.
 	// CheckStale confirms the run-file's PID is alive, but that alone is not
@@ -120,6 +139,7 @@ func Run() error {
 		// operator can attach by hand: tmux -S <socket> attach -t <session>.
 		log.Info("tmux runtime socket", "socket", tmuxRuntime.Socket())
 	}
+	managedPreview := previewserver.New(log, cfg.DataDir)
 	termMgr := terminal.NewManager(runtimeAdapter, cdcPipe.Broadcaster, log)
 	defer termMgr.Close()
 
@@ -163,7 +183,7 @@ func Run() error {
 	agentHealthMonitor := newAgentHealthMonitor(agentSvc, configuredModels, log)
 	modelHealthMonitor := newModelHealthMonitor(agentSvc, configuredModels, log)
 	modelHealthView := newModelHealthProjection(modelHealthMonitor, configuredModels.ListModelHealthPins)
-	sessionSvc, reviewSvc, sessMgr, err := startSession(cfg, runtimeAdapter, store, lcStack.LCM, messenger, agentSvc, telemetrySink, agents, log)
+	sessionSvc, reviewSvc, sessMgr, err := startSession(cfg, runtimeAdapter, store, lcStack.LCM, messenger, agentSvc, telemetrySink, agents, managedPreview, browserBroker, browserAuthority, log)
 	if err != nil {
 		stop()
 		lcStack.Stop()
@@ -202,6 +222,7 @@ func Run() error {
 		AdvertisedHost: cfg.MobileAdvertisedHost,
 	}
 	mc := &controllers.MobileController{Bridge: bs}
+	browserService := browsersvc.New(sessionSvc, browserBroker, browserAuthority)
 
 	// Standalone shell terminals: user-opened shells with no agent session
 	// behind them. They reuse the same runtime adapter (and therefore the same
@@ -276,6 +297,9 @@ func Run() error {
 				return sqlite.OpenReadOnly(ctx, dataDir)
 			},
 		}),
+		Browser:             browserService,
+		PreviewServer:       managedPreview,
+		SessionCapabilities: browserAuthority,
 	})
 	if err != nil {
 		stop()
@@ -288,6 +312,21 @@ func Run() error {
 	agentHealthDone := startAgentHealthMonitor(ctx, agentHealthMonitor, cfg.AgentHealthInterval, log)
 	modelHealthDone := startModelHealthMonitor(ctx, modelHealthMonitor, cfg.ModelRevalidationInterval, log)
 	previewDone := preview.NewPoller(store, sessionSvc, "http://"+srv.Addr().String(), preview.PollerConfig{Logger: log}).Start(ctx)
+	_ = os.Unsetenv(browserruntime.RuntimeAddressEnv)
+	if ln, addr, err := browserruntime.Listen(cfg.RunFilePath); err != nil {
+		log.Warn("browser runtime: listener unavailable; agent browser control disabled", "err", err)
+	} else {
+		if err := os.Setenv(browserruntime.RuntimeAddressEnv, addr); err != nil {
+			_ = ln.Close()
+			return fmt.Errorf("publish browser runtime address: %w", err)
+		}
+		log.Info("browser runtime: listening", "addr", addr)
+		go func() {
+			if err := browserBroker.Serve(ctx, ln); err != nil {
+				log.Warn("browser runtime: serve stopped with error", "err", err)
+			}
+		}()
+	}
 
 	// Late-bind: the LAN listener shares the exact loopback router instance so
 	// the LAN surface and loopback surface never drift apart.
@@ -349,6 +388,7 @@ func Run() error {
 	// via defer) avoids the LIFO trap where a Stop() that blocks on ctx-cancel
 	// runs before the cancel: a non-signal exit path would hang otherwise.
 	stop()
+	managedPreview.Close()
 	<-previewDone
 	<-primeDone
 	<-metricsDone

@@ -27,6 +27,7 @@ type Store interface {
 	GetDisplayPRFactsForSession(ctx context.Context, id domain.SessionID) (domain.PRFacts, bool, error)
 	ListPRFactsForSession(ctx context.Context, id domain.SessionID) ([]domain.PRFacts, error)
 	ListPRsBySession(ctx context.Context, sessionID domain.SessionID) ([]domain.PullRequest, error)
+	ListSessionWorktrees(ctx context.Context, id domain.SessionID) ([]domain.SessionWorktreeRecord, error)
 	ListChecks(ctx context.Context, prURL string) ([]domain.PullRequestCheck, error)
 	ListPRReviews(ctx context.Context, prURL string) ([]domain.PullRequestReview, error)
 	ListPRReviewThreads(ctx context.Context, prURL string) ([]domain.PullRequestReviewThread, error)
@@ -180,6 +181,22 @@ func NewWithDeps(d Deps) *Service {
 // Spawn creates a session and returns the API-facing read model plus
 // ephemeral prompt size measurements.
 func (s *Service) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Session, int, int, error) {
+	if cfg.Kind == domain.KindOrchestrator {
+		// Deduplicate on the same lock and the same query ReconcileRole uses; a
+		// separate orchestrator-only mutex would guard the same rows without
+		// excluding the role path, so neither would actually serialise.
+		target := domain.OrchestratorTarget(cfg.ProjectID)
+		unlock := s.lockRole(target)
+		defer unlock()
+
+		existing, err := s.activeRoleSessions(ctx, target)
+		if err != nil {
+			return domain.Session{}, 0, 0, err
+		}
+		if len(existing) > 0 {
+			return newestSession(existing), 0, 0, nil
+		}
+	}
 	return s.spawn(ctx, cfg, false)
 }
 
@@ -1148,6 +1165,7 @@ func (s *Service) toSession(ctx context.Context, rec domain.SessionRecord) (doma
 	if err != nil {
 		return domain.Session{}, fmt.Errorf("pr facts %s: %w", rec.ID, err)
 	}
+	prs = deduplicatePRFacts(prs)
 	return domain.Session{
 		SessionRecord:    rec,
 		Status:           deriveStatus(rec, prs, s.now(), s.harnessSignals(rec.Harness)),

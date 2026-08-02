@@ -34,16 +34,24 @@ export function WaitlistForm({ heading, description }: WaitlistFormProps) {
 	if (submitted) {
 		return (
 			<div>
-				<h2 className="mb-2 text-xl font-medium text-foreground">You're on the list!</h2>
-				<p className="text-sm text-muted-foreground">We'll notify you when Windows &amp; Linux support is ready.</p>
+				<h2 className="mb-2 text-xl font-medium text-foreground">
+					You're on the list!
+				</h2>
+				<p className="text-sm text-muted-foreground">
+					We'll notify you when Windows &amp; Linux support is ready.
+				</p>
 			</div>
 		);
 	}
 
 	return (
 		<>
-			{heading && <h2 className="mb-2 text-xl font-medium text-foreground">{heading}</h2>}
-			{description && <p className="mb-6 text-sm text-muted-foreground">{description}</p>}
+			{heading && (
+				<h2 className="mb-2 text-xl font-medium text-foreground">{heading}</h2>
+			)}
+			{description && (
+				<p className="mb-6 text-sm text-muted-foreground">{description}</p>
+			)}
 			<form onSubmit={handleSubmit} className="flex flex-col gap-3">
 				<input
 					type="email"
@@ -59,6 +67,14 @@ export function WaitlistForm({ heading, description }: WaitlistFormProps) {
 				>
 					Join waitlist
 				</button>
+				<p className="text-xs leading-relaxed text-muted-foreground">
+					By joining, you ask us to send your email to PostHog to manage this
+					waitlist. This submission does not turn on site analytics. See our{" "}
+					<a className="underline underline-offset-2" href="/privacy/">
+						privacy policy
+					</a>
+					.
+				</p>
 			</form>
 		</>
 	);

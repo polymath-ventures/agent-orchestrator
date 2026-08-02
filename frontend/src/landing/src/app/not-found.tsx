@@ -20,9 +20,12 @@ export default function NotFound() {
 				</div>
 
 				<div className="flex-1 max-w-md space-y-6">
-					<h1 className="text-3xl sm:text-4xl font-medium text-foreground">Page not found</h1>
+					<h1 className="text-3xl sm:text-4xl font-medium text-foreground">
+						Page not found
+					</h1>
 					<p className="text-sm sm:text-base font-light text-muted-foreground leading-relaxed">
-						The page you&apos;re looking for doesn&apos;t exist or has been moved.
+						The page you&apos;re looking for doesn&apos;t exist or has been
+						moved.
 					</p>
 					<Link
 						href="/"

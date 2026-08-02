@@ -9,5 +9,7 @@ export const changelogMdxComponents = {
 			{children}
 		</ul>
 	),
-	li: ({ children, ...props }: React.HTMLAttributes<HTMLLIElement>) => <li {...props}>{children}</li>,
+	li: ({ children, ...props }: React.HTMLAttributes<HTMLLIElement>) => (
+		<li {...props}>{children}</li>
+	),
 };

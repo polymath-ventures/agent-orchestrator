@@ -1,6 +1,7 @@
 import { COMPANY } from "@ao/shared/constants";
 import { getBlogPosts } from "@/lib/blog";
 
+
 export const dynamic = "force-static";
 
 export function GET() {
@@ -17,7 +18,8 @@ export function GET() {
 		"## Posts",
 		"",
 		...posts.map(
-			(post) => `- [${post.title}](${baseUrl}/blog/${post.slug})${post.description ? `: ${post.description}` : ""}`,
+			(post) =>
+				`- [${post.title}](${baseUrl}/blog/${post.slug})${post.description ? `: ${post.description}` : ""}`,
 		),
 	];
 

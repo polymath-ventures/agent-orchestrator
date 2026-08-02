@@ -21,7 +21,10 @@ function generateConversionId(): string {
  * `conversionId` in `properties` to override (e.g. to match a server-side
  * Conversions API call for the same conversion).
  */
-export function trackReddit(event: string, properties?: Record<string, unknown>): void {
+export function trackReddit(
+	event: string,
+	properties?: Record<string, unknown>,
+): void {
 	if (typeof window === "undefined" || typeof window.rdt !== "function") {
 		return;
 	}

@@ -6,7 +6,10 @@ interface StatusIndicatorProps {
 	status: WorkspaceStatus;
 }
 
-const STATUS_STYLES: Record<WorkspaceStatus, { dot: string; ping: string; pulse: boolean }> = {
+const STATUS_STYLES: Record<
+	WorkspaceStatus,
+	{ dot: string; ping: string; pulse: boolean }
+> = {
 	permission: { ping: "bg-amber-300/40", dot: "bg-amber-300/90", pulse: true },
 	working: {
 		ping: "bg-brand/40",
@@ -22,9 +25,13 @@ export function StatusIndicator({ status }: StatusIndicatorProps) {
 	return (
 		<span className="relative flex size-1.5 shrink-0">
 			{config.pulse && (
-				<span className={`absolute inline-flex h-full w-full animate-ping rounded-full opacity-75 ${config.ping}`} />
+				<span
+					className={`absolute inline-flex h-full w-full animate-ping rounded-full opacity-75 ${config.ping}`}
+				/>
 			)}
-			<span className={`relative inline-flex size-1.5 rounded-full ${config.dot}`} />
+			<span
+				className={`relative inline-flex size-1.5 rounded-full ${config.dot}`}
+			/>
 		</span>
 	);
 }

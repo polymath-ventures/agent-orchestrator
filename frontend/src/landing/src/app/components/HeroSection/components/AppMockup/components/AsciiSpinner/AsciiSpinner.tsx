@@ -9,7 +9,10 @@ interface AsciiSpinnerProps {
 	toneClassName?: string;
 }
 
-export function AsciiSpinner({ className, toneClassName = "text-orange-500/80" }: AsciiSpinnerProps) {
+export function AsciiSpinner({
+	className,
+	toneClassName = "text-orange-500/80",
+}: AsciiSpinnerProps) {
 	const [frameIndex, setFrameIndex] = useState(0);
 
 	useEffect(() => {
@@ -20,5 +23,9 @@ export function AsciiSpinner({ className, toneClassName = "text-orange-500/80" }
 		return () => clearInterval(interval);
 	}, []);
 
-	return <span className={`select-none font-mono ${toneClassName} ${className}`}>{SPINNER_FRAMES[frameIndex]}</span>;
+	return (
+		<span className={`select-none font-mono ${toneClassName} ${className}`}>
+			{SPINNER_FRAMES[frameIndex]}
+		</span>
+	);
 }

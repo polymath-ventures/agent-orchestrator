@@ -31,20 +31,30 @@ export function MainPanel({ activeDemo }: MainPanelProps) {
 							</div>
 							<div className="text-[11px] text-muted-foreground">
 								<div>
-									<span className="font-medium text-foreground">Claude Code</span> v2.0.74
+									<span className="font-medium text-foreground">
+										Claude Code
+									</span>{" "}
+									v2.0.74
 								</div>
 								<div>Opus 4.5 · Claude Max</div>
-								<div className="text-muted-foreground/65">~/.ao-agents/worktrees/main/feature-ws</div>
+								<div className="text-muted-foreground/65">
+									~/.ao-agents/worktrees/main/feature-ws
+								</div>
 							</div>
 						</div>
 
 						<div className="mb-5 text-foreground">
-							<span className="text-muted-foreground/55">❯</span> <span className="text-brand-light">/mcp</span>
+							<span className="text-muted-foreground/55">❯</span>{" "}
+							<span className="text-brand-light">/mcp</span>
 						</div>
 
 						<div className="space-y-2.5 border-t border-border pt-4">
-							<div className="text-[10px] font-medium tracking-[-0.5px] text-muted-foreground/65">MCP Servers</div>
-							<div className="text-[11px] text-muted-foreground">1 connected</div>
+							<div className="text-[10px] font-medium tracking-[-0.5px] text-muted-foreground/65">
+								MCP Servers
+							</div>
+							<div className="text-[11px] text-muted-foreground">
+								1 connected
+							</div>
 
 							<div>
 								<span className="text-muted-foreground/55">❯</span>
@@ -54,7 +64,8 @@ export function MainPanel({ activeDemo }: MainPanelProps) {
 							</div>
 
 							<div className="text-muted-foreground/65">
-								config: <span className="text-muted-foreground/50">.mcp.json</span>
+								config:{" "}
+								<span className="text-muted-foreground/50">.mcp.json</span>
 							</div>
 						</div>
 					</div>
@@ -62,7 +73,9 @@ export function MainPanel({ activeDemo }: MainPanelProps) {
 					<div className="mt-auto border-t border-border pt-4">
 						<div className="flex items-center gap-3 border border-border bg-card/60 px-3 py-2.5">
 							<span className="text-muted-foreground/55">❯</span>
-							<span className="flex-1 text-[11px] text-muted-foreground/55">Type a task for Claude…</span>
+							<span className="flex-1 text-[11px] text-muted-foreground/55">
+								Type a task for Claude…
+							</span>
 							<div className="flex size-5 items-center justify-center rounded-xl bg-brand/15 text-[11px] text-brand-light">
 								<LuArrowUp className="size-3" />
 							</div>
@@ -78,11 +91,15 @@ export function MainPanel({ activeDemo }: MainPanelProps) {
 					style={{ pointerEvents: isSetup ? "auto" : "none" }}
 				>
 					<div className="mb-3 text-foreground">
-						<span className="text-muted-foreground/55">❯</span> <span className="text-brand-light">ao new</span>
+						<span className="text-muted-foreground/55">❯</span>{" "}
+						<span className="text-brand-light">ao new</span>
 					</div>
 					<div className="space-y-1.5 text-muted-foreground">
 						<div className="flex items-center gap-2">
-							<AsciiSpinner className="text-[11px]" toneClassName="text-brand-light" />
+							<AsciiSpinner
+								className="text-[11px]"
+								toneClassName="text-brand-light"
+							/>
 							<span>Setting up new parallel environment...</span>
 						</div>
 						{SETUP_STEPS.map((step) => (

@@ -127,7 +127,10 @@ function intervalWithDelay(setIntervalSpy: ReturnType<typeof vi.spyOn>, delay: n
 	return call?.[0] as () => void;
 }
 
-function deferred<T = void>(): { promise: Promise<T>; resolve: (value: T | PromiseLike<T>) => void } {
+function deferred<T = void>(): {
+	promise: Promise<T>;
+	resolve: (value: T | PromiseLike<T>) => void;
+} {
 	let resolve!: (value: T | PromiseLike<T>) => void;
 	const promise = new Promise<T>((res) => {
 		resolve = res;
@@ -253,7 +256,10 @@ describe("startAutoUpdates", () => {
 
 		await module.checkForUpdatesNow(stateDir);
 		updaterEvents.get("update-available")?.({ version: "2.0.0" });
-		expect(module.getUpdateStatus()).toEqual({ state: "available", version: "2.0.0" });
+		expect(module.getUpdateStatus()).toEqual({
+			state: "available",
+			version: "2.0.0",
+		});
 
 		autoUpdater.checkForUpdates.mockImplementationOnce(() => {
 			updaterEvents.get("checking-for-update")?.();
@@ -264,7 +270,10 @@ describe("startAutoUpdates", () => {
 		await module.startAutoUpdates(stateDir);
 
 		expect(consoleErrorSpy).toHaveBeenCalledWith("auto-update check failed:", err);
-		expect(module.getUpdateStatus()).toEqual({ state: "available", version: "2.0.0" });
+		expect(module.getUpdateStatus()).toEqual({
+			state: "available",
+			version: "2.0.0",
+		});
 	});
 
 	it("restores the prior status when an automatic download fails after publishing progress", async () => {
@@ -275,7 +284,10 @@ describe("startAutoUpdates", () => {
 
 		await module.checkForUpdatesNow(stateDir);
 		updaterEvents.get("update-available")?.({ version: "2.0.0" });
-		expect(module.getUpdateStatus()).toEqual({ state: "available", version: "2.0.0" });
+		expect(module.getUpdateStatus()).toEqual({
+			state: "available",
+			version: "2.0.0",
+		});
 
 		autoUpdater.checkForUpdates.mockImplementationOnce(() => {
 			updaterEvents.get("checking-for-update")?.();
@@ -285,14 +297,20 @@ describe("startAutoUpdates", () => {
 		});
 		const startPromise = module.startAutoUpdates(stateDir);
 		await flushMicrotasks();
-		expect(module.getUpdateStatus()).toEqual({ state: "downloading", percent: 42 });
+		expect(module.getUpdateStatus()).toEqual({
+			state: "downloading",
+			percent: 42,
+		});
 
 		updaterEvents.get("error")?.(err);
 		lateDownload.resolve();
 		await startPromise;
 
 		expect(consoleErrorSpy).toHaveBeenCalledWith("auto-update check failed:", err);
-		expect(module.getUpdateStatus()).toEqual({ state: "available", version: "2.0.0" });
+		expect(module.getUpdateStatus()).toEqual({
+			state: "available",
+			version: "2.0.0",
+		});
 	});
 
 	it("restores a staged update when an automatic check emits checking before an error", async () => {
@@ -407,7 +425,10 @@ describe("startAutoUpdates", () => {
 		await Promise.resolve();
 		updaterEvents.get("update-available")?.({ version: "2.2.0" });
 		updaterEvents.get("download-progress")?.({ percent: 64 });
-		expect(module.getUpdateStatus()).toEqual({ state: "downloading", percent: 64 });
+		expect(module.getUpdateStatus()).toEqual({
+			state: "downloading",
+			percent: 64,
+		});
 
 		updaterEvents.get("error")?.(err);
 		automaticDownload.resolve();
@@ -427,7 +448,9 @@ describe("startAutoUpdates", () => {
 		const lateDownload = deferred();
 		const { module, autoUpdater, BrowserWindow, updaterEvents } = await importAutoUpdater();
 		const err = new Error("download failed");
-		autoUpdater.checkForUpdates.mockResolvedValueOnce({ downloadPromise: lateDownload.promise });
+		autoUpdater.checkForUpdates.mockResolvedValueOnce({
+			downloadPromise: lateDownload.promise,
+		});
 
 		const startPromise = module.startAutoUpdates(stateDir);
 		await Promise.resolve();
@@ -468,7 +491,10 @@ describe("startAutoUpdates", () => {
 		automaticCheck.resolve();
 		await Promise.all([startPromise, downloadPromise]);
 
-		expect(module.getUpdateStatus()).toEqual({ state: "error", message: "manual download failed" });
+		expect(module.getUpdateStatus()).toEqual({
+			state: "error",
+			message: "manual download failed",
+		});
 	});
 
 	it("keeps manual updater error events visible to the renderer", async () => {
@@ -479,7 +505,131 @@ describe("startAutoUpdates", () => {
 		updaterEvents.get("error")?.(err);
 
 		expect(BrowserWindow.getAllWindows).toHaveBeenCalled();
-		expect(module.getUpdateStatus()).toEqual({ state: "error", message: "manual feed failed" });
+		expect(module.getUpdateStatus()).toEqual({
+			state: "error",
+			message: "manual feed failed",
+		});
+	});
+
+	it("broadcasts friendly error on manifest 404 event during manual check", async () => {
+		vi.spyOn(console, "info").mockImplementation(() => undefined);
+		const { module, updaterEvents } = await importAutoUpdater();
+		const err = new Error(
+			'Cannot find latest-mac.yml in the latest release artifacts (https://github.com/AgentWrapper/agent-orchestrator/releases/download/v0.10.1/latest-mac.yml):\nHttpError: 404 "method: GET url: https://github.com/AgentWrapper/agent-orchestrator/releases/download/v0.10.1/latest-mac.yml"',
+		);
+
+		await module.checkForUpdatesNow(stateDir);
+		updaterEvents.get("error")?.(err);
+
+		expect(module.getUpdateStatus()).toEqual({
+			state: "error",
+			message: "Couldn't check for updates — the update information was not found on the server.",
+		});
+	});
+
+	it("broadcasts friendly error on manifest 404 event during manual download", async () => {
+		vi.spyOn(console, "error").mockImplementation(() => undefined);
+		const { module, autoUpdater, updaterEvents } = await importAutoUpdater();
+		const err = new Error(
+			'Cannot find latest-mac.yml in the latest release artifacts (https://github.com/AgentWrapper/agent-orchestrator/releases/download/v0.10.1/latest-mac.yml):\nHttpError: 404 "method: GET url: https://github.com/AgentWrapper/agent-orchestrator/releases/download/v0.10.1/latest-mac.yml"',
+		);
+		autoUpdater.downloadUpdate.mockImplementationOnce(() => {
+			updaterEvents.get("error")?.(err);
+			return Promise.resolve();
+		});
+
+		await module.downloadUpdateNow();
+
+		expect(module.getUpdateStatus()).toEqual({
+			state: "error",
+			message: "Download failed — the update file was not found on the server.",
+		});
+	});
+
+	it("broadcasts friendly error on rejected checkForUpdatesNow with manifest 404", async () => {
+		vi.spyOn(console, "info").mockImplementation(() => undefined);
+		const { module, autoUpdater } = await importAutoUpdater();
+		const err = new Error(
+			'Cannot find latest-mac.yml in the latest release artifacts (https://github.com/AgentWrapper/agent-orchestrator/releases/download/v0.10.1/latest-mac.yml):\nHttpError: 404 "method: GET url: https://github.com/AgentWrapper/agent-orchestrator/releases/download/v0.10.1/latest-mac.yml"',
+		);
+		autoUpdater.checkForUpdates.mockRejectedValueOnce(err);
+
+		await module.checkForUpdatesNow(stateDir);
+
+		expect(module.getUpdateStatus()).toEqual({
+			state: "error",
+			message: "Couldn't check for updates — the update information was not found on the server.",
+		});
+	});
+
+	it("broadcasts friendly error on rejected downloadUpdateNow with manifest 404", async () => {
+		vi.spyOn(console, "error").mockImplementation(() => undefined);
+		const { module, autoUpdater } = await importAutoUpdater();
+		const err = new Error(
+			'Cannot find latest-mac.yml in the latest release artifacts (https://github.com/AgentWrapper/agent-orchestrator/releases/download/v0.10.1/latest-mac.yml):\nHttpError: 404 "method: GET url: https://github.com/AgentWrapper/agent-orchestrator/releases/download/v0.10.1/latest-mac.yml"',
+		);
+		autoUpdater.downloadUpdate.mockRejectedValueOnce(err);
+
+		await module.downloadUpdateNow();
+
+		expect(module.getUpdateStatus()).toEqual({
+			state: "error",
+			message: "Download failed — the update file was not found on the server.",
+		});
+	});
+
+	it("restores staged build on manifest 404 event during manual check", async () => {
+		vi.spyOn(console, "info").mockImplementation(() => undefined);
+		const { module, updaterEvents } = await importAutoUpdater();
+		const err = new Error(
+			'Cannot find latest-mac.yml in the latest release artifacts (https://github.com/AgentWrapper/agent-orchestrator/releases/download/v0.10.1/latest-mac.yml):\nHttpError: 404 "method: GET url: https://github.com/AgentWrapper/agent-orchestrator/releases/download/v0.10.1/latest-mac.yml"',
+		);
+
+		await module.checkForUpdatesNow(stateDir);
+		updaterEvents.get("update-downloaded")?.({ version: "2.1.0" });
+		updaterEvents.get("error")?.(err);
+
+		expect(module.getUpdateStatus()).toEqual(
+			expect.objectContaining({
+				state: "downloaded",
+				version: "2.1.0",
+			}),
+		);
+	});
+
+	it("restores staged build on rejected checkForUpdatesNow with manifest 404", async () => {
+		vi.spyOn(console, "info").mockImplementation(() => undefined);
+		const { module, autoUpdater, updaterEvents } = await importAutoUpdater();
+		const err = new Error(
+			'Cannot find latest-mac.yml in the latest release artifacts (https://github.com/AgentWrapper/agent-orchestrator/releases/download/v0.10.1/latest-mac.yml):\nHttpError: 404 "method: GET url: https://github.com/AgentWrapper/agent-orchestrator/releases/download/v0.10.1/latest-mac.yml"',
+		);
+
+		await module.checkForUpdatesNow(stateDir);
+		updaterEvents.get("update-downloaded")?.({ version: "2.1.0" });
+		autoUpdater.checkForUpdates.mockRejectedValueOnce(err);
+		await module.checkForUpdatesNow(stateDir);
+
+		expect(module.getUpdateStatus()).toEqual(
+			expect.objectContaining({
+				state: "downloaded",
+				version: "2.1.0",
+			}),
+		);
+	});
+
+	it("still surfaces non-manifest 404 errors", async () => {
+		const { module, updaterEvents } = await importAutoUpdater();
+		const err = new Error(
+			'HttpError: 404 "method: GET url: https://github.com/AgentWrapper/agent-orchestrator/releases/download/v0.10.1/some-file.png"',
+		);
+
+		await module.checkForUpdatesNow(stateDir);
+		updaterEvents.get("error")?.(err);
+
+		expect(module.getUpdateStatus()).toEqual({
+			state: "error",
+			message: err.message,
+		});
 	});
 
 	it("logs settings failures during automatic checks and retries on later ticks", async () => {
@@ -489,7 +639,12 @@ describe("startAutoUpdates", () => {
 		const readUpdateSettings = vi
 			.fn<() => Promise<UpdateSettings>>()
 			.mockRejectedValueOnce(new Error("settings locked"))
-			.mockResolvedValue({ enabled: true, channel: "latest", nightlyAck: false, feature: null });
+			.mockResolvedValue({
+				enabled: true,
+				channel: "latest",
+				nightlyAck: false,
+				feature: null,
+			});
 		const { module, autoUpdater } = await importAutoUpdater(readUpdateSettings);
 
 		await expect(module.startAutoUpdates(stateDir)).resolves.toBeUndefined();
@@ -578,11 +733,21 @@ describe("startAutoUpdates", () => {
 		await module.startAutoUpdates(stateDir);
 		intervalWithDelay(setIntervalSpy, 30 * 60 * 1000)();
 		await flushMicrotasks();
-		current = { enabled: true, channel: "nightly", nightlyAck: true, feature: { pr: 2709 } };
+		current = {
+			enabled: true,
+			channel: "nightly",
+			nightlyAck: true,
+			feature: { pr: 2709 },
+		};
 		retirementLookup.resolve();
 		await flushMicrotasks();
 
-		expect(current).toEqual({ enabled: true, channel: "nightly", nightlyAck: true, feature: null });
+		expect(current).toEqual({
+			enabled: true,
+			channel: "nightly",
+			nightlyAck: true,
+			feature: null,
+		});
 	});
 
 	it("does not clear a newly selected feature after an older pin retires", async () => {
@@ -614,11 +779,21 @@ describe("startAutoUpdates", () => {
 		await module.startAutoUpdates(stateDir);
 		intervalWithDelay(setIntervalSpy, 30 * 60 * 1000)();
 		await flushMicrotasks();
-		current = { enabled: true, channel: "nightly", nightlyAck: true, feature: { pr: 2710 } };
+		current = {
+			enabled: true,
+			channel: "nightly",
+			nightlyAck: true,
+			feature: { pr: 2710 },
+		};
 		retirementLookup.resolve();
 		await flushMicrotasks();
 
-		expect(current).toEqual({ enabled: true, channel: "nightly", nightlyAck: true, feature: { pr: 2710 } });
+		expect(current).toEqual({
+			enabled: true,
+			channel: "nightly",
+			nightlyAck: true,
+			feature: { pr: 2710 },
+		});
 	});
 
 	it("coalesces retirement ticks queued behind a long updater operation", async () => {
@@ -634,7 +809,9 @@ describe("startAutoUpdates", () => {
 		const reconcileFeaturePin = vi.fn((current: UpdateSettings) =>
 			Promise.resolve({ settings: current, cleared: false }),
 		);
-		const { module, autoUpdater } = await importAutoUpdater(settings, { reconcileFeaturePin });
+		const { module, autoUpdater } = await importAutoUpdater(settings, {
+			reconcileFeaturePin,
+		});
 		autoUpdater.checkForUpdates.mockReturnValueOnce(automaticCheck.promise);
 
 		const startPromise = module.startAutoUpdates(stateDir);
@@ -683,7 +860,10 @@ describe("startAutoUpdates", () => {
 		await flushMicrotasks();
 
 		updaterEvents.get("update-available")?.({ version: "1.9.0" });
-		expect(module.getUpdateStatus()).toEqual({ state: "available", version: "1.9.0" });
+		expect(module.getUpdateStatus()).toEqual({
+			state: "available",
+			version: "1.9.0",
+		});
 
 		automaticCheck.resolve();
 		await Promise.all([startPromise, featureCheck]);
@@ -766,7 +946,10 @@ describe("startAutoUpdates", () => {
 		await module.startAutoUpdates(stateDir);
 		intervalWithDelay(setIntervalSpy, 60 * 60 * 1000)();
 		await flushMicrotasks();
-		const enable = module.setUpdateSettings(stateDir, { ...current, enabled: true });
+		const enable = module.setUpdateSettings(stateDir, {
+			...current,
+			enabled: true,
+		});
 		disabledRead.resolve({ ...current, enabled: false });
 		await enable;
 		await flushMicrotasks();
@@ -806,7 +989,9 @@ describe("startAutoUpdates", () => {
 
 	it("unrefs the periodic timer when the runtime supports it", async () => {
 		const unref = vi.fn();
-		const setIntervalStub = vi.fn((_callback: () => void, _delay?: number) => ({ unref }));
+		const setIntervalStub = vi.fn((_callback: () => void, _delay?: number) => ({
+			unref,
+		}));
 		vi.stubGlobal("setInterval", setIntervalStub);
 		const { module } = await importAutoUpdater();
 
@@ -833,7 +1018,14 @@ describe("returnToHome", () => {
 		// preserves every field except feature.
 		expect(updateUpdateSettings).toHaveBeenCalledTimes(1);
 		const clear = updateUpdateSettings.mock.calls[0]?.[1] as (c: UpdateSettings) => UpdateSettings;
-		expect(clear({ enabled: true, channel: "nightly", nightlyAck: true, feature: { pr: 2270 } })).toEqual({
+		expect(
+			clear({
+				enabled: true,
+				channel: "nightly",
+				nightlyAck: true,
+				feature: { pr: 2270 },
+			}),
+		).toEqual({
 			enabled: true,
 			channel: "nightly",
 			nightlyAck: true,
@@ -856,7 +1048,12 @@ describe("returnToHome", () => {
 		await module.returnToHome(stateDir);
 
 		const clear = updateUpdateSettings.mock.calls[0]?.[1] as (c: UpdateSettings) => UpdateSettings;
-		const current: UpdateSettings = { enabled: true, channel: "latest", nightlyAck: false, feature: null };
+		const current: UpdateSettings = {
+			enabled: true,
+			channel: "latest",
+			nightlyAck: false,
+			feature: null,
+		};
 		expect(clear(current)).toBe(current); // no pin -> unchanged
 		expect(autoUpdater.channel).toBe("latest");
 		expect(autoUpdater.checkForUpdates).toHaveBeenCalledTimes(1);
@@ -864,7 +1061,12 @@ describe("returnToHome", () => {
 
 	it("reports unsupported in dev (unpackaged) without touching settings", async () => {
 		const { module, autoUpdater, updateUpdateSettings } = await importAutoUpdater(
-			{ enabled: true, channel: "latest", nightlyAck: false, feature: { pr: 2270 } },
+			{
+				enabled: true,
+				channel: "latest",
+				nightlyAck: false,
+				feature: { pr: 2270 },
+			},
 			{ isPackaged: false },
 		);
 

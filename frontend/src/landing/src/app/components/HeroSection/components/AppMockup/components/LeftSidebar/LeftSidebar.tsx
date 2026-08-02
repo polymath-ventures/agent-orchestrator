@@ -1,7 +1,13 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { LuChevronDown, LuChevronRight, LuLayers, LuPlus, LuZap } from "react-icons/lu";
+import {
+	LuChevronDown,
+	LuChevronRight,
+	LuLayers,
+	LuPlus,
+	LuZap,
+} from "react-icons/lu";
 import { PORTS, WORKSPACES } from "../../constants";
 import type { ActiveDemo } from "../../types";
 import { AsciiSpinner } from "../AsciiSpinner";
@@ -40,16 +46,22 @@ export function LeftSidebar({ activeDemo }: LeftSidebarProps) {
 				>
 					<div className="relative flex h-7 items-center gap-2.5 bg-brand/[0.10] pl-4 pr-3">
 						<span className="absolute inset-y-1 left-0 w-[2px] bg-brand" />
-						<AsciiSpinner className="text-[10px]" toneClassName="text-brand-light" />
+						<AsciiSpinner
+							className="text-[10px]"
+							toneClassName="text-brand-light"
+						/>
 						<span className="truncate text-foreground/95">new workspace</span>
-						<span className="ml-auto font-mono text-[10px] text-muted-foreground/55">creating</span>
+						<span className="ml-auto font-mono text-[10px] text-muted-foreground/55">
+							creating
+						</span>
 					</div>
 				</motion.div>
 
 				<div className="mt-1 space-y-0.5">
 					{WORKSPACES.map((workspace) => {
 						const isFirstItem = workspace.name === "use any agents";
-						const shouldHideActiveState = isFirstItem && activeDemo === "Create Parallel Branches";
+						const shouldHideActiveState =
+							isFirstItem && activeDemo === "Create Parallel Branches";
 
 						return (
 							<WorkspaceItem
@@ -79,13 +91,19 @@ export function LeftSidebar({ activeDemo }: LeftSidebarProps) {
 
 			<div className="border-t border-border pb-1.5">
 				<div className="flex h-7 items-center gap-1.5 px-3 text-[10px] font-medium tracking-[-0.5px] text-muted-foreground/65">
-					<span className="font-mono normal-case text-muted-foreground/55">⌥</span>
+					<span className="font-mono normal-case text-muted-foreground/55">
+						⌥
+					</span>
 					<span>Ports</span>
-					<span className="ml-auto font-mono tabular-nums text-muted-foreground/40">4</span>
+					<span className="ml-auto font-mono tabular-nums text-muted-foreground/40">
+						4
+					</span>
 				</div>
 				{PORTS.map((port) => (
 					<div key={port.workspace} className="px-3 py-1">
-						<div className="truncate text-[10px] text-muted-foreground/65">{port.workspace}</div>
+						<div className="truncate text-[10px] text-muted-foreground/65">
+							{port.workspace}
+						</div>
 						<div className="mt-1 flex flex-wrap gap-1">
 							{port.ports.map((value) => (
 								<span
@@ -124,19 +142,31 @@ function NavRow({
 						: "text-foreground/85 hover:bg-foreground/[0.025]"
 			}`}
 		>
-			<Icon className={`size-3.5 ${active ? "text-foreground/85" : "text-muted-foreground/55"}`} />
+			<Icon
+				className={`size-3.5 ${active ? "text-foreground/85" : "text-muted-foreground/55"}`}
+			/>
 			<span>{label}</span>
 		</div>
 	);
 }
 
-function GroupHeader({ label, count, expanded }: { label: string; count: number; expanded?: boolean }) {
+function GroupHeader({
+	label,
+	count,
+	expanded,
+}: {
+	label: string;
+	count: number;
+	expanded?: boolean;
+}) {
 	const ChevronIcon = expanded ? LuChevronDown : LuChevronRight;
 	return (
 		<div className="flex h-6 items-center gap-1.5 px-3 text-[10px] font-medium tracking-[-0.5px] text-muted-foreground/65">
 			<ChevronIcon className="size-2.5 text-muted-foreground/45" />
 			<span className="truncate">{label}</span>
-			<span className="ml-auto font-mono tabular-nums text-muted-foreground/40">{count}</span>
+			<span className="ml-auto font-mono tabular-nums text-muted-foreground/40">
+				{count}
+			</span>
 		</div>
 	);
 }

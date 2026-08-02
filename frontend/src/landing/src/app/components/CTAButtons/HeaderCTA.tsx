@@ -3,5 +3,7 @@
 import { DownloadButton } from "../DownloadButton";
 
 export function HeaderCTA() {
-	return <DownloadButton size="sm" />;
+  return (
+    <DownloadButton size="sm" />
+  );
 }

@@ -11,11 +11,24 @@ export function GridBackground() {
 			transition={{ duration: 0.8, ease: "easeOut" }}
 			aria-hidden="true"
 		>
-			<svg className="absolute inset-0 w-full h-full" xmlns="http://www.w3.org/2000/svg">
+			<svg
+				className="absolute inset-0 w-full h-full"
+				xmlns="http://www.w3.org/2000/svg"
+			>
 				<title>grid</title>
 				<defs>
-					<pattern id="hero-grid" width="60" height="60" patternUnits="userSpaceOnUse">
-						<path d="M 60 0 L 0 0 0 60" fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth="1" />
+					<pattern
+						id="hero-grid"
+						width="60"
+						height="60"
+						patternUnits="userSpaceOnUse"
+					>
+						<path
+							d="M 60 0 L 0 0 0 60"
+							fill="none"
+							stroke="rgba(255,255,255,0.06)"
+							strokeWidth="1"
+						/>
 					</pattern>
 					<radialGradient id="grid-fade" cx="50%" cy="50%" r="50%">
 						<stop offset="0%" stopColor="white" stopOpacity="1" />
@@ -29,7 +42,12 @@ export function GridBackground() {
 						<rect width="100%" height="100%" fill="url(#grid-fade)" />
 					</mask>
 				</defs>
-				<rect width="100%" height="100%" fill="url(#hero-grid)" mask="url(#grid-mask)" />
+				<rect
+					width="100%"
+					height="100%"
+					fill="url(#hero-grid)"
+					mask="url(#grid-mask)"
+				/>
 			</svg>
 		</motion.div>
 	);

@@ -2,7 +2,11 @@
 
 import { motion } from "framer-motion";
 import type { ReactNode } from "react";
-import { HiOutlineCodeBracket, HiOutlineServerStack, HiOutlineSignal } from "react-icons/hi2";
+import {
+	HiOutlineCodeBracket,
+	HiOutlineServerStack,
+	HiOutlineSignal,
+} from "react-icons/hi2";
 
 const SECURITY_FEATURES: {
 	icon: ReactNode;
@@ -24,7 +28,8 @@ const SECURITY_FEATURES: {
 	{
 		icon: <HiOutlineSignal className="w-5 h-5 text-foreground/70" />,
 		title: "Local Control",
-		description: "Agent Orchestrator runs on your machine as a local daemon. Your code never leaves localhost.",
+		description:
+			"Agent Orchestrator runs on your machine as a local daemon. Your code never leaves localhost.",
 	},
 ];
 
@@ -41,9 +46,12 @@ export function SecuritySection() {
 					transition={{ duration: 0.5 }}
 				>
 					<div className="space-y-1">
-						<h2 className="text-2xl sm:text-3xl font-mono tracking-[0.5px] text-foreground">Private by default</h2>
+						<h2 className="text-2xl sm:text-3xl font-mono tracking-[0.5px] text-foreground">
+							Private by default
+						</h2>
 						<h2 className="text-lg sm:text-xl font-light tracking-[-0.5px] text-muted-foreground max-w-[700px]">
-							Your code stays local by default, with explicit control over connected services.
+							Your code stays local by default, with explicit control over
+							connected services.
 						</h2>
 					</div>
 				</motion.div>
@@ -68,8 +76,12 @@ export function SecuritySection() {
 							<div className="mb-4 inline-flex items-center justify-center w-10 h-10 rounded-xl bg-muted border border-border">
 								{feature.icon}
 							</div>
-							<h3 className="text-lg font-medium text-foreground/90 mb-2">{feature.title}</h3>
-							<p className="text-sm leading-relaxed text-muted-foreground">{feature.description}</p>
+							<h3 className="text-lg font-medium text-foreground/90 mb-2">
+								{feature.title}
+							</h3>
+							<p className="text-sm leading-relaxed text-muted-foreground">
+								{feature.description}
+							</p>
 						</motion.div>
 					))}
 				</motion.div>

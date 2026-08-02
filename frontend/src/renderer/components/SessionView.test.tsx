@@ -6,6 +6,7 @@ import { useUiStore } from "../stores/ui-store";
 import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 
 const navigateMock = vi.hoisted(() => vi.fn());
+const openShellTerminalMock = vi.hoisted(() => vi.fn());
 
 vi.mock("@tanstack/react-router", () => ({
 	useNavigate: () => navigateMock,
@@ -79,47 +80,39 @@ const { workspaces, workspaceQueryState, panels, shellTerminalsState } = vi.hois
 	};
 	return { workspaces, workspaceQueryState, panels: new Map<string, PanelEntry>(), shellTerminalsState };
 });
-const centerPaneProps = vi.hoisted(() => ({
-	value: {} as {
-		focusRequest?: number;
-		onSelectSessionTerminal?: () => void;
-		onSelectWorkerTerminal?: () => void;
-		terminalTarget?: { kind: string; handleId?: string };
-	},
-}));
 
 // The terminal and inspector body pull in xterm/SSE machinery irrelevant to
 // the split under test. (ShellTopbar is shell-owned on Win/Linux; when the
 // platform hides the shell topbar, SessionView mounts it in-panel.)
+const centerPaneProps = vi.hoisted(() => ({
+	value: {} as {
+		focusRequest?: number;
+		terminalTarget?: { kind: string; handleId?: string; harness?: string };
+		onSelectSessionTerminal?: () => void;
+		onSelectWorkerTerminal?: () => void;
+	},
+}));
+
 vi.mock("./ShellTopbar", () => ({ ShellTopbar: () => null }));
 vi.mock("./CenterPane", () => ({
 	CenterPane: (props: {
+		session?: WorkspaceSession;
 		focusRequest?: number;
-		onSelectSessionTerminal?: () => void;
-		onSelectWorkerTerminal?: () => void;
-		terminalTarget?: { kind: string; handleId?: string };
+		terminalTarget?: { kind: string; handleId?: string; harness?: string };
 		shellTerminals?: Array<{ handleId: string; title: string }>;
 		onSelectShellTerminal?: (handleId: string) => void;
-		projectSessions?: WorkspaceSession[];
-		availableProjectSessions?: WorkspaceSession[];
-		onAddProjectSession?: (session: WorkspaceSession) => void;
-		onCloseProjectSession?: (session: WorkspaceSession) => void;
-		onSelectProjectSession?: (session: WorkspaceSession) => void;
+		onSelectSessionTerminal?: () => void;
+		onSelectWorkerTerminal?: () => void;
+		onNewShellTerminal?: () => void;
 	}) => {
+		// Recorded so the terminal auto-focus contract (docs/fork.md item 2) can be
+		// asserted on the props SessionView actually passes down.
 		centerPaneProps.value = props;
-		const {
-			shellTerminals = [],
-			onSelectShellTerminal,
-			onSelectSessionTerminal,
-			projectSessions = [],
-			availableProjectSessions = [],
-			onAddProjectSession,
-			onCloseProjectSession,
-			onSelectProjectSession,
-		} = props;
+		const { session, shellTerminals = [], onSelectShellTerminal, onSelectSessionTerminal, onNewShellTerminal } = props;
 		return (
 			<div>
 				terminal center
+				<div data-testid="session-tab">{session?.title ?? ""}</div>
 				<div data-testid="shell-tabs">{shellTerminals.map((s) => s.title).join(",")}</div>
 				{shellTerminals.map((s) => (
 					<button key={s.handleId} type="button" onClick={() => onSelectShellTerminal?.(s.handleId)}>
@@ -129,25 +122,9 @@ vi.mock("./CenterPane", () => ({
 				<button type="button" onClick={() => onSelectSessionTerminal?.()}>
 					select agent tab
 				</button>
-				<div data-testid="project-tabs">
-					{projectSessions.map((session) => (
-						<button key={session.id} type="button" onClick={() => onSelectProjectSession?.(session)}>
-							{session.title}
-						</button>
-					))}
-				</div>
-				<div data-testid="available-project-tabs">
-					{availableProjectSessions.map((session) => (
-						<button key={session.id} type="button" onClick={() => onAddProjectSession?.(session)}>
-							Add {session.title}
-						</button>
-					))}
-				</div>
-				{projectSessions.slice(1).map((session) => (
-					<button key={session.id} type="button" onClick={() => onCloseProjectSession?.(session)}>
-						Close {session.title}
-					</button>
-				))}
+				<button type="button" onClick={() => onNewShellTerminal?.()}>
+					new terminal
+				</button>
 			</div>
 		);
 	},
@@ -190,10 +167,10 @@ vi.mock("./SessionFilesView", () => ({
 }));
 const { browserDestroy, browserViewOptions } = vi.hoisted(() => ({
 	browserDestroy: vi.fn(),
-	browserViewOptions: { current: undefined as { sessionId: string; terminated: boolean } | undefined },
+	browserViewOptions: { current: undefined as { active: boolean; sessionId: string; terminated: boolean } | undefined },
 }));
 vi.mock("../hooks/useBrowserView", () => ({
-	useBrowserView: (options: { sessionId: string; terminated: boolean }) => {
+	useBrowserView: (options: { active: boolean; sessionId: string; terminated: boolean }) => {
 		browserViewOptions.current = options;
 		return {
 			viewId: "browser:sess-1",
@@ -211,6 +188,14 @@ vi.mock("../hooks/useBrowserView", () => ({
 			goForward: vi.fn(),
 			reload: vi.fn(),
 			stop: vi.fn(),
+			tabs: [{ id: "t1", url: "http://127.0.0.1:4173/", title: "Calculator", active: true }],
+			activeTabId: "t1",
+			tabNotice: "",
+			agentBrowserActive: false,
+			selectTab: vi.fn(),
+			closeTab: vi.fn(),
+			annotationMode: false,
+			setAnnotationMode: vi.fn(),
 			destroy: browserDestroy,
 		};
 	},
@@ -256,7 +241,7 @@ vi.mock("../hooks/useWorkspaceQuery", () => ({
 // real hooks would need a QueryClientProvider this suite deliberately omits.
 vi.mock("../hooks/useShellTerminals", () => ({
 	useShellTerminals: () => ({ data: shellTerminalsState.data, isLoading: false }),
-	useOpenShellTerminal: () => ({ mutate: vi.fn() }),
+	useOpenShellTerminal: () => ({ mutate: openShellTerminalMock }),
 	useCloseShellTerminal: () => ({ mutate: vi.fn() }),
 	useRenameShellTerminal: () => ({ mutate: vi.fn() }),
 }));
@@ -362,13 +347,13 @@ describe("SessionView", () => {
 		}
 		workspaceQueryState.data = workspaces;
 		workspaceQueryState.isLoading = false;
-		useUiStore.setState({ inspectorSessions: {}, visibleTerminalKindBySession: {}, sessionTabsByOwner: {} });
+		useUiStore.setState({ inspectorSessions: {}, visibleTerminalKindBySession: {} });
 		panels.clear();
 		browserDestroy.mockReset();
-		centerPaneProps.value = {};
 		browserViewOptions.current = undefined;
 		shellTerminalsState.data = [];
 		navigateMock.mockReset();
+		openShellTerminalMock.mockReset();
 	});
 
 	// Regression: shell terminals are an app-wide list, so without a per-session
@@ -429,64 +414,23 @@ describe("SessionView", () => {
 		expect(useUiStore.getState().visibleTerminalKindBySession["sess-1"]).toBeUndefined();
 	});
 
-	it("starts with only the owner tab and pins another worker through the add menu", () => {
+	// The strip only ever shows the session on screen — pinning another session's
+	// terminal as a tab (and the cross-project picker that did it) is gone (#3208).
+	it("shows only the session on screen in the tab strip", () => {
 		render(<SessionView sessionId="sess-1" />);
 
-		expect(screen.getByTestId("project-tabs")).toHaveTextContent("do the thing");
-		expect(screen.getByTestId("project-tabs")).not.toHaveTextContent("do the other thing");
-		expect(screen.getByTestId("available-project-tabs")).toHaveTextContent("Add do the other thing");
-
-		fireEvent.click(screen.getByRole("button", { name: "Add do the other thing" }));
-		expect(useUiStore.getState().sessionTabsByOwner["sess-1"]).toEqual(["sess-2"]);
-		expect(navigateMock).toHaveBeenCalledWith({
-			to: "/projects/$projectId/sessions/$sessionId",
-			params: { projectId: "proj-1", sessionId: "sess-2" },
-			search: { tabOwner: "sess-1" },
-		});
+		expect(screen.getByTestId("session-tab")).toHaveTextContent("do the thing");
+		expect(screen.getByTestId("session-tab")).not.toHaveTextContent("do the other thing");
+		expect(screen.queryByRole("button", { name: /^Add / })).not.toBeInTheDocument();
 	});
 
-	it("offers and pins live worker sessions from other projects", () => {
-		render(<SessionView sessionId="sess-1" />);
+	// The daemon roots a shell in the session's worktree when it is given that
+	// session's id, so a new terminal must name the session actually on screen.
+	it("opens new terminals in the on-screen session's worktree", () => {
+		render(<SessionView sessionId="sess-2" />);
 
-		fireEvent.click(screen.getByRole("button", { name: "Add cross-project task" }));
-		expect(useUiStore.getState().sessionTabsByOwner["sess-1"]).toEqual(["sess-cross-project"]);
-		expect(navigateMock).toHaveBeenCalledWith({
-			to: "/projects/$projectId/sessions/$sessionId",
-			params: { projectId: "proj-2", sessionId: "sess-cross-project" },
-			search: { tabOwner: "sess-1" },
-		});
-	});
-
-	it("keeps pinned worker and shell tabs private to their owner session", () => {
-		useUiStore.getState().addSessionTab("sess-1", "sess-2");
-		shellTerminalsState.data = [
-			{
-				handleId: "sh-a",
-				sessionId: "sess-1",
-				title: "owner-shell",
-				workingDir: "/p",
-				createdAt: "2026-07-24T00:00:00Z",
-			},
-			{
-				handleId: "sh-b",
-				sessionId: "sess-2",
-				title: "worker-shell",
-				workingDir: "/q",
-				createdAt: "2026-07-24T00:00:00Z",
-			},
-		];
-		const { rerender } = render(<SessionView sessionId="sess-2" tabOwnerSessionId="sess-1" />);
-
-		expect(screen.getByTestId("project-tabs")).toHaveTextContent("do the thing");
-		expect(screen.getByTestId("project-tabs")).toHaveTextContent("do the other thing");
-		expect(screen.getByTestId("shell-tabs")).toHaveTextContent("owner-shell");
-		expect(screen.getByTestId("shell-tabs")).not.toHaveTextContent("worker-shell");
-
-		rerender(<SessionView sessionId="sess-2" />);
-		expect(screen.getByTestId("project-tabs")).not.toHaveTextContent("do the thing");
-		expect(screen.getByTestId("project-tabs")).toHaveTextContent("do the other thing");
-		expect(screen.getByTestId("shell-tabs")).not.toHaveTextContent("owner-shell");
-		expect(screen.getByTestId("shell-tabs")).toHaveTextContent("worker-shell");
+		fireEvent.click(screen.getByRole("button", { name: "new terminal" }));
+		expect(openShellTerminalMock).toHaveBeenCalledWith({ projectId: "proj-1", sessionId: "sess-2" }, expect.anything());
 	});
 
 	// Regression: react-resizable-panels v4 treats bare numeric sizes as PIXELS
@@ -718,17 +662,6 @@ describe("SessionView", () => {
 		expect(centerPaneProps.value.focusRequest).toBe(1);
 	});
 
-	it("requests terminal focus when navigating to a pinned session tab", () => {
-		useUiStore.getState().addSessionTab("sess-1", "sess-2");
-		const { rerender } = render(<SessionView sessionId="sess-1" />);
-		expect(centerPaneProps.value.focusRequest).toBe(1);
-
-		rerender(<SessionView sessionId="sess-2" tabOwnerSessionId="sess-1" />);
-
-		expect(centerPaneProps.value.terminalTarget?.kind).toBe("worker");
-		expect(centerPaneProps.value.focusRequest).toBe(2);
-	});
-
 	it("requests terminal focus when reselecting the already-active session terminal", () => {
 		render(<SessionView sessionId="sess-1" />);
 		const initialFocusRequest = centerPaneProps.value.focusRequest;
@@ -779,7 +712,6 @@ describe("SessionView", () => {
 	it("maximizes the browser over the whole app window and returns to the rail", () => {
 		act(() => useUiStore.getState().setInspectorOpen("sess-1", true));
 		render(<SessionView sessionId="sess-1" />);
-		const routeFocusRequest = centerPaneProps.value.focusRequest;
 
 		expect(screen.getByText("terminal center")).toBeInTheDocument();
 		fireEvent.click(screen.getByRole("button", { name: "pop browser" }));
@@ -787,13 +719,23 @@ describe("SessionView", () => {
 		// The maximized overlay appears; the terminal stays mounted behind it.
 		expect(screen.getByRole("button", { name: "browser center" })).toBeInTheDocument();
 		expect(screen.getByText("terminal center")).toBeInTheDocument();
-		expect(centerPaneProps.value.focusRequest).toBeUndefined();
 
 		fireEvent.click(screen.getByRole("button", { name: "browser center" }));
 		expect(screen.queryByRole("button", { name: "browser center" })).not.toBeInTheDocument();
 		expect(screen.getByText("terminal center")).toBeInTheDocument();
-		expect(centerPaneProps.value.focusRequest).toBe(routeFocusRequest);
 		expect(browserDestroy).not.toHaveBeenCalled();
+	});
+
+	it("does not carry popped-out browser visibility into the next session", () => {
+		act(() => useUiStore.getState().setInspectorView("sess-1", "browser"));
+		const { rerender } = render(<SessionView sessionId="sess-1" />);
+
+		fireEvent.click(screen.getByRole("button", { name: "pop browser" }));
+		expect(browserViewOptions.current).toMatchObject({ sessionId: "sess-1", active: true });
+
+		rerender(<SessionView sessionId="sess-2" />);
+
+		expect(browserViewOptions.current).toMatchObject({ sessionId: "sess-2", active: false });
 	});
 
 	it("opens the files view in the inspector rail first", () => {
@@ -818,7 +760,6 @@ describe("SessionView", () => {
 
 		expect(screen.getByRole("button", { name: "files center" })).toBeInTheDocument();
 		expect(screen.getByText("terminal center")).toBeInTheDocument();
-		expect(centerPaneProps.value.focusRequest).toBeUndefined();
 
 		fireEvent.click(screen.getByRole("button", { name: "files center" }));
 		expect(screen.queryByRole("button", { name: "files center" })).not.toBeInTheDocument();
@@ -843,6 +784,7 @@ describe("SessionView", () => {
 		// on the default Summary tab and the unseen flag is set.
 		expect(screen.getByRole("button", { name: "pop browser" })).toHaveAttribute("data-view", "summary");
 		expect(browserUnseen("sess-1")).toBe(true);
+		expect(browserViewOptions.current).toMatchObject({ active: false });
 	});
 
 	it("clears the badge once the user opens the Browser tab", () => {
@@ -857,6 +799,7 @@ describe("SessionView", () => {
 		act(() => useUiStore.getState().setInspectorView("sess-1", "browser"));
 		expect(inspectorButton()).toHaveAttribute("data-view", "browser");
 		expect(browserUnseen("sess-1")).toBe(false);
+		expect(browserViewOptions.current).toMatchObject({ active: true });
 	});
 
 	it("badges the Browser tab per worker session on a new preview, without switching tabs", () => {

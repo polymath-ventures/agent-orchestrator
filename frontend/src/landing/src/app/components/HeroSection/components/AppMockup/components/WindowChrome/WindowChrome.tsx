@@ -26,7 +26,9 @@ const TITLE_BY_DEMO: Record<ActiveDemo, { title: string; branch: string }> = {
 	},
 };
 
-export function WindowChrome({ activeDemo = "Use Any Agents" }: WindowChromeProps) {
+export function WindowChrome({
+	activeDemo = "Use Any Agents",
+}: WindowChromeProps) {
 	const { title, branch } = TITLE_BY_DEMO[activeDemo];
 	return (
 		<div className="flex h-9 items-center gap-2 border-b border-border bg-background px-3">

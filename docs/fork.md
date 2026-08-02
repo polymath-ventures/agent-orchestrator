@@ -208,6 +208,20 @@ session-scoping (upstream's model); and the UX shape of the inspector rail, the
 reviews panel, the terminal tab strip, and mobile chrome (upstream's — the fork
 requires only that these stay functional in the web client, per item 1).
 
+**The landing site is vendored, not forked.** `frontend/src/landing/` is
+upstream's marketing/docs app. The fork ships no code of its own there and does
+not deploy it, so the tree is kept **byte-identical to upstream** and a sync
+takes it wholesale (`git checkout MERGE_HEAD -- frontend/src/landing`). The one
+exception is `frontend/src/landing/content/docs/configuration/projects.mdx`,
+which carries the fork's model-management documentation; re-apply that file
+after taking upstream's tree. It is listed in `.prettierignore` for the same
+reason: reformatting a vendored app to this repo's Prettier config previously
+conflicted on essentially every landing file on every sync, for no fork benefit.
+A sync that finds a conflict under `frontend/src/landing/` outside that one
+`.mdx` should suspect the tree has drifted from upstream again, not hand-merge
+it. Note the landing app has its own dependency tree, and the renderer vitest
+suite collects its script tests — see `scripts/ci/ci-local.sh`.
+
 ## Browser Mode On The Tailnet
 
 The fork ships a small browser-mode web server for headless hosts. It serves the

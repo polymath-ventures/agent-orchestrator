@@ -93,7 +93,10 @@ function broadcast(status: UpdateStatus, owner: "independent" | "automatic-opera
 	if (owner === "independent") {
 		independentStatusRevision += 1;
 		if (activeUpdaterOperation === "automatic-check" && automaticCheckPreviousStatus !== undefined) {
-			automaticCheckPreviousStatus = { status, independentRevision: independentStatusRevision };
+			automaticCheckPreviousStatus = {
+				status,
+				independentRevision: independentStatusRevision,
+			};
 		}
 	}
 	lastStatus = status;
@@ -296,6 +299,16 @@ async function runRetirementPoll(stateDir: string): Promise<void> {
 	}
 }
 
+// isManifest404Error checks whether the error is a 404 on a release
+// manifest YAML file — a routine condition that should not be surfaced
+// to users as an error dialog.
+function isManifest404Error(err: unknown): boolean {
+	const e = err as Error & { code?: string };
+	if (e.code === "ERR_UPDATER_CHANNEL_FILE_NOT_FOUND") return true;
+	const msg = e.message ?? "";
+	return msg.includes("HttpError: 404") && /\.yml\b/i.test(msg);
+}
+
 // wireUpdaterEvents registers electron-updater listeners once and forwards each
 // to the renderer as an UpdateStatus. Idempotent: safe to call on every entry
 // point (launch auto-check and manual check).
@@ -309,7 +322,10 @@ function wireUpdaterEvents(): void {
 		if (activeUpdaterOperation === "automatic-check" && automaticCheckPreviousStatus === undefined) {
 			const status = lastStatus;
 			broadcastUpdaterStatus({ state: "checking" });
-			automaticCheckPreviousStatus = { status, independentRevision: independentStatusRevision };
+			automaticCheckPreviousStatus = {
+				status,
+				independentRevision: independentStatusRevision,
+			};
 			return;
 		}
 		broadcastUpdaterStatus({ state: "checking" });
@@ -331,7 +347,10 @@ function wireUpdaterEvents(): void {
 		if (stagedAtMs !== undefined) broadcastUpdaterStatus(stagedDownloadedStatus());
 	});
 	autoUpdater.on("download-progress", (p) =>
-		broadcastUpdaterStatus({ state: "downloading", percent: Math.max(0, Math.min(100, Math.round(p?.percent ?? 0))) }),
+		broadcastUpdaterStatus({
+			state: "downloading",
+			percent: Math.max(0, Math.min(100, Math.round(p?.percent ?? 0))),
+		}),
 	);
 	autoUpdater.on("update-downloaded", (info) => {
 		stagedVersion = info?.version;
@@ -357,7 +376,37 @@ function wireUpdaterEvents(): void {
 			restoreAutomaticCheckPreviousStatus();
 			return;
 		}
-		broadcast(withActiveRequest({ state: "error", message: err?.message ?? String(err) }));
+		// Manifest 404 (missing latest-mac.yml etc.) is a routine condition,
+		// not an actionable error — log and broadcast a terminal state so
+		// the renderer does not hang.
+		if (isManifest404Error(err)) {
+			console.info("update check failed (404, manifest not found):", err);
+			if (activeUpdaterOperation === "manual-download") {
+				broadcast(
+					withActiveRequest({
+						state: "error",
+						message: "Download failed — the update file was not found on the server.",
+					}),
+				);
+			} else if (stagedAtMs !== undefined) {
+				broadcast(stagedDownloadedStatus());
+			} else {
+				broadcast(
+					withActiveRequest({
+						state: "error",
+						message: "Couldn't check for updates — the update information was not found on the server.",
+					}),
+				);
+			}
+			return;
+		}
+		// All other errors: broadcast so the user knows something went wrong.
+		broadcast(
+			withActiveRequest({
+				state: "error",
+				message: err?.message ?? String(err),
+			}),
+		);
 	});
 }
 
@@ -479,11 +528,21 @@ export async function checkForUpdatesNow(stateDir: string, options: UpdateCheckO
 			options.requestId,
 		);
 	} catch (err) {
-		broadcast({
-			state: "error",
-			message: (err as Error)?.message ?? "Update check failed",
-			requestId: options.requestId,
-		});
+		if (isManifest404Error(err)) {
+			console.info("manual update check failed:", err);
+			broadcast({
+				state: "error",
+				message: "Couldn't check for updates — the update information was not found on the server.",
+				requestId: options.requestId,
+			});
+			if (stagedAtMs !== undefined) broadcast(stagedDownloadedStatus());
+		} else {
+			broadcast({
+				state: "error",
+				message: (err as Error)?.message ?? "Update check failed",
+				requestId: options.requestId,
+			});
+		}
 	}
 }
 
@@ -534,7 +593,11 @@ export async function returnToHome(stateDir: string, requestId?: string): Promis
 export async function downloadUpdateNow(requestId?: string): Promise<void> {
 	wireUpdaterEvents();
 	if (!app.isPackaged) {
-		broadcast({ state: "unsupported", message: "Updates are only available in the installed app.", requestId });
+		broadcast({
+			state: "unsupported",
+			message: "Updates are only available in the installed app.",
+			requestId,
+		});
 		return;
 	}
 	try {
@@ -546,7 +609,20 @@ export async function downloadUpdateNow(requestId?: string): Promise<void> {
 			requestId,
 		);
 	} catch (err) {
-		broadcast({ state: "error", message: (err as Error)?.message ?? "Download failed", requestId });
+		if (isManifest404Error(err)) {
+			console.error("update download failed:", err);
+			broadcast({
+				state: "error",
+				message: "Download failed — the update file was not found on the server.",
+				requestId,
+			});
+		} else {
+			broadcast({
+				state: "error",
+				message: (err as Error)?.message ?? "Download failed",
+				requestId,
+			});
+		}
 	}
 }
 
@@ -571,7 +647,12 @@ export async function ensureUpdatePrefs(stateDir: string): Promise<void> {
 		detail: "You can change this later in Settings.",
 	});
 	if (optIn.response !== 0) {
-		await writeUpdateSettings(stateDir, { enabled: false, channel: "latest", nightlyAck: false, feature: null });
+		await writeUpdateSettings(stateDir, {
+			enabled: false,
+			channel: "latest",
+			nightlyAck: false,
+			feature: null,
+		});
 		return;
 	}
 
@@ -584,7 +665,12 @@ export async function ensureUpdatePrefs(stateDir: string): Promise<void> {
 		detail: "Stable is released and tested. Nightly is the newest daily build.",
 	});
 	if (chan.response !== 1) {
-		await writeUpdateSettings(stateDir, { enabled: true, channel: "latest", nightlyAck: false, feature: null });
+		await writeUpdateSettings(stateDir, {
+			enabled: true,
+			channel: "latest",
+			nightlyAck: false,
+			feature: null,
+		});
 		return;
 	}
 

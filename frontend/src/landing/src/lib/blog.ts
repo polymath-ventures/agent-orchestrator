@@ -6,7 +6,12 @@ import { normalizeContentDate } from "./content-utils";
 import { getPersonById } from "./people";
 
 export { BLOG_CATEGORIES, type BlogCategory } from "./blog-constants";
-export { type BlogPost, formatBlogDate, slugify, type TocItem } from "./blog-utils";
+export {
+	type BlogPost,
+	formatBlogDate,
+	slugify,
+	type TocItem,
+} from "./blog-utils";
 export type { Person } from "./people";
 
 const BLOG_DIR = path.join(process.cwd(), "content/blog");
@@ -87,9 +92,17 @@ export function getAllSlugs(): string[] {
 
 const MAX_RELATED_POSTS = 3;
 
-export function getRelatedPosts({ slug, relatedSlugs }: { slug: string; relatedSlugs?: string[] }): BlogPost[] {
+export function getRelatedPosts({
+	slug,
+	relatedSlugs,
+}: {
+	slug: string;
+	relatedSlugs?: string[];
+}): BlogPost[] {
 	if (relatedSlugs && relatedSlugs.length > 0) {
-		return relatedSlugs.map((s) => getBlogPost(s)).filter((post): post is BlogPost => post !== undefined);
+		return relatedSlugs
+			.map((s) => getBlogPost(s))
+			.filter((post): post is BlogPost => post !== undefined);
 	}
 
 	return getBlogPosts()

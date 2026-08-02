@@ -1,6 +1,11 @@
 "use client";
 
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@ao/ui/dropdown-menu";
+import {
+	DropdownMenu,
+	DropdownMenuContent,
+	DropdownMenuItem,
+	DropdownMenuTrigger,
+} from "@ao/ui/dropdown-menu";
 import type { ReactNode } from "react";
 
 export interface DropdownItem {
@@ -24,7 +29,12 @@ interface PlatformDropdownProps {
 	className?: string;
 }
 
-export function PlatformDropdown({ trigger, sections, align = "end", className = "" }: PlatformDropdownProps) {
+export function PlatformDropdown({
+	trigger,
+	sections,
+	align = "end",
+	className = "",
+}: PlatformDropdownProps) {
 	return (
 		<DropdownMenu>
 			<DropdownMenuTrigger asChild>{trigger}</DropdownMenuTrigger>
@@ -36,11 +46,21 @@ export function PlatformDropdown({ trigger, sections, align = "end", className =
 			>
 				{sections.map((section, sectionIndex) => (
 					<div key={section.title || sectionIndex}>
-						{sectionIndex > 0 && <div className="mt-2 pt-2 border-t border-border" />}
-						{section.title && <p className="text-xs text-muted-foreground px-2 mb-2 text-start">{section.title}</p>}
+						{sectionIndex > 0 && (
+							<div className="mt-2 pt-2 border-t border-border" />
+						)}
+						{section.title && (
+							<p className="text-xs text-muted-foreground px-2 mb-2 text-start">
+								{section.title}
+							</p>
+						)}
 						<div className={section.title ? "flex flex-col gap-1.5" : ""}>
 							{section.items.map((item) => (
-								<DropdownMenuItem key={item.id} onClick={item.onClick} className="p-0 focus:bg-transparent">
+								<DropdownMenuItem
+									key={item.id}
+									onClick={item.onClick}
+									className="p-0 focus:bg-transparent"
+								>
 									{item.variant === "primary" ? (
 										<button
 											type="button"
@@ -50,7 +70,11 @@ export function PlatformDropdown({ trigger, sections, align = "end", className =
 												{item.icon}
 												<span className="font-medium">{item.label}</span>
 											</div>
-											{item.description && <span className="text-xs text-muted-foreground">{item.description}</span>}
+											{item.description && (
+												<span className="text-xs text-muted-foreground">
+													{item.description}
+												</span>
+											)}
 										</button>
 									) : (
 										<button

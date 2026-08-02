@@ -29,7 +29,9 @@ export function TypewriterText({
 	delay = 500,
 	showCursor = true,
 }: TypewriterTextProps) {
-	const fullText = segments ? segments.map((s) => s.text).join("") : (text ?? "");
+	const fullText = segments
+		? segments.map((s) => s.text).join("")
+		: (text ?? "");
 	const [displayedText, setDisplayedText] = useState("");
 	const [isTyping, setIsTyping] = useState(false);
 
@@ -65,18 +67,29 @@ export function TypewriterText({
 
 			if (segStart >= displayedText.length) return null;
 
-			const visibleText = segment.text.slice(0, Math.min(segment.text.length, displayedText.length - segStart));
+			const visibleText = segment.text.slice(
+				0,
+				Math.min(segment.text.length, displayedText.length - segStart),
+			);
 
 			if (segment.render) {
 				return (
-					<span key={segment.text} className={segment.className} style={segment.style}>
+					<span
+						key={segment.text}
+						className={segment.className}
+						style={segment.style}
+					>
 						{segment.render(visibleText)}
 					</span>
 				);
 			}
 
 			return (
-				<span key={segment.text} className={segment.className} style={segment.style}>
+				<span
+					key={segment.text}
+					className={segment.className}
+					style={segment.style}
+				>
 					{visibleText}
 				</span>
 			);
@@ -89,7 +102,9 @@ export function TypewriterText({
 			{showCursor && (
 				<motion.span
 					className="inline-block ml-0.5 w-3 h-[1em] bg-current translate-y-0.5"
-					animate={isTypingComplete ? { opacity: [1, 1, 0, 0] } : { opacity: 1 }}
+					animate={
+						isTypingComplete ? { opacity: [1, 1, 0, 0] } : { opacity: 1 }
+					}
 					transition={
 						isTypingComplete
 							? {

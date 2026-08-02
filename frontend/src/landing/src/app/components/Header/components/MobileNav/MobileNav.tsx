@@ -4,7 +4,11 @@ import { AnimatePresence, motion } from "framer-motion";
 import { Menu, X } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { type NavLink, PRODUCT_LINKS, RESOURCE_LINKS } from "../../constants";
+import {
+	type NavLink,
+	PRODUCT_LINKS,
+	RESOURCE_LINKS,
+} from "../../constants";
 
 interface MobileNavProps {
 	ctaButtons: React.ReactNode;
@@ -46,7 +50,9 @@ export function MobileNav({ ctaButtons }: MobileNavProps) {
 
 	return (
 		<div className="lg:hidden flex items-center gap-2 select-none">
-			<div className="hidden sm:flex items-center gap-2 shrink-0">{ctaButtons}</div>
+			<div className="hidden sm:flex items-center gap-2 shrink-0">
+				{ctaButtons}
+			</div>
 			<button
 				type="button"
 				className="-mr-2.5 grid size-11 place-items-center text-muted-foreground hover:text-foreground transition-colors"
@@ -82,9 +88,19 @@ export function MobileNav({ ctaButtons }: MobileNavProps) {
 						>
 							<div className="max-h-[calc(100dvh-3.5rem)] overflow-y-auto overscroll-contain px-4 pb-[env(safe-area-inset-bottom)] sm:px-8 lg:px-[30px]">
 								<div className="max-w-7xl mx-auto py-4 flex flex-col gap-6">
-									<MobileSection title="Product" links={PRODUCT_LINKS} onNavigate={close} />
-									<MobileSection title="Resources" links={RESOURCE_LINKS} onNavigate={close} />
-									<div className="pt-4 border-t border-border flex flex-col gap-3">{ctaButtons}</div>
+									<MobileSection
+										title="Product"
+										links={PRODUCT_LINKS}
+										onNavigate={close}
+									/>
+									<MobileSection
+										title="Resources"
+										links={RESOURCE_LINKS}
+										onNavigate={close}
+									/>
+									<div className="pt-4 border-t border-border flex flex-col gap-3">
+										{ctaButtons}
+									</div>
 								</div>
 							</div>
 						</motion.div>
@@ -95,10 +111,22 @@ export function MobileNav({ ctaButtons }: MobileNavProps) {
 	);
 }
 
-function MobileSection({ title, links, onNavigate }: { title?: string; links: NavLink[]; onNavigate: () => void }) {
+function MobileSection({
+	title,
+	links,
+	onNavigate,
+}: {
+	title?: string;
+	links: NavLink[];
+	onNavigate: () => void;
+}) {
 	return (
 		<div className="flex flex-col gap-1">
-			{title && <p className="px-2 pb-1 text-xs tracking-[-0.5px] text-muted-foreground/70">{title}</p>}
+			{title && (
+				<p className="px-2 pb-1 text-xs tracking-[-0.5px] text-muted-foreground/70">
+					{title}
+				</p>
+			)}
 			{links.map((link) =>
 				link.external ? (
 					<a

@@ -16,7 +16,13 @@ interface WorkspaceItemProps {
 	status?: WorkspaceStatus;
 }
 
-export function WorkspaceItem({ name, add, del, isActive, status }: WorkspaceItemProps) {
+export function WorkspaceItem({
+	name,
+	add,
+	del,
+	isActive,
+	status,
+}: WorkspaceItemProps) {
 	const isCloud = name === "see changes";
 	const isBranch = name === "forward ports";
 	return (
@@ -27,11 +33,16 @@ export function WorkspaceItem({ name, add, del, isActive, status }: WorkspaceIte
 					: "text-foreground/80 hover:bg-foreground/[0.025] hover:text-foreground/95"
 			}`}
 		>
-			{isActive && <span className="absolute inset-y-0.5 left-0 w-[2px] bg-brand" />}
+			{isActive && (
+				<span className="absolute inset-y-0.5 left-0 w-[2px] bg-brand" />
+			)}
 
 			<div className="flex size-3 shrink-0 items-center justify-center">
 				{status === "working" ? (
-					<AsciiSpinner className="text-[10px]" toneClassName="text-brand-light" />
+					<AsciiSpinner
+						className="text-[10px]"
+						toneClassName="text-brand-light"
+					/>
 				) : status ? (
 					<StatusIndicator status={status} />
 				) : isCloud ? (
@@ -43,12 +54,18 @@ export function WorkspaceItem({ name, add, del, isActive, status }: WorkspaceIte
 				)}
 			</div>
 
-			<span className={`min-w-0 flex-1 truncate ${isActive ? "font-medium" : ""}`}>{name}</span>
+			<span
+				className={`min-w-0 flex-1 truncate ${isActive ? "font-medium" : ""}`}
+			>
+				{name}
+			</span>
 
 			{add !== undefined && (
 				<span className="shrink-0 font-mono text-[10px] tabular-nums">
 					<span className="text-emerald-400/80">+{add}</span>
-					{del !== undefined && del > 0 && <span className="ml-1 text-rose-400/75">−{del}</span>}
+					{del !== undefined && del > 0 && (
+						<span className="ml-1 text-rose-400/75">−{del}</span>
+					)}
 				</span>
 			)}
 		</div>

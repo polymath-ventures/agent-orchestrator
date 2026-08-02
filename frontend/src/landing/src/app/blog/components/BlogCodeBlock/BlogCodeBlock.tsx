@@ -1,6 +1,9 @@
 "use client";
 
-import { CodeBlock, CodeBlockCopyButton } from "@ao/ui/ai-elements/code-block";
+import {
+	CodeBlock,
+	CodeBlockCopyButton,
+} from "@ao/ui/ai-elements/code-block";
 import type { BundledLanguage } from "shiki";
 
 interface BlogCodeBlockProps {
@@ -9,10 +12,18 @@ interface BlogCodeBlockProps {
 	showLineNumbers?: boolean;
 }
 
-export function BlogCodeBlock({ code, language, showLineNumbers }: BlogCodeBlockProps) {
+export function BlogCodeBlock({
+	code,
+	language,
+	showLineNumbers,
+}: BlogCodeBlockProps) {
 	return (
 		<div className="blog-code-block not-prose my-6">
-			<CodeBlock code={code} language={language} showLineNumbers={showLineNumbers}>
+			<CodeBlock
+				code={code}
+				language={language}
+				showLineNumbers={showLineNumbers}
+			>
 				<CodeBlockCopyButton />
 			</CodeBlock>
 		</div>

@@ -50,7 +50,9 @@ function stripMarkdownFormatting(value: string): string {
 		.trim();
 }
 
-export function extractComparisonFaqItems(content: string): ComparisonFaqItem[] {
+export function extractComparisonFaqItems(
+	content: string,
+): ComparisonFaqItem[] {
 	const lines = content.split("\n");
 	const items: ComparisonFaqItem[] = [];
 

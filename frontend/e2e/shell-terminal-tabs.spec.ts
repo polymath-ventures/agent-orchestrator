@@ -10,17 +10,16 @@ test("opens, selects, and closes standalone shell terminals from the tab strip",
 	await installBrowserModeApiFixtures(page);
 	await page.goto("/#/projects/api-gateway/sessions/refactor-mux");
 
-	// Upstream replaced the standalone "New terminal" button with an "Add tab"
-	// dropdown whose "Terminal" item opens a session-scoped shell. A session pane
-	// starts with only its own tab, so no shell close buttons yet.
-	const addTab = page.getByRole("button", { name: "Add tab" });
-	await expect(addTab).toBeVisible();
+	// The button at the end of the tab strip opens a shell and makes it the active
+	// pane. It creates a terminal directly — no menu, no session picker. A session
+	// pane starts with only its own tab, so there are no shell close buttons yet.
+	const newTerminal = page.getByRole("button", { name: "New terminal" });
+	await expect(newTerminal).toBeVisible();
 	const closeButtons = page.getByRole("button", { name: /^Close terminal / });
 	await expect(closeButtons).toHaveCount(0);
 
-	// The Add-tab menu opens a shell and makes it the active pane.
-	await addTab.click();
-	await page.getByRole("menuitem", { name: "Terminal" }).click();
+	await newTerminal.click();
+	await expect(page.getByRole("menu")).toHaveCount(0);
 	await expect(closeButtons).toHaveCount(1);
 
 	// Selecting the session tab hands the pane back to the agent. Matched by its

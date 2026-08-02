@@ -59,7 +59,13 @@ export function FeaturePreviewShell({
 	);
 }
 
-export function StatusDot({ color, pulse = false }: { color: string; pulse?: boolean }) {
+export function StatusDot({
+	color,
+	pulse = false,
+}: {
+	color: string;
+	pulse?: boolean;
+}) {
 	return (
 		<span className="relative flex size-2 shrink-0">
 			{pulse ? (
@@ -68,7 +74,10 @@ export function StatusDot({ color, pulse = false }: { color: string; pulse?: boo
 					style={{ backgroundColor: color }}
 				/>
 			) : null}
-			<span className="relative inline-flex size-2 rounded-full" style={{ backgroundColor: color }} />
+			<span
+				className="relative inline-flex size-2 rounded-full"
+				style={{ backgroundColor: color }}
+			/>
 		</span>
 	);
 }

@@ -2,7 +2,14 @@
 
 import { motion } from "framer-motion";
 import Image from "next/image";
-import { LuChevronDown, LuExternalLink, LuPlay, LuPlus, LuTerminal, LuX } from "react-icons/lu";
+import {
+	LuChevronDown,
+	LuExternalLink,
+	LuPlay,
+	LuPlus,
+	LuTerminal,
+	LuX,
+} from "react-icons/lu";
 import { AGENT_TABS } from "../../constants";
 import type { ActiveDemo } from "../../types";
 
@@ -54,7 +61,13 @@ export function TabBar({ activeDemo }: TabBarProps) {
 						delay: activeDemo === "Use Any Agents" ? tab.delay : 0,
 					}}
 				>
-					<Image src={tab.src} alt={tab.alt} width={12} height={12} style={{ width: "auto", height: 12 }} />
+					<Image
+						src={tab.src}
+						alt={tab.alt}
+						width={12}
+						height={12}
+						style={{ width: "auto", height: 12 }}
+					/>
 					<span>{tab.label}</span>
 					<LuX className="size-3 text-muted-foreground/30" />
 				</motion.div>

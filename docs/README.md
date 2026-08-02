@@ -21,6 +21,7 @@ Start with [architecture.md](architecture.md) for the current backend model and
 | [prime-supervisor.md](prime-supervisor.md)                           | Optional daemon-global fleet Prime role, persisted settings, lifecycle, and prompt inspection.                        |
 | [macos-electron-titlebar-smoke.md](macos-electron-titlebar-smoke.md) | Manual hosted macOS Electron launch and native traffic-light/titlebar-cluster geometry verification.                  |
 | [telemetry.md](telemetry.md)                                         | Telemetry collection, privacy safeguards, configuration, and PostHog dashboard guidance.                              |
+| [posthog-cost-controls.md](posthog-cost-controls.md)                 | PostHog event-name migration, ingestion drop rules, and dashboard queries for reducing telemetry spend.               |
 | [STATUS.md](STATUS.md)                                               | What is shipped on `main` today and what is still in flight.                                                          |
 | [stack.md](stack.md)                                                 | Accepted library/runtime choices, pending stack decisions, and dependencies explicitly avoided for V1.                |
 

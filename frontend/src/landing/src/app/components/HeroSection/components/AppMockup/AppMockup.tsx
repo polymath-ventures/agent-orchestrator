@@ -45,8 +45,8 @@ interface TrackItem {
 	summary: string;
 }
 
-const repoName = "AgentWrapper/agent-orchestrator";
-const repoAvatar = "https://github.com/AgentWrapper.png?size=64";
+const repoName = "Untrivial-ai/agent-orchestrator";
+const repoAvatar = "https://github.com/Untrivial-ai.png?size=64";
 
 const previewTokenStyle = {
 	"--preview-background": "oklch(0.153 0.006 107.1)",
@@ -246,7 +246,11 @@ const projectItems: TrackItem[] = [
 ];
 
 function previewCard(
-	card: Pick<StaticPreviewCard, "title" | "branch" | "activity" | "activityState" | "pr"> & Partial<StaticPreviewCard>,
+	card: Pick<
+		StaticPreviewCard,
+		"title" | "branch" | "activity" | "activityState" | "pr"
+	> &
+		Partial<StaticPreviewCard>,
 ): StaticPreviewCard {
 	return {
 		agent: "Claude",
@@ -261,7 +265,9 @@ function previewCard(
 }
 
 const trackCardTemplates: Record<TrackId, StaticPreviewCard[]> = {
-	landing: columns.flatMap((column) => column.cards.slice(0, 1).map((card) => ({ ...card }) as StaticPreviewCard)),
+	landing: columns.flatMap((column) =>
+		column.cards.slice(0, 1).map((card) => ({ ...card }) as StaticPreviewCard),
+	),
 	deploy: [
 		previewCard({
 			title: "Pin the Vercel monorepo root",
@@ -632,7 +638,11 @@ interface WindowState {
 	height: number;
 }
 
-function clampWindowState(state: WindowState, containerWidth: number, containerHeight: number): WindowState {
+function clampWindowState(
+	state: WindowState,
+	containerWidth: number,
+	containerHeight: number,
+): WindowState {
 	let { x, y, width, height } = state;
 	const maxWidth = Math.max(1, containerWidth - WINDOW_MARGIN * 2);
 	const maxHeight = Math.max(1, containerHeight - WINDOW_MARGIN * 2);
@@ -648,10 +658,17 @@ function clampWindowState(state: WindowState, containerWidth: number, containerH
 	return { x, y, width, height };
 }
 
-function createInitialWindowState(containerWidth: number, containerHeight: number): WindowState {
+function createInitialWindowState(
+	containerWidth: number,
+	containerHeight: number,
+): WindowState {
 	const availableWidth = containerWidth - WINDOW_MARGIN * 2;
 	const availableHeight = containerHeight - WINDOW_MARGIN * 2;
-	const scale = Math.min(1, availableWidth / BASE_WIDTH, availableHeight / BASE_HEIGHT);
+	const scale = Math.min(
+		1,
+		availableWidth / BASE_WIDTH,
+		availableHeight / BASE_HEIGHT,
+	);
 	const width = BASE_WIDTH * scale;
 	const height = BASE_HEIGHT * scale;
 	return {
@@ -662,7 +679,9 @@ function createInitialWindowState(containerWidth: number, containerHeight: numbe
 	};
 }
 
-function useFloatingWindow(outerRef: React.RefObject<HTMLElement | null>) {
+function useFloatingWindow(
+	outerRef: React.RefObject<HTMLElement | null>,
+) {
 	const stateRef = useRef<WindowState | null>(null);
 	// The geometry the user asked for, kept unclamped by container size. Narrow
 	// containers squash the rendered state into the corner; replaying from this
@@ -699,7 +718,8 @@ function useFloatingWindow(outerRef: React.RefObject<HTMLElement | null>) {
 		// render. Clamping alone pins x/y to the margin at narrow widths and never
 		// recovers the centered position when the container grows back.
 		stateRef.current = clampWindowState(
-			desiredStateRef.current ?? createInitialWindowState(rect.width, rect.height),
+			desiredStateRef.current ??
+				createInitialWindowState(rect.width, rect.height),
 			rect.width,
 			rect.height,
 		);
@@ -726,22 +746,26 @@ function useFloatingWindow(outerRef: React.RefObject<HTMLElement | null>) {
 		};
 	}, []);
 
-	const startResize = useCallback((direction: string, clientX: number, clientY: number) => {
-		if (!stateRef.current) return;
-		interactionRef.current = {
-			type: "resize",
-			direction,
-			startX: clientX,
-			startY: clientY,
-			initial: { ...stateRef.current },
-		};
-	}, []);
+	const startResize = useCallback(
+		(direction: string, clientX: number, clientY: number) => {
+			if (!stateRef.current) return;
+			interactionRef.current = {
+				type: "resize",
+				direction,
+				startX: clientX,
+				startY: clientY,
+				initial: { ...stateRef.current },
+			};
+		},
+		[],
+	);
 
 	useEffect(() => {
 		const handleMove = (event: PointerEvent) => {
 			const interaction = interactionRef.current;
 			if (!interaction || !stateRef.current) return;
-			const { width: containerWidth, height: containerHeight } = containerSizeRef.current;
+			const { width: containerWidth, height: containerHeight } =
+				containerSizeRef.current;
 			const dx = event.clientX - interaction.startX;
 			const dy = event.clientY - interaction.startY;
 			let next: WindowState = { ...interaction.initial };
@@ -885,22 +909,19 @@ function createInitialCards(trackId: TrackId): PreviewCard[] {
 	return columns.flatMap((column, index) => {
 		const card = trackCardTemplates[trackId][index];
 		return card
-			? [
-					{
-						...card,
-						column: column.id,
-						id: `${trackId}-${column.id}`,
-					},
-				]
+			? [{
+					...card,
+					column: column.id,
+					id: `${trackId}-${column.id}`,
+				}]
 			: [];
 	});
 }
 
 function createInitialCardsByTrack(): Record<TrackId, PreviewCard[]> {
-	return Object.fromEntries(projectItems.map(({ id }) => [id, createInitialCards(id)])) as Record<
-		TrackId,
-		PreviewCard[]
-	>;
+	return Object.fromEntries(
+		projectItems.map(({ id }) => [id, createInitialCards(id)]),
+	) as Record<TrackId, PreviewCard[]>;
 }
 
 function advanceCard(card: PreviewCard): PreviewCard {
@@ -1032,13 +1053,7 @@ function BranchIcon({ className = "" }: { className?: string }) {
 			<circle cx="4" cy="12.5" r="1.5" stroke="currentColor" strokeWidth="1.2" />
 			<circle cx="12" cy="12.5" r="1.5" stroke="currentColor" strokeWidth="1.2" />
 			<path d="M4 5v6M8 3.5h1.5A2.5 2.5 0 0 1 12 6v5" stroke="currentColor" strokeLinecap="round" strokeWidth="1.2" />
-			<path
-				d="m7.5 1.8 1.8 1.7-1.8 1.8"
-				stroke="currentColor"
-				strokeLinecap="round"
-				strokeLinejoin="round"
-				strokeWidth="1.2"
-			/>
+			<path d="m7.5 1.8 1.8 1.7-1.8 1.8" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.2" />
 		</svg>
 	);
 }
@@ -1106,13 +1121,7 @@ function GitHubIcon({ className = "" }: { className?: string }) {
 function CheckIcon({ className = "" }: { className?: string }) {
 	return (
 		<svg className={className} viewBox="0 0 16 16" fill="none" aria-hidden="true">
-			<path
-				d="m3.2 8.2 3.1 3.1 6.5-6.6"
-				stroke="currentColor"
-				strokeLinecap="round"
-				strokeLinejoin="round"
-				strokeWidth="1.8"
-			/>
+			<path d="m3.2 8.2 3.1 3.1 6.5-6.6" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" />
 		</svg>
 	);
 }
@@ -1146,7 +1155,13 @@ function SettingsIcon({ className = "" }: { className?: string }) {
 				strokeLinejoin="round"
 				strokeWidth="1.8"
 			/>
-			<circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="1.2" />
+			<circle
+				cx="12"
+				cy="12"
+				r="3"
+				stroke="currentColor"
+				strokeWidth="1.2"
+			/>
 		</svg>
 	);
 }
@@ -1422,7 +1437,11 @@ function BoardCard({
 			}}
 			whileTap={canPressScale ? { scale: 0.96 } : undefined}
 			initial={{ opacity: 0, scale: 0.98, y: -8 }}
-			animate={card.merging ? { opacity: 0, scale: 0.96, y: -8 } : { opacity: 1, scale: 1, y: 0 }}
+			animate={
+				card.merging
+					? { opacity: 0, scale: 0.96, y: -8 }
+					: { opacity: 1, scale: 1, y: 0 }
+			}
 			exit={{ opacity: 0, scale: 0.96, y: -8 }}
 			transition={{
 				duration: 0.45,
@@ -1482,9 +1501,9 @@ function BoardCard({
 									? "text-[#f87171]"
 									: card.activityState === "reviewing"
 										? "text-[#93c5fd]"
-										: card.activityState === "waiting"
-											? "text-[#fcd34d]"
-											: "text-[#9ca3af]"
+									: card.activityState === "waiting"
+										? "text-[#fcd34d]"
+										: "text-[#9ca3af]"
 						}`}
 					>
 						{card.activityState === "passed" ? (
@@ -1526,15 +1545,18 @@ function BoardColumn({
 		<section className="flex min-h-0 min-w-0 snap-start flex-col border-r border-[var(--preview-border)] last:border-r-0">
 			<div className="flex items-center gap-2 border-b border-[var(--preview-border)] px-3 py-2.5">
 				<span className="h-2 w-2 rounded-[2px]" style={{ backgroundColor: color }} />
-				<div className="text-[11px] font-semibold tracking-[-0.5px] text-[var(--preview-muted-foreground)]">
-					{title}
-				</div>
+				<div className="text-[11px] font-semibold tracking-[-0.5px] text-[var(--preview-muted-foreground)]">{title}</div>
 				<div className="ml-2 text-[10px] tabular-nums text-[var(--preview-muted-foreground)]">{count}</div>
 			</div>
 			<div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-2 scrollbar-hide">
 				<AnimatePresence initial={false}>
 					{cards.map((card) => (
-						<BoardCard key={`${card.id}-${card.column}`} card={card} onMerge={onMerge} onOpen={onOpen} />
+						<BoardCard
+							key={`${card.id}-${card.column}`}
+							card={card}
+							onMerge={onMerge}
+							onOpen={onOpen}
+						/>
 					))}
 				</AnimatePresence>
 			</div>
@@ -1653,7 +1675,13 @@ function AgentMetaItem({
 	);
 }
 
-function AgentStatusModal({ card, onClose }: { card: PreviewCard | null; onClose: () => void }) {
+function AgentStatusModal({
+	card,
+	onClose,
+}: {
+	card: PreviewCard | null;
+	onClose: () => void;
+}) {
 	return (
 		<AnimatePresence initial={false}>
 			{card ? (
@@ -1676,65 +1704,65 @@ function AgentStatusModal({ card, onClose }: { card: PreviewCard | null; onClose
 						transition={{ duration: 0.18, ease: [0.2, 0, 0, 1] }}
 						onClick={onClose}
 					>
-						<motion.div
-							role="dialog"
-							aria-modal="true"
-							aria-label={`${card.title} agent status`}
-							className="w-full min-w-0 max-w-[520px] rounded-2xl border border-[var(--preview-border)] bg-[var(--preview-card)] p-3 text-[var(--preview-card-foreground)] shadow-[0_24px_80px_rgba(0,0,0,0.45)] outline-none sm:p-4"
-							initial={{ opacity: 0, scale: 0.99 }}
-							animate={{ opacity: 1, scale: 1 }}
-							exit={{ opacity: 0, scale: 0.99 }}
-							transition={{ duration: 0.16, ease: [0.2, 0, 0, 1] }}
-							onClick={(event) => event.stopPropagation()}
-						>
-							<div className="flex items-start gap-3">
-								<img
-									src={card.icon}
-									alt=""
-									width={24}
-									height={24}
-									aria-hidden="true"
-									className="mt-0.5 h-6 w-6"
-									draggable="false"
-								/>
-								<div className="min-w-0 flex-1">
-									<div className="text-[13px] font-semibold tracking-[-0.5px] text-[var(--preview-foreground)]">
-										{card.agent} worker
-									</div>
-									<div className="mt-1 truncate font-mono text-[10px] tabular-nums text-[var(--preview-muted-foreground)]">
-										{card.branch} · {card.pr}
-									</div>
+					<motion.div
+						role="dialog"
+						aria-modal="true"
+						aria-label={`${card.title} agent status`}
+						className="w-full min-w-0 max-w-[520px] rounded-2xl border border-[var(--preview-border)] bg-[var(--preview-card)] p-3 text-[var(--preview-card-foreground)] shadow-[0_24px_80px_rgba(0,0,0,0.45)] outline-none sm:p-4"
+						initial={{ opacity: 0, scale: 0.99 }}
+						animate={{ opacity: 1, scale: 1 }}
+						exit={{ opacity: 0, scale: 0.99 }}
+						transition={{ duration: 0.16, ease: [0.2, 0, 0, 1] }}
+						onClick={(event) => event.stopPropagation()}
+					>
+						<div className="flex items-start gap-3">
+							<img
+								src={card.icon}
+								alt=""
+								width={24}
+								height={24}
+								aria-hidden="true"
+								className="mt-0.5 h-6 w-6"
+								draggable="false"
+							/>
+							<div className="min-w-0 flex-1">
+								<div className="text-[13px] font-semibold tracking-[-0.5px] text-[var(--preview-foreground)]">
+									{card.agent} worker
 								</div>
-								<button
-									type="button"
-									onClick={onClose}
-									className="grid h-10 w-10 shrink-0 place-items-center rounded-xl text-[var(--preview-muted-foreground)] transition-[background-color,color,transform] hover:bg-[var(--preview-muted)] hover:text-[var(--preview-foreground)] active:scale-[0.96]"
-									aria-label="Close agent status"
-								>
-									<CloseIcon className="h-4 w-4" />
-								</button>
+								<div className="mt-1 truncate font-mono text-[10px] tabular-nums text-[var(--preview-muted-foreground)]">
+									{card.branch} · {card.pr}
+								</div>
 							</div>
+							<button
+								type="button"
+								onClick={onClose}
+								className="grid h-10 w-10 shrink-0 place-items-center rounded-xl text-[var(--preview-muted-foreground)] transition-[background-color,color,transform] hover:bg-[var(--preview-muted)] hover:text-[var(--preview-foreground)] active:scale-[0.96]"
+								aria-label="Close agent status"
+							>
+								<CloseIcon className="h-4 w-4" />
+							</button>
+						</div>
 
-							<div className="mt-4 grid grid-cols-2 gap-2">
-								<AgentMetaItem Icon={BranchIcon}>{card.branch}</AgentMetaItem>
-								<AgentMetaItem Icon={FileIcon}>{card.files} changed</AgentMetaItem>
-								<AgentMetaItem Icon={GitHubIcon}>{card.pr}</AgentMetaItem>
-								<AgentMetaItem
-									Icon={
-										card.activityState === "passed"
-											? CheckIcon
-											: card.activityState === "failed"
-												? WarningIcon
-												: WaitingIcon
-									}
-								>
-									{card.activity}
-								</AgentMetaItem>
-							</div>
+						<div className="mt-4 grid grid-cols-2 gap-2">
+							<AgentMetaItem Icon={BranchIcon}>{card.branch}</AgentMetaItem>
+							<AgentMetaItem Icon={FileIcon}>{card.files} changed</AgentMetaItem>
+							<AgentMetaItem Icon={GitHubIcon}>{card.pr}</AgentMetaItem>
+							<AgentMetaItem
+								Icon={
+									card.activityState === "passed"
+										? CheckIcon
+										: card.activityState === "failed"
+											? WarningIcon
+											: WaitingIcon
+								}
+							>
+								{card.activity}
+							</AgentMetaItem>
+						</div>
 
-							<AgentTerminalDisplay card={card} />
-						</motion.div>
+						<AgentTerminalDisplay card={card} />
 					</motion.div>
+				</motion.div>
 				</>
 			) : null}
 		</AnimatePresence>
@@ -1785,15 +1813,13 @@ function OrchestratorView({
 						<div className="flex gap-2">
 							<span className="mt-1 h-3 w-3 shrink-0 animate-spin rounded-full border border-[#4b5563] border-t-[#d1d5db]" />
 							<span>
-								Keep {workingCards.length || 1} worker{workingCards.length === 1 ? "" : "s"} moving while routing
-								blockers back here.
+								Keep {workingCards.length || 1} worker{workingCards.length === 1 ? "" : "s"} moving while routing blockers back here.
 							</span>
 						</div>
 						<div className="flex gap-2">
 							<WaitingIcon className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#fcd34d]" />
 							<span>
-								Escalate {waitingCards.length} decision{waitingCards.length === 1 ? "" : "s"} and queue{" "}
-								{readyCards.length} approved PR{readyCards.length === 1 ? "" : "s"} for merge.
+								Escalate {waitingCards.length} decision{waitingCards.length === 1 ? "" : "s"} and queue {readyCards.length} approved PR{readyCards.length === 1 ? "" : "s"} for merge.
 							</span>
 						</div>
 					</div>
@@ -1820,10 +1846,7 @@ function OrchestratorView({
 				</div>
 				<div className="mt-3 space-y-2 overflow-y-auto scrollbar-hide">
 					{activeCards.slice(0, 4).map((card) => (
-						<div
-							key={card.id}
-							className="rounded-[8px] border border-[var(--preview-border)] bg-[var(--preview-card)] p-3"
-						>
+						<div key={card.id} className="rounded-[8px] border border-[var(--preview-border)] bg-[var(--preview-card)] p-3">
 							<div className="flex items-center gap-2">
 								<img
 									src={card.icon}
@@ -1884,16 +1907,20 @@ export function AppMockup() {
 	const isRepoAvatarReady = useImageReady(repoAvatar);
 	useDecorativeSubtree(windowRef);
 
-	const selectedTrack = projectItems.find((item) => item.id === selectedTrackId) ?? projectItems[0];
+	const selectedTrack =
+		projectItems.find((item) => item.id === selectedTrackId) ?? projectItems[0];
 	const cards = cardsByTrack[selectedTrackId];
 	const mergedCount = mergedCounts[selectedTrackId];
 
-	const updateTrackCards = useCallback((trackId: TrackId, update: (cards: PreviewCard[]) => PreviewCard[]) => {
-		setCardsByTrack((current) => ({
-			...current,
-			[trackId]: update(current[trackId]),
-		}));
-	}, []);
+	const updateTrackCards = useCallback(
+		(trackId: TrackId, update: (cards: PreviewCard[]) => PreviewCard[]) => {
+			setCardsByTrack((current) => ({
+				...current,
+				[trackId]: update(current[trackId]),
+			}));
+		},
+		[],
+	);
 
 	const startSidebarResize = useCallback((clientX: number) => {
 		const startWidth = sidebarWidthRef.current;
@@ -1917,23 +1944,20 @@ export function AppMockup() {
 		window.addEventListener("pointerup", handleUp);
 	}, []);
 
-	const mergeCard = useCallback(
-		(id: string) => {
-			const trackId = selectedTrackId;
-			updateTrackCards(trackId, (current) =>
-				current.map((card) => (card.id === id ? { ...card, merging: true } : card)),
-			);
+	const mergeCard = useCallback((id: string) => {
+		const trackId = selectedTrackId;
+		updateTrackCards(trackId, (current) =>
+			current.map((card) => (card.id === id ? { ...card, merging: true } : card)),
+		);
 
-			window.setTimeout(() => {
-				updateTrackCards(trackId, (current) => current.filter((card) => card.id !== id));
-				setMergedCounts((current) => ({
-					...current,
-					[trackId]: current[trackId] + 1,
-				}));
-			}, 520);
-		},
-		[selectedTrackId, updateTrackCards],
-	);
+		window.setTimeout(() => {
+			updateTrackCards(trackId, (current) => current.filter((card) => card.id !== id));
+			setMergedCounts((current) => ({
+				...current,
+				[trackId]: current[trackId] + 1,
+			}));
+		}, 520);
+	}, [selectedTrackId, updateTrackCards]);
 
 	const spawnRandomTask = useCallback(() => {
 		setViewMode("board");
@@ -1987,14 +2011,18 @@ export function AppMockup() {
 			const trackId = selectedTrackId;
 			const incomingCards = incomingCardsByTrack[trackId];
 			updateTrackCards(trackId, (current) => {
-				const chosen = randomItem(current.filter((card) => !card.merging && card.id !== selectedCardId));
+				const chosen = randomItem(
+					current.filter((card) => !card.merging && card.id !== selectedCardId),
+				);
 
 				let next = current;
 				if (chosen) {
 					if (chosen.column === "merge") {
 						window.setTimeout(() => mergeCard(chosen.id), 0);
 					} else {
-						next = current.map((card) => (card.id === chosen.id ? advanceCard(card) : card));
+						next = current.map((card) =>
+							card.id === chosen.id ? advanceCard(card) : card,
+						);
 					}
 				}
 
@@ -2003,12 +2031,17 @@ export function AppMockup() {
 				if (workingCount < 2 && activeCount < 7 && Math.random() < 0.5) {
 					const existingTitles = new Set(next.map((card) => card.title));
 					const templateOffset = incomingCards.findIndex((_, offset) => {
-						const candidate = incomingCards[(incomingIndexes.current[trackId] + offset) % incomingCards.length];
+						const candidate =
+							incomingCards[
+								(incomingIndexes.current[trackId] + offset) % incomingCards.length
+							];
 						return candidate ? !existingTitles.has(candidate.title) : false;
 					});
 
 					if (templateOffset >= 0) {
-						const templateIndex = (incomingIndexes.current[trackId] + templateOffset) % incomingCards.length;
+						const templateIndex =
+							(incomingIndexes.current[trackId] + templateOffset) %
+							incomingCards.length;
 						const template = incomingCards[templateIndex];
 						if (template) {
 							incomingIndexes.current[trackId] = templateIndex + 1;
@@ -2080,9 +2113,17 @@ export function AppMockup() {
 						sidebarRef={sidebarRef}
 					/>
 					<div className="flex min-w-0 flex-1 flex-col bg-[var(--preview-background)]">
-						<Topbar mergedCount={mergedCount} selectedTrack={selectedTrack} viewMode={viewMode} />
+						<Topbar
+							mergedCount={mergedCount}
+							selectedTrack={selectedTrack}
+							viewMode={viewMode}
+						/>
 						{viewMode === "orchestrator" ? (
-							<OrchestratorView cards={cards} onNewTask={spawnRandomTask} selectedTrack={selectedTrack} />
+							<OrchestratorView
+								cards={cards}
+								onNewTask={spawnRandomTask}
+								selectedTrack={selectedTrack}
+							/>
 						) : (
 							<LayoutGroup key={`${selectedTrack.id}-${boardVersion}`}>
 								<div className="grid min-h-0 flex-1 auto-cols-[85%] grid-flow-col snap-x snap-mandatory overflow-x-auto overscroll-x-contain scrollbar-hide md:auto-cols-[48%] lg:grid-flow-row lg:grid-cols-4 lg:auto-cols-auto lg:snap-none lg:overflow-hidden">
@@ -2101,7 +2142,10 @@ export function AppMockup() {
 					</div>
 				</div>
 			</div>
-			<AgentStatusModal card={selectedCard} onClose={() => setSelectedCard(null)} />
+			<AgentStatusModal
+				card={selectedCard}
+				onClose={() => setSelectedCard(null)}
+			/>
 			{selectedCard ? null : (
 				<div className="hidden sm:contents">
 					<ResizeHandles onResizeStart={startResize} />

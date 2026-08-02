@@ -66,23 +66,28 @@ export function ExternalIdePopup({ activeDemo }: ExternalIdePopupProps) {
 					<div className="space-y-1.5 leading-relaxed">
 						<div>
 							<span className="text-violet-300">import</span> {"{"} Agent {"}"}{" "}
-							<span className="text-violet-300">from</span> <span className="text-emerald-300/85">"ai"</span>
+							<span className="text-violet-300">from</span>{" "}
+							<span className="text-emerald-300/85">"ai"</span>
 						</div>
 						<div>
 							<span className="text-violet-300">import</span> {"{"} tools {"}"}{" "}
-							<span className="text-violet-300">from</span> <span className="text-emerald-300/85">"./utils"</span>
+							<span className="text-violet-300">from</span>{" "}
+							<span className="text-emerald-300/85">"./utils"</span>
 						</div>
 						<div className="text-muted-foreground/30">│</div>
 						<div>
-							<span className="text-violet-300">const</span> <span className="text-brand-light">agent</span> ={" "}
-							<span className="text-violet-300">new</span> <span className="text-foreground/95">Agent</span>({"{"}
+							<span className="text-violet-300">const</span>{" "}
+							<span className="text-brand-light">agent</span> ={" "}
+							<span className="text-violet-300">new</span>{" "}
+							<span className="text-foreground/95">Agent</span>({"{"}
 						</div>
 						<div className="pl-4">
-							<span className="text-foreground/75">model:</span> <span className="text-emerald-300/85">"claude-4"</span>
-							,
+							<span className="text-foreground/75">model:</span>{" "}
+							<span className="text-emerald-300/85">"claude-4"</span>,
 						</div>
 						<div className="pl-4">
-							<span className="text-foreground/75">tools:</span> [tools.read, tools.write]
+							<span className="text-foreground/75">tools:</span> [tools.read,
+							tools.write]
 						</div>
 						<div>{"}"})</div>
 					</div>

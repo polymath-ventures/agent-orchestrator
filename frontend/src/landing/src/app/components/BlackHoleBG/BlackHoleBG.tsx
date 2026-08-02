@@ -134,11 +134,14 @@ export function BlackHoleBG({
 	const linear = (p: number) => p;
 	const easeInExpo = (p: number) => (p === 0 ? 0 : Math.pow(2, 10 * (p - 1)));
 
-	const tweenValue = useCallback((start: number, end: number, p: number, ease: "inExpo" | null = null) => {
-		const delta = end - start;
-		const easeFn = ease === "inExpo" ? easeInExpo : linear;
-		return start + delta * easeFn(p);
-	}, []);
+	const tweenValue = useCallback(
+		(start: number, end: number, p: number, ease: "inExpo" | null = null) => {
+			const delta = end - start;
+			const easeFn = ease === "inExpo" ? easeInExpo : linear;
+			return start + delta * easeFn(p);
+		},
+		[],
+	);
 
 	const tweenDisc = useCallback(
 		(disc: Disc) => {
