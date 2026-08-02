@@ -173,9 +173,12 @@ them as the starting point for a search, not as an exhaustive file list.
    teardown must run on a detached context, not the caller's cancelled one
    (`cleanupContext` in `backend/internal/session_manager/manager.go`) — #156 →
    #158, #170 → #173, #175 → #188, #208 → #214; workspace/worktree teardown
-   safety (`backend/internal/adapters/workspace/gitworktree/workspace.go`,
-   `backend/internal/adapters/workspace/router/router.go`) — #164 → #171,
-   #165 → #187, #144 → #166; supervisor
+   safety (`backend/internal/adapters/workspace/gitworktree/workspace.go` for the
+   destroy guards, and `backend/internal/session_manager/workspace_ownership.go`
+   plus migration
+   `backend/internal/storage/sqlite/migrations/0049_session_worktrees_repo_path.sql`
+   for teardown after repo deregistration) — #164 → #171, #165 → #187,
+   #144 → #166; supervisor
    liveness accounting (`backend/internal/daemon/supervisor/supervisor.go`) —
    #147 → #159, #181 → #190; the tmux runtime socket anchored to the AO data dir
    (`backend/internal/adapters/runtime/tmux/tmux.go`) — #160 → #176; and session
