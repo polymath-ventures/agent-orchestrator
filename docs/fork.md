@@ -58,9 +58,9 @@ them as the starting point for a search, not as an exhaustive file list.
    `frontend/vite.renderer.config.ts` gates the browser build and its dev proxy;
    `frontend/src/renderer/lib/api-client.ts` (`isBrowserMode`,
    `hasTrustedApiBaseUrl`) selects the HTTP transport instead of `window.ao`, and
-   `frontend/src/renderer/lib/preview-mode.ts`,
-   `frontend/src/renderer/hooks/useWorkspaceQuery.ts`, and
-   `frontend/src/renderer/hooks/useShellTerminals.ts` branch on the same flag;
+   `frontend/src/renderer/hooks/useWorkspaceQuery.ts` and
+   `frontend/src/renderer/hooks/useShellTerminals.ts` carry the fork's
+   trusted-base-URL guards that keep production web mode off preview data;
    `ops/ao-web.service` and `ops/ao-web-server.test.mjs` cover the server itself.
    The `frontend/e2e/*.spec.ts` **browser-mode** suite is the guard — keep it
    green and meaningful, especially `frontend/e2e/browser-mode.spec.ts` and
