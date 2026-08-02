@@ -70,15 +70,16 @@ test("focus follows the terminal when another shell tab is selected", async ({ p
 
 // The same shells also live in a session's tab strip, reached by the same
 // controls; #131 applies there identically. Upstream scopes a session pane's
-// shells to that session, so open one from the pane's Add-tab menu, hand the
-// pane back to the agent, then reselect the shell and prove focus follows it.
+// shells to that session, so open one from the pane's New-terminal button, hand
+// the pane back to the agent, then reselect the shell and prove focus follows it.
 test("focus follows a shell selected from a session's tab strip", async ({ page }) => {
 	await installBrowserModeApiFixtures(page);
 	await page.goto("/#/projects/api-gateway/sessions/refactor-mux");
 	await expect(page.getByTestId("session-terminal")).toBeVisible();
 
-	await page.getByRole("button", { name: "Add tab" }).click();
-	await page.getByRole("menuitem", { name: "Terminal" }).click();
+	// Upstream replaced the Add-tab dropdown with a button that opens a terminal
+	// directly (#3275); the focus contract this test guards is unchanged.
+	await page.getByRole("button", { name: "New terminal" }).click();
 
 	// Scope tab lookups to the terminal pane so the sidebar's same-named controls
 	// do not collide.
@@ -125,6 +126,12 @@ test("a pending session terminal does not focus behind a browser pop-out when it
 						isTerminated: false,
 						kind: "worker",
 						projectId: "api-gateway",
+						// Upstream now gates the pop-out control on the browser actually
+						// having a page (`canPopOut = poppedOut || navState.url`). In web
+						// mode the session's preview target is what puts one there, so the
+						// session carries one; the focus assertion below is unchanged.
+						previewUrl: "http://127.0.0.1:4173/",
+						previewRevision: 1,
 						prs: [],
 						status: "working",
 						terminalHandleId: terminalHandleReady ? "term-refactor-mux" : undefined,

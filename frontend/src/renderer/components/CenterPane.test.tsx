@@ -4,12 +4,12 @@ import type { WorkspaceSession } from "../types/workspace";
 import { CenterPane } from "./CenterPane";
 
 const terminalPaneProps = vi.hoisted(() => ({
-	value: {} as { autoFocus?: boolean; focusRequest?: number },
+	value: {} as { autoFocus?: boolean; focusRequest?: number; onExitFocus?: () => void },
 }));
 
 // The terminal body pulls in xterm/SSE machinery irrelevant to the header under test.
 vi.mock("./TerminalPane", () => ({
-	TerminalPane: (props: { autoFocus?: boolean; focusRequest?: number }) => {
+	TerminalPane: (props: { autoFocus?: boolean; focusRequest?: number; onExitFocus?: () => void }) => {
 		terminalPaneProps.value = props;
 		return <div>terminal body</div>;
 	},
@@ -53,6 +53,24 @@ describe("CenterPane toolbar session label", () => {
 
 		expect(terminalPaneProps.value.autoFocus).toBe(true);
 		expect(terminalPaneProps.value.focusRequest).toBe(1);
+	});
+
+	// The Ctrl+F6 exit-focus escape hatch resolves its target by querying
+	// [data-terminal-tab="true"][aria-current="true"] inside the pane. Upstream owns
+	// this tab strip's shape and reverted it to a single session tab (#3275), so the
+	// attribute pairing is the seam most likely to be dropped by a future sync while
+	// every focus-nonce test above keeps passing. See docs/fork.md item 2.
+	it("exits terminal focus onto the active session tab, the data-terminal-tab anchor", () => {
+		render(<CenterPane session={worker} theme="dark" daemonReady />);
+
+		const sessionTab = screen.getByRole("button", { name: worker.title });
+		expect(sessionTab).toHaveAttribute("data-terminal-tab", "true");
+		expect(sessionTab).toHaveAttribute("aria-current", "true");
+		expect(sessionTab).not.toHaveFocus();
+
+		terminalPaneProps.value.onExitFocus?.();
+
+		expect(sessionTab).toHaveFocus();
 	});
 
 	it("renders only this session's own tab, never a sibling session", () => {
