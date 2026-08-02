@@ -78,6 +78,49 @@ func TestSessionPromptPolicyHashRoundTrips(t *testing.T) {
 	}
 }
 
+func TestSessionLastErrorRoundTrips(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+
+	rec := sampleRecord("mer")
+	rec.LastError = "initial launch failure"
+	created, err := s.CreateSession(ctx, rec)
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	got, ok, err := s.GetSession(ctx, created.ID)
+	if err != nil || !ok {
+		t.Fatalf("GetSession: ok=%v err=%v", ok, err)
+	}
+	if got.LastError != "initial launch failure" {
+		t.Fatalf("insert round-trip last error = %q", got.LastError)
+	}
+
+	baseSeq, err := s.LatestSeq(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got.LastError = "retry launch failure"
+	if err := s.UpdateSession(ctx, got); err != nil {
+		t.Fatalf("UpdateSession: %v", err)
+	}
+	again, _, err := s.GetSession(ctx, created.ID)
+	if err != nil {
+		t.Fatalf("GetSession again: %v", err)
+	}
+	if again.LastError != "retry launch failure" {
+		t.Fatalf("update round-trip last error = %q", again.LastError)
+	}
+	events, err := s.EventsAfter(ctx, baseSeq, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 || string(events[0].Type) != "session_updated" {
+		t.Fatalf("last-error update events = %+v, want one session_updated", events)
+	}
+}
+
 // Regression: the sessions.harness CHECK must allow the 'fake' harness (added
 // in migration 0024) so fake-driven e2e sessions can be created.
 func TestSessionCreateAllowsFakeHarness(t *testing.T) {

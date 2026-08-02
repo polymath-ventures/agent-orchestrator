@@ -648,6 +648,7 @@ type SetActivityRequest struct {
 	ToolUseID      string                 `json:"toolUseId,omitempty" description:"Native tool-use id, for tool-use hook events."`
 	AgentSessionID string                 `json:"agentSessionId,omitempty" description:"Native agent session identifier used to resume its transcript."`
 	LaunchID       string                 `json:"launchId,omitempty" description:"AO process generation that produced the signal."`
+	Error          string                 `json:"error,omitempty" description:"Bounded diagnostic from a managed-agent launch failure."`
 	Usage          *SessionUsagePayload   `json:"usage,omitempty" description:"Optional per-turn token usage delta extracted from harness-local records."`
 	Quotas         []domain.QuotaSnapshot `json:"quotas,omitempty" description:"Optional quota snapshots extracted from harness-local records."`
 }

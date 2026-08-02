@@ -445,6 +445,24 @@ type recordingAgent struct {
 	restoreCalls int
 }
 
+type sessionIDAllocatingAgent struct {
+	recordingAgent
+	allocated []string
+}
+
+func (a *sessionIDAllocatingAgent) AllocateAgentSessionID() string {
+	id := fmt.Sprintf("claude-native-%d", len(a.allocated)+1)
+	a.allocated = append(a.allocated, id)
+	return id
+}
+
+type blankSessionIDAllocatingAgent struct {
+	recordingAgent
+	nativeID string
+}
+
+func (a *blankSessionIDAllocatingAgent) AllocateAgentSessionID() string { return a.nativeID }
+
 func (a *recordingAgent) GetLaunchCommand(_ context.Context, cfg ports.LaunchConfig) ([]string, error) {
 	a.launchCalls++
 	a.lastConfig = cfg.Config
@@ -931,6 +949,143 @@ func seedTerminal(st *fakeStore, id domain.SessionID, meta domain.SessionMetadat
 }
 func mkLive(id domain.SessionID) domain.SessionRecord {
 	return domain.SessionRecord{ID: id, ProjectID: "mer", Metadata: domain.SessionMetadata{WorkspacePath: "/ws/" + string(id), RuntimeHandleID: "h1"}, Activity: domain.Activity{State: domain.ActivityActive}}
+}
+
+func TestSpawn_AllocatedAgentSessionIDReachesLaunchPersistenceAndRestore(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+	agent := &sessionIDAllocatingAgent{}
+	m := New(Deps{
+		Runtime:   &fakeRuntime{},
+		Agents:    singleAgent{agent: agent},
+		Workspace: &fakeWorkspace{},
+		Store:     st,
+		Messenger: &fakeMessenger{},
+		Lifecycle: &fakeLCM{store: st},
+		LookPath:  func(string) (string, error) { return "/bin/true", nil },
+	})
+
+	rec, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Harness: domain.HarnessClaudeCode, Prompt: "fix it"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const wantID = "claude-native-1"
+	if !reflect.DeepEqual(agent.allocated, []string{wantID}) {
+		t.Fatalf("allocated native ids = %#v, want %#v", agent.allocated, []string{wantID})
+	}
+	if got := agent.lastLaunch.AgentSessionID; got != wantID {
+		t.Fatalf("launch native id = %q, want %q", got, wantID)
+	}
+	if got := rec.Metadata.AgentSessionID; got != wantID {
+		t.Fatalf("spawned metadata native id = %q, want %q", got, wantID)
+	}
+	if got := st.sessions[rec.ID].Metadata.AgentSessionID; got != wantID {
+		t.Fatalf("persisted metadata native id = %q, want %q", got, wantID)
+	}
+
+	// Simulate the persisted session after its runtime has exited. Restore must
+	// use the exact durable native id rather than allocating a second one.
+	stored := st.sessions[rec.ID]
+	stored.IsTerminated = true
+	stored.Activity.State = domain.ActivityExited
+	st.sessions[rec.ID] = stored
+	result, err := m.RestoreWithMode(ctx, rec.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Mode != RestoreModeNative {
+		t.Fatalf("restore mode = %q, want %q", result.Mode, RestoreModeNative)
+	}
+	if got := agent.lastRestore.Session.Metadata[ports.MetadataKeyAgentSessionID]; got != wantID {
+		t.Fatalf("restore native id = %q, want %q", got, wantID)
+	}
+	if !reflect.DeepEqual(agent.allocated, []string{wantID}) {
+		t.Fatalf("restore allocated a replacement native id: %#v", agent.allocated)
+	}
+}
+
+func TestSpawn_NonAllocatingAgentLeavesNativeSessionIDEmpty(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+	agent := &recordingAgent{}
+	m := New(Deps{
+		Runtime:   &fakeRuntime{},
+		Agents:    singleAgent{agent: agent},
+		Workspace: &fakeWorkspace{},
+		Store:     st,
+		Messenger: &fakeMessenger{},
+		Lifecycle: &fakeLCM{store: st},
+		LookPath:  func(string) (string, error) { return "/bin/true", nil },
+	})
+
+	rec, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Harness: domain.HarnessCodex, Prompt: "fix it"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := agent.lastLaunch.AgentSessionID; got != "" {
+		t.Fatalf("launch native id = %q, want empty for non-allocating adapter", got)
+	}
+	if got := rec.Metadata.AgentSessionID; got != "" {
+		t.Fatalf("persisted native id = %q, want empty for non-allocating adapter", got)
+	}
+}
+
+func TestSpawn_RejectsBlankAllocatedAgentSessionIDBeforeRuntimeCreation(t *testing.T) {
+	for _, nativeID := range []string{"", " \t "} {
+		t.Run(fmt.Sprintf("%q", nativeID), func(t *testing.T) {
+			st := newFakeStore()
+			st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+			rt := &fakeRuntime{}
+			agent := &blankSessionIDAllocatingAgent{nativeID: nativeID}
+			m := New(Deps{
+				Runtime:   rt,
+				Agents:    singleAgent{agent: agent},
+				Workspace: &fakeWorkspace{},
+				Store:     st,
+				Messenger: &fakeMessenger{},
+				Lifecycle: &fakeLCM{store: st},
+				LookPath:  func(string) (string, error) { return "/bin/true", nil },
+			})
+
+			_, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Harness: domain.HarnessClaudeCode, Prompt: "fix it"})
+			if err == nil || !strings.Contains(err.Error(), "allocated empty native session id") {
+				t.Fatalf("Spawn error = %v, want allocated empty native session id", err)
+			}
+			if rt.created != 0 {
+				t.Fatalf("runtime.Create calls = %d, want 0", rt.created)
+			}
+			if _, ok := st.sessions["mer-1"]; ok {
+				t.Fatal("seed row survived blank native-session-id rollback")
+			}
+		})
+	}
+}
+
+func TestSpawn_TrimsAllocatedAgentSessionIDBeforeLaunchAndPersistence(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+	agent := &blankSessionIDAllocatingAgent{nativeID: " \tclaude-native-1\n"}
+	m := New(Deps{
+		Runtime:   &fakeRuntime{},
+		Agents:    singleAgent{agent: agent},
+		Workspace: &fakeWorkspace{},
+		Store:     st,
+		Messenger: &fakeMessenger{},
+		Lifecycle: &fakeLCM{store: st},
+		LookPath:  func(string) (string, error) { return "/bin/true", nil },
+	})
+
+	rec, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Harness: domain.HarnessClaudeCode, Prompt: "fix it"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const wantID = "claude-native-1"
+	if got := agent.lastLaunch.AgentSessionID; got != wantID {
+		t.Fatalf("launch native id = %q, want %q", got, wantID)
+	}
+	if got := rec.Metadata.AgentSessionID; got != wantID {
+		t.Fatalf("persisted native id = %q, want %q", got, wantID)
+	}
 }
 
 func TestSpawn_ResolvesProjectConfig(t *testing.T) {

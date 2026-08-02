@@ -392,6 +392,7 @@ func TestSessionsAPI_ListSpawnGetAndActions(t *testing.T) {
 	svc := newFakeSessionService()
 	s := svc.sessions["ao-1"]
 	s.Metadata = domain.SessionMetadata{Branch: "qa/modal-worker", WorkspacePath: "/tmp/private-worktree", RuntimeHandleID: "runtime-1", Prompt: "private prompt"}
+	s.LastError = "Session ID is already in use"
 	s.SCMStatus = domain.StatusReviewPending
 	svc.sessions["ao-1"] = s
 	srv := newSessionTestServer(t, svc)
@@ -409,6 +410,9 @@ func TestSessionsAPI_ListSpawnGetAndActions(t *testing.T) {
 	}
 	if list.Sessions[0].Branch != "qa/modal-worker" {
 		t.Fatalf("branch = %q, want qa/modal-worker", list.Sessions[0].Branch)
+	}
+	if list.Sessions[0].LastError != "Session ID is already in use" {
+		t.Fatalf("last error = %q", list.Sessions[0].LastError)
 	}
 	var rawList struct {
 		Sessions []map[string]any `json:"sessions"`
@@ -1589,6 +1593,7 @@ type sessionBody struct {
 	Status           string `json:"status"`
 	SCMStatus        string `json:"scmStatus"`
 	TerminalHandleID string `json:"terminalHandleId"`
+	LastError        string `json:"lastError"`
 }
 
 func TestSessionsAPI_PRRoutes(t *testing.T) {

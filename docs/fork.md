@@ -182,7 +182,14 @@ them as the starting point for a search, not as an exhaustive file list.
    liveness accounting (`backend/internal/daemon/supervisor/supervisor.go`) —
    #147 → #159, #181 → #190; the tmux runtime socket anchored to the AO data dir
    (`backend/internal/adapters/runtime/tmux/tmux.go`) — #160 → #176; and session
-   false-death / hook-attribution guards — #15 → #32, #91.
+   false-death / hook-attribution guards — #15 → #32, #91. Claude Code's
+   launch-time transcript identity must remain a fresh persisted
+   `agent_session_id`, with the legacy deterministic UUID used only as a restore
+   fallback for sessions that predate persistence; supervised launch failures
+   must retain their bounded error on the session record. Sync anchors:
+   `backend/internal/adapters/agent/claudecode/claudecode.go`,
+   `backend/internal/session_manager/manager.go`, and
+   `backend/internal/cli/agent_process.go`. Reference issue: #244.
 8. **Ops / SDLC infrastructure.** `ops/deploy.sh` + the web server + systemd /
    Tailscale wiring; the Prettier CI the fork keeps (upstream removed it); and
    the agent SDLC files (`CLAUDE.md`, the repo-carried `skills/`, Beads,

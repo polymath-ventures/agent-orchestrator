@@ -57,6 +57,7 @@ func (s *Store) createProjectlessPrimeSession(ctx context.Context, rec domain.Se
 		params.DisplayName,
 		params.ActivityState,
 		params.ActivityLastAt,
+		params.LastError,
 		params.FirstSignalAt,
 		params.IsTerminated,
 		params.Branch,
@@ -86,12 +87,12 @@ func (s *Store) createProjectlessPrimeSession(ctx context.Context, rec domain.Se
 const insertProjectlessPrimeSessionSQL = `
 INSERT INTO sessions (
     id, project_id, num, issue_id, kind, harness, display_name,
-    activity_state, activity_last_at, first_signal_at, is_terminated,
+    activity_state, activity_last_at, last_error, first_signal_at, is_terminated,
     branch, workspace_path, workspace_repo_path, runtime_handle_id,
     runtime_launch_id, agent_session_id, prompt,
     preview_url, preview_revision, model, effort, mix_selected, mix_bucket_model,
     prompt_policy_hash, terminate_on_pr_merge, cleanup_generation, created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 // UpdateSession writes the full mutable state of an existing session. The
 // id/project/num/created_at are immutable and not touched here.
@@ -281,6 +282,7 @@ func rowToRecord(row gen.Session) domain.SessionRecord {
 			State:          row.ActivityState,
 			LastActivityAt: row.ActivityLastAt,
 		},
+		LastError:          row.LastError,
 		FirstSignalAt:      nullTimeToTime(row.FirstSignalAt),
 		IsTerminated:       row.IsTerminated,
 		TerminateOnPRMerge: row.TerminateOnPRMerge,
@@ -320,6 +322,7 @@ func recordToInsert(rec domain.SessionRecord, num int64) gen.InsertSessionParams
 		DisplayName:        rec.DisplayName,
 		ActivityState:      activity.State,
 		ActivityLastAt:     activity.LastActivityAt,
+		LastError:          rec.LastError,
 		FirstSignalAt:      timeToNullTime(rec.FirstSignalAt),
 		IsTerminated:       rec.IsTerminated,
 		Branch:             rec.Metadata.Branch,
@@ -355,6 +358,7 @@ func recordToUpdate(rec domain.SessionRecord) gen.UpdateSessionParams {
 		DisplayName:        rec.DisplayName,
 		ActivityState:      activity.State,
 		ActivityLastAt:     activity.LastActivityAt,
+		LastError:          rec.LastError,
 		FirstSignalAt:      timeToNullTime(rec.FirstSignalAt),
 		IsTerminated:       rec.IsTerminated,
 		Branch:             rec.Metadata.Branch,

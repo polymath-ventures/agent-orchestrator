@@ -49,6 +49,9 @@ type ActivitySignal struct {
 	ToolName          string
 	ToolUseID         string
 	AgentSessionID    string
+	// Error is the bounded launch diagnostic supplied with a process-exited
+	// observation. Lifecycle persists it only for exited activity signals.
+	Error string
 	// LaunchID is set by AO's process supervisor. Lifecycle rejects a signal
 	// from an older process generation of the same session.
 	LaunchID string

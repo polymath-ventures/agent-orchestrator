@@ -1227,6 +1227,7 @@ export interface components {
             isTerminated: boolean;
             issueId?: string;
             kind: string;
+            lastError?: string;
             model?: string;
             /** Format: int64 */
             previewRevision?: number;
@@ -1860,6 +1861,8 @@ export interface components {
         SetActivityRequest: {
             /** @description Native agent session identifier used to resume its transcript. */
             agentSessionId?: string;
+            /** @description Bounded diagnostic from a managed-agent launch failure. */
+            error?: string;
             /** @description AO hook sub-command that produced this state (e.g. post-tool-use). */
             event?: string;
             /** @description Agent harness reporting the activity, used for usage telemetry attribution when the session row has no harness. */

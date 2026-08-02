@@ -8,11 +8,16 @@ import (
 	"os/signal"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/spf13/cobra"
 )
 
 const supervisedExitReportTimeout = 5 * time.Second
+
+const supervisedErrorTailBytes = 4096
+const supervisedLaunchErrorWindow = 10 * time.Second
+const supervisedPaneCaptureTimeout = time.Second
 
 func newAgentProcessCommand(ctx *commandContext) *cobra.Command {
 	root := &cobra.Command{
@@ -59,11 +64,16 @@ func (c *commandContext) runSupervisedProcess(ctx context.Context, sessionID, la
 	child := exec.CommandContext(ctx, argv[0], argv[1:]...) //nolint:gosec // argv is constructed by the selected agent adapter.
 	child.Stdin = c.deps.In
 	child.Stdout = c.deps.Out
+	// Preserve the terminal file descriptor itself. Wrapping stderr in an
+	// io.Writer makes os/exec insert a pipe: descendants can inherit its write
+	// end and keep Wait blocked after the managed process has already exited.
 	child.Stderr = c.deps.Err
 
+	paneBoundary := c.captureSupervisedPaneBoundary()
+	startedAt := c.deps.Now()
 	if err := child.Start(); err != nil {
 		_, _ = fmt.Fprintf(c.deps.Err, "ao: start managed agent: %v\n", err)
-		c.reportSupervisedExit(sessionID, launchID)
+		c.reportSupervisedExit(sessionID, launchID, err.Error())
 		return
 	}
 
@@ -72,17 +82,90 @@ func (c *commandContext) runSupervisedProcess(ctx context.Context, sessionID, la
 	// alive long enough to reap the child and publish the exit observation.
 	interrupts := make(chan os.Signal, 1)
 	signal.Notify(interrupts, os.Interrupt)
-	_ = child.Wait()
+	waitErr := child.Wait()
 	signal.Stop(interrupts)
 
-	c.reportSupervisedExit(sessionID, launchID)
+	errorDetail := ""
+	if waitErr != nil && c.deps.Now().Sub(startedAt) <= supervisedLaunchErrorWindow {
+		errorDetail = c.captureSupervisedLaunchError(waitErr, paneBoundary)
+	}
+	c.reportSupervisedExit(sessionID, launchID, errorDetail)
 }
 
-func (c *commandContext) reportSupervisedExit(sessionID, launchID string) {
+type supervisedPaneBoundary struct {
+	paneID string
+	before string
+}
+
+func (c *commandContext) captureSupervisedPaneBoundary() supervisedPaneBoundary {
+	paneID := strings.TrimSpace(os.Getenv("TMUX_PANE"))
+	if paneID == "" {
+		return supervisedPaneBoundary{}
+	}
+	before, err := c.captureSupervisedPane(paneID)
+	if err != nil {
+		return supervisedPaneBoundary{}
+	}
+	return supervisedPaneBoundary{paneID: paneID, before: before}
+}
+
+func (c *commandContext) captureSupervisedLaunchError(waitErr error, boundary supervisedPaneBoundary) string {
+	if boundary.paneID == "" {
+		return waitErr.Error()
+	}
+	after, err := c.captureSupervisedPane(boundary.paneID)
+	if err != nil {
+		return waitErr.Error()
+	}
+	detail := paneOutputAfterBoundary(boundary.before, after)
+	if detail == "" {
+		return waitErr.Error()
+	}
+	return boundedUTF8Tail(detail, supervisedErrorTailBytes)
+}
+
+func (c *commandContext) captureSupervisedPane(paneID string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), supervisedPaneCaptureTimeout)
+	defer cancel()
+	output, err := c.deps.CommandOutput(ctx, "tmux", "capture-pane", "-p", "-t", paneID, "-S", "-100")
+	if err != nil {
+		return "", err
+	}
+	return string(output), nil
+}
+
+func paneOutputAfterBoundary(before, after string) string {
+	before = strings.TrimSpace(before)
+	after = strings.TrimSpace(after)
+	if before == "" {
+		return after
+	}
+	boundary := strings.LastIndex(after, before)
+	if boundary < 0 {
+		return ""
+	}
+	return strings.TrimSpace(after[boundary+len(before):])
+}
+
+func boundedUTF8Tail(value string, limit int) string {
+	if limit <= 0 {
+		return ""
+	}
+	if len(value) <= limit {
+		return value
+	}
+	start := len(value) - limit
+	for start < len(value) && !utf8.RuneStart(value[start]) {
+		start++
+	}
+	return value[start:]
+}
+
+func (c *commandContext) reportSupervisedExit(sessionID, launchID, errorDetail string) {
 	ctx, cancel := context.WithTimeout(context.Background(), supervisedExitReportTimeout)
 	defer cancel()
 	path := "sessions/" + sessionID + "/activity"
-	req := setActivityAPIRequest{State: "exited", Event: "process-exited", LaunchID: launchID}
+	req := setActivityAPIRequest{State: "exited", Event: "process-exited", LaunchID: launchID, Error: errorDetail}
 	if err := c.postJSON(ctx, path, req, nil); err != nil {
 		// Reconciliation will recover this event from process absence. Keep the
 		// delivery failure visible without preventing the terminal's shell.

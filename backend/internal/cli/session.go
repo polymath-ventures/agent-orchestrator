@@ -48,6 +48,7 @@ type sessionDTO struct {
 	Harness      string          `json:"harness,omitempty"`
 	DisplayName  string          `json:"displayName,omitempty"`
 	Activity     sessionActivity `json:"activity"`
+	LastError    string          `json:"lastError,omitempty"`
 	IsTerminated bool            `json:"isTerminated"`
 	CreatedAt    time.Time       `json:"createdAt"`
 	UpdatedAt    time.Time       `json:"updatedAt"`
@@ -745,6 +746,7 @@ func writeSessionDetails(cmd *cobra.Command, sess sessionDTO) error {
 		{"role", sessionRole(sess)},
 		{"status", sess.Status},
 		{"activity", sess.Activity.State},
+		{"last error", sess.LastError},
 		{"harness", sess.Harness},
 		{"issue", sess.IssueID},
 		{"terminated", fmt.Sprintf("%t", sess.IsTerminated)},

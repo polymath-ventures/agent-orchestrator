@@ -49,6 +49,7 @@ type setActivityAPIRequest struct {
 	ToolUseID      string                 `json:"toolUseId,omitempty"`
 	AgentSessionID string                 `json:"agentSessionId,omitempty"`
 	LaunchID       string                 `json:"launchId,omitempty"`
+	Error          string                 `json:"error,omitempty"`
 	Usage          *usageAPIRequest       `json:"usage,omitempty"`
 	Quotas         []domain.QuotaSnapshot `json:"quotas,omitempty"`
 }

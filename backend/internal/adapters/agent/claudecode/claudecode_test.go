@@ -289,25 +289,63 @@ func TestGetLaunchCommandMissingSystemPromptFileErrors(t *testing.T) {
 
 func TestGetLaunchCommandInjectsSessionID(t *testing.T) {
 	p := &Plugin{resolvedBinary: "claude"}
+	const agentSessionID = "94a576ee-7d58-4d11-8562-aa89de0a7bd0"
 	cmd, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
-		SessionID: "e0tt49",
-		Prompt:    "do the thing",
+		SessionID:      "e0tt49",
+		AgentSessionID: agentSessionID,
+		Prompt:         "do the thing",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantUUID := claudeSessionUUID("e0tt49")
-	if !containsSubsequence(cmd, []string{"--session-id", wantUUID}) {
-		t.Fatalf("command %#v missing --session-id %q", cmd, wantUUID)
+	if !containsSubsequence(cmd, []string{"--session-id", agentSessionID}) {
+		t.Fatalf("command %#v missing --session-id %q", cmd, agentSessionID)
 	}
 
-	// No SessionID → no --session-id flag.
+	// A command without any AO session keeps the established no-session shape.
 	cmd, err = p.GetLaunchCommand(context.Background(), ports.LaunchConfig{Prompt: "x"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if contains(cmd, "--session-id") {
 		t.Fatalf("command %#v unexpectedly contains --session-id", cmd)
+	}
+}
+
+func TestGetLaunchCommandGivesRecycledAOSessionIDsDistinctPersistentClaudeIDs(t *testing.T) {
+	p := &Plugin{resolvedBinary: "claude"}
+
+	// These launch configs represent two persisted AO records from separate
+	// daemon lifetimes. Their recyclable display/session ID is identical, but
+	// each record must own a distinct Claude transcript identity.
+	first, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{SessionID: "agent-orchestrator-8"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	recycled, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{SessionID: "agent-orchestrator-8"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	firstID := argumentAfter(t, first, "--session-id")
+	recycledID := argumentAfter(t, recycled, "--session-id")
+	if firstID == recycledID {
+		t.Fatalf("recycled AO session ID received colliding Claude IDs: %q", firstID)
+	}
+
+	// Once persisted on the first AO record, the Claude ID must be used for
+	// restore rather than being regenerated.
+	restore, ok, err := p.GetRestoreCommand(context.Background(), ports.RestoreConfig{
+		Session: ports.SessionRef{
+			ID:       "agent-orchestrator-8",
+			Metadata: map[string]string{ports.MetadataKeyAgentSessionID: firstID},
+		},
+	})
+	if err != nil || !ok {
+		t.Fatalf("restore = (ok=%v, err=%v), want ok", ok, err)
+	}
+	if got := restore[len(restore)-1]; got != firstID {
+		t.Fatalf("restore ID = %q, want persisted Claude ID %q", got, firstID)
 	}
 }
 
@@ -1069,6 +1107,17 @@ func contains(values []string, needle string) bool {
 		}
 	}
 	return false
+}
+
+func argumentAfter(t *testing.T, values []string, flag string) string {
+	t.Helper()
+	for i, value := range values {
+		if value == flag && i+1 < len(values) {
+			return values[i+1]
+		}
+	}
+	t.Fatalf("command %#v missing value after %q", values, flag)
+	return ""
 }
 
 func containsSubsequence(values, needle []string) bool {

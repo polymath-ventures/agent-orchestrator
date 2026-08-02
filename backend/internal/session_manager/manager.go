@@ -764,6 +764,17 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		m.rollbackSeedSpawnWorkspace(ctx, rec, ws, workspaceProject, false)
 		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: no agent adapter for harness %q", id, cfg.Harness)
 	}
+	// Some agents require a native session identity at launch. Keep it local
+	// until MarkSpawned: the seed row must remain empty so failures before the
+	// runtime exists can still be deleted by the established rollback path.
+	agentSessionID := ""
+	if allocator, ok := agent.(ports.AgentSessionIDAllocator); ok {
+		agentSessionID = strings.TrimSpace(allocator.AllocateAgentSessionID())
+		if agentSessionID == "" {
+			m.rollbackSeedSpawnWorkspace(ctx, rec, ws, workspaceProject, false)
+			return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: allocated empty native session id", id)
+		}
+	}
 	agentConfig.Model = launchModelForBucket(cfg.Harness, cfg.Model, target.mixSelected)
 	env := m.runtimeEnv(id, cfg.ProjectID, cfg.IssueID, project.Config.Env)
 	m.augmentAgentRuntimeEnv(agent, env)
@@ -776,6 +787,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		DataDir:          m.dataDir,
 		DisplayName:      cfg.DisplayName,
 		SessionID:        string(id),
+		AgentSessionID:   agentSessionID,
 		WorkspacePath:    ws.Path,
 		Kind:             cfg.Kind,
 		Prompt:           prompt,
@@ -849,6 +861,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		WorkspaceRepoPath: ws.RepoPath,
 		RuntimeHandleID:   handle.ID,
 		RuntimeLaunchID:   launchID,
+		AgentSessionID:    agentSessionID,
 		Prompt:            prompt,
 		PromptPolicyHash:  promptPolicyHash(systemPrompt),
 	}
