@@ -46,9 +46,9 @@ Every item carries **sync anchors** — the files and symbols to re-check after 
 merge — and **reference issues/PRs**, so a sync can read the change that
 introduced the behavior instead of re-deriving intent from the diff. References
 are written `issue → PR` where both exist; a bare number is a PR that closed no
-issue. Anchor paths are repository-root-relative so they can be fed straight to a
-tool. Anchors say where the behavior lives today; treat them as the starting
-point for a search, not as an exhaustive file list.
+issue. Anchor paths are repository-root-relative, except where written as an
+explicit glob or brace set. Anchors say where the behavior lives today; treat
+them as the starting point for a search, not as an exhaustive file list.
 
 1. **Web client as a first-class client.** The browser-served renderer
    (`ops/ao-web-server.mjs`, `npm run build:web`, `VITE_NO_ELECTRON`) must stay
@@ -100,13 +100,18 @@ point for a search, not as an exhaustive file list.
    reviewer agent" picker offers it. These live in shared upstream files, so
    re-apply the fugu reviewer registration on any sync that touches them. Sync
    anchors: `selectableAgentCatalog` in
-   `frontend/src/renderer/lib/agent-selection.ts`, consumed by
+   `frontend/src/renderer/lib/agent-selection.ts`, called directly by
    `frontend/src/renderer/components/ProjectSettingsForm.tsx` (which also defines
-   `HarnessModelRow`),
-   `frontend/src/renderer/components/WorkerMixFields.tsx`, and
+   `HarnessModelRow`) and
    `frontend/src/renderer/components/CreateProjectAgentSheet.tsx`;
-   tracker intake resolves the mix in
-   `backend/internal/observe/trackerintake/observer.go`. The fugu worker plugin is
+   `frontend/src/renderer/components/WorkerMixFields.tsx` renders the mix rows and
+   receives its options through `ProjectSettingsForm` rather than calling the
+   catalog itself. On the backend the mix is resolved at spawn by
+   `resolveSpawnTarget` and `selectMixBucket` in
+   `backend/internal/session_manager/manager.go`;
+   `backend/internal/observe/trackerintake/observer.go` is the tracker-intake
+   caller, and handles `ErrWorkerMixExhausted` / `ErrWorkerMixBucketDown`
+   deferral rather than choosing a bucket. The fugu worker plugin is
    `codex.NewFugu()` in `backend/internal/adapters/agent/codex/codex.go` and the
    reviewer is `backend/internal/adapters/reviewer/codex/codex.go` plus its entry
    in `backend/internal/adapters/reviewer/registry.go`;
@@ -152,13 +157,15 @@ point for a search, not as an exhaustive file list.
    `0036_add_session_effort.sql`, and `0038_add_session_mix_bucket_model.sql`.
    Note the fork's migration numbering has already diverged from upstream's,
    which is why a version collision is a sync STOP condition rather than a
-   mechanical renumber. **Scratch projects are currently upstream-identical**
-   (`backend/internal/adapters/workspace/scratch/` matches `upstream/main` tree
-   for tree) and so need no preservation today; the only fork delta touching them
-   is the derived `SessionPrefix` on the default scratch project. Re-check that
-   with `git log <merge-base>..origin/main -- backend/internal/adapters/workspace/scratch/`
-   each sync before discarding scratch changes, rather than treating this line as
-   permanent.
+   mechanical renumber. **The scratch-workspace adapter is currently identical to
+   upstream's**, so it needs no preservation today. That is a claim about
+   `backend/internal/adapters/workspace/scratch/` only — fork code elsewhere
+   (spawn resolution, project-config validation, workspace routing, session
+   management) does touch scratch projects — the derived `SessionPrefix` on the
+   default scratch project is one such delta — so do not read this as "the fork
+   never changes scratch". Re-establish it each sync rather than trusting this
+   line:
+   `git diff --exit-code upstream/main..origin/main -- backend/internal/adapters/workspace/scratch/`.
    Reference issues/PRs: worker mix #3 → #17, #80 — the session `model` and
    `mix_selected` columns landed in #17; session prefix #151 → #179.
 7. **Bug fixes.** Any fork divergence that fixes a real bug beats re-absorbing
@@ -176,15 +183,14 @@ point for a search, not as an exhaustive file list.
    false-death / hook-attribution guards — #15 → #32, #91.
 8. **Ops / SDLC infrastructure.** `ops/deploy.sh` + the web server + systemd /
    Tailscale wiring; the Prettier CI the fork keeps (upstream removed it); and
-   the agent SDLC files (`CLAUDE.md`, `.claude/skills`, Beads, OpenSpec,
-   `agent-instructions/`). Sync anchors: `ops/deploy.sh` with `ops/deploy.test.mjs`
-   and `ops/deploy-gate.test.mjs`; the units `ops/ao.service`,
-   `ops/ao-tmux.service`, `ops/ao-tmux-claim.{service,timer}`, `ops/ao-web.service`,
-   and `ops/ao-config-drift.{service,timer}`, asserted by
-   `ops/ao-systemd-units.test.mjs`; the pre-push gate in `scripts/ci/`, covered by
-   `ops/ci-*.test.mjs`; `.github/workflows/prettier.yml`; and the final-review
-   status contract helper `ops/final-review-status.mjs`. The `aong` porcelain has
-   its own section below.
+   the agent SDLC files (`CLAUDE.md`, the repo-carried `skills/`, Beads,
+   OpenSpec, `agent-instructions/`). Sync anchors: the whole of `ops/` is
+   fork-owned — `ops/deploy.sh`, the `ops/*.service` / `ops/*.timer` units, and
+   their `ops/*.test.mjs` guards, of which `ops/ao-systemd-units.test.mjs` is the
+   one that pins unit invariants; the pre-push gate is `scripts/ci/`; the Prettier
+   CI is `.github/workflows/prettier.yml`; and the final-review status contract
+   helper is `ops/final-review-status.mjs`. The `aong` porcelain has its own
+   section below.
    Reference issues/PRs: headless standup #13 → #19; tmux socket #160 → #176;
    pre-push gate #105 → #108, #219 → #222, #227 → #228; build revision on the
    health probe #196, #200, #201 → #198; agent-ci workdir #169 → #172; and #52
