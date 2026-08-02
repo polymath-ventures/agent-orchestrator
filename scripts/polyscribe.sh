@@ -3,7 +3,7 @@
 # polyscribe.sh
 #
 # @sx-managed: polyscribe (vault) — do not edit; managed by the agent-vault hook
-# @sx-managed-version: 12
+# @sx-managed-version: 14
 #
 # Assemble modular markdown PRIMITIVES into the per-agent instruction files the
 # coding tools read, at TWO scopes:
@@ -69,24 +69,24 @@ ROLE_DIR="${AI_DIR}/roles"
 SCRIPT_PATH="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/$(basename -- "${BASH_SOURCE[0]}")"
 case "$SCRIPT_PATH" in
   "$HOME/.claude/hooks/polyscribe/polyscribe.sh")
-    REBUILD_COMMAND='bash "$HOME/.claude/hooks/polyscribe/polyscribe.sh"'
+    RECOVERY_COMMAND='bash "$HOME/.claude/hooks/polyscribe/polyscribe.sh"'
     ;;
   "$HOME/.gemini/hooks/polyscribe/polyscribe.sh")
-    REBUILD_COMMAND='bash "$HOME/.gemini/hooks/polyscribe/polyscribe.sh"'
+    RECOVERY_COMMAND='bash "$HOME/.gemini/hooks/polyscribe/polyscribe.sh"'
     ;;
   "$REPO_ROOT/polyscribe/polyscribe.sh")
-    REBUILD_COMMAND='bash polyscribe/polyscribe.sh'
+    RECOVERY_COMMAND='bash polyscribe/polyscribe.sh'
     ;;
   "$REPO_ROOT/scripts/polyscribe.sh")
-    REBUILD_COMMAND='bash scripts/polyscribe.sh'
+    RECOVERY_COMMAND='bash scripts/polyscribe.sh'
     ;;
   *)
-    REBUILD_COMMAND="bash $(printf '%q' "$SCRIPT_PATH")"
+    RECOVERY_COMMAND="bash $(printf '%q' "$SCRIPT_PATH")"
     ;;
 esac
 
-BANNER="<!-- GENERATED — DO NOT EDIT. Edit agent-instructions/{source,agent-overrides,system}/, then rebuild: ${REBUILD_COMMAND} (system scope adds --system) -->"
-ROLE_BANNER="<!-- GENERATED — DO NOT EDIT. Edit agent-instructions/roles/<role>/, then rebuild: ${REBUILD_COMMAND} -->"
+BANNER="<!-- GENERATED — DO NOT EDIT. Edit agent-instructions/{source,agent-overrides,system}/, then rebuild with polyscribe (system scope adds --system) -->"
+ROLE_BANNER="<!-- GENERATED — DO NOT EDIT. Edit agent-instructions/roles/<role>/, then rebuild with polyscribe -->"
 CEILING=200
 
 # --- REPO scope (NEVER glob — order is explicit) -----------------------------
@@ -257,6 +257,17 @@ sha256_stdin() {
   fi
 }
 
+sha256_file() {
+  local f="$1"
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$f" | awk '{print $1}'
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$f" | awk '{print $1}'
+  else
+    die "missing sha256sum or shasum for standard-set canon check"
+  fi
+}
+
 standard_opted_out() {
   local rel="$1" cfg="${REPO_ROOT}/nickify.json"
   [[ -f "$cfg" ]] || return 1
@@ -312,7 +323,14 @@ check_standard_set() {
       fi
       die "standard-set repo-owned override without opt-out: $rel (missing marker $marker)"
     fi
-    actual="$(normalize_standard_module "$path" | sha256_stdin)"
+    case "$rel" in
+      *.sh)
+        actual="$(sha256_file "$path")"
+        ;;
+      *)
+        actual="$(normalize_standard_module "$path" | sha256_stdin)"
+        ;;
+    esac
     if [[ "$actual" != "$expected" ]]; then
       die "standard-set module drift: $rel (expected $expected, got $actual)"
     fi
@@ -538,7 +556,7 @@ check_stale_generated_output() {
     return
   fi
   first="$(sed -n '1p' "$path")"
-  if [[ "$first" == "$BANNER" ]]; then
+  if [[ "$first" == '<!-- GENERATED — DO NOT EDIT. Edit agent-instructions/'* ]]; then
     die "stale generated client output $out has no matching override ${override}.md; remove $out or restore ${OVR_DIR}/${override}.md"
   fi
 }
@@ -618,7 +636,7 @@ if [[ "$MODE" == "check" ]]; then
       diff -u "${REPO_ROOT}/${out}" "${tmp}/${out}" --label "committed/${out}" --label "freshly-built/${out}" || drift=1
     done
   fi
-  [[ $drift -ne 0 ]] && die "repo agent instruction files are stale. Run: ${REBUILD_COMMAND}"
+  [[ $drift -ne 0 ]] && die "repo agent instruction files are stale. Run: ${RECOVERY_COMMAND}"
   printf 'polyscribe: repo files (AGENTS.md + CLAUDE.md/GEMINI.md inline + AGENTS.shared.md) up to date.\n'
   exit 0
 fi
