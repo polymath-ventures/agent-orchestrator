@@ -75,8 +75,8 @@ type SessionRecord struct {
 	MixBucketModel string   `json:"-"`
 	DisplayName    string   `json:"displayName,omitempty"`
 	Activity       Activity `json:"activity"`
-	// LastError is the bounded diagnostic from the latest failed managed-agent
-	// process. It remains available after terminal state changes until a new
+	// LastError is the bounded diagnostic from the latest managed-agent launch
+	// failure. It remains available after terminal state changes until a new
 	// spawn supersedes that process.
 	LastError string `json:"lastError,omitempty"`
 	// FirstSignalAt is when the FIRST agent hook callback arrived for the

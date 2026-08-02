@@ -327,8 +327,8 @@ func TestGetLaunchCommandGivesRecycledAOSessionIDsDistinctPersistentClaudeIDs(t 
 		t.Fatal(err)
 	}
 
-	firstID := first[2]
-	recycledID := recycled[2]
+	firstID := argumentAfter(t, first, "--session-id")
+	recycledID := argumentAfter(t, recycled, "--session-id")
 	if firstID == recycledID {
 		t.Fatalf("recycled AO session ID received colliding Claude IDs: %q", firstID)
 	}
@@ -1107,6 +1107,17 @@ func contains(values []string, needle string) bool {
 		}
 	}
 	return false
+}
+
+func argumentAfter(t *testing.T, values []string, flag string) string {
+	t.Helper()
+	for i, value := range values {
+		if value == flag && i+1 < len(values) {
+			return values[i+1]
+		}
+	}
+	t.Fatalf("command %#v missing value after %q", values, flag)
+	return ""
 }
 
 func containsSubsequence(values, needle []string) bool {

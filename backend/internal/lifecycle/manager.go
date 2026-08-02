@@ -281,7 +281,7 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 	s.AgentSessionID = strings.TrimSpace(s.AgentSessionID)
 	s.LaunchID = strings.TrimSpace(s.LaunchID)
 	s.Error = strings.TrimSpace(s.Error)
-	if !s.Valid && s.AgentSessionID == "" && s.Error == "" && s.Usage == nil && len(s.Quotas) == 0 {
+	if !s.Valid && s.AgentSessionID == "" && s.Usage == nil && len(s.Quotas) == 0 {
 		return nil
 	}
 	var intent *ports.NotificationIntent

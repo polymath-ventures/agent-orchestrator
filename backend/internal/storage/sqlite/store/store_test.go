@@ -97,6 +97,10 @@ func TestSessionLastErrorRoundTrips(t *testing.T) {
 		t.Fatalf("insert round-trip last error = %q", got.LastError)
 	}
 
+	baseSeq, err := s.LatestSeq(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
 	got.LastError = "retry launch failure"
 	if err := s.UpdateSession(ctx, got); err != nil {
 		t.Fatalf("UpdateSession: %v", err)
@@ -107,6 +111,13 @@ func TestSessionLastErrorRoundTrips(t *testing.T) {
 	}
 	if again.LastError != "retry launch failure" {
 		t.Fatalf("update round-trip last error = %q", again.LastError)
+	}
+	events, err := s.EventsAfter(ctx, baseSeq, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 || string(events[0].Type) != "session_updated" {
+		t.Fatalf("last-error update events = %+v, want one session_updated", events)
 	}
 }
 

@@ -1861,7 +1861,7 @@ export interface components {
         SetActivityRequest: {
             /** @description Native agent session identifier used to resume its transcript. */
             agentSessionId?: string;
-            /** @description Bounded diagnostic from a failed managed-agent process exit. */
+            /** @description Bounded diagnostic from a managed-agent launch failure. */
             error?: string;
             /** @description AO hook sub-command that produced this state (e.g. post-tool-use). */
             event?: string;

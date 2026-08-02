@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -16,6 +15,8 @@ import (
 const supervisedExitReportTimeout = 5 * time.Second
 
 const supervisedErrorTailBytes = 4096
+const supervisedLaunchErrorWindow = 10 * time.Second
+const supervisedPaneCaptureTimeout = time.Second
 
 func newAgentProcessCommand(ctx *commandContext) *cobra.Command {
 	root := &cobra.Command{
@@ -62,11 +63,12 @@ func (c *commandContext) runSupervisedProcess(ctx context.Context, sessionID, la
 	child := exec.CommandContext(ctx, argv[0], argv[1:]...) //nolint:gosec // argv is constructed by the selected agent adapter.
 	child.Stdin = c.deps.In
 	child.Stdout = c.deps.Out
-	// Keep the child stderr visible in its terminal pane while retaining just
-	// enough of the tail to diagnose a failed launch through the API.
-	stderrTail := &tailBuffer{limit: supervisedErrorTailBytes}
-	child.Stderr = io.MultiWriter(c.deps.Err, stderrTail)
+	// Preserve the terminal file descriptor itself. Wrapping stderr in an
+	// io.Writer makes os/exec insert a pipe: descendants can inherit its write
+	// end and keep Wait blocked after the managed process has already exited.
+	child.Stderr = c.deps.Err
 
+	startedAt := c.deps.Now()
 	if err := child.Start(); err != nil {
 		_, _ = fmt.Fprintf(c.deps.Err, "ao: start managed agent: %v\n", err)
 		c.reportSupervisedExit(sessionID, launchID, err.Error())
@@ -81,13 +83,30 @@ func (c *commandContext) runSupervisedProcess(ctx context.Context, sessionID, la
 	waitErr := child.Wait()
 	signal.Stop(interrupts)
 
-	errorDetail := strings.TrimSpace(stderrTail.String())
-	if waitErr == nil {
-		errorDetail = ""
-	} else if errorDetail == "" {
-		errorDetail = waitErr.Error()
+	errorDetail := ""
+	if waitErr != nil && c.deps.Now().Sub(startedAt) <= supervisedLaunchErrorWindow {
+		errorDetail = c.captureSupervisedLaunchError(waitErr)
 	}
 	c.reportSupervisedExit(sessionID, launchID, errorDetail)
+}
+
+func (c *commandContext) captureSupervisedLaunchError(waitErr error) string {
+	paneID := strings.TrimSpace(os.Getenv("TMUX_PANE"))
+	if paneID == "" {
+		return waitErr.Error()
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), supervisedPaneCaptureTimeout)
+	defer cancel()
+	output, err := c.deps.CommandOutput(ctx, "tmux", "capture-pane", "-p", "-t", paneID, "-S", "-100")
+	if err != nil {
+		return waitErr.Error()
+	}
+	tail := &tailBuffer{limit: supervisedErrorTailBytes}
+	_, _ = tail.Write(output)
+	if detail := strings.TrimSpace(tail.String()); detail != "" {
+		return detail
+	}
+	return waitErr.Error()
 }
 
 func (c *commandContext) reportSupervisedExit(sessionID, launchID, errorDetail string) {
@@ -102,9 +121,8 @@ func (c *commandContext) reportSupervisedExit(sessionID, launchID, errorDetail s
 	}
 }
 
-// tailBuffer retains the last limit bytes written to it. It lets process
-// supervision report a bounded stderr diagnostic without consuming or
-// redirecting the terminal stream.
+// tailBuffer retains the last limit bytes written to it. It bounds the pane
+// transcript retained for a launch failure without redirecting child stderr.
 type tailBuffer struct {
 	data  []byte
 	limit int
