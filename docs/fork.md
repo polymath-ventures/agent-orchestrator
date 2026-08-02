@@ -42,13 +42,28 @@ area, this list decides what must survive; everything not on it may follow
 upstream. Each item names the feature and the concrete thing a sync must keep
 working (not a specific UI shape unless stated).
 
+Every item carries **sync anchors** — the files and symbols to re-check after a
+merge — and **reference issues/PRs** in `issue → PR` form, so a sync can read the
+change that introduced the behavior instead of re-deriving intent from the diff.
+Anchors say where the behavior lives today; treat them as the starting point for
+a search, not as an exhaustive file list.
+
 1. **Web client as a first-class client.** The browser-served renderer
    (`ops/ao-web-server.mjs`, `npm run build:web`, `VITE_NO_ELECTRON`) must stay
    fully servable and usable in a plain browser, on par with Electron. No
    web-path dependence on `window.ao`, Electron preload, or Electron-only daemon
-   fields. The `frontend/e2e/*.spec.ts` **browser-mode** suite is the guard —
-   keep it green and meaningful. UX shape may follow upstream; browser
+   fields. Sync anchors: `frontend/package.json` defines `build:web` / `dev:web`;
+   `frontend/vite.renderer.config.ts` gates the browser build and its dev proxy;
+   `renderer/lib/api-client.ts` (`isBrowserMode`, `hasTrustedApiBaseUrl`) selects
+   the HTTP transport instead of `window.ao`, and `renderer/lib/preview-mode.ts`,
+   `renderer/hooks/useWorkspaceQuery.ts`, and `renderer/hooks/useShellTerminals.ts`
+   branch on the same flag; `ops/ao-web.service` and `ops/ao-web-server.test.mjs`
+   cover the server itself. The `frontend/e2e/*.spec.ts` **browser-mode** suite is
+   the guard — keep it green and meaningful, especially `browser-mode.spec.ts` and
+   `mobile-sidebar-toggle.spec.ts`. UX shape may follow upstream; browser
    functionality may not regress.
+   Reference issues/PRs: #2 → #18; #46 → #55; #54 → #62; #182 → #191; and #109
+   (web project import daemon readiness).
 2. **Terminal auto-focus.** A terminal pane takes keyboard focus when it appears
    or is selected, so the user types without clicking (`focusRequest`/`autoFocus`,
    `data-terminal-tab` + `focusActiveTerminalTab`, plus the Ctrl+F6
@@ -58,30 +73,101 @@ working (not a specific UI shape unless stated).
    `ShellTerminalsView`/`CenterPane` pass activation requests for shell and
    session-tab selection. Regression coverage lives in
    `frontend/e2e/terminal-focus.spec.ts` and the matching component tests.
-   Reference issues/PRs: #131, #136, #230.
+   Reference issues/PRs: #131 → #136, #230; #137 → #157 (which also absorbed
+   #134 and #135).
 3. **Quota & usage tracking.** Per-turn usage telemetry and quota snapshots from
-   agent hooks (`usageTelemetryEvent`, `acceptedQuotaSnapshots`, the quota
-   probers under `service/agent/quota`), plus model-health / candidate-health.
+   agent hooks (`usageTelemetryEvent`, `acceptedQuotaSnapshots`, both in
+   `backend/internal/lifecycle/manager.go`; the quota probers under
+   `backend/internal/observe/quota`), plus model-health / candidate-health
+   (`backend/internal/modelhealth`). Sync anchors: hook ingest in
+   `backend/internal/cli/hooks.go` and `backend/internal/cli/usage_extract.go`,
+   the per-harness parsers such as
+   `backend/internal/adapters/agent/claudecode/quota.go`, aggregation and
+   alerting in `backend/internal/observe/metrics/{quota,alert,observer}.go`, and
+   the sidebar widget `frontend/src/renderer/components/QuotaPanel.tsx`.
    This is mechanism-independent — re-layer it onto whatever signal path upstream
    uses.
-4. **Harness/agent setup & selection.** The agent-selection catalog and per-role
-   model+effort tuples and worker-mix UI (`selectableAgentCatalog`,
-   `HarnessModelRow`, `WorkerMixFields`, `lib/agent-selection.ts`, tracker
-   intake), and the fork-only **codex-fugu** harness — as both a worker and a
-   **reviewer** (`domain.ReviewerCodexFugu` in `AllReviewerHarnesses`, the
-   `codex.NewFugu()` reviewer adapter, so the Settings "Default reviewer agent"
-   picker offers it). These live in shared upstream files, so re-apply the fugu
-   reviewer registration on any sync that touches them.
+   Reference issues/PRs: #8 → #16, #88; #97 → #102; #112 → #113; #116 → #117.
+4. **Harness/agent setup & selection.** The agent-selection catalog, the per-role
+   model+effort tuples, and the worker-mix UI, plus the fork-only **codex-fugu**
+   harness — as both a worker and a **reviewer**, so the Settings "Default
+   reviewer agent" picker offers it. These live in shared upstream files, so
+   re-apply the fugu reviewer registration on any sync that touches them. Sync
+   anchors: `selectableAgentCatalog` in
+   `frontend/src/renderer/lib/agent-selection.ts`, consumed by
+   `components/ProjectSettingsForm.tsx` (which also defines `HarnessModelRow`),
+   `components/WorkerMixFields.tsx`, and `components/CreateProjectAgentSheet.tsx`;
+   tracker intake resolves the mix in
+   `backend/internal/observe/trackerintake/observer.go`. The fugu worker plugin is
+   `codex.NewFugu()` in `backend/internal/adapters/agent/codex/codex.go` and the
+   reviewer is `backend/internal/adapters/reviewer/codex/codex.go` plus its entry
+   in `backend/internal/adapters/reviewer/registry.go`;
+   `backend/internal/domain/reviewerharness.go` is an upstream file whose
+   `ReviewerCodexFugu` constant and its `AllReviewerHarnesses` entry are fork-only
+   lines, and `backend/internal/adapters/reviewer/registry_test.go` is the guard
+   that keeps the adapter set and the domain set in sync.
+   Reference issues/PRs: model management #4 → #34, #64; codex-fugu worker
+   harness #12 → #21; fugu reviewer registration #229 → #231; selector
+   unification #121 → #124, #125, #132 → #139, and #140 → #141; setup defaults
+   #98 → #100 and #106 → #107; per-harness catalog degradation #234 → #235.
 5. **Fleet & Prime.** The projectless "AO Fleet" workspace (`FLEET_WORKSPACE_ID`,
    projectless-prime sessions), worker-mix percentages, fleet pause, and the
-   daemon-global Prime supervisor.
-6. **Scratch projects** and persisted per-session model/effort/mix.
+   daemon-global Prime supervisor. Sync anchors: `FLEET_WORKSPACE_ID` and
+   `isFleetWorkspace` in `frontend/src/renderer/types/workspace.ts`, projected
+   into the sidebar by `renderer/hooks/useWorkspaceQuery.ts`; Prime lives in
+   `backend/internal/service/prime`, `backend/internal/daemon/prime_supervisor.go`,
+   `prime_reconciler.go`, `prime_relaunch.go`,
+   `backend/internal/domain/prime_settings.go`,
+   `backend/internal/httpd/controllers/prime.go`, and
+   `backend/internal/cli/prime.go`; the mix itself is
+   `backend/internal/domain/workermix.go`; pause/drain is
+   `backend/internal/observe/drain/drain.go` with route coverage in
+   `backend/internal/httpd/controllers/pause_routes_test.go`.
+   Reference issues/PRs: Prime #7 → #45, #87; fleet-scoped Prime #92 → #95;
+   Prime settings unification #99 → #103 and #167 → #184; Prime permission mode
+   #163 → #189; pause/drain #5 → #33, #66; worker mix #3 → #17, #80.
+6. **Persisted per-session model/effort/mix.** The launched-with model, effort,
+   and mix-selection are stored on the session row rather than re-derived from
+   project config, because the worker-mix census groups live sessions on
+   `(harness, model)` and config can change under them. Sync anchors: migrations
+   `backend/internal/storage/sqlite/migrations/0028_add_session_model.sql` and
+   `0029_add_session_mix_selected.sql`, and the `Model`/`Effort` fields on
+   `backend/internal/domain/session.go`. Note the fork's migration numbering has
+   already diverged from upstream's, which is why a version collision is a sync
+   STOP condition rather than a mechanical renumber. **Scratch projects are
+   upstream's** (`backend/internal/adapters/workspace/scratch/`) and need no
+   preservation; the only fork delta touching them is the derived
+   `SessionPrefix` on the default scratch project.
+   Reference issues/PRs: worker mix #3 → #17, #80 — the session `model` and
+   `mix_selected` columns landed in #17; session prefix #151 → #179.
 7. **Bug fixes.** Any fork divergence that fixes a real bug beats re-absorbing
-   the upstream behavior it fixed.
+   the upstream behavior it fixed. The clusters most likely to be silently
+   reverted by a blend, because they live in shared upstream files: compensating
+   teardown must run on a detached context, not the caller's cancelled one
+   (`cleanupContext` in `backend/internal/session_manager/manager.go`) — #156 →
+   #158, #170 → #173, #175 → #188, #208 → #214; workspace/worktree teardown
+   safety (`backend/internal/adapters/workspace/gitworktree/workspace.go`,
+   `router/router.go`) — #164 → #171, #165 → #187, #144 → #166; supervisor
+   liveness accounting (`backend/internal/daemon/supervisor/supervisor.go`) —
+   #147 → #159, #181 → #190; the tmux runtime socket anchored to the AO data dir
+   (`backend/internal/adapters/runtime/tmux/tmux.go`) — #160 → #176; and session
+   false-death / hook-attribution guards — #15 → #32, #91.
 8. **Ops / SDLC infrastructure.** `ops/deploy.sh` + the web server + systemd /
    Tailscale wiring; the Prettier CI the fork keeps (upstream removed it); and
    the agent SDLC files (`CLAUDE.md`, `.claude/skills`, Beads, OpenSpec,
-   `agent-instructions/`).
+   `agent-instructions/`). Sync anchors: `ops/deploy.sh` with `ops/deploy.test.mjs`
+   and `ops/deploy-gate.test.mjs`; the units `ops/ao.service`,
+   `ops/ao-tmux.service`, `ops/ao-tmux-claim.{service,timer}`, `ops/ao-web.service`,
+   and `ops/ao-config-drift.{service,timer}`, asserted by
+   `ops/ao-systemd-units.test.mjs`; the pre-push gate in `scripts/ci/` with
+   `ops/ci-local.test.mjs`, `ops/ci-format-check.test.mjs`, and
+   `ops/ci-go-scope.test.mjs`; `.github/workflows/prettier.yml`; and the
+   final-review status contract helper `ops/final-review-status.mjs`. The `aong`
+   porcelain has its own section below.
+   Reference issues/PRs: headless standup #13 → #19; tmux socket #160 → #176;
+   pre-push gate #105 → #108, #219 → #222, #227 → #228; build revision on the
+   health probe #196, #200, #201 → #198; agent-ci workdir #169 → #172; and #52
+   (the deploy script itself, opened without a tracking issue).
 
 **Explicitly NOT fork-specific — absorb upstream freely** (do not spend a sync
 preserving these; they were merged toward upstream and re-preserving them
@@ -353,7 +439,9 @@ daemon, and they no longer describe what they do on a web-first deployment:
 drain, `pause --hard` is an emergency stop filed as a flag on the
 non-destructive verb, and `stop` stops only the daemon.
 
-`aong` (`backend/cmd/aong`) is the fork's operator-facing surface over `ao`.
+`aong` (`backend/cmd/aong`, entrypoint `backend/cmd/aong/main.go`) is the fork's
+operator-facing surface over `ao`. Reference issues/PRs: #177 → #185 (the
+original porcelain), #203 → #204 (widening it to the complete `ao` surface).
 It passes every non-overridden `ao` command through by default, so operators do
 not need to remember which binary has which verb. The override table is the
 interesting part: lifecycle names that are misleading upstream become honest on
