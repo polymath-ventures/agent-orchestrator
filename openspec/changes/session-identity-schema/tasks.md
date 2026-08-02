@@ -6,7 +6,7 @@
 
 ## 2. Persist and consume the database generation
 
-- [x] 2.1 Add migration `0059_add_session_id_generation.sql` that mints one 128-bit lowercase-hex database-generation token without rewriting existing session IDs
+- [x] 2.1 Add migration `0059_add_session_id_generation.sql` that mints one 64-bit lowercase-hex database-generation token without rewriting existing session IDs
 - [x] 2.2 Add the sqlc accessor for `daemon_settings.session_id_generation` and regenerate sqlc output
 - [x] 2.3 Compose the validated generation token into every newly created project and projectless-Prime session ID at the store's single creation seam
 

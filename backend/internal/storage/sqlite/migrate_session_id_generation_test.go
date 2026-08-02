@@ -32,7 +32,7 @@ func TestMigrateMintsSessionIDGenerationOnFreshDatabase(t *testing.T) {
 		t.Fatalf("migrate: %v", err)
 	}
 	if generation := sessionIDGeneration(t, db); !generationTokenPattern.MatchString(generation) {
-		t.Fatalf("generation = %q, want 32 lowercase hex chars", generation)
+		t.Fatalf("generation = %q, want 16 lowercase hex chars", generation)
 	}
 }
 

@@ -22,7 +22,7 @@ changing identity. Identity SHALL NOT be re-derived from presentation.
 
 ### Requirement: A database generation namespaces every new session identity
 
-The daemon SHALL mint and persist one 128-bit lowercase-hex generation token for
+The daemon SHALL mint and persist one 64-bit lowercase-hex generation token for
 each database generation. The token SHALL be stable for the lifetime of that
 database and SHALL be regenerated when a new database is initialized.
 

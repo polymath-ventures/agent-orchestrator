@@ -132,7 +132,8 @@ token is composed only into IDs minted after the migration.
 
 `{gen}` is lowercase hex (`[0-9a-f]`), which passes the filesystem
 `validatePathComponent` (no separators), the tmux `sessionIDPattern`
-(`[a-zA-Z0-9_-]`), the git ref grammar, and Claude's cwd slugification. Length is 32 hex chars (16 random bytes). Long IDs may cross tmux's 48-byte
+(`[a-zA-Z0-9_-]`), the git ref grammar, and Claude's cwd slugification. Length is 16 hex chars (8 random bytes). A 64-bit suffix keeps a realistic
+project's id (e.g. `agent-orchestrator-12-` + 16 hex = 38 bytes) inside tmux's 48-byte
 raw-name cap; tmux's existing `SessionName` canonicalizer then preserves a
 readable prefix and appends an 8-hex digest. Every create/lookup/attach path
 already calls that same helper, so the canonical runtime identity remains
