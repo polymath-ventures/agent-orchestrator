@@ -141,7 +141,7 @@ consistent.
   a different string and attach/lookup could mismatch. Mitigation: keep every lookup on the existing `SessionName` canonicalizer and
   add a boundary test that a long token-bearing id canonicalizes deterministically
   to the same tmux name for create and attach.
-- **Operator muscle-memory churn** → new session IDs gain an 8-char suffix, so
+- **Operator muscle-memory churn** → new session IDs gain a 32-char suffix, so
   `ao send --session <id>` requires copying it from `ao session ls` rather than
   typing from memory. The display name (#150) remains the primary readable cue,
   and operators already copy IDs from listings. Documented in the schema doc.
@@ -156,7 +156,7 @@ consistent.
 
 ## Migration Plan
 
-1. Add migration `0058_add_session_id_generation.sql`: `ALTER TABLE
+1. Add migration `0059_add_session_id_generation.sql`: `ALTER TABLE
 daemon_settings ADD COLUMN session_id_generation TEXT NOT NULL DEFAULT ''`,
    then `UPDATE daemon_settings SET session_id_generation =
 lower(hex(randomblob(16))) WHERE id = 1`. Down drops the column.

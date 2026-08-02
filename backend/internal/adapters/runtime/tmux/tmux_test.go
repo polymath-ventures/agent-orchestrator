@@ -1367,3 +1367,28 @@ func exitCodeErr(t *testing.T, code int) error {
 	}
 	return err
 }
+
+func TestSessionNameDistinguishesDatabaseGenerations(t *testing.T) {
+	const (
+		generationA = "0123456789abcdef0123456789abcdef"
+		generationB = "fedcba9876543210fedcba9876543210"
+	)
+	idA := "agent-orchestrator-1-" + generationA
+	idB := "agent-orchestrator-1-" + generationB
+
+	nameA := SessionName(idA)
+	nameB := SessionName(idB)
+	if nameA == nameB {
+		t.Fatalf("different generation ids canonicalized to the same tmux name %q", nameA)
+	}
+	if got := SessionName(idA); got != nameA {
+		t.Fatalf("SessionName is not deterministic: first %q, second %q", nameA, got)
+	}
+	viaCreate, err := tmuxSessionName(domain.SessionID(idA))
+	if err != nil {
+		t.Fatalf("tmuxSessionName: %v", err)
+	}
+	if viaCreate != nameA {
+		t.Fatalf("Create canonicalization = %q, lookup canonicalization = %q", viaCreate, nameA)
+	}
+}

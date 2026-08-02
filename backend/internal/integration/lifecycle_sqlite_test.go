@@ -2,6 +2,7 @@ package integration
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -200,7 +201,7 @@ func TestSpawnPRKillRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sess.ID != "mer-1" || sess.Status != domain.StatusIdle {
+	if !strings.HasPrefix(string(sess.ID), "mer-1-") || sess.Status != domain.StatusIdle {
 		t.Fatalf("spawn got %+v", sess)
 	}
 	rec, ok, _ := st.store.GetSession(ctx, sess.ID)

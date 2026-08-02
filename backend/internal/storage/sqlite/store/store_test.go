@@ -2,9 +2,13 @@ package store_test
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
+	"path/filepath"
 	"reflect"
+	"regexp"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -16,12 +20,50 @@ import (
 
 func newTestStore(t *testing.T) *sqlite.Store {
 	t.Helper()
-	s, err := sqlite.Open(t.TempDir())
+	return newTestStoreAt(t, t.TempDir())
+}
+
+func newTestStoreAt(t *testing.T, dataDir string) *sqlite.Store {
+	t.Helper()
+	s, err := sqlite.Open(dataDir)
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	t.Cleanup(func() { _ = s.Close() })
 	return s
+}
+
+const (
+	testGenerationA = "0123456789abcdef0123456789abcdef"
+	testGenerationB = "fedcba9876543210fedcba9876543210"
+)
+
+var sessionGenerationPattern = regexp.MustCompile(`^[0-9a-f]{32}$`)
+
+func setSessionGeneration(t *testing.T, dataDir, generation string) {
+	t.Helper()
+	db, err := sql.Open("sqlite", filepath.Join(dataDir, "ao.db"))
+	if err != nil {
+		t.Fatalf("open raw sqlite: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+	if _, err := db.Exec(`UPDATE daemon_settings SET session_id_generation = ? WHERE id = 1`, generation); err != nil {
+		t.Fatalf("set session generation: %v", err)
+	}
+}
+
+func sessionGeneration(t *testing.T, id domain.SessionID) string {
+	t.Helper()
+	raw := string(id)
+	i := strings.LastIndexByte(raw, '-')
+	if i < 0 {
+		t.Fatalf("session id %q has no generation separator", id)
+	}
+	generation := raw[i+1:]
+	if !sessionGenerationPattern.MatchString(generation) {
+		t.Fatalf("session id %q generation = %q, want 32 lowercase hex chars", id, generation)
+	}
+	return generation
 }
 
 func seedProject(t *testing.T, s *sqlite.Store, id string) {
@@ -326,7 +368,9 @@ func TestProjectConfigRoundTrips(t *testing.T) {
 }
 
 func TestSessionCreateAssignsPerProjectID(t *testing.T) {
-	s := newTestStore(t)
+	dataDir := t.TempDir()
+	s := newTestStoreAt(t, dataDir)
+	setSessionGeneration(t, dataDir, testGenerationA)
 	ctx := context.Background()
 	seedProject(t, s, "mer")
 	seedProject(t, s, "ao")
@@ -335,12 +379,21 @@ func TestSessionCreateAssignsPerProjectID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r2, _ := s.CreateSession(ctx, sampleRecord("mer"))
-	r3, _ := s.CreateSession(ctx, sampleRecord("ao"))
-	if r1.ID != "mer-1" || r2.ID != "mer-2" || r3.ID != "ao-1" {
-		t.Fatalf("ids = %s, %s, %s; want mer-1, mer-2, ao-1", r1.ID, r2.ID, r3.ID)
+	r2, err := s.CreateSession(ctx, sampleRecord("mer"))
+	if err != nil {
+		t.Fatal(err)
 	}
-	got, ok, err := s.GetSession(ctx, "mer-1")
+	r3, err := s.CreateSession(ctx, sampleRecord("ao"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r1.ID != "mer-1-"+testGenerationA || r2.ID != "mer-2-"+testGenerationA || r3.ID != "ao-1-"+testGenerationA {
+		t.Fatalf("ids = %s, %s, %s; want generation-qualified ids", r1.ID, r2.ID, r3.ID)
+	}
+	if got := sessionGeneration(t, r1.ID); got != sessionGeneration(t, r2.ID) || got != sessionGeneration(t, r3.ID) {
+		t.Fatalf("generations differ within one database: %q, %q, %q", got, sessionGeneration(t, r2.ID), sessionGeneration(t, r3.ID))
+	}
+	got, ok, err := s.GetSession(ctx, r1.ID)
 	if err != nil || !ok {
 		t.Fatalf("get: ok=%v err=%v", ok, err)
 	}
@@ -356,6 +409,61 @@ func TestSessionCreateAssignsPerProjectID(t *testing.T) {
 	}
 }
 
+func TestSessionIdentityDoesNotRecycleAcrossDatabaseRebuilds(t *testing.T) {
+	ctx := context.Background()
+	create := func(generation string) domain.SessionID {
+		dataDir := t.TempDir()
+		s := newTestStoreAt(t, dataDir)
+		setSessionGeneration(t, dataDir, generation)
+		seedProject(t, s, "mer")
+		rec, err := s.CreateSession(ctx, sampleRecord("mer"))
+		if err != nil {
+			t.Fatalf("CreateSession: %v", err)
+		}
+		return rec.ID
+	}
+
+	oldID := create(testGenerationA)
+	newID := create(testGenerationB)
+	if oldID == newID {
+		t.Fatalf("rebuilt database recycled session id %q", oldID)
+	}
+	if oldID != "mer-1-"+testGenerationA || newID != "mer-1-"+testGenerationB {
+		t.Fatalf("rebuilt ids = %q, %q; want same head with distinct generations", oldID, newID)
+	}
+}
+
+func TestCreateSessionRejectsInvalidGenerationBeforeInsert(t *testing.T) {
+	cases := map[string]string{
+		"empty":     "",
+		"short":     "short",
+		"uppercase": strings.ToUpper(testGenerationA),
+		"non-hex":   strings.Repeat("g", 32),
+	}
+	for name, generation := range cases {
+		t.Run(name, func(t *testing.T) {
+			dataDir := t.TempDir()
+			s := newTestStoreAt(t, dataDir)
+			setSessionGeneration(t, dataDir, generation)
+			seedProject(t, s, "mer")
+			if _, err := s.CreateSession(context.Background(), sampleRecord("mer")); err == nil {
+				t.Fatalf("CreateSession generation %q = nil error, want refusal", generation)
+			}
+			if all, err := s.ListAllSessions(context.Background()); err != nil || len(all) != 0 {
+				t.Fatalf("sessions after rejected generation = %v, err=%v; want none", all, err)
+			}
+			setSessionGeneration(t, dataDir, testGenerationA)
+			created, err := s.CreateSession(context.Background(), sampleRecord("mer"))
+			if err != nil {
+				t.Fatalf("CreateSession after repair: %v", err)
+			}
+			if created.ID != "mer-1-"+testGenerationA {
+				t.Fatalf("id after repair = %q, want num 1", created.ID)
+			}
+		})
+	}
+}
+
 func TestCreateSessionAllowsProjectlessPrimeOnly(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
@@ -367,8 +475,11 @@ func TestCreateSessionAllowsProjectlessPrimeOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateSession projectless prime: %v", err)
 	}
-	if created.ID != "prime-1" || created.ProjectID != "" {
-		t.Fatalf("projectless prime = id %q project %q, want prime-1 with empty project", created.ID, created.ProjectID)
+	if !strings.HasPrefix(string(created.ID), "prime-1-") || created.ProjectID != "" {
+		t.Fatalf("projectless prime = id %q project %q, want generation-qualified prime-1 with empty project", created.ID, created.ProjectID)
+	}
+	if generation := sessionGeneration(t, created.ID); generation == "" {
+		t.Fatal("projectless prime has empty generation")
 	}
 	got, ok, err := s.GetSession(ctx, created.ID)
 	if err != nil || !ok {

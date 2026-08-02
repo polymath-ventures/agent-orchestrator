@@ -14,8 +14,9 @@ import (
 
 // ---- sessions ----
 
-// CreateSession assigns the per-project identity ("{project}-{num}") and inserts
-// the record, returning it with ID populated. The next-num read and the insert
+// CreateSession assigns the non-recycling per-project identity
+// ("{project}-{num}-{database-generation}") and inserts the record, returning
+// it with ID populated. The generation read, next-num read, and insert
 // run on the writer connection under writeMu, so two concurrent creates in the
 // same project can't collide on num.
 func (s *Store) CreateSession(ctx context.Context, rec domain.SessionRecord) (domain.SessionRecord, error) {
@@ -26,26 +27,52 @@ func (s *Store) CreateSession(ctx context.Context, rec domain.SessionRecord) (do
 		if rec.Kind != domain.KindPrime {
 			return domain.SessionRecord{}, fmt.Errorf("project id is required for %s sessions", rec.Kind)
 		}
-		return s.createProjectlessPrimeSession(ctx, rec)
+		generation, err := s.sessionIDGeneration(ctx)
+		if err != nil {
+			return domain.SessionRecord{}, err
+		}
+		return s.createProjectlessPrimeSession(ctx, rec, generation)
 	}
 
+	generation, err := s.sessionIDGeneration(ctx)
+	if err != nil {
+		return domain.SessionRecord{}, err
+	}
 	num, err := s.qw.NextSessionNum(ctx, rec.ProjectID)
 	if err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("next session num for %s: %w", rec.ProjectID, err)
 	}
-	rec.ID = domain.SessionID(fmt.Sprintf("%s-%d", rec.ProjectID, num))
+	rec.ID = domain.SessionID(fmt.Sprintf("%s-%d-%s", rec.ProjectID, num, generation))
 	if err := s.qw.InsertSession(ctx, recordToInsert(rec, num)); err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("insert session %s: %w", rec.ID, err)
 	}
 	return rec, nil
 }
 
-func (s *Store) createProjectlessPrimeSession(ctx context.Context, rec domain.SessionRecord) (domain.SessionRecord, error) {
+const sessionIDGenerationLength = 32
+
+func (s *Store) sessionIDGeneration(ctx context.Context) (string, error) {
+	generation, err := s.qw.GetSessionIDGeneration(ctx)
+	if err != nil {
+		return "", fmt.Errorf("get session id generation: %w", err)
+	}
+	if len(generation) != sessionIDGenerationLength {
+		return "", fmt.Errorf("invalid session id generation %q: want %d lowercase hex characters", generation, sessionIDGenerationLength)
+	}
+	for _, c := range generation {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return "", fmt.Errorf("invalid session id generation %q: want %d lowercase hex characters", generation, sessionIDGenerationLength)
+		}
+	}
+	return generation, nil
+}
+
+func (s *Store) createProjectlessPrimeSession(ctx context.Context, rec domain.SessionRecord, generation string) (domain.SessionRecord, error) {
 	var num int64
 	if err := s.writeDB.QueryRowContext(ctx, `SELECT COALESCE(MAX(num), 0) + 1 FROM sessions WHERE project_id IS NULL AND kind = 'prime'`).Scan(&num); err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("next projectless prime session num: %w", err)
 	}
-	rec.ID = domain.SessionID(fmt.Sprintf("prime-%d", num))
+	rec.ID = domain.SessionID(fmt.Sprintf("prime-%d-%s", num, generation))
 	params := recordToInsert(rec, num)
 	if _, err := s.writeDB.ExecContext(ctx, insertProjectlessPrimeSessionSQL,
 		params.ID,

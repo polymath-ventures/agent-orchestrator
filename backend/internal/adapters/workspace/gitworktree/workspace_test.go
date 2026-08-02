@@ -1104,3 +1104,29 @@ func TestGitWorktreeExitStatusOneHelper(t *testing.T) {
 	}
 	os.Exit(1)
 }
+
+func TestManagedPathDistinguishesDatabaseGenerations(t *testing.T) {
+	root := t.TempDir()
+	ws, err := New(Options{ManagedRoot: root, RepoResolver: StaticRepoResolver{"agent-orchestrator": root}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	const (
+		idA = domain.SessionID("agent-orchestrator-1-0123456789abcdef0123456789abcdef")
+		idB = domain.SessionID("agent-orchestrator-1-fedcba9876543210fedcba9876543210")
+	)
+	pathA, err := ws.managedPath(ports.WorkspaceConfig{ProjectID: "agent-orchestrator", SessionID: idA})
+	if err != nil {
+		t.Fatalf("managed path A: %v", err)
+	}
+	pathB, err := ws.managedPath(ports.WorkspaceConfig{ProjectID: "agent-orchestrator", SessionID: idB})
+	if err != nil {
+		t.Fatalf("managed path B: %v", err)
+	}
+	if pathA == pathB {
+		t.Fatalf("different generation ids produced the same workspace path %q", pathA)
+	}
+	if filepath.Base(pathA) != string(idA) || filepath.Base(pathB) != string(idB) {
+		t.Fatalf("workspace paths did not retain complete identities: %q, %q", pathA, pathB)
+	}
+}

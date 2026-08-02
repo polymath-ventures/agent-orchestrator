@@ -9,3 +9,6 @@ SELECT prime_settings FROM daemon_settings WHERE id = 1;
 
 -- name: SetPrimeSettingsJSON :exec
 UPDATE daemon_settings SET prime_settings = ? WHERE id = 1;
+
+-- name: GetSessionIDGeneration :one
+SELECT session_id_generation FROM daemon_settings WHERE id = 1;

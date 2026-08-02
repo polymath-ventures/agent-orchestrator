@@ -230,13 +230,16 @@ func TestSpawnFailsWhenNamingFailsAndLivenessCannotBeConfirmed(t *testing.T) {
 // The rename path reaches the running harness, not just the database row.
 func TestDeliverNameWritesThePersistedNameToALiveSession(t *testing.T) {
 	m, st, _, msg := newNamingManager(renameOnlyAgent{})
-	st.sessions["mer-1"] = liveNamedSession("ao #7 renamed", domain.ActivityIdle)
+	id := domain.SessionID("mer-1-0123456789abcdef0123456789abcdef")
+	rec := liveNamedSession("ao #7 renamed", domain.ActivityIdle)
+	rec.ID = id
+	st.sessions[id] = rec
 
-	if err := m.DeliverName(ctx, "mer-1"); err != nil {
+	if err := m.DeliverName(ctx, id); err != nil {
 		t.Fatal(err)
 	}
 	if len(msg.msgs) != 1 || msg.msgs[0] != "/rename ao #7 renamed" {
-		t.Fatalf("writes = %v, want the persisted name delivered verbatim", msg.msgs)
+		t.Fatalf("writes = %v, want the persisted name delivered verbatim without the identity generation", msg.msgs)
 	}
 }
 
