@@ -135,6 +135,28 @@ var legacyActorlessUserCLICommands = map[string]struct{}{
 	"ao stop":                   {},
 	"ao version":                {},
 
+	// Fork-only operator commands (fleet pause/drain, Prime, role prompt
+	// inspection, versionable project config, the Slack notification mirror).
+	// They are operator-invoked like every other entry here, and
+	// TestTelemetryMetaClassifiesRegisteredCommandPaths fails on any registered
+	// path that falls through to "system".
+	"ao notify":                {},
+	"ao notify slack":          {},
+	"ao pause":                 {},
+	"ao prime":                 {},
+	"ao prime disable":         {},
+	"ao prime enable":          {},
+	"ao prime prompt":          {},
+	"ao prime set":             {},
+	"ao prime settings":        {},
+	"ao project config":        {},
+	"ao project config apply":  {},
+	"ao project config diff":   {},
+	"ao project config export": {},
+	"ao resume":                {},
+	"ao role":                  {},
+	"ao role prompt":           {},
+
 	// Legacy commands observed in PostHog's current billing-period data.
 	"ao handoff":                   {},
 	"ao project orchestration get": {},
