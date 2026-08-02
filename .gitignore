@@ -104,4 +104,6 @@ pnpm-lock.yaml
 
 .reviewcache/
 .reviewtmp/
+/.reviewcache/
+/.reviewtmp/
 /TASK-PLAN.md

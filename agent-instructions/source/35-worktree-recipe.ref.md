@@ -13,6 +13,11 @@ Rule 2 states the invariant: every change you make — bead-tracked or ad-hoc,
 code or docs or config — happens in a worktree YOU created under the repo-local
 agent worktree directory. This is how you create one:
 
+**This worktree is disposable.** When its PR merges, cleanup deletes the whole
+directory — tracked, untracked, and ignored alike, without asking. Anything that
+must survive has to be committed and pushed before then; nothing left here is
+recoverable.
+
 ```bash
 create_owned_worktree() {
   main_repo_root="$1"
@@ -52,8 +57,8 @@ create_owned_worktree() {
     echo "Cannot resolve the created worktree git dir" >&2
     return 1
   }
-  printf 'format=polypowers-worktree-owner-v1\ntask=%s\npath=%s\n' \
-    "$work_item_key" "$target_worktree" \
+  printf 'format=polypowers-worktree-owner-v1\ntask=%s\npath=%s\n# ephemeral: this entire directory is deleted when task=%s'"'"'s PR merges\n' \
+    "$work_item_key" "$target_worktree" "$work_item_key" \
     >"$target_git_dir/polypowers-worktree-owner" || {
     git -C "$main_repo_root" worktree remove "$target_worktree" >&2 || true
     echo "Cannot record worktree ownership marker" >&2
@@ -108,12 +113,12 @@ worktree; use it only as launch context and create the required task worktree
 from the freshly fetched remote ref as above.
 
 The helper call is not optional. It records lifecycle ownership in the new
-worktree's git directory as `polypowers-worktree-owner`, which is how
-`cleanup-merge` knows which work item a worktree belongs to. It is provenance
-only: removal requires the worktree to be provably disposable on its own terms —
-clean tree, merged branch, no live session, all three — and the marker grants no
-bypass. Cleanup will never backfill a missing one, because provenance has to be
-recorded at creation to mean anything. Set `WORK_ITEM_KEY` to the canonical work-item key:
-the Beads id when the repo uses Beads, otherwise `gh:#N`. A plausible path,
-branch name, current checkout, or files already written there are never
-ownership proof.
+worktree's git directory as `polypowers-worktree-owner`, which is how other
+skills know which work item a worktree belongs to and whether it is safe to
+reuse. It is provenance only, and it is not what authorizes deletion: cleanup
+removes a merged task worktree whether or not it is marked, and retains an
+unmerged one whether or not it is marked. Cleanup will never backfill a missing
+marker, because provenance has to be recorded at creation to mean anything. Set
+`WORK_ITEM_KEY` to the canonical work-item key: the Beads id when the repo uses
+Beads, otherwise `gh:#N`. A plausible path, branch name, current checkout, or
+files already written there are never ownership proof.

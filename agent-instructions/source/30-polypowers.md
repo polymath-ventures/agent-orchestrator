@@ -25,7 +25,7 @@ Durable work lives in **two places on purpose**:
 
 The pairing rules:
 
-1. **New bug/feature/task → `/capture`**, which files the GitHub issue _and_
+1. **New bug/feature/task → `/capture`**, which files the GitHub issue *and*
    the linked bead (`Tracks GH #N`) together. Never one without the other.
 2. Issues filed outside `/capture` (bulk filings, web UI) get beads backfilled
    via `/sync-issues-to-beads`. Audit before ending a filing or queue session:
@@ -130,7 +130,6 @@ Non-negotiable. Violating any of these is a bug in your behavior.
    paths** — when the PR diff touches a marked path, autonomous mode parks the
    merge-ready PR for a human instead of merging, stating which path triggered
    it. Fragments may never grant autonomy implicitly.
-
 7. **Specs go through the OpenSpec tooling.** Canonical `openspec/specs/` is
    read-only outside checkbox/date/gap-note edits. Most new features can
    benefit from using `/opsx:explore` to explore and plan out the feature
@@ -155,8 +154,9 @@ Non-negotiable. Violating any of these is a bug in your behavior.
 
 ## The workflow — one skill per phase
 
-Features go through OpenSpec; bugs go to the tracker; keep spec-implementation
-and bug-fix sessions separate.
+Tracked work is routed by type: features go through OpenSpec, bugs go through
+the tracker, and spec implementation and bug-fix sessions stay separate. Bugs,
+gaps, or cleanup found while already building follow Rule 8 instead.
 
 Start from `/capture` for untracked work and `/address-issue` for anything
 already tracked; both route to the right work skill by type. Your harness lists
@@ -192,7 +192,7 @@ foreground/attached. Do not background reviewer or diagnostic agents.
 
 ## The identity contract — what skills defer to your agent identity
 
-Shared skills describe _process_ and resolve the _who/how_ from this contract:
+Shared skills describe *process* and resolve the *who/how* from this contract:
 
 - **Subagents**, by capability tier: lightweight for triage and monitoring;
   standard for reproduction, implementation, and verification; deep reasoning

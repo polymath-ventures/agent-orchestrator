@@ -5,6 +5,18 @@ frontend/src/landing/data/changelog.json
 backend/internal/httpd/apispec/openapi.yaml
 agent-instructions/standard-set.json
 
+# Vault-managed agent standards and generated client instructions
+agent-instructions/README.md
+agent-instructions/source/30-polypowers.md
+agent-instructions/source/35-worktree-recipe.ref.md
+agent-instructions/source/40-operating-principles.md
+agent-instructions/source/65-agent-identity.md
+agent-instructions/agent-overrides/*.md
+AGENTS.md
+AGENTS.shared.md
+CLAUDE.md
+.nickified.json
+
 # Build outputs
 frontend/dist
 frontend/dist-electron
