@@ -34,6 +34,11 @@ type ProjectConfig struct {
 
 	// AgentRules are project-specific standing instructions for worker sessions.
 	AgentRules string `json:"agentRules,omitempty"`
+	// WorkerTaskPrompt fully replaces AO's built-in issue-driven worker task
+	// message. Literal {issue} tokens are rendered at spawn; other bytes are
+	// preserved exactly. Unlike AgentRules, this is a task message, not part of
+	// the worker system prompt.
+	WorkerTaskPrompt string `json:"workerTaskPrompt,omitempty"`
 	// AgentRulesFile is a repo-relative Markdown/text file whose contents are
 	// appended to AgentRules for worker sessions.
 	AgentRulesFile string `json:"agentRulesFile,omitempty"`
@@ -274,6 +279,21 @@ func (c ProjectConfig) Validate() error {
 		return fmt.Errorf("maxLiveWorkers: must not be negative, got %d", c.MaxLiveWorkers)
 	}
 	return nil
+}
+
+// ResolveWorkerTaskPrompt returns the effective configured worker task
+// template and its precedence source. A non-empty project value wins over the
+// daemon-wide typed default. Whitespace values deliberately count as active so
+// a bad higher-precedence setting fails closed at render time instead of
+// silently falling back.
+func ResolveWorkerTaskPrompt(project, defaults ProjectConfig) (template, source string) {
+	if project.WorkerTaskPrompt != "" {
+		return project.WorkerTaskPrompt, "project"
+	}
+	if defaults.WorkerTaskPrompt != "" {
+		return defaults.WorkerTaskPrompt, "global"
+	}
+	return "", ""
 }
 
 // WakeIntervalDuration parses the configured prime wake interval. An empty

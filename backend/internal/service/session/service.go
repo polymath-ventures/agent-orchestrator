@@ -1060,6 +1060,7 @@ func (s *Service) Get(ctx context.Context, id domain.SessionID) (domain.Session,
 // equivalents; an unrecognized error passes through and surfaces as a 500.
 func toAPIError(err error) error {
 	var rulesErr *sessionmanager.RulesLoadError
+	var taskPromptErr *sessionmanager.WorkerTaskPromptConfigError
 	switch {
 	case err == nil:
 		return nil
@@ -1103,6 +1104,11 @@ func toAPIError(err error) error {
 		// error, not a server fault: surface the role/project/file detail as
 		// a 4xx instead of a sanitized 500.
 		return apierr.Invalid("ROLE_RULES_LOAD_FAILED", rulesErr.Error(), nil)
+	case errors.As(err, &taskPromptErr):
+		// An active configured template is authoritative. Surface which
+		// precedence layer is invalid rather than silently selecting built-in
+		// prose or returning a sanitized server error.
+		return apierr.Invalid("WORKER_TASK_PROMPT_INVALID", taskPromptErr.Error(), nil)
 	case errors.Is(err, sessionmanager.ErrProjectPaused):
 		// The project or the fleet is paused, so new work is gated. A pause is an
 		// operator state, not a server fault: 409 lets a client resume (or pass

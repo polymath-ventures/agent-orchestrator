@@ -80,23 +80,27 @@ type Config struct {
 	FailureBackoff time.Duration
 	Clock          func() time.Time
 	Logger         *slog.Logger
+	// ProjectDefaults are daemon-wide typed defaults. Project configuration
+	// takes precedence when resolving a worker task prompt.
+	ProjectDefaults domain.ProjectConfig
 }
 
 // Observer polls configured projects and starts sessions for eligible issues.
 type Observer struct {
-	resolver       TrackerResolver
-	store          Store
-	spawner        Spawner
-	tick           time.Duration
-	failureBackoff time.Duration
-	clock          func() time.Time
-	logger         *slog.Logger
-	backoffUntil   map[string]time.Time
+	resolver        TrackerResolver
+	store           Store
+	spawner         Spawner
+	tick            time.Duration
+	failureBackoff  time.Duration
+	clock           func() time.Time
+	logger          *slog.Logger
+	backoffUntil    map[string]time.Time
+	projectDefaults domain.ProjectConfig
 }
 
 // New constructs an Observer with safe defaults.
 func New(resolver TrackerResolver, store Store, spawner Spawner, cfg Config) *Observer {
-	o := &Observer{resolver: resolver, store: store, spawner: spawner, tick: cfg.Tick, failureBackoff: cfg.FailureBackoff, clock: cfg.Clock, logger: cfg.Logger, backoffUntil: map[string]time.Time{}}
+	o := &Observer{resolver: resolver, store: store, spawner: spawner, tick: cfg.Tick, failureBackoff: cfg.FailureBackoff, clock: cfg.Clock, logger: cfg.Logger, backoffUntil: map[string]time.Time{}, projectDefaults: cfg.ProjectDefaults}
 	if o.tick <= 0 {
 		o.tick = DefaultTickInterval
 	}
@@ -224,11 +228,21 @@ func (o *Observer) pollProject(ctx context.Context, project domain.ProjectRecord
 			o.logger.Debug("tracker intake: worker pool already full, deferring issue", "project", project.ID, "issue", issueID)
 			continue
 		}
+		prompt := BuildIssuePrompt(issue)
+		if template, source := domain.ResolveWorkerTaskPrompt(project.Config, o.projectDefaults); template != "" {
+			var renderErr error
+			prompt, renderErr = sessionmanager.RenderWorkerTaskPrompt(template, issueID)
+			if renderErr != nil {
+				o.logger.Error("tracker intake: invalid worker task prompt configuration", "project", project.ID, "source", source, "issue", issueID, "err", renderErr)
+				spawnFailed = true
+				continue
+			}
+		}
 		if _, _, _, err := o.spawner.Spawn(ctx, ports.SpawnConfig{
 			ProjectID: domain.ProjectID(project.ID),
 			IssueID:   issueID,
 			Kind:      domain.KindWorker,
-			Prompt:    BuildIssuePrompt(issue),
+			Prompt:    prompt,
 		}); err != nil {
 			// Worker-cap, pause, and worker-mix health refusals are healthy
 			// capacity states, not intake faults. Leave the issue unseen so a

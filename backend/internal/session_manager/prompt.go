@@ -2,11 +2,14 @@ package sessionmanager
 
 import (
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
 type sessionPromptRole string
@@ -80,12 +83,53 @@ func (e *RulesLoadError) Error() string {
 
 func (e *RulesLoadError) Unwrap() error { return e.Err }
 
+// ErrInvalidWorkerTaskPromptTemplate marks a configured worker task template
+// that cannot produce a task message. Configured templates are authoritative,
+// so callers must fail rather than fall back to AO's built-in prose.
+var ErrInvalidWorkerTaskPromptTemplate = errors.New("worker task prompt template renders to an empty or whitespace-only message")
+
+// WorkerTaskPromptConfigError adds the effective precedence source and project
+// to a renderer failure so API callers and intake logs identify the operator
+// setting that must be corrected.
+type WorkerTaskPromptConfigError struct {
+	ProjectID string
+	Source    string
+	Err       error
+}
+
+func (e *WorkerTaskPromptConfigError) Error() string {
+	source := e.Source
+	if source == "" {
+		source = "configured"
+	}
+	project := e.ProjectID
+	if project == "" {
+		project = "(unknown project)"
+	}
+	return fmt.Sprintf("%s worker task prompt configuration (project %s): %v", source, project, e.Err)
+}
+
+func (e *WorkerTaskPromptConfigError) Unwrap() error { return e.Err }
+
+// RenderWorkerTaskPrompt substitutes every literal {issue} token and otherwise
+// preserves the configured template byte-for-byte. Canonical tracker references
+// ending in #<native> use only that native suffix, so github:owner/repo#242 and
+// a manual 242 render identically. Unknown shapes remain unchanged.
+func RenderWorkerTaskPrompt(template string, issueID domain.IssueID) (string, error) {
+	issue := string(issueID)
+	if hash := strings.LastIndexByte(issue, '#'); hash >= 0 && hash < len(issue)-1 && strings.IndexByte(issue[:hash], ':') >= 0 {
+		issue = issue[hash+1:]
+	}
+	rendered := strings.ReplaceAll(template, "{issue}", issue)
+	if strings.TrimSpace(rendered) == "" {
+		return "", ErrInvalidWorkerTaskPromptTemplate
+	}
+	return rendered, nil
+}
+
 func buildTaskPrompt(cfg taskPromptConfig) string {
 	issueContext := strings.TrimSpace(cfg.IssueContext)
 	if cfg.Prompt != "" {
-		if cfg.Role == sessionPromptRoleWorker && issueContext != "" {
-			return strings.TrimRight(cfg.Prompt, "\n") + "\n\n" + issueContextSection(issueContext)
-		}
 		return cfg.Prompt
 	}
 	if cfg.IssueID == "" {

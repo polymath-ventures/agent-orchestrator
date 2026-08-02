@@ -3223,6 +3223,81 @@ func TestSpawnWorker_IssueContextStaysInTaskPrompt(t *testing.T) {
 	}
 }
 
+func TestBuildSpawnTexts_ConfiguredWorkerTaskPromptPrecedence(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{WorkerTaskPrompt: "/project {issue}"}}
+	m := New(Deps{
+		Store:           st,
+		ProjectDefaults: domain.ProjectConfig{WorkerTaskPrompt: "/global {issue}"},
+	})
+
+	prompt, _, err := m.buildSpawnTexts(ctx, ports.SpawnConfig{
+		ProjectID:    "mer",
+		Kind:         domain.KindWorker,
+		IssueID:      "github:acme/mer#242",
+		IssueContext: "must not be appended",
+	})
+	if err != nil {
+		t.Fatalf("buildSpawnTexts: %v", err)
+	}
+	if prompt != "/project 242" {
+		t.Fatalf("prompt = %q, want project override only", prompt)
+	}
+
+	template, source, err := m.EffectiveWorkerTaskPrompt(ctx, "mer")
+	if err != nil {
+		t.Fatalf("EffectiveWorkerTaskPrompt: %v", err)
+	}
+	if template != "/project {issue}" || source != "project" {
+		t.Fatalf("effective template = %q source=%q, want project template/source", template, source)
+	}
+}
+
+func TestBuildSpawnTexts_GlobalWorkerTaskPromptForProjectWithoutOverride(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{}}
+	m := New(Deps{Store: st, ProjectDefaults: domain.ProjectConfig{WorkerTaskPrompt: "/global {issue}\n"}})
+
+	prompt, _, err := m.buildSpawnTexts(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, IssueID: "242"})
+	if err != nil {
+		t.Fatalf("buildSpawnTexts: %v", err)
+	}
+	if prompt != "/global 242\n" {
+		t.Fatalf("prompt = %q, want global override bytes preserved", prompt)
+	}
+	template, source, err := m.EffectiveWorkerTaskPrompt(ctx, "mer")
+	if err != nil || template != "/global {issue}\n" || source != "global" {
+		t.Fatalf("effective = %q source=%q err=%v", template, source, err)
+	}
+}
+
+func TestSpawnRejectsInvalidProjectWorkerTaskPromptBeforeSessionCreation(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{
+		WorkerTaskPrompt: " \n\t",
+		Worker:           domain.RoleOverride{Harness: domain.HarnessClaudeCode},
+	}}
+	m := New(Deps{
+		Runtime:         &fakeRuntime{},
+		Agents:          singleAgent{agent: &recordingAgent{}},
+		Workspace:       &fakeWorkspace{},
+		Store:           st,
+		Messenger:       &fakeMessenger{},
+		Lifecycle:       &fakeLCM{store: st},
+		LookPath:        func(string) (string, error) { return "/bin/true", nil },
+		ProjectDefaults: domain.ProjectConfig{WorkerTaskPrompt: "/global {issue}"},
+	})
+
+	_, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, IssueID: "242"})
+	var templateErr *WorkerTaskPromptConfigError
+	if !errors.As(err, &templateErr) || templateErr.Source != "project" {
+		t.Fatalf("Spawn error = %v, want project WorkerTaskPromptConfigError", err)
+	}
+	if len(st.sessions) != 0 {
+		t.Fatalf("sessions = %d, want none after prompt preflight failure", len(st.sessions))
+	}
+}
+
 func TestSpawnWorker_UsesSlimPolicyScaffold(t *testing.T) {
 	st := newFakeStore()
 	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}

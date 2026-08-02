@@ -1866,6 +1866,17 @@ func TestToAPIError_RulesLoadError(t *testing.T) {
 	}
 }
 
+func TestToAPIError_WorkerTaskPromptConfigError(t *testing.T) {
+	err := fmt.Errorf("spawn: prompt: %w", &sessionmanager.WorkerTaskPromptConfigError{
+		ProjectID: "mer", Source: "project", Err: sessionmanager.ErrInvalidWorkerTaskPromptTemplate,
+	})
+	mapped := toAPIError(err)
+	var e *apierr.Error
+	if !errors.As(mapped, &e) || e.Kind != apierr.KindInvalid || e.Code != "WORKER_TASK_PROMPT_INVALID" {
+		t.Fatalf("mapped = %v, want Invalid WORKER_TASK_PROMPT_INVALID", mapped)
+	}
+}
+
 // A spawned singleton that fails replacement verification must be retired,
 // not left live for the next ensure tick to adopt.
 func TestSpawnPrimeRetiresUnverifiedReplacement(t *testing.T) {
