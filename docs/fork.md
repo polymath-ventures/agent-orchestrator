@@ -162,8 +162,9 @@ them as the starting point for a search, not as an exhaustive file list.
    management) does touch scratch projects — the derived `SessionPrefix` on the
    default scratch project is one such delta — so do not read this as "the fork
    never changes scratch". Re-establish it each sync rather than trusting this
-   line:
-   `git diff --exit-code upstream/main..origin/main -- backend/internal/adapters/workspace/scratch/`.
+   line, from inside the merge worktree so the comparison covers the tree you are
+   about to land rather than the pre-merge `origin/main`:
+   `git diff --exit-code upstream/main..HEAD -- backend/internal/adapters/workspace/scratch/`.
    Reference issues/PRs: worker mix #3 → #17, #80 — the session `model` and
    `mix_selected` columns landed in #17; session prefix #151 → #179.
 7. **Bug fixes.** Any fork divergence that fixes a real bug beats re-absorbing
