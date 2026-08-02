@@ -311,6 +311,43 @@ func TestGetLaunchCommandInjectsSessionID(t *testing.T) {
 	}
 }
 
+func TestGetLaunchCommandGivesRecycledAOSessionIDsDistinctPersistentClaudeIDs(t *testing.T) {
+	p := &Plugin{resolvedBinary: "claude"}
+
+	// These launch configs represent two persisted AO records from separate
+	// daemon lifetimes. Their recyclable display/session ID is identical, but
+	// each record must own a distinct Claude transcript identity.
+	first, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{SessionID: "agent-orchestrator-8"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	recycled, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{SessionID: "agent-orchestrator-8"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	firstID := first[2]
+	recycledID := recycled[2]
+	if firstID == recycledID {
+		t.Fatalf("recycled AO session ID received colliding Claude IDs: %q", firstID)
+	}
+
+	// Once persisted on the first AO record, the Claude ID must be used for
+	// restore rather than being regenerated.
+	restore, ok, err := p.GetRestoreCommand(context.Background(), ports.RestoreConfig{
+		Session: ports.SessionRef{
+			ID:       "agent-orchestrator-8",
+			Metadata: map[string]string{ports.MetadataKeyAgentSessionID: firstID},
+		},
+	})
+	if err != nil || !ok {
+		t.Fatalf("restore = (ok=%v, err=%v), want ok", ok, err)
+	}
+	if got := restore[len(restore)-1]; got != firstID {
+		t.Fatalf("restore ID = %q, want persisted Claude ID %q", got, firstID)
+	}
+}
+
 func TestClaudeSessionUUIDDeterministicAndUnique(t *testing.T) {
 	a1 := claudeSessionUUID("alpha")
 	a2 := claudeSessionUUID("alpha")
