@@ -111,11 +111,12 @@ func (g *Guard) Send(ctx context.Context, id domain.SessionID, msg string) error
 	return err
 }
 
-// Deliver writes a user-initiated message (or its Enter-only re-submit: an
-// empty msg) into a live agent. Its activity-specific policy refuses when the
-// session is blocked on a pending decision — waiting_input does NOT suppress, because an agent
-// sitting at an idle prompt is exactly where a user message (or the Enter that
-// submits its unsent draft) belongs.
+// Deliver writes a solicited message into a live agent: a user-initiated
+// message (or its Enter-only re-submit: an empty msg), or a spawn-owned command
+// that is part of creating the session. Its activity-specific policy refuses
+// when the session is blocked on a pending decision — waiting_input does NOT
+// suppress, because an agent sitting at an idle prompt is exactly where a user
+// message or spawn-owned slash command belongs.
 func (g *Guard) Deliver(ctx context.Context, id domain.SessionID, msg string) (Outcome, error) {
 	return g.send(ctx, id, msg, func(rec domain.SessionRecord) (Outcome, bool) {
 		return SuppressedAwaitingUser, rec.Activity.State == domain.ActivityBlocked

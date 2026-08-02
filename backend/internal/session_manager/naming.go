@@ -50,26 +50,14 @@ func (m *Manager) resolveDisplayName(cfg ports.SpawnConfig, project domain.Proje
 	}
 }
 
-// launchArgvCarriedName reports whether the command that just started this
-// process already named the session.
-//
-// Only a fresh spawn can name in argv: a resume command carries no launch-time
-// name flag, so a restored session always needs the in-harness path even on a
-// harness that has one. Asking the adapter "can you name at launch?" instead of
-// "did this launch name it?" is what silently skipped redelivery on restore.
-func launchArgvCarriedName(agent ports.Agent, name string) bool {
-	namer, ok := agent.(ports.AgentNamer)
-	return ok && len(namer.LaunchNameArgs(name)) > 0
-}
-
 // deliverNameAfterStart pushes a session's name into an already-running harness.
 //
 // The write waits for the harness to be ready first: runtime creation returns as
 // soon as the pane exists, which is before the TUI has drawn an input box to
-// receive keystrokes. Callers that named the session in argv skip this entirely —
-// a name delivered in argv lands atomically with process start, so for those
-// spawns the pane-readiness race is absent rather than mitigated.
-func (m *Manager) deliverNameAfterStart(ctx context.Context, agent ports.Agent, cfg ports.LaunchConfig, handle ports.RuntimeHandle, id domain.SessionID, name string) error {
+// receive keystrokes. Launch-time naming, when available, is only an accelerator
+// for early surfaces: the universal in-harness rename remains the durable path
+// that updates the harness-owned session store the desktop/mobile apps render.
+func (m *Manager) deliverNameAfterStart(ctx context.Context, agent ports.Agent, cfg ports.LaunchConfig, handle ports.RuntimeHandle, id domain.SessionID, name string, send nameSender) error {
 	if strings.TrimSpace(name) == "" {
 		return nil
 	}
@@ -83,17 +71,24 @@ func (m *Manager) deliverNameAfterStart(ctx context.Context, agent ports.Agent, 
 	if err != nil {
 		return err
 	}
-	// A worker whose prompt rides argv may already be mid-turn by the time its
-	// harness reports ready, so the spawn write must tolerate an active session
-	// or exactly the sessions this change exists for would go unnamed. It must
-	// still refuse when the session awaits the human: a paste plus Enter into a
-	// permission dialog answers the dialog. Nudge is that policy.
-	return m.deliverName(ctx, rec, m.messenger.Nudge)
+	return m.deliverName(ctx, rec, send)
+}
+
+func (m *Manager) spawnNameSender(agent ports.Agent) nameSender {
+	if spawnNameMayUseWaitingInput(agent) {
+		return m.messenger.Deliver
+	}
+	return m.messenger.Nudge
+}
+
+func spawnNameMayUseWaitingInput(agent ports.Agent) bool {
+	s, ok := agent.(ports.ActivitySignaler)
+	return ok && s.EmitsBlockedActivity()
 }
 
 // DeliverName pushes a session's persisted display name into its running
-// harness. It is the delivery half of a rename: the session service owns the
-// database write, this owns the pane.
+// harness. It is the delivery half of an operator rename: the session service
+// owns the database write, this owns the pane.
 func (m *Manager) DeliverName(ctx context.Context, id domain.SessionID) error {
 	rec, err := m.getRecord(ctx, id)
 	if err != nil {
@@ -113,17 +108,20 @@ func (m *Manager) DeliverName(ctx context.Context, id domain.SessionID) error {
 	})
 }
 
-// deliverName is the single routine every naming path goes through — spawn and
-// rename alike — so a surface cannot be forgotten and the skip conditions are
-// written once. It reads the name off the record rather than accepting it as an
-// argument, which is what makes the string delivered to the harness identical to
-// the one AO displays by construction rather than by convention.
+// deliverName is the single routine every naming path goes through — spawn,
+// restore, and operator rename alike — so a surface cannot be forgotten and the
+// skip conditions are written once. It reads the name off the record rather than
+// accepting it as an argument, which is what makes the string delivered to the
+// harness identical to the one AO displays by construction rather than by
+// convention.
 //
 // A session that is terminated or has no runtime keeps its persisted name and is
 // not written to; an adapter that declares no naming capability is left alone
 // rather than having text typed blindly into a TUI AO does not understand. The
 // caller supplies the delivery policy, which is the one thing that legitimately
-// differs between the two paths — see the two call sites.
+// differs between the paths: spawn uses solicited delivery only for harnesses
+// that can distinguish a prompt from a permission decision, restore uses a
+// stricter unsolicited nudge, and operator rename uses the coordination guard.
 func (m *Manager) deliverName(ctx context.Context, rec domain.SessionRecord, send nameSender) error {
 	name := strings.TrimSpace(rec.DisplayName)
 	if name == "" || rec.IsTerminated || rec.Metadata.RuntimeHandleID == "" {
@@ -158,8 +156,9 @@ func (m *Manager) deliverName(ctx context.Context, rec domain.SessionRecord, sen
 }
 
 // nameSender is the guarded pane-write policy a naming path uses. Spawn's write
-// is solicited and rename's is not, and that is the only difference between
-// them; everything else about delivery is shared.
+// is solicited but only some harnesses can safely receive it at waiting_input,
+// while restore and operator rename are not solicited; everything else about
+// delivery is shared.
 type nameSender func(ctx context.Context, id domain.SessionID, msg string) (sessionguard.Outcome, error)
 
 // agentStillRunning requires positive proof that the pane is still running the
@@ -213,13 +212,4 @@ func (m *Manager) forgiveSpawnNameFailure(ctx context.Context, handle ports.Runt
 	m.logger.Warn("spawn: session name not delivered to the harness; keeping the live session",
 		"sessionID", id, "error", nameErr)
 	return true
-}
-
-// deliverNameForSpawn names a freshly spawned session, skipping the post-start
-// write when this launch's argv already carried the name.
-func (m *Manager) deliverNameForSpawn(ctx context.Context, agent ports.Agent, cfg ports.LaunchConfig, handle ports.RuntimeHandle, id domain.SessionID, name string) error {
-	if launchArgvCarriedName(agent, name) {
-		return nil
-	}
-	return m.deliverNameAfterStart(ctx, agent, cfg, handle, id, name)
 }

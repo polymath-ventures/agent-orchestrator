@@ -116,20 +116,24 @@ delivered name SHALL be byte-identical to the name AO persists and displays.
 Delivery SHALL be expressed as an optional agent-adapter capability with two
 forms:
 
-- An **in-harness rename command**, which the system SHALL use for any name
-  change applied to an already-running session.
-- An **optional launch argument**, which the system SHALL prefer at spawn time
-  when the harness offers one, so the name is applied atomically with process
-  start and cannot race the harness's own naming.
+- An **in-harness rename command**, which the system SHALL use for every
+  supported spawn after harness readiness and for any name change applied to an
+  already-running session.
+- An **optional launch argument**, which the system MAY use at spawn time as an
+  accelerator when the harness offers one, so early harness surfaces can show
+  the name before the in-harness rename is accepted.
 
+A launch argument SHALL NOT suppress the in-harness rename path for that spawn.
 A harness that offers neither form SHALL simply keep AO's own display name, and
 the system SHALL NOT attempt to name it by writing blindly into its input.
 
-#### Scenario: Harness with a launch argument is named at start
+#### Scenario: Harness with a launch argument is named at start and after readiness
 
-- **WHEN** a session spawns on a harness that offers a launch naming argument
+- **WHEN** a session spawns on a harness that offers a launch naming argument and
+  an in-harness rename
 - **THEN** the launch command carries the computed name
-- **AND** no post-start rename is issued for that spawn
+- **AND** the post-readiness rename command is also issued for that spawn
+- **AND** both delivery forms carry the same computed name
 
 #### Scenario: Harness without a launch argument is named after start
 
@@ -158,27 +162,34 @@ that no surface can be updated without the others.
 A rename targeting a session that is terminated, or that has no running runtime,
 SHALL update persisted state without attempting harness delivery.
 
-Because a name is cosmetic relative to the session's task, a rename SHALL be
-delivered only while the session is idle, re-checked at the moment of the write,
-and SHALL be skipped when the session is mid-turn or awaiting the user. A spawn's
-own naming write MAY proceed while the session is mid-turn, because a session
-whose prompt was delivered at launch is routinely working by the time its harness
-reports ready; it SHALL still be skipped while the session awaits the user, where
-the keystrokes that deliver a name would answer a pending decision.
+Because a name is cosmetic relative to the session's task, an operator rename or
+restore redelivery SHALL be delivered only while the session is idle, re-checked
+at the moment of the write, and SHALL be skipped when the session is mid-turn,
+blocked, or sitting at a prompt that would treat the write as the next user
+message. A spawn's own naming write MAY proceed while the session is mid-turn,
+because a session whose prompt was delivered at launch is routinely working by
+the time its harness reports ready. It MAY also proceed while the session is
+back at its idle prompt only when the harness can report pending decisions as a
+distinct blocked state; otherwise a waiting-input state is ambiguous and SHALL
+be skipped. It SHALL always be skipped while the session is blocked or awaiting
+a pending decision, where the keystrokes that deliver a name would answer that
+decision.
 
 A runtime may keep a session's terminal alive after its agent exits, so a naming
-write can reach whatever replaced the agent. The system SHALL constrain a session
-name to characters that cannot cause a command to run — no control characters and
-none of the shell grammar that starts, substitutes, quotes, escapes, or redirects
-a command — so that a misdirected naming write cannot be executed. It SHALL
-reject rather than truncate a supplied name that falls outside that set, on every
-path that accepts one, so no path can persist a name that delivery would refuse. The system SHALL additionally require positive
-confirmation that a session's runtime is still running its agent before writing a
-name into it, and SHALL skip the write when it cannot confirm this.
+write can reach whatever replaced the agent. The system SHALL constrain a
+session name to characters that cannot cause a command to run: no control
+characters and none of the shell grammar that starts, substitutes, quotes,
+escapes, or redirects a command. That way, a misdirected naming write cannot be
+executed. It SHALL reject rather than truncate a supplied name that falls
+outside that set, on every path that accepts one, so no path can persist a name
+that delivery would refuse. The system SHALL additionally require positive
+confirmation that a session's runtime is still running its agent before writing
+a name into it, and SHALL skip the write when it cannot confirm this.
 
 #### Scenario: A rename is not written into a busy session
 
-- **WHEN** a rename targets a session that is mid-turn or awaiting the user
+- **WHEN** a rename targets a session that is mid-turn, blocked, or sitting at a
+  prompt that would accept the write as user input
 - **THEN** the persisted display name is updated
 - **AND** no naming input is written to the runtime
 
@@ -187,9 +198,24 @@ name into it, and SHALL skip the write when it cannot confirm this.
 - **WHEN** a session's harness begins its task before it reports readiness
 - **THEN** the spawn's naming write is still delivered
 
-#### Scenario: A spawn does not name a session awaiting the user
+#### Scenario: A spawn names a distinguishable idle prompt
 
-- **WHEN** a session is awaiting the user when its naming write would be issued
+- **WHEN** a session's harness can report pending decisions as blocked
+- **AND** the session reaches its idle prompt before the spawn naming write
+  would be issued
+- **THEN** the spawn's naming write is still delivered
+
+#### Scenario: A spawn skips an ambiguous waiting-input state
+
+- **WHEN** a session's harness cannot report pending decisions as blocked
+- **AND** the session is in a waiting-input state when its spawn naming write
+  would be issued
+- **THEN** no naming input is written to that runtime
+
+#### Scenario: A spawn does not name a session awaiting a pending decision
+
+- **WHEN** a session is blocked or awaiting a pending decision when its naming
+  write would be issued
 - **THEN** no naming input is written to that runtime
 
 #### Scenario: A name is not written into a terminal the agent has left
