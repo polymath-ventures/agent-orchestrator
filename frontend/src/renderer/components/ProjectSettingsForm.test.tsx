@@ -349,12 +349,46 @@ describe("ProjectSettingsForm", () => {
 		expect(body.primeRulesFile).toBe("docs/prime-rules.md");
 	}, 20_000);
 
+	it("loads and saves the authoritative worker task prompt template", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "git@github.com:acme/project-one.git",
+			defaultBranch: "main",
+			config: {
+				worker: { agent: "codex" },
+				orchestrator: { agent: "claude-code" },
+				workerTaskPrompt: "/address-issue {issue}",
+			},
+		});
+
+		renderSettings();
+
+		const taskPrompt = await screen.findByLabelText("Worker task prompt template");
+		expect(taskPrompt).toHaveValue("/address-issue {issue}");
+		await userEvent.clear(taskPrompt);
+		await userEvent.type(taskPrompt, "/ship {{issue}");
+		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
+		expect(putMock.mock.calls[0][1].body.config.workerTaskPrompt).toBe("/ship {issue}");
+	}, 20_000);
+
 	it("renders the selected role's assembled prompt in the inspector", async () => {
 		getMock.mockImplementation(async (path: string, options?: { params?: { path?: { role?: string } } }) => {
 			if (path === "/api/v1/agents") return agentCatalogResponse;
 			if (path === "/api/v1/projects/{id}/roles/{role}/prompt") {
 				const role = options?.params?.path?.role ?? "worker";
-				return { data: { role, prompt: `ASSEMBLED ${role.toUpperCase()} PROMPT` }, error: undefined };
+				return {
+					data: {
+						role,
+						prompt: `ASSEMBLED ${role.toUpperCase()} PROMPT`,
+						...(role === "worker" ? { taskPromptTemplate: "/address-issue {issue}", taskPromptSource: "global" } : {}),
+					},
+					error: undefined,
+				};
 			}
 			return {
 				data: {
@@ -376,8 +410,11 @@ describe("ProjectSettingsForm", () => {
 		renderSettings();
 
 		expect(await screen.findByText("ASSEMBLED WORKER PROMPT")).toBeInTheDocument();
+		expect(screen.getByText("Task prompt template (global)")).toBeInTheDocument();
+		expect(screen.getByText("/address-issue {issue}")).toBeInTheDocument();
 		await chooseOption(screen.getByRole("combobox", { name: "Role" }), "reviewer");
 		expect(await screen.findByText("ASSEMBLED REVIEWER PROMPT")).toBeInTheDocument();
+		expect(screen.queryByText("Task prompt template (global)")).not.toBeInTheDocument();
 	}, 20_000);
 
 	it("labels the unconfigured reviewer as the automatic independent reviewer", async () => {

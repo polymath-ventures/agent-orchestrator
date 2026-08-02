@@ -262,6 +262,7 @@ func TestProjectSetConfig_RulesFlags(t *testing.T) {
 	out, errOut, err := executeCLI(t, Deps{
 		ProcessAlive: func(int) bool { return true },
 	}, "project", "set-config", "demo",
+		"--worker-task-prompt", "/address-issue {issue}",
 		"--agent-rules", "Run tests.",
 		"--agent-rules-file", "docs/rules.md",
 		"--orchestrator-rules", "Delegate.",
@@ -283,6 +284,9 @@ func TestProjectSetConfig_RulesFlags(t *testing.T) {
 	}
 	if got.Config.AgentRules != "Run tests." || got.Config.AgentRulesFile != "docs/rules.md" || got.Config.OrchestratorRules != "Delegate." {
 		t.Fatalf("rules config = %#v", got.Config)
+	}
+	if got.Config.WorkerTaskPrompt != "/address-issue {issue}" {
+		t.Fatalf("worker task prompt = %q", got.Config.WorkerTaskPrompt)
 	}
 	if got.Config.OrchestratorRulesFile != "docs/orch.md" || got.Config.ReviewerRules != "Check isolation." || got.Config.ReviewerRulesFile != "docs/review.md" {
 		t.Fatalf("new rules config = %#v", got.Config)

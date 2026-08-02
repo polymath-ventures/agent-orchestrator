@@ -1,6 +1,7 @@
 package runfile
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -122,6 +123,53 @@ func TestReadMissingIsNotError(t *testing.T) {
 	}
 	if got != nil {
 		t.Errorf("Read missing = %+v, want nil", got)
+	}
+}
+
+func TestReadFileWithRetryRetriesTransientErrors(t *testing.T) {
+	transientErr := errors.New("transient sharing violation")
+	attempts := 0
+	sleeps := 0
+
+	data, err := readFileWithRetry(
+		func() ([]byte, error) {
+			attempts++
+			if attempts < 3 {
+				return nil, transientErr
+			}
+			return []byte("ready"), nil
+		},
+		func(err error) bool { return errors.Is(err, transientErr) },
+		func(time.Duration) { sleeps++ },
+	)
+	if err != nil {
+		t.Fatalf("readFileWithRetry: %v", err)
+	}
+	if got := string(data); got != "ready" {
+		t.Fatalf("data = %q, want ready", got)
+	}
+	if attempts != 3 || sleeps != 2 {
+		t.Fatalf("attempts = %d, sleeps = %d; want 3 attempts and 2 sleeps", attempts, sleeps)
+	}
+}
+
+func TestReadFileWithRetryDoesNotRetryPermanentErrors(t *testing.T) {
+	permanentErr := errors.New("permission denied")
+	attempts := 0
+
+	_, err := readFileWithRetry(
+		func() ([]byte, error) {
+			attempts++
+			return nil, permanentErr
+		},
+		func(error) bool { return false },
+		func(time.Duration) { t.Fatal("permanent error should not sleep") },
+	)
+	if !errors.Is(err, permanentErr) {
+		t.Fatalf("error = %v, want permanent error", err)
+	}
+	if attempts != 1 {
+		t.Fatalf("attempts = %d, want 1", attempts)
 	}
 }
 

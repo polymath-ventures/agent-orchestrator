@@ -24,12 +24,12 @@ import (
 // stays lazy so daemon readiness is not blocked by credential probing or a gh
 // CLI call, and no token is resolved until some enabled project is actually
 // polled.
-func startTrackerIntake(ctx context.Context, store *sqlite.Store, sessions *sessionsvc.Service, logger *slog.Logger) <-chan struct{} {
+func startTrackerIntake(ctx context.Context, store *sqlite.Store, sessions *sessionsvc.Service, defaults domain.ProjectConfig, logger *slog.Logger) <-chan struct{} {
 	resolver := trackerintake.SingleTrackerResolver{
 		Provider: domain.TrackerProviderGitHub,
 		Adapter:  newLazyGitHubTracker(logger),
 	}
-	observer := trackerintake.New(resolver, store, sessions, trackerintake.Config{Logger: logger})
+	observer := trackerintake.New(resolver, store, sessions, trackerintake.Config{Logger: logger, ProjectDefaults: defaults})
 	return observer.Start(ctx)
 }
 

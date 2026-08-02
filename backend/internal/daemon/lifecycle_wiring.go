@@ -132,6 +132,7 @@ type sessionLifecycle interface {
 	Reconcile(ctx context.Context) error
 	RestoreAll(ctx context.Context) error
 	RoleSystemPrompt(ctx context.Context, kind domain.SessionKind, projectID domain.ProjectID) (string, error)
+	EffectiveWorkerTaskPrompt(ctx context.Context, projectID domain.ProjectID) (template, source string, err error)
 	Kill(ctx context.Context, id domain.SessionID) (bool, error)
 	// SetShellTerminalCloser late-binds Kill/Cleanup to close a session's
 	// scoped shell terminals before its worktree is torn down. shellterm.Service
@@ -178,16 +179,17 @@ func startSession(cfg config.Config, runtime runtimeselect.Runtime, store *sqlit
 		Projects: store,
 	})
 	mgr := sessionmanager.New(sessionmanager.Deps{
-		Runtime:        runtime,
-		Agents:         agents,
-		Workspace:      ws,
-		Store:          store,
-		Messenger:      messenger,
-		Lifecycle:      lcm,
-		DataDir:        cfg.DataDir,
-		Logger:         log,
-		Health:         health,
-		ModelValidator: modelValidator,
+		Runtime:         runtime,
+		Agents:          agents,
+		Workspace:       ws,
+		Store:           store,
+		Messenger:       messenger,
+		Lifecycle:       lcm,
+		DataDir:         cfg.DataDir,
+		Logger:          log,
+		Health:          health,
+		ModelValidator:  modelValidator,
+		ProjectDefaults: cfg.ProjectDefaults,
 	})
 	scmProvider, err := newGitHubSCMProvider(log)
 	if err != nil {

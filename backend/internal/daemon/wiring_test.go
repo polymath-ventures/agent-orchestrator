@@ -179,7 +179,7 @@ func TestWiring_StartSessionBuildsSessionService(t *testing.T) {
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	lcm := lifecycle.New(store, nil)
-	cfg := config.Config{DataDir: t.TempDir()}
+	cfg := config.Config{DataDir: t.TempDir(), ProjectDefaults: domain.ProjectConfig{WorkerTaskPrompt: "/global {issue}"}}
 
 	rt := runtimeselect.New(cfg.DataDir, nil)
 	messenger := newSessionMessenger(store, rt, log)
@@ -199,6 +199,13 @@ func TestWiring_StartSessionBuildsSessionService(t *testing.T) {
 	}
 	if lc == nil {
 		t.Fatal("startSession returned nil session lifecycle")
+	}
+	template, source, err := lc.EffectiveWorkerTaskPrompt(context.Background(), "new-project")
+	if err != nil {
+		t.Fatalf("EffectiveWorkerTaskPrompt: %v", err)
+	}
+	if template != "/global {issue}" || source != "global" {
+		t.Fatalf("effective worker task prompt = %q source=%q, want global default", template, source)
 	}
 }
 
@@ -368,7 +375,7 @@ func TestStartTrackerIntake_RunsEvenWithoutEnabledProjects(t *testing.T) {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	done := startTrackerIntake(ctx, store, svc, log)
+	done := startTrackerIntake(ctx, store, svc, cfg.ProjectDefaults, log)
 
 	select {
 	case <-done:
@@ -685,6 +692,10 @@ func (f *fakeSessionLifecycle) RestoreAll(_ context.Context) error {
 
 func (f *fakeSessionLifecycle) RoleSystemPrompt(_ context.Context, _ domain.SessionKind, _ domain.ProjectID) (string, error) {
 	return "", nil
+}
+
+func (f *fakeSessionLifecycle) EffectiveWorkerTaskPrompt(_ context.Context, _ domain.ProjectID) (string, string, error) {
+	return "", "", nil
 }
 
 func (f *fakeSessionLifecycle) SetShellTerminalCloser(sessionmanager.ShellTerminalCloser) {}

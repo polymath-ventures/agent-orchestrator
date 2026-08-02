@@ -12,8 +12,10 @@ import (
 )
 
 type fakeSessions struct {
-	prompts map[domain.SessionKind]string
-	err     error
+	prompts            map[domain.SessionKind]string
+	taskPromptTemplate string
+	taskPromptSource   string
+	err                error
 }
 
 func (f fakeSessions) RoleSystemPrompt(_ context.Context, kind domain.SessionKind, _ domain.ProjectID) (string, error) {
@@ -21,6 +23,10 @@ func (f fakeSessions) RoleSystemPrompt(_ context.Context, kind domain.SessionKin
 		return "", f.err
 	}
 	return f.prompts[kind], nil
+}
+
+func (f fakeSessions) EffectiveWorkerTaskPrompt(_ context.Context, _ domain.ProjectID) (string, string, error) {
+	return f.taskPromptTemplate, f.taskPromptSource, f.err
 }
 
 type fakeProjects struct {
@@ -45,7 +51,7 @@ func TestRolePrompt_WorkerAndOrchestrator(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: %v", role, err)
 		}
-		if got != want {
+		if got.Prompt != want {
 			t.Fatalf("%s prompt = %q, want %q", role, got, want)
 		}
 	}
@@ -75,9 +81,25 @@ func TestRolePrompt_ReviewerIncludesRulesContent(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{"## Code reviewer role", "## Project-Specific Reviewer Rules", "Inline reviewer rule.", "Reviewer file rule."} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("reviewer prompt missing %q:\n%s", want, got)
+		if !strings.Contains(got.Prompt, want) {
+			t.Fatalf("reviewer prompt missing %q:\n%s", want, got.Prompt)
 		}
+	}
+}
+
+func TestRolePrompt_WorkerIncludesTaskTemplateMetadata(t *testing.T) {
+	a := New(fakeSessions{
+		prompts:            map[domain.SessionKind]string{domain.KindWorker: "WORKER SYSTEM"},
+		taskPromptTemplate: "/address-issue {issue}",
+		taskPromptSource:   "project",
+	}, fakeProjects{rec: domain.ProjectRecord{ID: "mer"}, ok: true})
+
+	got, err := a.RolePrompt(context.Background(), "mer", RoleWorker)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Prompt != "WORKER SYSTEM" || got.TaskPromptTemplate != "/address-issue {issue}" || got.TaskPromptSource != "project" {
+		t.Fatalf("result = %+v", got)
 	}
 }
 
