@@ -69,6 +69,7 @@ func TestRenderWorkerTaskPrompt(t *testing.T) {
 	}{
 		{name: "canonical github", template: "/address-issue {issue}", issue: "github:acme/demo#242", want: "/address-issue 242"},
 		{name: "manual native", template: "/address-issue {issue}", issue: "242", want: "/address-issue 242"},
+		{name: "manual hash prefix", template: "/address-issue {issue}", issue: "#242", want: "/address-issue 242"},
 		{name: "repeated and exact bytes", template: " {issue}\n{issue}\t", issue: "github:acme/demo#242", want: " 242\n242\t"},
 		{name: "fixed", template: "/triage", issue: "242", want: "/triage"},
 		{name: "unknown shape unchanged", template: "do {issue}", issue: "linear:ENG-42", want: "do linear:ENG-42"},

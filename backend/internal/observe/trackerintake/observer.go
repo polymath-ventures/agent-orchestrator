@@ -208,6 +208,7 @@ func (o *Observer) pollProject(ctx context.Context, project domain.ProjectRecord
 		o.logger.Error("tracker intake: list issues failed", "project", project.ID, "repo", repo.Native, "err", err)
 		return true
 	}
+	taskTemplate, taskSource := domain.ResolveWorkerTaskPrompt(project.Config, o.projectDefaults)
 	var spawnFailed bool
 	workerPoolFull := false
 	for _, issue := range issues {
@@ -228,15 +229,16 @@ func (o *Observer) pollProject(ctx context.Context, project domain.ProjectRecord
 			o.logger.Debug("tracker intake: worker pool already full, deferring issue", "project", project.ID, "issue", issueID)
 			continue
 		}
-		prompt := BuildIssuePrompt(issue)
-		if template, source := domain.ResolveWorkerTaskPrompt(project.Config, o.projectDefaults); template != "" {
+		var prompt string
+		if taskTemplate != "" {
 			var renderErr error
-			prompt, renderErr = sessionmanager.RenderWorkerTaskPrompt(template, issueID)
+			prompt, renderErr = sessionmanager.RenderWorkerTaskPrompt(taskTemplate, issueID)
 			if renderErr != nil {
-				o.logger.Error("tracker intake: invalid worker task prompt configuration", "project", project.ID, "source", source, "issue", issueID, "err", renderErr)
-				spawnFailed = true
-				continue
+				o.logger.Error("tracker intake: invalid worker task prompt configuration", "project", project.ID, "source", taskSource, "issue", issueID, "err", renderErr)
+				return true
 			}
+		} else {
+			prompt = BuildIssuePrompt(issue)
 		}
 		if _, _, _, err := o.spawner.Spawn(ctx, ports.SpawnConfig{
 			ProjectID: domain.ProjectID(project.ID),

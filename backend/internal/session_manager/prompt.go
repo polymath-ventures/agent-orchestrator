@@ -116,7 +116,7 @@ func (e *WorkerTaskPromptConfigError) Unwrap() error { return e.Err }
 // ending in #<native> use only that native suffix, so github:owner/repo#242 and
 // a manual 242 render identically. Unknown shapes remain unchanged.
 func RenderWorkerTaskPrompt(template string, issueID domain.IssueID) (string, error) {
-	issue := string(issueID)
+	issue := strings.TrimPrefix(string(issueID), "#")
 	if hash := strings.LastIndexByte(issue, '#'); hash >= 0 && hash < len(issue)-1 && strings.IndexByte(issue[:hash], ':') >= 0 {
 		issue = issue[hash+1:]
 	}

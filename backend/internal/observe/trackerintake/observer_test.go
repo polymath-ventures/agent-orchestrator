@@ -1,6 +1,7 @@
 package trackerintake
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -111,16 +112,21 @@ func TestPollInvalidProjectWorkerTaskPromptDoesNotFallBackOrSpawn(t *testing.T) 
 		ID: "demo", RepoOriginURL: "https://github.com/acme/demo.git",
 		Config: domain.ProjectConfig{WorkerTaskPrompt: " \n", TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, Assignee: "alice"}},
 	}}}
-	tracker := &fakeTracker{issues: []domain.Issue{{
-		ID: domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#242"}, State: domain.IssueOpen, Assignees: []string{"alice"},
-	}}}
+	tracker := &fakeTracker{issues: []domain.Issue{
+		{ID: domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#242"}, State: domain.IssueOpen, Assignees: []string{"alice"}},
+		{ID: domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#243"}, State: domain.IssueOpen, Assignees: []string{"alice"}},
+	}}
 	spawner := &fakeSpawner{}
-	err := New(singleResolver(tracker), store, spawner, Config{Logger: discardLogger(), ProjectDefaults: domain.ProjectConfig{WorkerTaskPrompt: "/global {issue}"}}).Poll(context.Background())
+	var logs bytes.Buffer
+	err := New(singleResolver(tracker), store, spawner, Config{Logger: slog.New(slog.NewTextHandler(&logs, nil)), ProjectDefaults: domain.ProjectConfig{WorkerTaskPrompt: "/global {issue}"}}).Poll(context.Background())
 	if err != nil {
 		t.Fatalf("Poll: %v", err)
 	}
 	if len(spawner.calls) != 0 {
 		t.Fatalf("spawn calls = %+v, want none for invalid project prompt", spawner.calls)
+	}
+	if got := strings.Count(logs.String(), "invalid worker task prompt configuration"); got != 1 {
+		t.Fatalf("invalid-template log count = %d, want one project-level failure; logs=%s", got, logs.String())
 	}
 }
 
