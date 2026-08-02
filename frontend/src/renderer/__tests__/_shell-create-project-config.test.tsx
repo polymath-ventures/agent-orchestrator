@@ -8,6 +8,7 @@ describe("createProjectConfig", () => {
 				workerAgent: "codex",
 				orchestratorAgent: "claude-code",
 				reviewerAgent: "",
+				permissions: "",
 				modelDefaults: {},
 			}),
 		).toEqual({
@@ -21,6 +22,7 @@ describe("createProjectConfig", () => {
 			workerAgent: "codex-fugu",
 			orchestratorAgent: "claude-code",
 			reviewerAgent: "claude-code",
+			permissions: "",
 			modelDefaults: {
 				"codex-fugu": { model: "fugu", effort: "xhigh" },
 				"claude-code": { model: "opus", effort: "" },
@@ -42,12 +44,36 @@ describe("createProjectConfig", () => {
 		expect(config.agentConfig).not.toHaveProperty("model");
 	});
 
+	it("persists an explicit permission mode alongside selected harness defaults", () => {
+		expect(
+			createProjectConfig({
+				workerAgent: "codex",
+				orchestratorAgent: "claude-code",
+				reviewerAgent: "",
+				permissions: "bypass-permissions",
+				modelDefaults: {
+					codex: { model: "gpt-5-codex", effort: "high" },
+				},
+			}),
+		).toEqual({
+			worker: { agent: "codex" },
+			orchestrator: { agent: "claude-code" },
+			agentConfig: {
+				permissions: "bypass-permissions",
+				modelByHarness: {
+					codex: { model: "gpt-5-codex", effort: "high" },
+				},
+			},
+		});
+	});
+
 	it("omits the reviewer config when automatic independent reviewer is selected", () => {
 		expect(
 			createProjectConfig({
 				workerAgent: "codex",
 				orchestratorAgent: "codex",
 				reviewerAgent: "",
+				permissions: "",
 				modelDefaults: {
 					codex: { model: "", effort: "" },
 				},
@@ -64,6 +90,7 @@ describe("createProjectConfig", () => {
 				workerAgent: "cursor",
 				orchestratorAgent: "opencode",
 				reviewerAgent: "",
+				permissions: "",
 				modelDefaults: {},
 				trackerIntake: { enabled: true, provider: "github", assignee: "octocat" },
 			}),
