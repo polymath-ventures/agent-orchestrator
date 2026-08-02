@@ -40,6 +40,8 @@ func TestProjectConfigValidate(t *testing.T) {
 		{"symlink embedded parent", ProjectConfig{Symlinks: []string{"a/../../b"}}, true},
 		{"symlink bare ..", ProjectConfig{Symlinks: []string{".."}}, true},
 		{"good prompt rules", ProjectConfig{AgentRules: "Run tests.", AgentRulesFile: "docs/agent-rules.md", OrchestratorRules: "Delegate work."}, false},
+		{"good worker task prompt", ProjectConfig{WorkerTaskPrompt: "/address-issue {issue}"}, false},
+		{"whitespace worker task prompt persists until spawn validation", ProjectConfig{WorkerTaskPrompt: " \n\t"}, false},
 		{"agent rules file absolute path", ProjectConfig{AgentRulesFile: "/etc/passwd"}, false},
 		{"agent rules file leading backslash", ProjectConfig{AgentRulesFile: `\policy.md`}, true},
 		{"agent rules file parent escape", ProjectConfig{AgentRulesFile: "../rules.md"}, true},
@@ -156,6 +158,28 @@ func TestProjectConfigWithDefaults(t *testing.T) {
 	}
 	if d, err := got.Prime.WakeIntervalDuration(); err != nil || d != 45*time.Minute {
 		t.Fatalf("parsed prime wake interval = %s, %v; want 45m", d, err)
+	}
+}
+
+func TestResolveWorkerTaskPrompt(t *testing.T) {
+	tests := []struct {
+		name       string
+		project    ProjectConfig
+		defaults   ProjectConfig
+		wantPrompt string
+		wantSource string
+	}{
+		{name: "none"},
+		{name: "global", defaults: ProjectConfig{WorkerTaskPrompt: "/global {issue}"}, wantPrompt: "/global {issue}", wantSource: "global"},
+		{name: "project wins", project: ProjectConfig{WorkerTaskPrompt: "/project {issue}"}, defaults: ProjectConfig{WorkerTaskPrompt: "/global {issue}"}, wantPrompt: "/project {issue}", wantSource: "project"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			prompt, source := ResolveWorkerTaskPrompt(tt.project, tt.defaults)
+			if prompt != tt.wantPrompt || source != tt.wantSource {
+				t.Fatalf("ResolveWorkerTaskPrompt() = %q, %q; want %q, %q", prompt, source, tt.wantPrompt, tt.wantSource)
+			}
+		})
 	}
 }
 

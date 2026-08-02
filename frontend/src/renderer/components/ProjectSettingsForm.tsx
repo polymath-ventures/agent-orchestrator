@@ -125,6 +125,7 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 		permissions: config.agentConfig?.permissions ?? "",
 		reviewerHarness: initialReviewerHarness,
 		reviewerModels: toRoleHarnessModelForm(firstReviewer?.agentConfig, initialReviewerHarness),
+		workerTaskPrompt: config.workerTaskPrompt ?? "",
 		agentRules: config.agentRules ?? "",
 		agentRulesFile: config.agentRulesFile ?? "",
 		orchestratorRules: config.orchestratorRules ?? "",
@@ -207,6 +208,7 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 					form.permissions,
 					form.modelByHarness,
 				),
+				workerTaskPrompt: form.workerTaskPrompt || undefined,
 				agentRules: form.agentRules.trim() || undefined,
 				agentRulesFile: form.agentRulesFile.trim() || undefined,
 				orchestratorRules: form.orchestratorRules.trim() || undefined,
@@ -521,6 +523,20 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 					<CardTitle className="text-control">Role instructions</CardTitle>
 				</CardHeader>
 				<CardContent className="flex flex-col gap-4">
+					<Field label="Worker task prompt template" htmlFor="workerTaskPrompt">
+						<textarea
+							id="workerTaskPrompt"
+							className="min-h-[64px] w-full resize-y rounded-md border border-input bg-transparent px-2.5 py-1.5 font-mono text-control text-foreground placeholder:text-passive focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-weak"
+							value={form.workerTaskPrompt}
+							onChange={(e) => setForm((f) => ({ ...f, workerTaskPrompt: e.target.value }))}
+							placeholder="/address-issue {issue}"
+						/>
+					</Field>
+					<p className="text-xs leading-row text-muted-foreground">
+						When set, this fully replaces AO&apos;s issue-driven worker task message. Every literal
+						{" {issue} "}is replaced with the native issue id; no issue body or context block is appended. Leave empty
+						to inherit the daemon&apos;s AO_WORKER_TASK_PROMPT default or AO&apos;s built-in message.
+					</p>
 					<p className="text-xs leading-row text-muted-foreground">
 						Operator-controlled standing instructions injected into each role's prompt on the next spawn,
 						content-preserving (only surrounding whitespace is normalized). Inline content is loaded first, then file
@@ -563,8 +579,8 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 				</CardHeader>
 				<CardContent className="flex flex-col gap-3">
 					<p className="text-xs leading-row text-muted-foreground">
-						The exact, fully-assembled system prompt a role receives for this project — base scaffold plus every
-						injected instruction source. Reflects saved config; save your changes above to see them here.
+						The exact, fully-assembled system prompt a role receives for this project, plus the worker task template
+						when one is configured. Reflects saved config; save your changes above to see it here.
 					</p>
 					<RolePromptInspector projectId={projectId} />
 				</CardContent>
@@ -829,7 +845,7 @@ function RolePromptInspector({ projectId }: { projectId: string }) {
 				params: { path: { id: projectId, role } },
 			});
 			if (error) throw new Error(apiErrorMessage(error, "Could not load the assembled prompt."));
-			return data.prompt;
+			return data;
 		},
 	});
 	return (
@@ -855,9 +871,19 @@ function RolePromptInspector({ projectId }: { projectId: string }) {
 					{query.error instanceof Error ? query.error.message : "Could not load the assembled prompt."}
 				</p>
 			) : (
-				<pre className="max-h-96 overflow-auto whitespace-pre-wrap break-words rounded-md bg-terminal px-3 py-3 font-mono text-xs leading-row text-terminal-foreground">
-					{query.data}
-				</pre>
+				<>
+					{query.data.taskPromptTemplate && (
+						<div className="flex flex-col gap-1.5">
+							<p className="text-xs text-muted-foreground">Task prompt template ({query.data.taskPromptSource})</p>
+							<pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-md bg-terminal px-3 py-3 font-mono text-xs leading-row text-terminal-foreground">
+								{query.data.taskPromptTemplate}
+							</pre>
+						</div>
+					)}
+					<pre className="max-h-96 overflow-auto whitespace-pre-wrap break-words rounded-md bg-terminal px-3 py-3 font-mono text-xs leading-row text-terminal-foreground">
+						{query.data.prompt}
+					</pre>
+				</>
 			)}
 		</div>
 	);

@@ -19,8 +19,8 @@ SELECT id, COALESCE(project_id, '') AS project_id, num, issue_id, kind, harness,
        runtime_handle_id, agent_session_id, prompt, created_at, updated_at,
        display_name, first_signal_at, preview_url, preview_revision, model,
        mix_selected, effort, prompt_policy_hash,
-       mix_bucket_model, diff_base_sha, diff_base_ref, cleanup_generation,
-       runtime_launch_id, workspace_repo_path, terminate_on_pr_merge
+       mix_bucket_model, cleanup_generation, runtime_launch_id, workspace_repo_path,
+       terminate_on_pr_merge, diff_base_sha, diff_base_ref
 FROM sessions WHERE id = ?
 `
 
@@ -53,12 +53,12 @@ func (q *Queries) GetSession(ctx context.Context, id domain.SessionID) (Session,
 		&i.Effort,
 		&i.PromptPolicyHash,
 		&i.MixBucketModel,
-		&i.DiffBaseSha,
-		&i.DiffBaseRef,
 		&i.CleanupGeneration,
 		&i.RuntimeLaunchID,
 		&i.WorkspaceRepoPath,
 		&i.TerminateOnPRMerge,
+		&i.DiffBaseSha,
+		&i.DiffBaseRef,
 	)
 	return i, err
 }
@@ -151,8 +151,8 @@ SELECT id, COALESCE(project_id, '') AS project_id, num, issue_id, kind, harness,
        runtime_handle_id, agent_session_id, prompt, created_at, updated_at,
        display_name, first_signal_at, preview_url, preview_revision, model,
        mix_selected, effort, prompt_policy_hash,
-       mix_bucket_model, diff_base_sha, diff_base_ref, cleanup_generation,
-       runtime_launch_id, workspace_repo_path, terminate_on_pr_merge
+       mix_bucket_model, cleanup_generation, runtime_launch_id, workspace_repo_path,
+       terminate_on_pr_merge, diff_base_sha, diff_base_ref
 FROM sessions ORDER BY COALESCE(project_id, ''), num
 `
 
@@ -191,12 +191,12 @@ func (q *Queries) ListAllSessions(ctx context.Context) ([]Session, error) {
 			&i.Effort,
 			&i.PromptPolicyHash,
 			&i.MixBucketModel,
-			&i.DiffBaseSha,
-			&i.DiffBaseRef,
 			&i.CleanupGeneration,
 			&i.RuntimeLaunchID,
 			&i.WorkspaceRepoPath,
 			&i.TerminateOnPRMerge,
+			&i.DiffBaseSha,
+			&i.DiffBaseRef,
 		); err != nil {
 			return nil, err
 		}
@@ -217,8 +217,8 @@ SELECT id, COALESCE(project_id, '') AS project_id, num, issue_id, kind, harness,
        runtime_handle_id, agent_session_id, prompt, created_at, updated_at,
        display_name, first_signal_at, preview_url, preview_revision, model,
        mix_selected, effort, prompt_policy_hash,
-       mix_bucket_model, diff_base_sha, diff_base_ref, cleanup_generation,
-       runtime_launch_id, workspace_repo_path, terminate_on_pr_merge
+       mix_bucket_model, cleanup_generation, runtime_launch_id, workspace_repo_path,
+       terminate_on_pr_merge, diff_base_sha, diff_base_ref
 FROM sessions WHERE project_id = ? ORDER BY num
 `
 
@@ -257,12 +257,12 @@ func (q *Queries) ListSessionsByProject(ctx context.Context, projectID domain.Pr
 			&i.Effort,
 			&i.PromptPolicyHash,
 			&i.MixBucketModel,
-			&i.DiffBaseSha,
-			&i.DiffBaseRef,
 			&i.CleanupGeneration,
 			&i.RuntimeLaunchID,
 			&i.WorkspaceRepoPath,
 			&i.TerminateOnPRMerge,
+			&i.DiffBaseSha,
+			&i.DiffBaseRef,
 		); err != nil {
 			return nil, err
 		}

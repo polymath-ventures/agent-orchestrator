@@ -224,12 +224,12 @@ type Session struct {
 	Effort             string
 	PromptPolicyHash   string
 	MixBucketModel     string
-	DiffBaseSha        string
-	DiffBaseRef        string
 	CleanupGeneration  int64
 	RuntimeLaunchID    string
 	WorkspaceRepoPath  string
 	TerminateOnPRMerge bool
+	DiffBaseSha        string
+	DiffBaseRef        string
 }
 
 type SessionCleanupFact struct {

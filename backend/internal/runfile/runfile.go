@@ -92,7 +92,11 @@ func Write(path string, info Info) error {
 // Read loads running.json. A missing file returns (nil, nil) — that is the
 // normal "no daemon recorded" state, not an error.
 func Read(path string) (*Info, error) {
-	data, err := os.ReadFile(path)
+	data, err := readFileWithRetry(
+		func() ([]byte, error) { return os.ReadFile(path) },
+		retryableReadError,
+		time.Sleep,
+	)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
 	}
@@ -104,6 +108,28 @@ func Read(path string) (*Info, error) {
 		return nil, fmt.Errorf("parse run-file: %w", err)
 	}
 	return &info, nil
+}
+
+const (
+	readRetryAttempts = 10
+	readRetryDelay    = 10 * time.Millisecond
+)
+
+// readFileWithRetry absorbs the short sharing window Windows can expose while
+// another process still owns running.json. The platform predicate keeps all
+// other errors, and all Unix reads, single-attempt.
+func readFileWithRetry(
+	read func() ([]byte, error),
+	retryable func(error) bool,
+	sleep func(time.Duration),
+) ([]byte, error) {
+	for attempt := 0; ; attempt++ {
+		data, err := read()
+		if err == nil || attempt == readRetryAttempts-1 || !retryable(err) {
+			return data, err
+		}
+		sleep(readRetryDelay)
+	}
 }
 
 // Remove deletes running.json. A missing file is not an error — graceful

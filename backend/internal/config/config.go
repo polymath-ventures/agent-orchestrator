@@ -14,6 +14,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
 const (
@@ -160,6 +162,10 @@ type Config struct {
 	// normalizes it. The desktop uses this to identify dev daemons after the
 	// process cwd is moved to the stable data dir.
 	StartupWorkingDirectory string
+	// ProjectDefaults are daemon-wide typed defaults applied to projects that
+	// do not configure the corresponding field themselves. They are not copied
+	// into project storage, so newly registered projects inherit them too.
+	ProjectDefaults domain.ProjectConfig
 }
 
 // Addr returns the host:port the HTTP server binds. It uses net.JoinHostPort so
@@ -196,6 +202,7 @@ func (c Config) Addr() string {
 //	AO_METRICS_INTERVAL           metrics sampling interval (Go duration, default 30s; 0 disables)
 //	AO_METRICS_LOW_QUOTA_PERCENT  low-quota threshold percent (default 10; 0 disables)
 //	AO_QUOTA_PROBE_INTERVAL       harness quota probe cadence (Go duration, default 1h; 0 disables)
+//	AO_WORKER_TASK_PROMPT         issue-driven worker task template (literal {issue} substitution)
 //
 // The bind host is not configurable: the daemon is loopback-only by design.
 func Load() (Config, error) {
@@ -248,6 +255,9 @@ func Load() (Config, error) {
 
 	if raw := os.Getenv("AO_AGENT"); raw != "" {
 		cfg.Agent = raw
+	}
+	if raw := os.Getenv("AO_WORKER_TASK_PROMPT"); raw != "" {
+		cfg.ProjectDefaults.WorkerTaskPrompt = raw
 	}
 	if raw := os.Getenv("AO_AGENT_HEALTH_INTERVAL"); raw != "" {
 		duration, err := parseNonNegativeDuration("AO_AGENT_HEALTH_INTERVAL", raw)

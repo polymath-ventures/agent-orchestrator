@@ -299,14 +299,27 @@ missing, unreadable, empty, oversized, not a regular file, or escaping the proje
 root (the file is read through a root-confined `os.Root` handle) fails the spawn
 loudly rather than silently dropping the operator's standing rules.
 
-The effective prompt is inspectable read-only via
+Issue-driven worker task messages have a separate replacement surface because
+they are dispatch instructions, not standing system instructions. Set
+`workerTaskPrompt` in project config, or set the daemon-wide
+`AO_WORKER_TASK_PROMPT` default for every project (including projects registered
+later). Project config wins over the daemon default. Every literal `{issue}` is
+replaced with the tracker-native issue identifier; configured templates are
+otherwise preserved exactly and receive no appended title, body, or cached issue
+context. If neither setting is present, AO uses its existing manual-spawn and
+tracker-intake prompt builders unchanged.
+
+The effective role configuration is inspectable read-only via
 `GET /api/v1/projects/{id}/roles/{role}/prompt` (CLI: `ao role prompt <project>
 <role>`; also surfaced in the supervisor settings UI). The route **recomputes**
-the prompt from current config using the same assembly used at spawn — worker and
-orchestrator through `sessionmanager.Manager.RoleSystemPrompt`, reviewer through
-`review.AssembleReviewerSystemPrompt` — composed by the `roleprompt` package. It
-does not read the ephemeral per-session `system.md` artifact, so it answers "what
-would this role get right now" even with no live session. A misconfigured override
+the system prompt from current config using the same assembly used at spawn —
+worker and orchestrator through `sessionmanager.Manager.RoleSystemPrompt`,
+reviewer through `review.AssembleReviewerSystemPrompt` — composed by the
+`roleprompt` package. Worker inspection also reports the effective task template
+and whether it came from the project or global default as separate metadata; it
+never mixes task text into the system prompt. The route does not read the
+ephemeral per-session `system.md` artifact, so it answers "what would this role
+get right now" even with no live session. A misconfigured role-rules file
 surfaces the same fail-closed error the spawn would raise (HTTP 422) instead of a
 prompt with the override silently omitted.
 

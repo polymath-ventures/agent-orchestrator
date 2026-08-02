@@ -10,7 +10,7 @@ import (
 func TestLoadDefaults(t *testing.T) {
 	// Clear every recognised var so we observe pure defaults regardless of the
 	// surrounding environment.
-	for _, k := range []string{"AO_PORT", "AO_REQUEST_TIMEOUT", "AO_SHUTDOWN_TIMEOUT", "AO_RUN_FILE", "AO_DATA_DIR", "AO_AGENT", "AO_AGENT_HEALTH_INTERVAL", "AO_MODEL_REVALIDATION_INTERVAL", "AO_ALLOWED_ORIGINS", "AO_MOBILE_ADVERTISED_HOST", "AO_TELEMETRY_EVENTS", "AO_TELEMETRY_METRICS", "AO_TELEMETRY_REMOTE", "AO_TELEMETRY_POSTHOG_KEY", "AO_TELEMETRY_POSTHOG_HOST", "AO_METRICS_INTERVAL", "AO_METRICS_LOW_QUOTA_PERCENT", "AO_QUOTA_PROBE_INTERVAL"} {
+	for _, k := range []string{"AO_PORT", "AO_REQUEST_TIMEOUT", "AO_SHUTDOWN_TIMEOUT", "AO_RUN_FILE", "AO_DATA_DIR", "AO_AGENT", "AO_AGENT_HEALTH_INTERVAL", "AO_MODEL_REVALIDATION_INTERVAL", "AO_ALLOWED_ORIGINS", "AO_MOBILE_ADVERTISED_HOST", "AO_TELEMETRY_EVENTS", "AO_TELEMETRY_METRICS", "AO_TELEMETRY_REMOTE", "AO_TELEMETRY_POSTHOG_KEY", "AO_TELEMETRY_POSTHOG_HOST", "AO_METRICS_INTERVAL", "AO_METRICS_LOW_QUOTA_PERCENT", "AO_QUOTA_PROBE_INTERVAL", "AO_WORKER_TASK_PROMPT"} {
 		t.Setenv(k, "")
 	}
 
@@ -65,6 +65,31 @@ func TestLoadDefaults(t *testing.T) {
 	}
 	if cfg.MobileAdvertisedHost != "" {
 		t.Errorf("MobileAdvertisedHost = %q, want empty default", cfg.MobileAdvertisedHost)
+	}
+	if cfg.ProjectDefaults.WorkerTaskPrompt != "" {
+		t.Errorf("ProjectDefaults.WorkerTaskPrompt = %q, want empty default", cfg.ProjectDefaults.WorkerTaskPrompt)
+	}
+}
+
+func TestLoadWorkerTaskPromptDefault(t *testing.T) {
+	t.Setenv("AO_WORKER_TASK_PROMPT", "/address-issue {issue}\n")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := cfg.ProjectDefaults.WorkerTaskPrompt; got != "/address-issue {issue}\n" {
+		t.Fatalf("WorkerTaskPrompt = %q, want bytes preserved", got)
+	}
+}
+
+func TestLoadPreservesWhitespaceWorkerTaskPromptDefaultForSpawnValidation(t *testing.T) {
+	t.Setenv("AO_WORKER_TASK_PROMPT", " \n\t")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := cfg.ProjectDefaults.WorkerTaskPrompt; got != " \n\t" {
+		t.Fatalf("WorkerTaskPrompt = %q, want active whitespace preserved for spawn-time failure", got)
 	}
 }
 

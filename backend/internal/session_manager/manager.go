@@ -288,6 +288,10 @@ type Manager struct {
 	health *candidatehealth.Tracker
 	// modelValidator consumes only previously cached model/catalog verdicts.
 	modelValidator SpawnModelSelectionValidator
+	// projectDefaults are daemon-wide typed defaults. Per-project values are
+	// resolved over these at each spawn so newly registered projects inherit
+	// them without copied persistence.
+	projectDefaults domain.ProjectConfig
 	// spawnLocks serializes spawn admission per project: live cap check,
 	// worker-mix census and selection, resolved model validation, and seed-row
 	// creation. A lock is released once the seed row exists so runtime launch
@@ -410,6 +414,8 @@ type Deps struct {
 	Health *candidatehealth.Tracker
 	// ModelValidator is the unified agent model service's cache-only spawn view.
 	ModelValidator SpawnModelSelectionValidator
+	// ProjectDefaults are daemon-wide typed defaults for project configuration.
+	ProjectDefaults domain.ProjectConfig
 }
 
 // New builds a Session Manager from its dependencies, defaulting the clock to
@@ -435,10 +441,11 @@ func New(d Deps) *Manager {
 			attemptDeadline: sendConfirmAttemptDeadline,
 			maxAttempts:     sendConfirmMaxAttempts,
 		},
-		logger:         d.Logger,
-		health:         d.Health,
-		modelValidator: d.ModelValidator,
-		spawnLocks:     map[domain.ProjectID]*sync.Mutex{},
+		logger:          d.Logger,
+		health:          d.Health,
+		modelValidator:  d.ModelValidator,
+		projectDefaults: d.ProjectDefaults,
+		spawnLocks:      map[domain.ProjectID]*sync.Mutex{},
 	}
 	if m.health == nil {
 		// A sink-less Tracker keeps selection narrowing and recovery working in
@@ -3543,12 +3550,39 @@ func appendAttachmentReferences(prompt string, refs []string) string {
 // promptless spawn delivers no user prompt at all: the agent simply lands at an
 // empty input box rather than receiving an auto-generated kickoff turn.
 func (m *Manager) buildSpawnTexts(ctx context.Context, cfg ports.SpawnConfig) (prompt, systemPrompt string, err error) {
-	prompt = buildPrompt(cfg)
+	if cfg.Prompt == "" && cfg.Kind == domain.KindWorker && cfg.IssueID != "" {
+		template, source, resolveErr := m.EffectiveWorkerTaskPrompt(ctx, cfg.ProjectID)
+		if resolveErr != nil {
+			return "", "", resolveErr
+		}
+		if template != "" {
+			prompt, resolveErr = RenderWorkerTaskPrompt(template, cfg.IssueID)
+			if resolveErr != nil {
+				return "", "", &WorkerTaskPromptConfigError{ProjectID: string(cfg.ProjectID), Source: source, Err: resolveErr}
+			}
+		} else {
+			prompt = buildPrompt(cfg)
+		}
+	} else {
+		prompt = buildPrompt(cfg)
+	}
 	systemPrompt, err = m.buildSystemPrompt(ctx, cfg.Kind, cfg.ProjectID)
 	if err != nil {
 		return "", "", err
 	}
 	return prompt, systemPrompt, nil
+}
+
+// EffectiveWorkerTaskPrompt reports the configured task template and its
+// precedence source ("project" or "global") without mixing the task message
+// into the separately assembled system prompt. Empty values mean no override.
+func (m *Manager) EffectiveWorkerTaskPrompt(ctx context.Context, projectID domain.ProjectID) (template, source string, err error) {
+	project, err := m.loadProject(ctx, projectID)
+	if err != nil {
+		return "", "", err
+	}
+	template, source = domain.ResolveWorkerTaskPrompt(project.Config, m.projectDefaults)
+	return template, source, nil
 }
 
 // RoleSystemPrompt assembles the exact system prompt a worker or orchestrator

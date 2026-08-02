@@ -47,10 +47,13 @@ type RolePromptRoleParam struct {
 }
 
 // RolePromptResponse is the body of GET /projects/{id}/roles/{role}/prompt: the
-// exact, fully-assembled system prompt that role receives for the project.
+// exact system prompt that role receives plus optional worker task-template
+// metadata kept separate from that system prompt.
 type RolePromptResponse struct {
-	Role   string `json:"role"`
-	Prompt string `json:"prompt"`
+	Role               string `json:"role"`
+	Prompt             string `json:"prompt"`
+	TaskPromptTemplate string `json:"taskPromptTemplate,omitempty"`
+	TaskPromptSource   string `json:"taskPromptSource,omitempty" enum:"project,global"`
 }
 
 // ListProjectsResponse is the body of GET /api/v1/projects.

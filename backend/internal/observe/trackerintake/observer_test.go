@@ -1,6 +1,7 @@
 package trackerintake
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -59,6 +60,73 @@ func TestPollSpawnsWorkerForEligibleIssue(t *testing.T) {
 	}
 	if got := tracker.filters[0]; got.State != domain.ListOpen || got.Assignee != "alice" || len(got.Labels) != 0 {
 		t.Fatalf("tracker filter = %+v", got)
+	}
+}
+
+func TestPollConfiguredWorkerTaskPromptPrecedence(t *testing.T) {
+	store := &fakeStore{projects: []domain.ProjectRecord{{
+		ID:            "demo",
+		RepoOriginURL: "https://github.com/acme/demo.git",
+		Config: domain.ProjectConfig{
+			WorkerTaskPrompt: "/project {issue}\n",
+			TrackerIntake:    domain.TrackerIntakeConfig{Enabled: true, Assignee: "alice"},
+		},
+	}}}
+	tracker := &fakeTracker{issues: []domain.Issue{{
+		ID: domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#242"}, Title: "must not be injected", Body: "nor this body", State: domain.IssueOpen, Assignees: []string{"alice"},
+	}}}
+	spawner := &fakeSpawner{}
+
+	err := New(singleResolver(tracker), store, spawner, Config{
+		Logger:          discardLogger(),
+		ProjectDefaults: domain.ProjectConfig{WorkerTaskPrompt: "/global {issue}"},
+	}).Poll(context.Background())
+	if err != nil {
+		t.Fatalf("Poll: %v", err)
+	}
+	if len(spawner.calls) != 1 || spawner.calls[0].Prompt != "/project 242\n" {
+		t.Fatalf("spawn calls = %+v, want exact rendered project prompt", spawner.calls)
+	}
+}
+
+func TestPollUsesGlobalWorkerTaskPrompt(t *testing.T) {
+	store := &fakeStore{projects: []domain.ProjectRecord{{
+		ID: "demo", RepoOriginURL: "https://github.com/acme/demo.git",
+		Config: domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, Assignee: "alice"}},
+	}}}
+	tracker := &fakeTracker{issues: []domain.Issue{{
+		ID: domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#242"}, State: domain.IssueOpen, Assignees: []string{"alice"},
+	}}}
+	spawner := &fakeSpawner{}
+	err := New(singleResolver(tracker), store, spawner, Config{Logger: discardLogger(), ProjectDefaults: domain.ProjectConfig{WorkerTaskPrompt: "/global {issue}"}}).Poll(context.Background())
+	if err != nil {
+		t.Fatalf("Poll: %v", err)
+	}
+	if len(spawner.calls) != 1 || spawner.calls[0].Prompt != "/global 242" {
+		t.Fatalf("spawn calls = %+v, want exact rendered global prompt", spawner.calls)
+	}
+}
+
+func TestPollInvalidProjectWorkerTaskPromptDoesNotFallBackOrSpawn(t *testing.T) {
+	store := &fakeStore{projects: []domain.ProjectRecord{{
+		ID: "demo", RepoOriginURL: "https://github.com/acme/demo.git",
+		Config: domain.ProjectConfig{WorkerTaskPrompt: " \n", TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, Assignee: "alice"}},
+	}}}
+	tracker := &fakeTracker{issues: []domain.Issue{
+		{ID: domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#242"}, State: domain.IssueOpen, Assignees: []string{"alice"}},
+		{ID: domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#243"}, State: domain.IssueOpen, Assignees: []string{"alice"}},
+	}}
+	spawner := &fakeSpawner{}
+	var logs bytes.Buffer
+	err := New(singleResolver(tracker), store, spawner, Config{Logger: slog.New(slog.NewTextHandler(&logs, nil)), ProjectDefaults: domain.ProjectConfig{WorkerTaskPrompt: "/global {issue}"}}).Poll(context.Background())
+	if err != nil {
+		t.Fatalf("Poll: %v", err)
+	}
+	if len(spawner.calls) != 0 {
+		t.Fatalf("spawn calls = %+v, want none for invalid project prompt", spawner.calls)
+	}
+	if got := strings.Count(logs.String(), "invalid worker task prompt configuration"); got != 1 {
+		t.Fatalf("invalid-template log count = %d, want one project-level failure; logs=%s", got, logs.String())
 	}
 }
 
@@ -333,6 +401,31 @@ func TestBuildIssuePromptCapsLargeIssueBody(t *testing.T) {
 	}
 	if !strings.HasSuffix(prompt, intakePromptFooter) {
 		t.Fatalf("prompt missing footer:\n%s", prompt)
+	}
+}
+
+func TestBuildIssuePromptPreservesLegacyBytes(t *testing.T) {
+	issue := domain.Issue{
+		ID:        domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#12"},
+		Title:     "Fix login",
+		URL:       "https://github.com/acme/demo/issues/12",
+		Labels:    []string{"bug", "agent-ready"},
+		Assignees: []string{"alice"},
+		Body:      "The login form submits twice.\n",
+	}
+	want := `Work on tracker issue github:acme/demo#12.
+
+Title: Fix login
+URL: https://github.com/acme/demo/issues/12
+Labels: bug, agent-ready
+Assignees: alice
+
+Body:
+The login form submits twice.
+
+Implement the requested change in this repository, run the relevant checks, and open or update a pull request when ready.`
+	if got := BuildIssuePrompt(issue); got != want {
+		t.Fatalf("intake prompt changed from legacy bytes:\ngot:  %q\nwant: %q", got, want)
 	}
 }
 
