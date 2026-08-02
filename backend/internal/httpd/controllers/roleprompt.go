@@ -13,10 +13,10 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/roleprompt"
 )
 
-// RolePromptService assembles the exact system prompt a role receives for a
-// project. *roleprompt.Assembler satisfies it.
+// RolePromptService assembles the exact system prompt and optional worker
+// task-template metadata for a project. *roleprompt.Assembler satisfies it.
 type RolePromptService interface {
-	RolePrompt(ctx context.Context, projectID domain.ProjectID, role string) (string, error)
+	RolePrompt(ctx context.Context, projectID domain.ProjectID, role string) (roleprompt.Result, error)
 }
 
 // RolePromptController owns the read-only effective-prompt visibility route.
@@ -36,7 +36,7 @@ func (c *RolePromptController) get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	role := chi.URLParam(r, "role")
-	prompt, err := c.Svc.RolePrompt(r.Context(), projectID(r), role)
+	result, err := c.Svc.RolePrompt(r.Context(), projectID(r), role)
 	switch {
 	case errors.Is(err, roleprompt.ErrUnknownRole):
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "UNKNOWN_ROLE", err.Error(), nil)
@@ -57,5 +57,10 @@ func (c *RolePromptController) get(w http.ResponseWriter, r *http.Request) {
 		envelope.WriteError(w, r, err)
 		return
 	}
-	envelope.WriteJSON(w, http.StatusOK, RolePromptResponse{Role: role, Prompt: prompt})
+	envelope.WriteJSON(w, http.StatusOK, RolePromptResponse{
+		Role:               role,
+		Prompt:             result.Prompt,
+		TaskPromptTemplate: result.TaskPromptTemplate,
+		TaskPromptSource:   result.TaskPromptSource,
+	})
 }

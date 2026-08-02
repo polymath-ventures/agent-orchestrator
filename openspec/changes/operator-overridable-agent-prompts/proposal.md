@@ -26,5 +26,5 @@ None.
 
 - Typed project configuration and daemon-wide environment configuration.
 - Session task-prompt assembly and tracker-intake spawn wiring.
-- Project config CLI/API DTOs and generated OpenAPI/TypeScript schemas.
+- Project config CLI/API/supervisor surfaces and generated OpenAPI/TypeScript schemas.
 - Prompt regression tests, intake parity tests, operator documentation, and `docs/fork.md`.

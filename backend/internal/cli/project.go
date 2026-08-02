@@ -117,6 +117,7 @@ type trackerIntakeConfig struct {
 type projectConfig struct {
 	DefaultBranch         string              `json:"defaultBranch,omitempty"`
 	SessionPrefix         string              `json:"sessionPrefix,omitempty"`
+	WorkerTaskPrompt      string              `json:"workerTaskPrompt,omitempty"`
 	Env                   map[string]string   `json:"env,omitempty"`
 	Symlinks              []string            `json:"symlinks,omitempty"`
 	PostCreate            []string            `json:"postCreate,omitempty"`
@@ -145,6 +146,7 @@ type setConfigRequest struct {
 type projectSetConfigOptions struct {
 	defaultBranch         string
 	sessionPrefix         string
+	workerTaskPrompt      string
 	model                 string
 	permission            string
 	workerAgent           string
@@ -343,6 +345,7 @@ func newProjectSetConfigCommand(ctx *commandContext) *cobra.Command {
 	f := cmd.Flags()
 	f.StringVar(&opts.defaultBranch, "default-branch", "", "Base branch new session worktrees are created from")
 	f.StringVar(&opts.sessionPrefix, "session-prefix", "", "Displayed session-id prefix")
+	f.StringVar(&opts.workerTaskPrompt, "worker-task-prompt", "", "Complete issue-driven worker task template; {issue} expands to the native issue id")
 	f.StringVar(&opts.model, "model", "", "Agent model override (e.g. claude-opus-4-5)")
 	f.StringVar(&opts.permission, "permission", "", "Permission mode: default, accept-edits, auto, bypass-permissions")
 	f.StringVar(&opts.workerAgent, "worker-agent", "", "Harness override for worker sessions")
@@ -391,6 +394,7 @@ func buildProjectConfig(opts projectSetConfigOptions) (projectConfig, error) {
 	cfg := projectConfig{
 		DefaultBranch:         opts.defaultBranch,
 		SessionPrefix:         opts.sessionPrefix,
+		WorkerTaskPrompt:      opts.workerTaskPrompt,
 		Env:                   env,
 		Symlinks:              opts.symlink,
 		PostCreate:            opts.postCreate,

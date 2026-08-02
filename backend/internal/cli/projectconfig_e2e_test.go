@@ -62,9 +62,10 @@ func TestE2E_ProjectConfigRoundTrip(t *testing.T) {
 	pm := &statefulProjectManager{
 		fakeProjectManager: &fakeProjectManager{},
 		config: domain.ProjectConfig{
-			DefaultBranch:  "main",
-			SessionPrefix:  "demo",
-			MaxLiveWorkers: 7,
+			DefaultBranch:    "main",
+			SessionPrefix:    "demo",
+			WorkerTaskPrompt: "/address-issue {issue}",
+			MaxLiveWorkers:   7,
 		},
 	}
 	startDriftTestDaemon(t, &fakeSessionService{}, pm)
@@ -76,6 +77,9 @@ func TestE2E_ProjectConfigRoundTrip(t *testing.T) {
 	}
 	if !strings.Contains(e1, "maxLiveWorkers") || !strings.Contains(e1, "7") {
 		t.Fatalf("export dropped MaxLiveWorkers (not in CLI mirror): %s", e1)
+	}
+	if !strings.Contains(e1, "workerTaskPrompt") || !strings.Contains(e1, "/address-issue {issue}") {
+		t.Fatalf("export dropped WorkerTaskPrompt: %s", e1)
 	}
 
 	// Round trip: applying the full export changes nothing and performs no write.
@@ -105,7 +109,7 @@ func TestE2E_ProjectConfigRoundTrip(t *testing.T) {
 	// Surgical apply of a two-field spec persists exactly those fields through the
 	// real controller's strict decoder; the merged body must decode into
 	// domain.ProjectConfig without an unknown-field 400.
-	specTwo := writeSpecFile(t, `{"sessionPrefix":"prod","maxLiveWorkers":9}`)
+	specTwo := writeSpecFile(t, `{"sessionPrefix":"prod","workerTaskPrompt":"/fix {issue}","maxLiveWorkers":9}`)
 	twoOut, err := runConfigCLI(t, "project", "config", "apply", "demo", specTwo)
 	if err != nil {
 		t.Fatalf("surgical apply: %v\n%s", err, twoOut)
@@ -118,6 +122,9 @@ func TestE2E_ProjectConfigRoundTrip(t *testing.T) {
 	}
 	if pm.config.MaxLiveWorkers != 9 {
 		t.Errorf("MaxLiveWorkers = %d, want 9", pm.config.MaxLiveWorkers)
+	}
+	if pm.config.WorkerTaskPrompt != "/fix {issue}" {
+		t.Errorf("WorkerTaskPrompt = %q, want /fix {issue}", pm.config.WorkerTaskPrompt)
 	}
 	// Unnamed field preserved.
 	if pm.config.DefaultBranch != "main" {

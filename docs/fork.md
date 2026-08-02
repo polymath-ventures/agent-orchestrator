@@ -197,6 +197,22 @@ them as the starting point for a search, not as an exhaustive file list.
    pre-push gate #105 → #108, #219 → #222, #227 → #228; build revision on the
    health probe #196, #200, #201 → #198; agent-ci workdir #169 → #172; and #52
    (the deploy script itself, opened without a tracking issue).
+9. **Operator-overridable worker task prompts.** Project config
+   `workerTaskPrompt` overrides the daemon-wide `AO_WORKER_TASK_PROMPT`; either
+   one fully replaces AO's issue-driven worker message and renders literal
+   `{issue}` placeholders without appending prefetched issue content. With both
+   settings absent, the upstream-compatible manual-spawn and tracker-intake
+   prompts remain unchanged. Sync anchors: the typed config and global default
+   in `backend/internal/{domain/projectconfig.go,config/config.go}`; shared
+   rendering and precedence in
+   `backend/internal/session_manager/{prompt.go,manager.go}`; tracker-intake
+   parity in `backend/internal/observe/trackerintake/observer.go`; inspection in
+   `backend/internal/roleprompt/`; CLI/API surfaces in
+   `backend/internal/{cli,httpd/controllers}/`; generated contracts in
+   `backend/internal/httpd/apispec/openapi.yaml` and `frontend/src/api/schema.ts`;
+   and the supervisor setting in
+   `frontend/src/renderer/components/ProjectSettingsForm.tsx`. Reference issue:
+   #242.
 
 **Explicitly NOT fork-specific — absorb upstream freely** (do not spend a sync
 preserving these; they were merged toward upstream and re-preserving them

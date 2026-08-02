@@ -19,15 +19,15 @@ import (
 )
 
 type fakeRolePrompt struct {
-	prompt string
+	result roleprompt.Result
 	err    error
 	gotID  domain.ProjectID
 	gotRl  string
 }
 
-func (f *fakeRolePrompt) RolePrompt(_ context.Context, id domain.ProjectID, role string) (string, error) {
+func (f *fakeRolePrompt) RolePrompt(_ context.Context, id domain.ProjectID, role string) (roleprompt.Result, error) {
 	f.gotID, f.gotRl = id, role
-	return f.prompt, f.err
+	return f.result, f.err
 }
 
 func rolePromptRouter(svc controllers.RolePromptService) http.Handler {
@@ -37,7 +37,11 @@ func rolePromptRouter(svc controllers.RolePromptService) http.Handler {
 }
 
 func TestRolePromptController_OK(t *testing.T) {
-	svc := &fakeRolePrompt{prompt: "ASSEMBLED PROMPT"}
+	svc := &fakeRolePrompt{result: roleprompt.Result{
+		Prompt:             "ASSEMBLED PROMPT",
+		TaskPromptTemplate: "/address-issue {issue}",
+		TaskPromptSource:   "project",
+	}}
 	rr := httptest.NewRecorder()
 	rolePromptRouter(svc).ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/projects/mer/roles/worker/prompt", nil))
 
@@ -51,8 +55,24 @@ func TestRolePromptController_OK(t *testing.T) {
 	if body.Role != "worker" || body.Prompt != "ASSEMBLED PROMPT" {
 		t.Fatalf("body = %+v", body)
 	}
+	if body.TaskPromptTemplate != "/address-issue {issue}" || body.TaskPromptSource != "project" {
+		t.Fatalf("task prompt metadata = %+v", body)
+	}
 	if svc.gotID != "mer" || svc.gotRl != "worker" {
 		t.Fatalf("service got id=%q role=%q", svc.gotID, svc.gotRl)
+	}
+}
+
+func TestRolePromptController_OmitsTaskMetadataWhenUnconfigured(t *testing.T) {
+	svc := &fakeRolePrompt{result: roleprompt.Result{Prompt: "ASSEMBLED PROMPT"}}
+	rr := httptest.NewRecorder()
+	rolePromptRouter(svc).ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/projects/mer/roles/worker/prompt", nil))
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rr.Code, rr.Body.String())
+	}
+	if strings.Contains(rr.Body.String(), "taskPrompt") {
+		t.Fatalf("unconfigured response changed legacy JSON shape: %s", rr.Body.String())
 	}
 }
 

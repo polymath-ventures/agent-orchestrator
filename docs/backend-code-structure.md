@@ -693,6 +693,7 @@ graph LR
     Settings --> DataDir[AO_DATA_DIR]
     Settings --> RunFile[AO_RUN_FILE]
     Settings --> Agent[AO_AGENT]
+    Settings --> WorkerPrompt[AO_WORKER_TASK_PROMPT]
 
 ```
 
@@ -704,6 +705,9 @@ graph LR
 - `AO_RUN_FILE` — PID/port handshake (default: ~/.ao/running.json)
 - `AO_DATA_DIR` — Data directory: SQLite state plus the tmux runtime socket at `run/tmux/default` (default: ~/.ao/data)
 - `AO_AGENT` — Compatibility agent adapter (default: claude-code)
+- `AO_WORKER_TASK_PROMPT` — Complete issue-driven worker task template applied
+  to every project that does not set `workerTaskPrompt`; each literal `{issue}`
+  expands to the tracker-native issue identifier
 - `GITHUB_TOKEN` — GitHub authentication
 
 ---

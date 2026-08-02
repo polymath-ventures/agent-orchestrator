@@ -132,6 +132,15 @@ drifted field (spec vs live), and exits nonzero on drift — so it can gate a CI
 job or a scheduled drift check. Unknown field names are rejected by the daemon's
 strict config decoder rather than re-validated client-side.
 
+`workerTaskPrompt` is a complete replacement for AO's issue-driven worker
+message. Set it with `aong project set-config <project>
+--worker-task-prompt '/address-issue {issue}'`, through config JSON, or in the
+supervisor project settings. Every literal `{issue}` expands to the native issue
+identifier, and no fetched issue body or context is appended. The daemon-wide
+`AO_WORKER_TASK_PROMPT` environment variable supplies the same template to all
+projects that do not set a project override; a project value takes precedence.
+Leave both unset to retain AO's built-in prompts.
+
 > **Secret handling:** an exported config can include `env` values that carry
 > credentials. Treat an export as sensitive — review it before committing to
 > version control, and prefer restricting file permissions (e.g. redirect to a

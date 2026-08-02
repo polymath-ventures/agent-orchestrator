@@ -12,8 +12,10 @@ import (
 // rolePromptResult mirrors the daemon's RolePromptResponse body for
 // GET /api/v1/projects/{id}/roles/{role}/prompt.
 type rolePromptResult struct {
-	Role   string `json:"role"`
-	Prompt string `json:"prompt"`
+	Role               string `json:"role"`
+	Prompt             string `json:"prompt"`
+	TaskPromptTemplate string `json:"taskPromptTemplate,omitempty"`
+	TaskPromptSource   string `json:"taskPromptSource,omitempty"`
 }
 
 // supportedRoles are the roles whose assembled prompt can be inspected. The CLI
@@ -34,9 +36,10 @@ func newRolePromptCommand(ctx *commandContext) *cobra.Command {
 	var asJSON bool
 	cmd := &cobra.Command{
 		Use:   "prompt <project> <role>",
-		Short: "Print the exact assembled system prompt a role receives for a project",
+		Short: "Inspect a role's effective prompt configuration",
 		Long: "Print the exact, fully-assembled system prompt an agent role receives for a " +
 			"project — the base scaffold plus every injected operator instruction source. " +
+			"Worker output also reports an effective configured task template separately when one is set. " +
 			"Role is one of: worker, orchestrator, reviewer. For fleet Prime, use `ao prime prompt`.",
 		Args: func(cmd *cobra.Command, args []string) error {
 			if err := cobra.ExactArgs(2)(cmd, args); err != nil {
@@ -61,6 +64,10 @@ func newRolePromptCommand(ctx *commandContext) *cobra.Command {
 			}
 			if asJSON {
 				return writeJSON(cmd.OutOrStdout(), res)
+			}
+			if res.TaskPromptTemplate != "" {
+				_, err := fmt.Fprintf(cmd.OutOrStdout(), "Worker task prompt template (%s):\n%s\n\nSystem prompt:\n%s\n", res.TaskPromptSource, res.TaskPromptTemplate, res.Prompt)
+				return err
 			}
 			_, _ = fmt.Fprintln(cmd.OutOrStdout(), res.Prompt)
 			return nil

@@ -2940,6 +2940,13 @@ components:
           type: string
         role:
           type: string
+        taskPromptSource:
+          enum:
+          - project
+          - global
+          type: string
+        taskPromptTemplate:
+          type: string
       required:
       - role
       - prompt
@@ -3907,6 +3914,8 @@ components:
           $ref: '#/components/schemas/RoleOverride'
         workerMix:
           $ref: '#/components/schemas/WorkerMix'
+        workerTaskPrompt:
+          type: string
       type: object
     ProjectGetResponse:
       properties:

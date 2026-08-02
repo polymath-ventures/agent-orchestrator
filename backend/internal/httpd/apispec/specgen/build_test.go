@@ -83,6 +83,24 @@ func TestBuildIncludesReviewerCapabilityOnAgentInventory(t *testing.T) {
 	}
 }
 
+func TestBuildIncludesWorkerTaskPromptContracts(t *testing.T) {
+	got, err := specgen.Build()
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	for _, want := range [][]byte{
+		[]byte("workerTaskPrompt:"),
+		[]byte("taskPromptTemplate:"),
+		[]byte("taskPromptSource:"),
+		[]byte("- project"),
+		[]byte("- global"),
+	} {
+		if !bytes.Contains(got, want) {
+			t.Fatalf("generated spec missing %q", want)
+		}
+	}
+}
+
 func normalizeYAML(in []byte) []byte {
 	return bytes.ReplaceAll(in, []byte("\r\n"), []byte("\n"))
 }

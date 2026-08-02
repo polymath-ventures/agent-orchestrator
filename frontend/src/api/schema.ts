@@ -1135,6 +1135,9 @@ export interface components {
         ControllersRolePromptResponse: {
             prompt: string;
             role: string;
+            /** @enum {string} */
+            taskPromptSource?: "project" | "global";
+            taskPromptTemplate?: string;
         };
         ControllersSessionView: {
             activity: components["schemas"]["DomainActivity"];
@@ -1506,6 +1509,7 @@ export interface components {
             trackerIntake?: components["schemas"]["TrackerIntakeConfig"];
             worker?: components["schemas"]["RoleOverride"];
             workerMix?: components["schemas"]["WorkerMix"];
+            workerTaskPrompt?: string;
         };
         ProjectGetResponse: {
             project: components["schemas"]["ProjectOrDegraded"];
