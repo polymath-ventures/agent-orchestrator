@@ -230,6 +230,7 @@ type Session struct {
 	TerminateOnPRMerge bool
 	DiffBaseSha        string
 	DiffBaseRef        string
+	LastError          string
 }
 
 type SessionCleanupFact struct {

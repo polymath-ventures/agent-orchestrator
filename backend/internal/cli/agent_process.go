@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -13,6 +14,8 @@ import (
 )
 
 const supervisedExitReportTimeout = 5 * time.Second
+
+const supervisedErrorTailBytes = 4096
 
 func newAgentProcessCommand(ctx *commandContext) *cobra.Command {
 	root := &cobra.Command{
@@ -59,11 +62,14 @@ func (c *commandContext) runSupervisedProcess(ctx context.Context, sessionID, la
 	child := exec.CommandContext(ctx, argv[0], argv[1:]...) //nolint:gosec // argv is constructed by the selected agent adapter.
 	child.Stdin = c.deps.In
 	child.Stdout = c.deps.Out
-	child.Stderr = c.deps.Err
+	// Keep the child stderr visible in its terminal pane while retaining just
+	// enough of the tail to diagnose a failed launch through the API.
+	stderrTail := &tailBuffer{limit: supervisedErrorTailBytes}
+	child.Stderr = io.MultiWriter(c.deps.Err, stderrTail)
 
 	if err := child.Start(); err != nil {
 		_, _ = fmt.Fprintf(c.deps.Err, "ao: start managed agent: %v\n", err)
-		c.reportSupervisedExit(sessionID, launchID)
+		c.reportSupervisedExit(sessionID, launchID, err.Error())
 		return
 	}
 
@@ -72,20 +78,52 @@ func (c *commandContext) runSupervisedProcess(ctx context.Context, sessionID, la
 	// alive long enough to reap the child and publish the exit observation.
 	interrupts := make(chan os.Signal, 1)
 	signal.Notify(interrupts, os.Interrupt)
-	_ = child.Wait()
+	waitErr := child.Wait()
 	signal.Stop(interrupts)
 
-	c.reportSupervisedExit(sessionID, launchID)
+	errorDetail := strings.TrimSpace(stderrTail.String())
+	if waitErr == nil {
+		errorDetail = ""
+	} else if errorDetail == "" {
+		errorDetail = waitErr.Error()
+	}
+	c.reportSupervisedExit(sessionID, launchID, errorDetail)
 }
 
-func (c *commandContext) reportSupervisedExit(sessionID, launchID string) {
+func (c *commandContext) reportSupervisedExit(sessionID, launchID, errorDetail string) {
 	ctx, cancel := context.WithTimeout(context.Background(), supervisedExitReportTimeout)
 	defer cancel()
 	path := "sessions/" + sessionID + "/activity"
-	req := setActivityAPIRequest{State: "exited", Event: "process-exited", LaunchID: launchID}
+	req := setActivityAPIRequest{State: "exited", Event: "process-exited", LaunchID: launchID, Error: errorDetail}
 	if err := c.postJSON(ctx, path, req, nil); err != nil {
 		// Reconciliation will recover this event from process absence. Keep the
 		// delivery failure visible without preventing the terminal's shell.
 		c.reportHookFailure("agent-process", "process-exited", sessionID, err)
 	}
 }
+
+// tailBuffer retains the last limit bytes written to it. It lets process
+// supervision report a bounded stderr diagnostic without consuming or
+// redirecting the terminal stream.
+type tailBuffer struct {
+	data  []byte
+	limit int
+}
+
+func (b *tailBuffer) Write(p []byte) (int, error) {
+	if b.limit <= 0 {
+		return len(p), nil
+	}
+	if len(p) >= b.limit {
+		b.data = append(b.data[:0], p[len(p)-b.limit:]...)
+		return len(p), nil
+	}
+	if overflow := len(b.data) + len(p) - b.limit; overflow > 0 {
+		copy(b.data, b.data[overflow:])
+		b.data = b.data[:len(b.data)-overflow]
+	}
+	b.data = append(b.data, p...)
+	return len(p), nil
+}
+
+func (b *tailBuffer) String() string { return string(b.data) }

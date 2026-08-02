@@ -99,6 +99,24 @@ func TestSessionsAPI_ActivityThreadsCorrelationFields(t *testing.T) {
 	}
 }
 
+func TestSessionsAPI_ActivitySanitizesAndCapsExitError(t *testing.T) {
+	rec := &fakeActivityRecorder{}
+	srv := newActivityTestServer(t, rec)
+	long := strings.Repeat("a", 5000)
+
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions/ao-1/activity",
+		`{"state":"exited","event":"process-exited","error":"failure\u0000`+long+`"}`)
+	if status != http.StatusOK {
+		t.Fatalf("activity = %d, want 200; body=%s", status, body)
+	}
+	if len(rec.gotSignal.Error) != 4096 {
+		t.Fatalf("error length = %d, want 4096", len(rec.gotSignal.Error))
+	}
+	if strings.ContainsRune(rec.gotSignal.Error, '\x00') {
+		t.Fatalf("error contains control char: %q", rec.gotSignal.Error)
+	}
+}
+
 func TestSessionsAPI_ActivityAcceptsMetadataOnlyAgentSessionID(t *testing.T) {
 	rec := &fakeActivityRecorder{}
 	srv := newActivityTestServer(t, rec)

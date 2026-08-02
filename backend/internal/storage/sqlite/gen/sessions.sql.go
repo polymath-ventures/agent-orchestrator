@@ -20,7 +20,7 @@ SELECT id, COALESCE(project_id, '') AS project_id, num, issue_id, kind, harness,
        display_name, first_signal_at, preview_url, preview_revision, model,
        mix_selected, effort, prompt_policy_hash,
        mix_bucket_model, cleanup_generation, runtime_launch_id, workspace_repo_path,
-       terminate_on_pr_merge, diff_base_sha, diff_base_ref
+       terminate_on_pr_merge, diff_base_sha, diff_base_ref, last_error
 FROM sessions WHERE id = ?
 `
 
@@ -59,6 +59,7 @@ func (q *Queries) GetSession(ctx context.Context, id domain.SessionID) (Session,
 		&i.TerminateOnPRMerge,
 		&i.DiffBaseSha,
 		&i.DiffBaseRef,
+		&i.LastError,
 	)
 	return i, err
 }
@@ -66,12 +67,12 @@ func (q *Queries) GetSession(ctx context.Context, id domain.SessionID) (Session,
 const insertSession = `-- name: InsertSession :exec
 INSERT INTO sessions (
     id, project_id, num, issue_id, kind, harness, display_name,
-    activity_state, activity_last_at, first_signal_at, is_terminated,
+    activity_state, activity_last_at, last_error, first_signal_at, is_terminated,
     branch, workspace_path, workspace_repo_path, diff_base_sha, diff_base_ref, runtime_handle_id,
     runtime_launch_id, agent_session_id, prompt,
     preview_url, preview_revision, model, effort, mix_selected, mix_bucket_model,
     prompt_policy_hash, terminate_on_pr_merge, cleanup_generation, created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type InsertSessionParams struct {
@@ -84,6 +85,7 @@ type InsertSessionParams struct {
 	DisplayName        string
 	ActivityState      domain.ActivityState
 	ActivityLastAt     time.Time
+	LastError          string
 	FirstSignalAt      sql.NullTime
 	IsTerminated       bool
 	Branch             string
@@ -119,6 +121,7 @@ func (q *Queries) InsertSession(ctx context.Context, arg InsertSessionParams) er
 		arg.DisplayName,
 		arg.ActivityState,
 		arg.ActivityLastAt,
+		arg.LastError,
 		arg.FirstSignalAt,
 		arg.IsTerminated,
 		arg.Branch,
@@ -152,7 +155,7 @@ SELECT id, COALESCE(project_id, '') AS project_id, num, issue_id, kind, harness,
        display_name, first_signal_at, preview_url, preview_revision, model,
        mix_selected, effort, prompt_policy_hash,
        mix_bucket_model, cleanup_generation, runtime_launch_id, workspace_repo_path,
-       terminate_on_pr_merge, diff_base_sha, diff_base_ref
+       terminate_on_pr_merge, diff_base_sha, diff_base_ref, last_error
 FROM sessions ORDER BY COALESCE(project_id, ''), num
 `
 
@@ -197,6 +200,7 @@ func (q *Queries) ListAllSessions(ctx context.Context) ([]Session, error) {
 			&i.TerminateOnPRMerge,
 			&i.DiffBaseSha,
 			&i.DiffBaseRef,
+			&i.LastError,
 		); err != nil {
 			return nil, err
 		}
@@ -218,7 +222,7 @@ SELECT id, COALESCE(project_id, '') AS project_id, num, issue_id, kind, harness,
        display_name, first_signal_at, preview_url, preview_revision, model,
        mix_selected, effort, prompt_policy_hash,
        mix_bucket_model, cleanup_generation, runtime_launch_id, workspace_repo_path,
-       terminate_on_pr_merge, diff_base_sha, diff_base_ref
+       terminate_on_pr_merge, diff_base_sha, diff_base_ref, last_error
 FROM sessions WHERE project_id = ? ORDER BY num
 `
 
@@ -263,6 +267,7 @@ func (q *Queries) ListSessionsByProject(ctx context.Context, projectID domain.Pr
 			&i.TerminateOnPRMerge,
 			&i.DiffBaseSha,
 			&i.DiffBaseRef,
+			&i.LastError,
 		); err != nil {
 			return nil, err
 		}
@@ -372,7 +377,7 @@ func (q *Queries) SetSessionTerminateOnPRMerge(ctx context.Context, arg SetSessi
 const updateSession = `-- name: UpdateSession :exec
 UPDATE sessions SET
     issue_id = ?, kind = ?, harness = ?, display_name = ?,
-    activity_state = ?, activity_last_at = ?, first_signal_at = ?, is_terminated = ?,
+    activity_state = ?, activity_last_at = ?, last_error = ?, first_signal_at = ?, is_terminated = ?,
     branch = ?, workspace_path = ?, workspace_repo_path = ?, diff_base_sha = ?, diff_base_ref = ?, runtime_handle_id = ?,
     runtime_launch_id = ?, agent_session_id = ?, prompt = ?,
     preview_url = ?, preview_revision = ?, model = ?, effort = ?, mix_selected = ?,
@@ -388,6 +393,7 @@ type UpdateSessionParams struct {
 	DisplayName        string
 	ActivityState      domain.ActivityState
 	ActivityLastAt     time.Time
+	LastError          string
 	FirstSignalAt      sql.NullTime
 	IsTerminated       bool
 	Branch             string
@@ -420,6 +426,7 @@ func (q *Queries) UpdateSession(ctx context.Context, arg UpdateSessionParams) er
 		arg.DisplayName,
 		arg.ActivityState,
 		arg.ActivityLastAt,
+		arg.LastError,
 		arg.FirstSignalAt,
 		arg.IsTerminated,
 		arg.Branch,

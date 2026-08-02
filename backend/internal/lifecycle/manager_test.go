@@ -406,6 +406,61 @@ func TestActivity_ExitedPreservesLiveSessionAndRejectsDelayedHooks(t *testing.T)
 	}
 }
 
+func TestActivity_ExitedPersistsErrorUntilNextSpawn(t *testing.T) {
+	m, st, _ := newManager()
+	rec := working("mer-1")
+	rec.Metadata.RuntimeLaunchID = "launch-1"
+	st.sessions[rec.ID] = rec
+
+	if err := m.ApplyActivitySignal(ctx, rec.ID, ports.ActivitySignal{
+		Valid: true, State: domain.ActivityExited, Event: "process-exited", LaunchID: "launch-1", Error: "session id already in use",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got := st.sessions[rec.ID]; got.LastError != "session id already in use" {
+		t.Fatalf("last error = %q", got.LastError)
+	}
+
+	// A same-state exit may arrive after the initial report; it must retain its
+	// diagnostic even though the activity state itself did not transition.
+	if err := m.ApplyActivitySignal(ctx, rec.ID, ports.ActivitySignal{
+		Valid: true, State: domain.ActivityExited, Event: "process-exited", LaunchID: "launch-1", Error: "updated failure",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got := st.sessions[rec.ID]; got.LastError != "updated failure" {
+		t.Fatalf("same-state error = %q", got.LastError)
+	}
+	if err := m.MarkTerminated(ctx, rec.ID); err != nil {
+		t.Fatal(err)
+	}
+	if got := st.sessions[rec.ID]; got.LastError != "updated failure" {
+		t.Fatalf("termination erased last error: %+v", got)
+	}
+
+	if err := m.MarkSpawned(ctx, rec.ID, domain.SessionMetadata{RuntimeLaunchID: "launch-2"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := st.sessions[rec.ID]; got.LastError != "" || got.Activity.State != domain.ActivityIdle {
+		t.Fatalf("spawn did not clear previous error: %+v", got)
+	}
+}
+
+func TestActivity_NonExitedErrorIsNotPersisted(t *testing.T) {
+	m, st, _ := newManager()
+	rec := working("mer-1")
+	st.sessions[rec.ID] = rec
+
+	if err := m.ApplyActivitySignal(ctx, rec.ID, ports.ActivitySignal{
+		Valid: true, State: domain.ActivityActive, Error: "must not persist",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got := st.sessions[rec.ID]; got.LastError != "" {
+		t.Fatalf("non-exited signal persisted error: %+v", got)
+	}
+}
+
 func TestActivity_UserPromptResumesExitedWorkload(t *testing.T) {
 	m, st, _ := newManager()
 	rec := working("mer-1")
@@ -459,7 +514,7 @@ func TestActivity_StaleLaunchSignalIsIgnored(t *testing.T) {
 	rec.Metadata.RuntimeLaunchID = "launch-2"
 	st.sessions["mer-1"] = rec
 	before := st.sessions["mer-1"]
-	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{Valid: true, State: domain.ActivityExited, LaunchID: "launch-1"}); err != nil {
+	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{Valid: true, State: domain.ActivityExited, LaunchID: "launch-1", Error: "stale failure"}); err != nil {
 		t.Fatal(err)
 	}
 	if st.sessions["mer-1"] != before {

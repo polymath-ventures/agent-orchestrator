@@ -280,7 +280,8 @@ func (m *Manager) ApplyRuntimeObservation(ctx context.Context, id domain.Session
 func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, s ports.ActivitySignal) error {
 	s.AgentSessionID = strings.TrimSpace(s.AgentSessionID)
 	s.LaunchID = strings.TrimSpace(s.LaunchID)
-	if !s.Valid && s.AgentSessionID == "" && s.Usage == nil && len(s.Quotas) == 0 {
+	s.Error = strings.TrimSpace(s.Error)
+	if !s.Valid && s.AgentSessionID == "" && s.Error == "" && s.Usage == nil && len(s.Quotas) == 0 {
 		return nil
 	}
 	var intent *ports.NotificationIntent
@@ -353,6 +354,7 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 	// (old CLIs, adapters without tool identity) pass through untouched —
 	// last-writer-wins, exactly as before.
 	metadataChanged := s.AgentSessionID != "" && rec.Metadata.AgentSessionID != s.AgentSessionID
+	errorChanged := s.Valid && s.State == domain.ActivityExited && s.Error != "" && rec.LastError != s.Error
 	if s.Valid {
 		s = m.applyToolPrecedenceLocked(id, rec.Activity.State, s)
 	}
@@ -396,7 +398,10 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 	// first to ARRIVE may match the seeded state — e.g. a turn's "active"
 	// POST is lost and its Stop hook lands idle on the idle-seeded row.
 	if sameState && !rec.FirstSignalAt.IsZero() {
-		if metadataChanged || s.Event == "user-prompt-submit" {
+		if metadataChanged || errorChanged || s.Event == "user-prompt-submit" {
+			if errorChanged {
+				rec.LastError = s.Error
+			}
 			rec.UpdatedAt = now
 			err := m.store.UpdateSession(ctx, rec)
 			m.mu.Unlock()
@@ -421,6 +426,9 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 	}
 	next := rec
 	next.Activity = act
+	if errorChanged {
+		next.LastError = s.Error
+	}
 	if next.FirstSignalAt.IsZero() {
 		next.FirstSignalAt = timeOr(s.Timestamp, now)
 	}
@@ -783,6 +791,7 @@ func (m *Manager) MarkSpawned(ctx context.Context, id domain.SessionID, metadata
 	now := m.clock()
 	rec.IsTerminated = false
 	rec.Activity = domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}
+	rec.LastError = ""
 	// Each spawn/restore must re-prove its hook pipeline: clear the receipt so
 	// a relaunch with broken hooks degrades to no_signal instead of inheriting
 	// a stale "signals worked once" fact.

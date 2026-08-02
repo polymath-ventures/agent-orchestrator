@@ -917,6 +917,7 @@ func (c *SessionsController) activity(w http.ResponseWriter, r *http.Request) {
 		ToolUseID:      capActivityMeta(domain.SanitizeControlChars(in.ToolUseID)),
 		AgentSessionID: agentSessionID,
 		LaunchID:       capActivityMeta(domain.SanitizeControlChars(strings.TrimSpace(in.LaunchID))),
+		Error:          capActivityError(domain.SanitizeControlChars(strings.TrimSpace(in.Error))),
 		Usage:          usageSignal(in.Usage),
 		Quotas:         in.Quotas,
 	}
@@ -929,6 +930,14 @@ func (c *SessionsController) activity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	envelope.WriteJSON(w, http.StatusOK, SetActivityResponse{OK: true, SessionID: sessionID(r), State: in.State})
+}
+
+func capActivityError(v string) string {
+	const maxLen = 4096
+	if len(v) > maxLen {
+		return v[:maxLen]
+	}
+	return v
 }
 
 // capActivityMeta bounds an optional activity correlation string; overlong

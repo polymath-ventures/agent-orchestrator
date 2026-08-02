@@ -3347,6 +3347,8 @@ components:
           type: string
         kind:
           type: string
+        lastError:
+          type: string
         model:
           type: string
         previewRevision:
@@ -5001,6 +5003,9 @@ components:
       properties:
         agentSessionId:
           description: Native agent session identifier used to resume its transcript.
+          type: string
+        error:
+          description: Bounded diagnostic from a failed managed-agent process exit.
           type: string
         event:
           description: AO hook sub-command that produced this state (e.g. post-tool-use).
