@@ -34,11 +34,11 @@ func newTestStoreAt(t *testing.T, dataDir string) *sqlite.Store {
 }
 
 const (
-	testGenerationA = "0123456789abcdef0123456789abcdef"
-	testGenerationB = "fedcba9876543210fedcba9876543210"
+	testGenerationA = "0123456789abcdef"
+	testGenerationB = "fedcba9876543210"
 )
 
-var sessionGenerationPattern = regexp.MustCompile(`^[0-9a-f]{32}$`)
+var sessionGenerationPattern = regexp.MustCompile(`^[0-9a-f]{16}$`)
 
 func setSessionGeneration(t *testing.T, dataDir, generation string) {
 	t.Helper()
@@ -61,7 +61,7 @@ func sessionGeneration(t *testing.T, id domain.SessionID) string {
 	}
 	generation := raw[i+1:]
 	if !sessionGenerationPattern.MatchString(generation) {
-		t.Fatalf("session id %q generation = %q, want 32 lowercase hex chars", id, generation)
+		t.Fatalf("session id %q generation = %q, want 16 lowercase hex chars", id, generation)
 	}
 	return generation
 }
@@ -438,7 +438,7 @@ func TestCreateSessionRejectsInvalidGenerationBeforeInsert(t *testing.T) {
 		"empty":     "",
 		"short":     "short",
 		"uppercase": strings.ToUpper(testGenerationA),
-		"non-hex":   strings.Repeat("g", 32),
+		"non-hex":   strings.Repeat("g", 16),
 	}
 	for name, generation := range cases {
 		t.Run(name, func(t *testing.T) {

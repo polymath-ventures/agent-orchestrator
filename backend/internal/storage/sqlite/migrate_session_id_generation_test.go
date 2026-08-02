@@ -9,7 +9,7 @@ import (
 	"github.com/pressly/goose/v3"
 )
 
-var generationTokenPattern = regexp.MustCompile(`^[0-9a-f]{32}$`)
+var generationTokenPattern = regexp.MustCompile(`^[0-9a-f]{16}$`)
 
 func sessionIDGeneration(t *testing.T, db *sql.DB) string {
 	t.Helper()

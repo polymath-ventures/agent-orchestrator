@@ -7286,8 +7286,8 @@ func (m *flipOnNudgeMessenger) Send(_ context.Context, _ domain.SessionID, msg s
 
 func TestDefaultSpawnBranchDistinguishesDatabaseGenerations(t *testing.T) {
 	const (
-		idA = domain.SessionID("agent-orchestrator-1-0123456789abcdef0123456789abcdef")
-		idB = domain.SessionID("agent-orchestrator-1-fedcba9876543210fedcba9876543210")
+		idA = domain.SessionID("agent-orchestrator-1-0123456789abcdef")
+		idB = domain.SessionID("agent-orchestrator-1-fedcba9876543210")
 	)
 	branchA := DefaultSpawnBranch(idA, domain.KindWorker, "ao", domain.ProjectKindSingleRepo, "")
 	branchB := DefaultSpawnBranch(idB, domain.KindWorker, "ao", domain.ProjectKindSingleRepo, "")

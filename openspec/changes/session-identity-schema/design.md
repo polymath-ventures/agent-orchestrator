@@ -89,14 +89,18 @@ across a rebuild, `{gen}` differs, so a restarted counter mints
 `{project}-1-{newgen}` which cannot collide with a surviving `{project}-1-{oldgen}`
 (or a pre-token `{project}-1`) on the host.
 
-A 128-bit generation token makes inter-generation collision negligible over a
-host lifetime, while `num` gives exact intra-generation uniqueness. It is
+A per-database generation token gives inter-generation separation while `num`
+gives exact intra-generation uniqueness. The token is 64 bits (16 lowercase-hex
+characters): the colliding population is database generations — single digits
+over a host lifetime, not sessions — so 64 bits is already astronomically
+sufficient, and it deliberately keeps the composed id short enough that a
+realistic project keeps a verbatim tmux session name (see D4). It is
 preferred over a per-session suffix because the entropy is minted and stored in
 one place rather than repeated for every session: It keeps each fact in one place — the generation
 token is stored once, not re-derived per session — matching the Operating
 Principles ("a property the code keeps true by construction over a detector").
 
-The token is minted by the migration itself: `lower(hex(randomblob(16)))` run
+The token is minted by the migration itself: `lower(hex(randomblob(8)))` run
 once against the `daemon_settings` row. A rebuilt database re-runs the migration
 against a fresh file and mints a new token; the same database keeps its token
 stable forever. The store reads it once and composes it into every new ID at the
@@ -141,7 +145,7 @@ consistent.
   a different string and attach/lookup could mismatch. Mitigation: keep every lookup on the existing `SessionName` canonicalizer and
   add a boundary test that a long token-bearing id canonicalizes deterministically
   to the same tmux name for create and attach.
-- **Operator muscle-memory churn** → new session IDs gain a 32-char suffix, so
+- **Operator muscle-memory churn** → new session IDs gain a 16-char suffix, so
   `ao send --session <id>` requires copying it from `ao session ls` rather than
   typing from memory. The display name (#150) remains the primary readable cue,
   and operators already copy IDs from listings. Documented in the schema doc.
@@ -159,7 +163,7 @@ consistent.
 1. Add migration `0059_add_session_id_generation.sql`: `ALTER TABLE
 daemon_settings ADD COLUMN session_id_generation TEXT NOT NULL DEFAULT ''`,
    then `UPDATE daemon_settings SET session_id_generation =
-lower(hex(randomblob(16))) WHERE id = 1`. Down drops the column.
+lower(hex(randomblob(8))) WHERE id = 1`. Down drops the column.
 2. `npm run sqlc` regenerates the query accessor for the new column.
 3. `CreateSession` (and the projectless-Prime path) read the token and compose
    `{project}-{num}-{gen}`.

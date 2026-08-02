@@ -14,7 +14,7 @@
 ALTER TABLE daemon_settings ADD COLUMN session_id_generation TEXT NOT NULL DEFAULT '';
 
 -- +goose StatementBegin
-UPDATE daemon_settings SET session_id_generation = lower(hex(randomblob(16))) WHERE id = 1;
+UPDATE daemon_settings SET session_id_generation = lower(hex(randomblob(8))) WHERE id = 1;
 -- +goose StatementEnd
 
 -- +goose Down

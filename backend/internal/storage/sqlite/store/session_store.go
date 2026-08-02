@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -23,21 +24,18 @@ func (s *Store) CreateSession(ctx context.Context, rec domain.SessionRecord) (do
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 
-	if rec.ProjectID == "" {
-		if rec.Kind != domain.KindPrime {
-			return domain.SessionRecord{}, fmt.Errorf("project id is required for %s sessions", rec.Kind)
-		}
-		generation, err := s.sessionIDGeneration(ctx)
-		if err != nil {
-			return domain.SessionRecord{}, err
-		}
-		return s.createProjectlessPrimeSession(ctx, rec, generation)
-	}
-
 	generation, err := s.sessionIDGeneration(ctx)
 	if err != nil {
 		return domain.SessionRecord{}, err
 	}
+
+	if rec.ProjectID == "" {
+		if rec.Kind != domain.KindPrime {
+			return domain.SessionRecord{}, fmt.Errorf("project id is required for %s sessions", rec.Kind)
+		}
+		return s.createProjectlessPrimeSession(ctx, rec, generation)
+	}
+
 	num, err := s.qw.NextSessionNum(ctx, rec.ProjectID)
 	if err != nil {
 		return domain.SessionRecord{}, fmt.Errorf("next session num for %s: %w", rec.ProjectID, err)
@@ -49,20 +47,20 @@ func (s *Store) CreateSession(ctx context.Context, rec domain.SessionRecord) (do
 	return rec, nil
 }
 
-const sessionIDGenerationLength = 32
+// sessionIDGenerationPattern is the exact shape migration 0059 mints for
+// daemon_settings.session_id_generation: the lowercase-hex encoding of 8 random
+// bytes (randomblob(8)). Reading it fails closed on anything else so a corrupt
+// or absent token can never degrade a new identity back to the recyclable
+// {project}-{num} form.
+var sessionIDGenerationPattern = regexp.MustCompile(`^[0-9a-f]{16}$`)
 
 func (s *Store) sessionIDGeneration(ctx context.Context) (string, error) {
 	generation, err := s.qw.GetSessionIDGeneration(ctx)
 	if err != nil {
 		return "", fmt.Errorf("get session id generation: %w", err)
 	}
-	if len(generation) != sessionIDGenerationLength {
-		return "", fmt.Errorf("invalid session id generation %q: want %d lowercase hex characters", generation, sessionIDGenerationLength)
-	}
-	for _, c := range generation {
-		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
-			return "", fmt.Errorf("invalid session id generation %q: want %d lowercase hex characters", generation, sessionIDGenerationLength)
-		}
+	if !sessionIDGenerationPattern.MatchString(generation) {
+		return "", fmt.Errorf("invalid session id generation %q: want the lowercase hex of randomblob(8)", generation)
 	}
 	return generation, nil
 }

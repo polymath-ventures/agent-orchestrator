@@ -1370,19 +1370,26 @@ func exitCodeErr(t *testing.T, code int) error {
 
 func TestSessionNameDistinguishesDatabaseGenerations(t *testing.T) {
 	const (
-		generationA = "0123456789abcdef0123456789abcdef"
-		generationB = "fedcba9876543210fedcba9876543210"
+		generationA = "0123456789abcdef"
+		generationB = "fedcba9876543210"
 	)
 	idA := "agent-orchestrator-1-" + generationA
 	idB := "agent-orchestrator-1-" + generationB
 
+	// A 64-bit generation suffix keeps a realistic project's ids under the
+	// 48-byte verbatim threshold, so the tmux session name stays byte-equal to
+	// the id rather than falling through to the digest form. That is what keeps
+	// "the tmux session name is the session id" true after this change.
+	if len(idA) > 48 {
+		t.Fatalf("id %q is %d bytes, past the tmux verbatim threshold", idA, len(idA))
+	}
 	nameA := SessionName(idA)
 	nameB := SessionName(idB)
+	if nameA != idA || nameB != idB {
+		t.Fatalf("token-bearing ids were not returned verbatim: %q, %q", nameA, nameB)
+	}
 	if nameA == nameB {
 		t.Fatalf("different generation ids canonicalized to the same tmux name %q", nameA)
-	}
-	if got := SessionName(idA); got != nameA {
-		t.Fatalf("SessionName is not deterministic: first %q, second %q", nameA, got)
 	}
 	viaCreate, err := tmuxSessionName(domain.SessionID(idA))
 	if err != nil {

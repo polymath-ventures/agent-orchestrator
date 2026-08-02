@@ -1112,8 +1112,8 @@ func TestManagedPathDistinguishesDatabaseGenerations(t *testing.T) {
 		t.Fatalf("new: %v", err)
 	}
 	const (
-		idA = domain.SessionID("agent-orchestrator-1-0123456789abcdef0123456789abcdef")
-		idB = domain.SessionID("agent-orchestrator-1-fedcba9876543210fedcba9876543210")
+		idA = domain.SessionID("agent-orchestrator-1-0123456789abcdef")
+		idB = domain.SessionID("agent-orchestrator-1-fedcba9876543210")
 	)
 	pathA, err := ws.managedPath(ports.WorkspaceConfig{ProjectID: "agent-orchestrator", SessionID: idA})
 	if err != nil {
