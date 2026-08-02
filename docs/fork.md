@@ -151,10 +151,8 @@ them as the starting point for a search, not as an exhaustive file list.
    session fields `Model`, `Effort`, `MixSelected`, and `MixBucketModel` on
    `backend/internal/domain/session.go`; `mixCensus` in
    `backend/internal/session_manager/manager.go`; `BucketKey` in
-   `backend/internal/domain/workermix.go`; and the four migrations under
-   `backend/internal/storage/sqlite/migrations/` —
-   `0028_add_session_model.sql`, `0029_add_session_mix_selected.sql`,
-   `0036_add_session_effort.sql`, and `0038_add_session_mix_bucket_model.sql`.
+   `backend/internal/domain/workermix.go`; and the four migrations
+   `backend/internal/storage/sqlite/migrations/{0028_add_session_model,0029_add_session_mix_selected,0036_add_session_effort,0038_add_session_mix_bucket_model}.sql`.
    Note the fork's migration numbering has already diverged from upstream's,
    which is why a version collision is a sync STOP condition rather than a
    mechanical renumber. **The scratch-workspace adapter is currently identical to
