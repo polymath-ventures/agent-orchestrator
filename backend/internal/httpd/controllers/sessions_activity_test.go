@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -114,6 +115,21 @@ func TestSessionsAPI_ActivitySanitizesAndCapsExitError(t *testing.T) {
 	}
 	if strings.ContainsRune(rec.gotSignal.Error, '\x00') {
 		t.Fatalf("error contains control char: %q", rec.gotSignal.Error)
+	}
+}
+
+func TestSessionsAPI_ActivityErrorCapPreservesUTF8(t *testing.T) {
+	rec := &fakeActivityRecorder{}
+	srv := newActivityTestServer(t, rec)
+	prefix := strings.Repeat("a", 4095)
+
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions/ao-1/activity",
+		`{"state":"exited","event":"process-exited","error":"`+prefix+`🙂"}`)
+	if status != http.StatusOK {
+		t.Fatalf("activity = %d, want 200; body=%s", status, body)
+	}
+	if rec.gotSignal.Error != prefix || !utf8.ValidString(rec.gotSignal.Error) {
+		t.Fatalf("capped error is not the valid UTF-8 prefix: len=%d", len(rec.gotSignal.Error))
 	}
 }
 

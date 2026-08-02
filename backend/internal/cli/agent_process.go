@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/spf13/cobra"
 )
@@ -68,6 +69,7 @@ func (c *commandContext) runSupervisedProcess(ctx context.Context, sessionID, la
 	// end and keep Wait blocked after the managed process has already exited.
 	child.Stderr = c.deps.Err
 
+	paneBoundary := c.captureSupervisedPaneBoundary()
 	startedAt := c.deps.Now()
 	if err := child.Start(); err != nil {
 		_, _ = fmt.Fprintf(c.deps.Err, "ao: start managed agent: %v\n", err)
@@ -85,28 +87,78 @@ func (c *commandContext) runSupervisedProcess(ctx context.Context, sessionID, la
 
 	errorDetail := ""
 	if waitErr != nil && c.deps.Now().Sub(startedAt) <= supervisedLaunchErrorWindow {
-		errorDetail = c.captureSupervisedLaunchError(waitErr)
+		errorDetail = c.captureSupervisedLaunchError(waitErr, paneBoundary)
 	}
 	c.reportSupervisedExit(sessionID, launchID, errorDetail)
 }
 
-func (c *commandContext) captureSupervisedLaunchError(waitErr error) string {
+type supervisedPaneBoundary struct {
+	paneID string
+	before string
+}
+
+func (c *commandContext) captureSupervisedPaneBoundary() supervisedPaneBoundary {
 	paneID := strings.TrimSpace(os.Getenv("TMUX_PANE"))
 	if paneID == "" {
+		return supervisedPaneBoundary{}
+	}
+	before, err := c.captureSupervisedPane(paneID)
+	if err != nil {
+		return supervisedPaneBoundary{}
+	}
+	return supervisedPaneBoundary{paneID: paneID, before: before}
+}
+
+func (c *commandContext) captureSupervisedLaunchError(waitErr error, boundary supervisedPaneBoundary) string {
+	if boundary.paneID == "" {
 		return waitErr.Error()
 	}
+	after, err := c.captureSupervisedPane(boundary.paneID)
+	if err != nil {
+		return waitErr.Error()
+	}
+	detail := paneOutputAfterBoundary(boundary.before, after)
+	if detail == "" {
+		return waitErr.Error()
+	}
+	return boundedUTF8Tail(detail, supervisedErrorTailBytes)
+}
+
+func (c *commandContext) captureSupervisedPane(paneID string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), supervisedPaneCaptureTimeout)
 	defer cancel()
 	output, err := c.deps.CommandOutput(ctx, "tmux", "capture-pane", "-p", "-t", paneID, "-S", "-100")
 	if err != nil {
-		return waitErr.Error()
+		return "", err
 	}
-	tail := &tailBuffer{limit: supervisedErrorTailBytes}
-	_, _ = tail.Write(output)
-	if detail := strings.TrimSpace(tail.String()); detail != "" {
-		return detail
+	return string(output), nil
+}
+
+func paneOutputAfterBoundary(before, after string) string {
+	before = strings.TrimSpace(before)
+	after = strings.TrimSpace(after)
+	if before == "" {
+		return after
 	}
-	return waitErr.Error()
+	boundary := strings.LastIndex(after, before)
+	if boundary < 0 {
+		return ""
+	}
+	return strings.TrimSpace(after[boundary+len(before):])
+}
+
+func boundedUTF8Tail(value string, limit int) string {
+	if limit <= 0 {
+		return ""
+	}
+	if len(value) <= limit {
+		return value
+	}
+	start := len(value) - limit
+	for start < len(value) && !utf8.RuneStart(value[start]) {
+		start++
+	}
+	return value[start:]
 }
 
 func (c *commandContext) reportSupervisedExit(sessionID, launchID, errorDetail string) {
@@ -120,28 +172,3 @@ func (c *commandContext) reportSupervisedExit(sessionID, launchID, errorDetail s
 		c.reportHookFailure("agent-process", "process-exited", sessionID, err)
 	}
 }
-
-// tailBuffer retains the last limit bytes written to it. It bounds the pane
-// transcript retained for a launch failure without redirecting child stderr.
-type tailBuffer struct {
-	data  []byte
-	limit int
-}
-
-func (b *tailBuffer) Write(p []byte) (int, error) {
-	if b.limit <= 0 {
-		return len(p), nil
-	}
-	if len(p) >= b.limit {
-		b.data = append(b.data[:0], p[len(p)-b.limit:]...)
-		return len(p), nil
-	}
-	if overflow := len(b.data) + len(p) - b.limit; overflow > 0 {
-		copy(b.data, b.data[overflow:])
-		b.data = b.data[:len(b.data)-overflow]
-	}
-	b.data = append(b.data, p...)
-	return len(p), nil
-}
-
-func (b *tailBuffer) String() string { return string(b.data) }

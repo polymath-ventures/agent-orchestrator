@@ -935,7 +935,11 @@ func (c *SessionsController) activity(w http.ResponseWriter, r *http.Request) {
 func capActivityError(v string) string {
 	const maxLen = 4096
 	if len(v) > maxLen {
-		return v[:maxLen]
+		end := maxLen
+		for end > 0 && !utf8.ValidString(v[:end]) {
+			end--
+		}
+		return v[:end]
 	}
 	return v
 }

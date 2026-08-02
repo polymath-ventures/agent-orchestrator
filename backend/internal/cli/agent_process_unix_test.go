@@ -21,6 +21,7 @@ func TestAgentProcessSuperviseReportsFailureAndPreservesOutput(t *testing.T) {
 	srv, capture := activityServer(t, http.StatusOK, `{"ok":true}`)
 	writeRunFileFor(t, cfg, srv)
 	t.Setenv("TMUX_PANE", "%7")
+	captureCalls := 0
 
 	out, errOut, err := executeCLI(t, Deps{
 		In:           strings.NewReader(""),
@@ -30,7 +31,11 @@ func TestAgentProcessSuperviseReportsFailureAndPreservesOutput(t *testing.T) {
 			if name != "tmux" || !reflect.DeepEqual(args, want) {
 				t.Fatalf("capture command = %s %v, want tmux %v", name, args, want)
 			}
-			return []byte("session collision"), nil
+			captureCalls++
+			if captureCalls == 1 {
+				return []byte("old secret prompt\n"), nil
+			}
+			return []byte("old secret prompt\nsession collision\n"), nil
 		},
 	}, "agent-process", "supervise", "--session", "ao-7", "--launch", "launch-3", "--", "sh", "-c", "printf supervised; printf 'session collision' >&2; exit 23")
 	if err != nil {
@@ -50,12 +55,16 @@ func TestAgentProcessSuperviseReportsFailureAndPreservesOutput(t *testing.T) {
 	if !reflect.DeepEqual(req, want) {
 		t.Fatalf("exit report = %+v, want %+v", req, want)
 	}
+	if captureCalls != 2 {
+		t.Fatalf("pane captures = %d, want start and failed-launch snapshots", captureCalls)
+	}
 }
 
 func TestAgentProcessSuperviseSuccessfulExitOmitsError(t *testing.T) {
 	cfg := setConfigEnv(t)
 	srv, capture := activityServer(t, http.StatusOK, `{"ok":true}`)
 	writeRunFileFor(t, cfg, srv)
+	t.Setenv("TMUX_PANE", "")
 
 	_, errOut, err := executeCLI(t, Deps{
 		In:           strings.NewReader(""),
@@ -110,6 +119,7 @@ func TestAgentProcessSupervisePreservesChildStderrTTY(t *testing.T) {
 	cfg := setConfigEnv(t)
 	srv, capture := activityServer(t, http.StatusOK, `{"ok":true}`)
 	writeRunFileFor(t, cfg, srv)
+	t.Setenv("TMUX_PANE", "")
 
 	master, slave, err := pty.Open()
 	if err != nil {
@@ -170,16 +180,9 @@ func TestAgentProcessSuperviseDoesNotPersistLateProcessFailureOutput(t *testing.
 	}
 }
 
-func TestTailBufferKeepsBoundedStderrTail(t *testing.T) {
-	b := &tailBuffer{limit: 4}
-	if _, err := b.Write([]byte("abc")); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := b.Write([]byte("def")); err != nil {
-		t.Fatal(err)
-	}
-	if got := b.String(); got != "cdef" {
-		t.Fatalf("tail = %q, want cdef", got)
+func TestBoundedUTF8TailKeepsCompleteRunes(t *testing.T) {
+	if got := boundedUTF8Tail("ab🙂cd", 5); got != "cd" {
+		t.Fatalf("bounded tail = %q, want cd", got)
 	}
 }
 
