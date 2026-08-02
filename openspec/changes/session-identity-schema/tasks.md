@@ -19,5 +19,5 @@
 ## 4. Validate documentation and release gates
 
 - [x] 4.1 Validate `session-identity-schema` with OpenSpec strict validation and keep the nine-surface schema document in sync with the implementation
-- [ ] 4.2 Run `npm run sqlc`, formatting, and `npm run ci-local`
+- [x] 4.2 Run `npm run sqlc`, formatting, and `npm run ci-local`
 - [ ] 4.3 Rebase the stack after PR #245 lands, push, open the PR, and complete independent final review
