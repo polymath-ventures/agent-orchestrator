@@ -66,6 +66,14 @@ type AgentAuthChecker interface {
 	AuthStatus(ctx context.Context) (AgentAuthStatus, error)
 }
 
+// AgentSessionIDAllocator is the optional capability for adapters that require
+// AO to choose a native session identity before launch. The returned value must
+// be fresh and non-empty for every call. Session Manager persists it only after
+// the workspace and runtime exist, so failed seed rows remain safely deletable.
+type AgentSessionIDAllocator interface {
+	AllocateAgentSessionID() string
+}
+
 // ModelValidationStatus is the adapter-facing result of a live model probe.
 type ModelValidationStatus string
 
@@ -366,6 +374,11 @@ type LaunchConfig struct {
 	Permissions PermissionMode
 	Prompt      string
 	SessionID   string
+	// AgentSessionID is the adapter-native identity selected for this launch.
+	// It is persisted in SessionMetadata after runtime creation and supplied on
+	// subsequent restores. Adapters that do not need a native launch identity
+	// ignore it.
+	AgentSessionID string
 	// AllowedTools and DisallowedTools scope the agent to a tool allowlist when
 	// it runs in a non-bypass permission mode (allow rules auto-approve, deny
 	// rules auto-reject). They are the enforced read-only guarantee the reviewer

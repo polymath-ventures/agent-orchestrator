@@ -3,7 +3,7 @@
 // It builds the argv to launch `claude` as an interactive session inside a
 // session's worktree, installs worktree-local hooks that report normalized
 // session metadata (native id, title, summary) back into AO's store,
-// and supports resume: GetLaunchCommand pins a stable `--session-id` so
+// and supports resume: GetLaunchCommand pins a unique `--session-id` so
 // GetRestoreCommand can rebuild `claude --resume <uuid>`. SessionInfo reads the
 // hook-captured metadata from the store — it does not parse transcripts.
 // GetConfigSpec remains a no-op (no agent-specific config keys yet).
@@ -44,11 +44,9 @@ const (
 	adapterID = "claude-code"
 )
 
-// claudeSessionNamespace seeds the UUIDv5 derivation that maps an AO
-// session id onto a stable Claude Code `--session-id`. A fixed namespace makes
-// the mapping deterministic, so GetLaunchCommand (which pins --session-id at
-// launch) and GetRestoreCommand (which recomputes it as a fallback for
-// pre-hook sessions) agree without persisting anything.
+// claudeSessionNamespace seeds the UUIDv5 derivation used only to restore
+// pre-existing sessions whose native Claude ID was not persisted. Fresh
+// sessions receive a random native ID from AllocateAgentSessionID instead.
 var claudeSessionNamespace = uuid.MustParse("a1f0c3d2-7b54-4e96-8a2b-0d9e1f2a3b4c")
 
 // Plugin is the Claude Code agent adapter. It is safe for concurrent use; the
@@ -141,6 +139,7 @@ func (p *Plugin) PromptReadinessHints(ctx context.Context, _ ports.LaunchConfig)
 
 var _ adapters.Adapter = (*Plugin)(nil)
 var _ ports.Agent = (*Plugin)(nil)
+var _ ports.AgentSessionIDAllocator = (*Plugin)(nil)
 var _ ports.AgentNamer = (*Plugin)(nil)
 var _ ports.AgentPromptReadinessProvider = (*Plugin)(nil)
 var _ ports.AgentAuthChecker = (*Plugin)(nil)
@@ -208,10 +207,9 @@ func (p *Plugin) GetConfigSpec(ctx context.Context) (ports.ConfigSpec, error) {
 //	       [--append-system-prompt <system prompt>] \
 //	       [-- <prompt>]
 //
-// --session-id pins Claude's native session UUID to a value derived from the
-// AO session id, so the session is resumable later (see
-// GetRestoreCommand) and its transcript is locatable (see SessionInfo) without
-// a separate capture step.
+// --session-id pins Claude's native session UUID to the value Session Manager
+// allocated and will persist for later resume. Direct callers that omit it get
+// a fresh fallback UUID so they never collide on a recyclable AO session name.
 //
 // <mode> is acceptEdits, auto, or bypassPermissions. AO's "default"
 // mode emits no --permission-mode flag, so Claude's TUI resolves the starting
@@ -233,8 +231,12 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 
 	effort := normalizeClaudeEffort(string(cfg.Config.Effort))
 	cmd = claudeCommandPrefix(binary, effort)
-	if cfg.SessionID != "" {
-		cmd = append(cmd, "--session-id", claudeSessionUUID(cfg.SessionID))
+	agentSessionID := strings.TrimSpace(cfg.AgentSessionID)
+	if agentSessionID == "" && cfg.SessionID != "" {
+		agentSessionID = p.AllocateAgentSessionID()
+	}
+	if agentSessionID != "" {
+		cmd = append(cmd, "--session-id", agentSessionID)
 	}
 	// Ahead of the positional separator by construction: the name is a flag, and
 	// only the prompt may ever follow `--`.
@@ -274,6 +276,13 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 	return cmd, nil
 }
 
+// AllocateAgentSessionID returns a unique Claude Code transcript identity for
+// a fresh AO session. Session Manager owns persisting this value so restores use
+// the same transcript even when AO's display/session counter has recycled.
+func (p *Plugin) AllocateAgentSessionID() string {
+	return uuid.NewString()
+}
+
 // PreLaunch is an optional capability the spawn engine invokes (via type
 // assertion) immediately before creating the session. Claude Code shows a
 // blocking "do you trust this folder?" dialog the first time it runs in any
@@ -302,8 +311,8 @@ func (p *Plugin) PreLaunch(ctx context.Context, cfg ports.LaunchConfig) error {
 // session: `claude [--permission-mode <mode>] --resume <agentSessionId>`. It
 // prefers the hook-captured native session id from
 // cfg.Session.Metadata["agentSessionId"]; for sessions created before hooks
-// captured it, it falls back to the deterministic UUID AO pins via
-// --session-id at launch. ok is false only when neither is available, so the
+// captured it, it falls back to the deterministic UUID historical AO launches
+// pinned via --session-id. ok is false only when neither is available, so the
 // caller fresh-spawns. The command re-applies the permission mode (resume
 // otherwise reverts to the configured default) but not the prompt/system
 // prompt, which the session already carries.
@@ -314,8 +323,8 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 
 	sessionID := strings.TrimSpace(cfg.Session.Metadata[ports.MetadataKeyAgentSessionID])
 	if sessionID == "" && cfg.Session.ID != "" {
-		// Explicit fallback for pre-hook sessions: the id AO
-		// deterministically pinned via --session-id at launch.
+		// Explicit fallback for pre-existing rows created before AO persisted
+		// native ids: their launches deterministically pinned this UUID.
 		sessionID = claudeSessionUUID(cfg.Session.ID)
 	}
 	if sessionID == "" {
@@ -676,9 +685,9 @@ func claudeConfigAuthStatus(path string) (ports.AgentAuthStatus, bool, error) {
 	return ports.AgentAuthStatusUnknown, false, nil
 }
 
-// claudeSessionUUID maps an AO session id onto a stable Claude Code
-// session UUID via UUIDv5 over a fixed namespace, so the same AO session
-// always resolves to the same Claude session.
+// claudeSessionUUID maps an AO session id onto the deterministic Claude Code
+// UUID used by historical launches. It remains only as the restore fallback for
+// pre-existing rows without persisted native metadata.
 func claudeSessionUUID(aoSessionID string) string {
 	return uuid.NewSHA1(claudeSessionNamespace, []byte(aoSessionID)).String()
 }

@@ -289,19 +289,20 @@ func TestGetLaunchCommandMissingSystemPromptFileErrors(t *testing.T) {
 
 func TestGetLaunchCommandInjectsSessionID(t *testing.T) {
 	p := &Plugin{resolvedBinary: "claude"}
+	const agentSessionID = "94a576ee-7d58-4d11-8562-aa89de0a7bd0"
 	cmd, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
-		SessionID: "e0tt49",
-		Prompt:    "do the thing",
+		SessionID:      "e0tt49",
+		AgentSessionID: agentSessionID,
+		Prompt:         "do the thing",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantUUID := claudeSessionUUID("e0tt49")
-	if !containsSubsequence(cmd, []string{"--session-id", wantUUID}) {
-		t.Fatalf("command %#v missing --session-id %q", cmd, wantUUID)
+	if !containsSubsequence(cmd, []string{"--session-id", agentSessionID}) {
+		t.Fatalf("command %#v missing --session-id %q", cmd, agentSessionID)
 	}
 
-	// No SessionID → no --session-id flag.
+	// A command without any AO session keeps the established no-session shape.
 	cmd, err = p.GetLaunchCommand(context.Background(), ports.LaunchConfig{Prompt: "x"})
 	if err != nil {
 		t.Fatal(err)
