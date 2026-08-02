@@ -41,6 +41,12 @@ type Info struct {
 	// ShutdownToken authorizes local daemon shutdown requests. It lives in
 	// running.json so arbitrary loopback clients cannot cleanly stop the daemon.
 	ShutdownToken string `json:"shutdownToken,omitempty"`
+	// BrowserRuntimeToken authenticates the desktop-owned browser bridge. It is
+	// regenerated for every daemon launch.
+	BrowserRuntimeToken string `json:"browserRuntimeToken,omitempty"`
+	// BrowserRuntimeAddress is the exact Unix socket or Windows named-pipe
+	// address selected by the backend for this daemon launch.
+	BrowserRuntimeAddress string `json:"browserRuntimeAddress,omitempty"`
 }
 
 // Write atomically writes running.json at path, creating parent directories

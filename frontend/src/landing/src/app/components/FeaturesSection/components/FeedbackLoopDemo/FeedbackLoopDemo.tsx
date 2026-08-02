@@ -1,9 +1,20 @@
 "use client";
 
 import { AnimatePresence, motion } from "motion/react";
-import { Check, CircleAlert, GitPullRequest, MessageSquare, RotateCw, Terminal } from "lucide-react";
+import {
+	Check,
+	CircleAlert,
+	GitPullRequest,
+	MessageSquare,
+	RotateCw,
+	Terminal,
+} from "lucide-react";
 import { useEffect, useState } from "react";
-import { FeaturePreviewShell, StatusDot, previewStatus } from "../FeaturePreviewShell";
+import {
+	FeaturePreviewShell,
+	StatusDot,
+	previewStatus,
+} from "../FeaturePreviewShell";
 
 const states = [
 	{
@@ -56,7 +67,10 @@ export function FeedbackLoopDemo() {
 	const [active, setActive] = useState(0);
 
 	useEffect(() => {
-		const interval = window.setInterval(() => setActive((current) => (current + 1) % states.length), 2300);
+		const interval = window.setInterval(
+			() => setActive((current) => (current + 1) % states.length),
+			2300,
+		);
 		return () => window.clearInterval(interval);
 	}, []);
 
@@ -75,9 +89,16 @@ export function FeedbackLoopDemo() {
 			<div className="grid h-[318px] grid-cols-1 sm:grid-cols-[190px_minmax(0,1fr)]">
 				<aside className="hidden border-r border-[var(--preview-border)] bg-[var(--preview-card)]/35 p-3 sm:block">
 					<div className="flex items-center gap-2">
-						<img src="/app-icons/coverage-claude-code.svg" alt="" className="size-4" draggable="false" />
+						<img
+							src="/app-icons/coverage-claude-code.svg"
+							alt=""
+							className="size-4"
+							draggable="false"
+						/>
 						<div className="min-w-0">
-							<div className="truncate text-[10px] font-semibold">Claude worker</div>
+							<div className="truncate text-[10px] font-semibold">
+								Claude worker
+							</div>
 							<div className="truncate font-mono text-[9px] text-[var(--preview-muted-foreground)]">
 								feat/github-auth
 							</div>
@@ -106,15 +127,26 @@ export function FeedbackLoopDemo() {
 										{complete ? (
 											<Check className="size-3 text-[#74b98a]" />
 										) : index === 0 ? (
-											<CircleAlert className="size-3" style={{ color: isActive ? item.color : "#737373" }} />
+											<CircleAlert
+												className="size-3"
+												style={{ color: isActive ? item.color : "#737373" }}
+											/>
 										) : index === 3 ? (
-											<MessageSquare className="size-3" style={{ color: isActive ? item.color : "#737373" }} />
+											<MessageSquare
+												className="size-3"
+												style={{ color: isActive ? item.color : "#737373" }}
+											/>
 										) : (
-											<StatusDot color={isActive ? item.color : "#737373"} pulse={isActive} />
+											<StatusDot
+												color={isActive ? item.color : "#737373"}
+												pulse={isActive}
+											/>
 										)}
 									</div>
 									<div className="min-w-0">
-										<div className="truncate text-[9px] font-medium">{item.event}</div>
+										<div className="truncate text-[9px] font-medium">
+											{item.event}
+										</div>
 										<div className="mt-0.5 truncate text-[9px] text-[var(--preview-muted-foreground)]">
 											{item.label}
 										</div>
@@ -132,7 +164,9 @@ export function FeedbackLoopDemo() {
 								<GitPullRequest className="size-3.5" />
 								<span className="truncate">{state.event}</span>
 							</div>
-							<p className="mt-1.5 truncate text-[9px] text-[var(--preview-muted-foreground)]">{state.detail}</p>
+							<p className="mt-1.5 truncate text-[9px] text-[var(--preview-muted-foreground)]">
+								{state.detail}
+							</p>
 						</div>
 						<motion.div
 							key={state.label}
@@ -152,7 +186,9 @@ export function FeedbackLoopDemo() {
 						<div className="flex h-8 items-center gap-2 border-b border-[var(--preview-border)] px-3 text-[9px] text-[var(--preview-muted-foreground)]">
 							<Terminal className="size-3" />
 							Agent output
-							<RotateCw className={`ml-auto size-3 ${active === 1 ? "animate-spin" : ""}`} />
+							<RotateCw
+								className={`ml-auto size-3 ${active === 1 ? "animate-spin" : ""}`}
+							/>
 						</div>
 						<AnimatePresence mode="wait" initial={false}>
 							<motion.div
@@ -173,8 +209,12 @@ export function FeedbackLoopDemo() {
 											transition={{ delay: index * 0.11 }}
 											className="flex gap-3"
 										>
-											<span className="w-12 shrink-0 text-[#7eaaff]">{command}</span>
-											<span className="text-[var(--preview-muted-foreground)]">{rest.join(" ")}</span>
+											<span className="w-12 shrink-0 text-[#7eaaff]">
+												{command}
+											</span>
+											<span className="text-[var(--preview-muted-foreground)]">
+												{rest.join(" ")}
+											</span>
 										</motion.div>
 									);
 								})}

@@ -118,6 +118,16 @@ run "frontend typecheck" npm run frontend:typecheck
 # free port (5173 is hardcoded in frontend/playwright.config.ts). It stays a
 # manual opt-in step; see docs/local-ci.md. Remote CI (frontend.yml) runs it on
 # every frontend-touching PR.
+#
+# The vitest suite collects frontend/src/landing/scripts/*.test.mjs, whose script
+# under test imports from the landing app's own dependency tree. Remote CI has an
+# explicit "Install landing dependencies" step before it runs vitest; without the
+# same install the local gate fails on a fresh clone while CI is green — exactly
+# the parity break this script exists to close. Installed only when absent,
+# because CI restores it from cache and a fresh `npm ci` here is not cheap.
+if [ ! -d frontend/src/landing/node_modules ]; then
+	run "landing deps (for vitest)" npm ci --prefix frontend/src/landing
+fi
 run "frontend vitest" npm run frontend:test
 
 printf '\n\xe2\x9c\x93 local CI-parity gate passed\n'

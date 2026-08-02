@@ -56,7 +56,7 @@ Experimental Cmd/Ctrl+K command palette wired into sidebar search, a spawn short
 
 This is where most of the cycle went.
 
-**Sessions survive restarts.** Sessions now resume the agent's own native transcript rather than restarting cold, with a toast when AO has to fall back to replaying the saved prompt. Per-harness restore landed for OpenCode, Copilot, Agy, Kimi, Grok, Qwen, Goose and Vibe, backed by a test proving sessions survive daemon restart _and_ upgrade. (#2350, #2744, #2765, #2790, #2796, #2856, #2857, #2858)
+**Sessions survive restarts.** Sessions now resume the agent's own native transcript rather than restarting cold, with a toast when AO has to fall back to replaying the saved prompt. Per-harness restore landed for OpenCode, Copilot, Agy, Kimi, Grok, Qwen, Goose and Vibe, backed by a test proving sessions survive daemon restart *and* upgrade. (#2350, #2744, #2765, #2790, #2796, #2856, #2857, #2858)
 
 **Model config actually reaches the agent.** The model you picked in settings was silently dropped for most agents. Closed across Codex, Cline, Goose, Auggie, Pi, Vibe, Autohand, Kimi, Kilocode, Qwen and Copilot, with Kiro now advertising its options at all. (#2869, #2932, #2953, #2956, #2961, #2969, #2971, #2975, #2985, #2989, #2993, #3044)
 

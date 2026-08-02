@@ -120,7 +120,10 @@ export function Waves({
 				points.push(point);
 			}
 
-			const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+			const path = document.createElementNS(
+				"http://www.w3.org/2000/svg",
+				"path",
+			);
 			path.classList.add("a__line");
 			path.classList.add("js-line");
 			path.setAttribute("fill", "none");
@@ -182,7 +185,8 @@ export function Waves({
 
 		lines.forEach((points) => {
 			points.forEach((p: Point) => {
-				const move = noise((p.x + time * 0.002) * 0.002, (p.y + time * 0.001) * 0.001) * 3;
+				const move =
+					noise((p.x + time * 0.002) * 0.002, (p.y + time * 0.001) * 0.001) * 3;
 
 				p.wave.x = Math.cos(move) * 3;
 				p.wave.y = Math.sin(move) * 1.5;
@@ -289,7 +293,11 @@ export function Waves({
 				} as React.CSSProperties
 			}
 		>
-			<svg ref={svgRef} className="block w-full h-full js-svg" xmlns="http://www.w3.org/2000/svg" />
+			<svg
+				ref={svgRef}
+				className="block w-full h-full js-svg"
+				xmlns="http://www.w3.org/2000/svg"
+			/>
 			<div
 				className="pointer-dot"
 				style={{
@@ -300,7 +308,8 @@ export function Waves({
 					height: `${pointerSize}rem`,
 					background: strokeColor,
 					borderRadius: "50%",
-					transform: "translate3d(calc(var(--x) - 50%), calc(var(--y) - 50%), 0)",
+					transform:
+						"translate3d(calc(var(--x) - 50%), calc(var(--y) - 50%), 0)",
 					willChange: "transform",
 				}}
 			/>

@@ -8,6 +8,11 @@ declare module "stripe-gradient" {
 	}
 
 	export class MiniGl {
-		constructor(canvas: HTMLCanvasElement, width?: number, height?: number, debug?: boolean);
+		constructor(
+			canvas: HTMLCanvasElement,
+			width?: number,
+			height?: number,
+			debug?: boolean,
+		);
 	}
 }

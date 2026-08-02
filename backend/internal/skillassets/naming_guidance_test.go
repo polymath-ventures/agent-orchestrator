@@ -19,6 +19,7 @@ import (
 var namingGuidanceFiles = []string{
 	"using-ao/SKILL.md",
 	"using-ao/references.md",
+	"using-ao/commands/browser.md",
 	"using-ao/commands/doctor.md",
 	"using-ao/commands/drain.md",
 	"using-ao/commands/import.md",

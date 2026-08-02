@@ -1,6 +1,7 @@
 import { COMPANY } from "@ao/shared/constants";
 import { getChangelogEntries } from "@/lib/changelog";
 
+
 export const dynamic = "force-static";
 
 export async function GET() {

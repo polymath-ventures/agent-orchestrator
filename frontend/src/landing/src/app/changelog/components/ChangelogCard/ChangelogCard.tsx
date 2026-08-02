@@ -1,6 +1,9 @@
 import Image from "next/image";
 import Link from "next/link";
-import { type ChangelogEntry, formatChangelogDate } from "@/lib/changelog-utils";
+import {
+	type ChangelogEntry,
+	formatChangelogDate,
+} from "@/lib/changelog-utils";
 
 interface ChangelogCardProps {
 	entry: ChangelogEntry;
@@ -23,13 +26,20 @@ export function ChangelogCard({ entry }: ChangelogCardProps) {
 					</div>
 				)}
 				<div className="p-6">
-					<time dateTime={entry.date} className="text-sm font-mono text-muted-foreground">
+					<time
+						dateTime={entry.date}
+						className="text-sm font-mono text-muted-foreground"
+					>
 						{formattedDate}
 					</time>
 					<h2 className="text-xl font-medium text-foreground mt-2 mb-2 group-hover:text-foreground/90">
 						{entry.title}
 					</h2>
-					{entry.description && <p className="text-muted-foreground text-sm leading-relaxed">{entry.description}</p>}
+					{entry.description && (
+						<p className="text-muted-foreground text-sm leading-relaxed">
+							{entry.description}
+						</p>
+					)}
 				</div>
 			</article>
 		</Link>

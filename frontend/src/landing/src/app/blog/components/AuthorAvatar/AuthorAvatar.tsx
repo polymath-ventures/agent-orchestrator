@@ -24,8 +24,16 @@ export function AuthorAvatar({ name, avatar, size = "md" }: AuthorAvatarProps) {
 
 	if (avatar) {
 		return (
-			<div className={`${config.container} relative rounded-full overflow-hidden flex-shrink-0`}>
-				<Image src={avatar} alt={name} fill className="object-cover" sizes={config.imgSize} />
+			<div
+				className={`${config.container} relative rounded-full overflow-hidden flex-shrink-0`}
+			>
+				<Image
+					src={avatar}
+					alt={name}
+					fill
+					className="object-cover"
+					sizes={config.imgSize}
+				/>
 			</div>
 		);
 	}

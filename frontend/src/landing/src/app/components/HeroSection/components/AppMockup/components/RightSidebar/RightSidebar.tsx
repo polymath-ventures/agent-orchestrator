@@ -36,7 +36,9 @@ export function RightSidebar({ activeDemo }: RightSidebarProps) {
 				>
 					<LuGitPullRequest className="size-2.5 text-brand-light" />
 					<span>PR</span>
-					<span className="font-mono tabular-nums text-muted-foreground/55">#827</span>
+					<span className="font-mono tabular-nums text-muted-foreground/55">
+						#827
+					</span>
 				</button>
 			</div>
 
@@ -47,11 +49,15 @@ export function RightSidebar({ activeDemo }: RightSidebarProps) {
 						<div
 							key={tab}
 							className={`relative flex h-8 cursor-pointer items-center text-[11px] font-medium ${
-								active ? "text-foreground/95" : "text-muted-foreground/55 hover:text-foreground/85"
+								active
+									? "text-foreground/95"
+									: "text-muted-foreground/55 hover:text-foreground/85"
 							}`}
 						>
 							{tab}
-							{active && <span className="absolute inset-x-0 -bottom-px h-[2px] bg-brand" />}
+							{active && (
+								<span className="absolute inset-x-0 -bottom-px h-[2px] bg-brand" />
+							)}
 						</div>
 					);
 				})}
@@ -60,7 +66,9 @@ export function RightSidebar({ activeDemo }: RightSidebarProps) {
 			<div className="border-b border-border px-3 py-2.5">
 				<div className="flex items-center gap-2 font-mono text-[11px]">
 					<span className="size-1.5 rounded-full bg-brand" />
-					<span className="truncate font-medium text-foreground/95">{BRANCH_BY_DEMO[activeDemo]}</span>
+					<span className="truncate font-medium text-foreground/95">
+						{BRANCH_BY_DEMO[activeDemo]}
+					</span>
 				</div>
 				<div className="mt-1 flex items-center gap-1.5 font-mono text-[10px] text-muted-foreground/60">
 					<span className="tabular-nums text-emerald-400/85">+1,128</span>
@@ -109,13 +117,19 @@ export function RightSidebar({ activeDemo }: RightSidebarProps) {
 							cloud-workspace.ts
 							<span className="absolute inset-x-2 -bottom-px h-[2px] bg-brand" />
 						</span>
-						<span className="flex h-7 items-center px-2 font-mono text-[11px] text-muted-foreground/55">enums.ts</span>
-						<span className="flex h-7 items-center px-2 text-[10px] text-muted-foreground/45">+4</span>
+						<span className="flex h-7 items-center px-2 font-mono text-[11px] text-muted-foreground/55">
+							enums.ts
+						</span>
+						<span className="flex h-7 items-center px-2 text-[10px] text-muted-foreground/45">
+							+4
+						</span>
 					</div>
 
 					<div className="flex-1 overflow-hidden p-3 font-mono text-[10px] leading-relaxed">
 						<div className="space-y-px">
-							<div className="py-0.5 text-muted-foreground/50">@@ -1,4 +1,6 @@</div>
+							<div className="py-0.5 text-muted-foreground/50">
+								@@ -1,4 +1,6 @@
+							</div>
 							<DiffLine n={1}>
 								import {"{"} db {"}"} from "../db"
 							</DiffLine>
@@ -126,8 +140,12 @@ export function RightSidebar({ activeDemo }: RightSidebarProps) {
 								import {"{"} createSSHConnection {"}"} from "./ssh"
 							</DiffLine>
 							<DiffLine n={2} />
-							<DiffLine removed>export const getWorkspaces = () =&gt; {"{"}</DiffLine>
-							<DiffLine added>export const getWorkspaces = async () =&gt; {"{"}</DiffLine>
+							<DiffLine removed>
+								export const getWorkspaces = () =&gt; {"{"}
+							</DiffLine>
+							<DiffLine added>
+								export const getWorkspaces = async () =&gt; {"{"}
+							</DiffLine>
 							<DiffLine n={4}>{"  "}return db.query.workspaces</DiffLine>
 						</div>
 					</div>
@@ -182,7 +200,9 @@ function DiffLine({
 
 	return (
 		<div className={`flex border-l-2 ${bar} ${bg}`}>
-			<span className="w-6 shrink-0 pr-2 text-right tabular-nums text-muted-foreground/40">{prefix || n}</span>
+			<span className="w-6 shrink-0 pr-2 text-right tabular-nums text-muted-foreground/40">
+				{prefix || n}
+			</span>
 			<span className={textColor}>{children}</span>
 		</div>
 	);

@@ -1,7 +1,7 @@
 ---
 name: using-ao
-description: "Catalog of the AO (Agent Orchestrator) `aong` CLI: spawning workers, managing sessions and projects, sending messages, previewing pages, and daemon control. Use when using the aong CLI, spawning workers, or managing AO sessions in an AO workspace."
-trigger: "Using the aong CLI in an AO workspace: spawning workers, managing sessions/projects, sending messages, previewing pages."
+description: "Catalog of the AO (Agent Orchestrator) `aong` CLI: spawning workers, managing sessions and projects, sending messages, controlling the shared browser, previewing pages, and daemon control. Use when using the aong CLI, spawning workers, or managing AO sessions in an AO workspace."
+trigger: "Using the aong CLI in an AO workspace: spawning workers, managing sessions/projects, sending messages, controlling the browser, previewing pages."
 ---
 
 # AO CLI Catalog
@@ -23,7 +23,8 @@ for commands that are not fork-specific lifecycle overrides.
 | `orchestrator` | List orchestrator sessions | Viewing which sessions are orchestrators | [commands/orchestrator.md](commands/orchestrator.md) |
 | `review` | Submit a reviewer result for a worker's PR | Completing a code review loop | [commands/review.md](commands/review.md) |
 | `send` | Send a message to a running agent session | Correcting or directing a live agent | [commands/send.md](commands/send.md) |
-| `preview` | Open a URL in the desktop browser panel | Demoing a local server or file from inside a session | [commands/preview.md](commands/preview.md) |
+| `preview` | Start a session-owned app or open an exact URL/file | Running and showing the worker's relevant app, Markdown, HTML, PDF, or image | [commands/preview.md](commands/preview.md) |
+| `browser` | Inspect and control the session's shared live browser | Verifying a web app through snapshots, interactions, waits, screenshots, console, and errors | [commands/browser.md](commands/browser.md) |
 | `start` | Start loaded AO user services | Starting a web-first AO deployment | [commands/start.md](commands/start.md) |
 | `status` | Show daemon, fleet, and service-unit status | Verifying the deployment is up and healthy | [commands/status.md](commands/status.md) |
 | `doctor` | Run health checks plus fork service checks | Diagnosing AO setup problems | [commands/doctor.md](commands/doctor.md) |
@@ -47,5 +48,12 @@ for commands that are not fork-specific lifecycle overrides.
 - Session and project ids are shown by `aong session ls` and `aong project ls`.
 - `--agent` is an alias for `--harness` on `aong spawn`.
 - Every command accepts `-h / --help` for the full flag list.
+- For frontend launch, preview selection, or artifact handoff, read
+  [commands/preview.md](commands/preview.md) before acting. Its static-file,
+  project-runtime, and automatic-handoff rules are load-bearing.
+- For page inspection, interaction, or request diagnosis, read
+  [commands/browser.md](commands/browser.md). It defines shared-tab behavior
+  and the opt-in network policy.
 
-See [references.md](references.md) for natural-language-to-command mappings.
+Use [references.md](references.md) only when a natural-language request does
+not map clearly to a command above.

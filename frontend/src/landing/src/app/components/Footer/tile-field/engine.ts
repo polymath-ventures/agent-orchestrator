@@ -153,7 +153,8 @@ export class TileField {
 	constructor(host: HTMLElement, _opts: TileFieldOptions = {}) {
 		this.host = host;
 		this.canvas = document.createElement("canvas");
-		this.canvas.className = "pointer-events-none absolute inset-0 block h-full w-full";
+		this.canvas.className =
+			"pointer-events-none absolute inset-0 block h-full w-full";
 		this.ctx = this.canvas.getContext("2d")!;
 		this.host.appendChild(this.canvas);
 		this.reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -169,7 +170,12 @@ export class TileField {
 	private linear = (p: number) => p;
 	private easeInExpo = (p: number) => (p === 0 ? 0 : Math.pow(2, 10 * (p - 1)));
 
-	private tweenValue = (start: number, end: number, p: number, ease: "inExpo" | null = null) => {
+	private tweenValue = (
+		start: number,
+		end: number,
+		p: number,
+		ease: "inExpo" | null = null,
+	) => {
 		const delta = end - start;
 		const easeFn = ease === "inExpo" ? this.easeInExpo : this.linear;
 		return start + delta * easeFn(p);
@@ -427,7 +433,13 @@ export class TileField {
 		this.state.particles.forEach((particle) => {
 			ctx.fillStyle = particle.c;
 			ctx.beginPath();
-			ctx.arc(particle.x + particle.r / 2, particle.y + particle.r / 2, particle.r / 2, 0, Math.PI * 2);
+			ctx.arc(
+				particle.x + particle.r / 2,
+				particle.y + particle.r / 2,
+				particle.r / 2,
+				0,
+				Math.PI * 2,
+			);
 			ctx.closePath();
 			ctx.fill();
 		});
@@ -452,7 +464,14 @@ export class TileField {
 		});
 	};
 
-	private distSegSq = (qx: number, qy: number, ax: number, ay: number, bx: number, by: number) => {
+	private distSegSq = (
+		qx: number,
+		qy: number,
+		ax: number,
+		ay: number,
+		bx: number,
+		by: number,
+	) => {
 		const dx = bx - ax;
 		const dy = by - ay;
 		if (dx === 0 && dy === 0) {
@@ -511,7 +530,10 @@ export class TileField {
 				const dSq = this.distSegSq(x, y, prevX, prevY, lightX, lightY);
 				if (dSq <= influenceSq) {
 					const ang = Math.atan2(y - lightY, x - lightX);
-					const wobble = 1 + 0.3 * Math.sin(3 * ang + time * 1.6) + 0.16 * Math.sin(5 * ang - time * 1.1 + 1.3);
+					const wobble =
+						1 +
+						0.3 * Math.sin(3 * ang + time * 1.6) +
+						0.16 * Math.sin(5 * ang - time * 1.1 + 1.3);
 					const f = clamp(1 - Math.sqrt(dSq) / (reach * wobble), 0, 1);
 					target = f * f * (3 - 2 * f);
 				}
@@ -542,17 +564,22 @@ export class TileField {
 				let hue: number;
 				let chroma: number;
 				if (ROWS[rowOf[i] ?? 0]?.bright) {
-					hue = ((((hueSeed[i] ?? 0) * 360 + time * 26) % 360) + 360) % 360;
+					hue = (((hueSeed[i] ?? 0) * 360 + time * 26) % 360 + 360) % 360;
 					chroma = 0.19;
 				} else {
 					const drift = (flow - 0.8) * 16;
 					hue = BRAND_HUE + drift + ((hueSeed[i] ?? 0) - 0.5) * 8;
 					chroma = 0.085;
 				}
-				const hStep = ((Math.round((hue / 360) * HUE_STEPS) % HUE_STEPS) + HUE_STEPS) % HUE_STEPS;
+				const hStep =
+					((Math.round((hue / 360) * HUE_STEPS) % HUE_STEPS) + HUE_STEPS) %
+					HUE_STEPS;
 				const lightness = ROWS[rowOf[i] ?? 0]?.bright ? 0.72 : 0.64;
 				hueOfStep[hStep] = hue;
-				const as = Math.min(ALPHA_STEPS - 1, Math.floor(colorAmt * ALPHA_STEPS));
+				const as = Math.min(
+					ALPHA_STEPS - 1,
+					Math.floor(colorAmt * ALPHA_STEPS),
+				);
 				buckets[hStep]?.[as]?.rect(x - h, y - h, sz, sz);
 				this.stepL[hStep] = lightness;
 				this.stepC[hStep] = chroma;

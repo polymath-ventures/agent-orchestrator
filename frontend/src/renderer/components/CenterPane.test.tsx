@@ -4,12 +4,12 @@ import type { WorkspaceSession } from "../types/workspace";
 import { CenterPane } from "./CenterPane";
 
 const terminalPaneProps = vi.hoisted(() => ({
-	value: {} as { autoFocus?: boolean; focusRequest?: number },
+	value: {} as { autoFocus?: boolean; focusRequest?: number; onExitFocus?: () => void },
 }));
 
 // The terminal body pulls in xterm/SSE machinery irrelevant to the header under test.
 vi.mock("./TerminalPane", () => ({
-	TerminalPane: (props: { autoFocus?: boolean; focusRequest?: number }) => {
+	TerminalPane: (props: { autoFocus?: boolean; focusRequest?: number; onExitFocus?: () => void }) => {
 		terminalPaneProps.value = props;
 		return <div>terminal body</div>;
 	},
@@ -26,12 +26,6 @@ const worker = {
 	status: "working",
 	updatedAt: "2026-06-10T00:00:00Z",
 	prs: [],
-} satisfies WorkspaceSession;
-const secondWorker = {
-	...worker,
-	id: "sess-2",
-	title: "review the change",
-	branch: "ao/sess-2",
 } satisfies WorkspaceSession;
 
 describe("CenterPane toolbar session label", () => {
@@ -61,81 +55,40 @@ describe("CenterPane toolbar session label", () => {
 		expect(terminalPaneProps.value.focusRequest).toBe(1);
 	});
 
-	it("renders project sessions as tabs and opens a sibling session", () => {
-		const onSelectProjectSession = vi.fn();
-		render(
-			<CenterPane
-				session={worker}
-				projectSessions={[worker, secondWorker]}
-				onSelectProjectSession={onSelectProjectSession}
-				theme="dark"
-				daemonReady
-			/>,
-		);
+	// The Ctrl+F6 exit-focus escape hatch resolves its target by querying
+	// [data-terminal-tab="true"][aria-current="true"] inside the pane. Upstream owns
+	// this tab strip's shape and reverted it to a single session tab (#3275), so the
+	// attribute pairing is the seam most likely to be dropped by a future sync while
+	// every focus-nonce test above keeps passing. See docs/fork.md item 2.
+	it("exits terminal focus onto the active session tab, the data-terminal-tab anchor", () => {
+		render(<CenterPane session={worker} theme="dark" daemonReady />);
+
+		const sessionTab = screen.getByRole("button", { name: worker.title });
+		expect(sessionTab).toHaveAttribute("data-terminal-tab", "true");
+		expect(sessionTab).toHaveAttribute("aria-current", "true");
+		expect(sessionTab).not.toHaveFocus();
+
+		terminalPaneProps.value.onExitFocus?.();
+
+		expect(sessionTab).toHaveFocus();
+	});
+
+	it("renders only this session's own tab, never a sibling session", () => {
+		render(<CenterPane session={worker} theme="dark" daemonReady />);
 
 		expect(screen.getByRole("button", { name: "do the thing" })).toHaveAttribute("aria-current", "true");
-		fireEvent.click(screen.getByRole("button", { name: "review the change" }));
-		expect(onSelectProjectSession).toHaveBeenCalledWith(secondWorker);
-	});
-
-	it("adds workers and terminals only through the tab launcher", () => {
-		const onAddProjectSession = vi.fn();
-		const onNewShellTerminal = vi.fn();
-		render(
-			<CenterPane
-				session={worker}
-				projectSessions={[worker]}
-				availableProjectSessions={[secondWorker]}
-				onAddProjectSession={onAddProjectSession}
-				onNewShellTerminal={onNewShellTerminal}
-				theme="dark"
-				daemonReady
-			/>,
-		);
-
 		expect(screen.queryByRole("button", { name: "review the change" })).not.toBeInTheDocument();
-		fireEvent.pointerDown(screen.getByRole("button", { name: "Add tab" }), { button: 0, ctrlKey: false });
-		fireEvent.click(screen.getByRole("menuitem", { name: /review the change/ }));
-		expect(onAddProjectSession).toHaveBeenCalledWith(secondWorker);
-
-		fireEvent.pointerDown(screen.getByRole("button", { name: "Add tab" }), { button: 0, ctrlKey: false });
-		fireEvent.click(screen.getByRole("menuitem", { name: "Terminal" }));
-		expect(onNewShellTerminal).toHaveBeenCalledOnce();
 	});
 
-	it("limits a large session list, then expands it into a searchable scroll area", () => {
-		const sessions = Array.from({ length: 7 }, (_, index) => ({
-			...secondWorker,
-			id: `sess-${index + 2}`,
-			title: `Worker ${index + 1}`,
-		}));
-		render(
-			<CenterPane
-				session={worker}
-				projectSessions={[worker]}
-				availableProjectSessions={sessions}
-				theme="dark"
-				daemonReady
-			/>,
-		);
+	// The button used to open a dropdown that also listed every session across
+	// every project (#3208); it now only ever creates a terminal.
+	it("opens a new terminal straight from the tab-strip button", () => {
+		const onNewShellTerminal = vi.fn();
+		render(<CenterPane session={worker} onNewShellTerminal={onNewShellTerminal} theme="dark" daemonReady />);
 
-		fireEvent.pointerDown(screen.getByRole("button", { name: "Add tab" }), { button: 0, ctrlKey: false });
-		const search = screen.getByRole("textbox", { name: "Search sessions" });
-		const terminal = screen.getByRole("menuitem", { name: "Terminal" });
-		expect(terminal.compareDocumentPosition(search) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-		expect(screen.getByRole("menuitem", { name: /Worker 5/ })).toBeInTheDocument();
-		expect(screen.queryByRole("menuitem", { name: /Worker 6/ })).not.toBeInTheDocument();
-
-		fireEvent.click(screen.getByRole("menuitem", { name: "Show all sessions" }));
-		const lastSession = screen.getByRole("menuitem", { name: /Worker 7/ });
-		expect(lastSession).toBeInTheDocument();
-		expect(lastSession.parentElement).toHaveClass("h-52", "overflow-y-auto");
-
-		fireEvent.change(screen.getByRole("textbox", { name: "Search sessions" }), {
-			target: { value: "Worker 7" },
-		});
-		expect(screen.getByRole("menuitem", { name: /Worker 7/ })).toBeInTheDocument();
-		expect(screen.queryByRole("menuitem", { name: /Worker 1/ })).not.toBeInTheDocument();
+		fireEvent.click(screen.getByRole("button", { name: "New terminal" }));
+		expect(onNewShellTerminal).toHaveBeenCalledOnce();
+		expect(screen.queryByRole("menu")).not.toBeInTheDocument();
 	});
 
 	it("shows 'Orchestrator' for an orchestrator session", () => {

@@ -5,6 +5,11 @@ frontend/src/landing/data/changelog.json
 backend/internal/httpd/apispec/openapi.yaml
 agent-instructions/standard-set.json
 
+# Vendored upstream marketing site — the fork carries no code of its own here and
+# keeps the tree byte-identical to upstream so syncs stay mechanical. Reformatting
+# it to this repo's Prettier config conflicted every landing file on every sync.
+frontend/src/landing/
+
 # Vault-managed agent standards and generated client instructions
 agent-instructions/README.md
 agent-instructions/source/30-polypowers.md

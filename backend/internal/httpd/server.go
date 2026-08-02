@@ -107,11 +107,16 @@ func (s *Server) Run(ctx context.Context) error {
 	defer s.cancelStreams()
 
 	info := runfile.Info{
-		PID:           os.Getpid(),
-		Port:          s.boundPort(),
-		StartedAt:     time.Now().UTC(),
-		Owner:         s.cfg.Owner,
-		ShutdownToken: s.shutdownToken,
+		PID:       os.Getpid(),
+		Port:      s.boundPort(),
+		StartedAt: time.Now().UTC(),
+		// Owner comes from config rather than a second os.Getenv read: config.Load
+		// already resolves AO_OWNER, and OwnerApp is an exact-match gate for
+		// installing the frontend-death watchdog.
+		Owner:                 s.cfg.Owner,
+		ShutdownToken:         s.shutdownToken,
+		BrowserRuntimeToken:   os.Getenv("AO_BROWSER_RUNTIME_TOKEN"),
+		BrowserRuntimeAddress: os.Getenv("AO_BROWSER_RUNTIME_ADDRESS"),
 	}
 	if err := runfile.Write(s.cfg.RunFilePath, info); err != nil {
 		_ = s.listen.Close()

@@ -187,7 +187,7 @@ func TestWiring_StartSessionBuildsSessionService(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildAgentResolver: %v", err)
 	}
-	svc, reviewSvc, lc, err := startSession(cfg, rt, store, lcm, messenger, nil, telemetryadapter.NoopSink{}, agents, log)
+	svc, reviewSvc, lc, err := startSession(cfg, rt, store, lcm, messenger, nil, telemetryadapter.NoopSink{}, agents, nil, nil, nil, log)
 	if err != nil {
 		t.Fatalf("startSession: %v", err)
 	}
@@ -255,7 +255,7 @@ func TestWiring_StartSessionSpawnsScratchWithoutGitRepo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildAgentResolver: %v", err)
 	}
-	svc, _, _, err := startSession(cfg, runtime, store, lcm, messenger, nil, telemetryadapter.NoopSink{}, agents, log)
+	svc, _, _, err := startSession(cfg, runtime, store, lcm, messenger, nil, telemetryadapter.NoopSink{}, agents, nil, nil, nil, log)
 	if err != nil {
 		t.Fatalf("startSession: %v", err)
 	}
@@ -310,7 +310,7 @@ func TestStartSession_SpawnDoesNotPanicWhenNoTrackerToken(t *testing.T) {
 	if agentsErr != nil {
 		t.Fatalf("buildAgentResolver: %v", agentsErr)
 	}
-	svc, _, _, err := startSession(cfg, rt, store, lcm, messenger, nil, telemetryadapter.NoopSink{}, agents, log)
+	svc, _, _, err := startSession(cfg, rt, store, lcm, messenger, nil, telemetryadapter.NoopSink{}, agents, nil, nil, nil, log)
 	if err != nil {
 		t.Fatalf("startSession: %v", err)
 	}
@@ -369,7 +369,7 @@ func TestStartTrackerIntake_RunsEvenWithoutEnabledProjects(t *testing.T) {
 	if agentsErr != nil {
 		t.Fatalf("buildAgentResolver: %v", agentsErr)
 	}
-	svc, _, _, err := startSession(cfg, rt, store, lcm, messenger, nil, telemetryadapter.NoopSink{}, agents, log)
+	svc, _, _, err := startSession(cfg, rt, store, lcm, messenger, nil, telemetryadapter.NoopSink{}, agents, nil, nil, nil, log)
 	if err != nil {
 		t.Fatalf("startSession: %v", err)
 	}
@@ -426,7 +426,7 @@ func TestStartSessionInjectsSharedSpawnModelValidator(t *testing.T) {
 	if agentsErr != nil {
 		t.Fatalf("buildAgentResolver: %v", agentsErr)
 	}
-	svc, _, _, err := startSession(config.Config{DataDir: t.TempDir()}, rt, store, lcm, messenger, validator, telemetryadapter.NoopSink{}, agents, log)
+	svc, _, _, err := startSession(config.Config{DataDir: t.TempDir()}, rt, store, lcm, messenger, validator, telemetryadapter.NoopSink{}, agents, nil, nil, nil, log)
 	if err != nil {
 		t.Fatal(err)
 	}

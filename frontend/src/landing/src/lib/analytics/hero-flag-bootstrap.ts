@@ -36,7 +36,8 @@ function sha1Hex(input: string): string {
 			w[i] = view.getUint32(block + i * 4);
 		}
 		for (let i = 16; i < 80; i++) {
-			const n = (w[i - 3] ?? 0) ^ (w[i - 8] ?? 0) ^ (w[i - 14] ?? 0) ^ (w[i - 16] ?? 0);
+			const n =
+				(w[i - 3] ?? 0) ^ (w[i - 8] ?? 0) ^ (w[i - 14] ?? 0) ^ (w[i - 16] ?? 0);
 			w[i] = ((n << 1) | (n >>> 31)) >>> 0;
 		}
 
@@ -62,7 +63,8 @@ function sha1Hex(input: string): string {
 				f = b ^ c ^ d;
 				k = 0xca62c1d6;
 			}
-			const temp = ((((a << 5) | (a >>> 27)) >>> 0) + f + e + k + (w[i] ?? 0)) >>> 0;
+			const temp =
+				((((a << 5) | (a >>> 27)) >>> 0) + f + e + k + (w[i] ?? 0)) >>> 0;
 			e = d;
 			d = c;
 			c = ((b << 30) | (b >>> 2)) >>> 0;
@@ -77,12 +79,17 @@ function sha1Hex(input: string): string {
 		h4 = (h4 + e) >>> 0;
 	}
 
-	return [h0, h1, h2, h3, h4].map((word) => word.toString(16).padStart(8, "0")).join("");
+	return [h0, h1, h2, h3, h4]
+		.map((word) => word.toString(16).padStart(8, "0"))
+		.join("");
 }
 
 function variantForDistinctId(distinctId: string): string {
 	const hashValue =
-		Number.parseInt(sha1Hex(`${HERO_POSITIONING_FLAG}.${distinctId}variant`).slice(0, 15), 16) / LONG_SCALE;
+		Number.parseInt(
+			sha1Hex(`${HERO_POSITIONING_FLAG}.${distinctId}variant`).slice(0, 15),
+			16,
+		) / LONG_SCALE;
 	let cumulative = 0;
 	for (const variant of VARIANTS) {
 		cumulative += variant.rolloutPercentage / 100;
@@ -92,17 +99,25 @@ function variantForDistinctId(distinctId: string): string {
 }
 
 function distinctIdFromCookie(): string | undefined {
-	const match = document.cookie.split("; ").find((row) => row.startsWith(`${POSTHOG_COOKIE_NAME}=`));
+	const match = document.cookie
+		.split("; ")
+		.find((row) => row.startsWith(`${POSTHOG_COOKIE_NAME}=`));
 	if (!match) return undefined;
 	try {
-		const parsed = JSON.parse(decodeURIComponent(match.slice(POSTHOG_COOKIE_NAME.length + 1)));
-		return typeof parsed.distinct_id === "string" ? parsed.distinct_id : undefined;
+		const parsed = JSON.parse(
+			decodeURIComponent(match.slice(POSTHOG_COOKIE_NAME.length + 1)),
+		);
+		return typeof parsed.distinct_id === "string"
+			? parsed.distinct_id
+			: undefined;
 	} catch {
 		return undefined;
 	}
 }
 
-export function getHeroFlagBootstrap(): NonNullable<PostHogConfig["bootstrap"]> {
+export function getHeroFlagBootstrap(): NonNullable<
+	PostHogConfig["bootstrap"]
+> {
 	const distinctId = distinctIdFromCookie() ?? crypto.randomUUID();
 	return {
 		distinctID: distinctId,

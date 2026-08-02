@@ -4,8 +4,13 @@ interface JoinWaitlistButtonProps {
 	className?: string;
 }
 
-export function JoinWaitlistButton({ onClick, size = "md", className = "" }: JoinWaitlistButtonProps) {
-	const sizeClasses = size === "sm" ? "px-4 py-2 text-sm" : "px-6 py-3 text-base";
+export function JoinWaitlistButton({
+	onClick,
+	size = "md",
+	className = "",
+}: JoinWaitlistButtonProps) {
+	const sizeClasses =
+		size === "sm" ? "px-4 py-2 text-sm" : "px-6 py-3 text-base";
 
 	return (
 		<button

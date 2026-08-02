@@ -9,7 +9,12 @@ import {
 	PREVIOUS_SESSION_SHORTCUT_CHANNEL,
 	type KeybindingOverrides,
 } from "./shared/shortcuts";
-import type { BrowserNavState, BrowserRect } from "./main/browser-view-host";
+import type {
+	BrowserAgentActivityState,
+	BrowserNavState,
+	BrowserRect,
+	BrowserTabsState,
+} from "./main/browser-view-host";
 import type { DaemonStatus } from "./shared/daemon-status";
 import type { TelemetryBootstrap } from "./shared/telemetry";
 import type { MigrationState } from "./main/app-state";
@@ -60,6 +65,8 @@ const api = {
 		openExternal: (url: string) => ipcRenderer.invoke("app:openExternal", url) as Promise<void>,
 		scanImportFolder: (input: { path: string; mode: ImportFolderMode }) =>
 			ipcRenderer.invoke("app:scanImportFolder", input) as Promise<ImportFolderScan>,
+		checkAncestorRepo: (path: string) =>
+			ipcRenderer.invoke("app:checkAncestorRepo", path) as Promise<string | undefined>,
 		// Fired by the main process when the app-level new-session shortcut
 		// (⌘N / Ctrl+Shift+N) is pressed in any web contents.
 		onNewSessionShortcut: (listener: () => void) => {
@@ -172,6 +179,11 @@ const api = {
 		goForward: (viewId: string) => ipcRenderer.invoke("browser:goForward", viewId) as Promise<BrowserNavState>,
 		reload: (viewId: string) => ipcRenderer.invoke("browser:reload", viewId) as Promise<BrowserNavState>,
 		stop: (viewId: string) => ipcRenderer.invoke("browser:stop", viewId) as Promise<BrowserNavState>,
+		getTabs: (viewId: string) => ipcRenderer.invoke("browser:getTabs", viewId) as Promise<BrowserTabsState>,
+		selectTab: (input: { viewId: string; tabId: string }) =>
+			ipcRenderer.invoke("browser:selectTab", input) as Promise<BrowserTabsState>,
+		closeTab: (input: { viewId: string; tabId: string }) =>
+			ipcRenderer.invoke("browser:closeTab", input) as Promise<BrowserTabsState>,
 		destroy: (viewId: string) => ipcRenderer.send("browser:destroy", viewId),
 		setAnnotationMode: (input: BrowserAnnotationModeInput) =>
 			ipcRenderer.invoke("browser:annotation:setMode", input) as Promise<void>,
@@ -180,6 +192,20 @@ const api = {
 			ipcRenderer.on("browser:navState", wrapped);
 			return () => {
 				ipcRenderer.off("browser:navState", wrapped);
+			};
+		},
+		onTabsState: (listener: (state: BrowserTabsState) => void) => {
+			const wrapped = (_event: Electron.IpcRendererEvent, state: BrowserTabsState) => listener(state);
+			ipcRenderer.on("browser:tabsState", wrapped);
+			return () => {
+				ipcRenderer.off("browser:tabsState", wrapped);
+			};
+		},
+		onAgentActivity: (listener: (state: BrowserAgentActivityState) => void) => {
+			const wrapped = (_event: Electron.IpcRendererEvent, state: BrowserAgentActivityState) => listener(state);
+			ipcRenderer.on("browser:agentActivity", wrapped);
+			return () => {
+				ipcRenderer.off("browser:agentActivity", wrapped);
 			};
 		},
 		onAnnotationSubmit: (listener: (payload: BrowserAnnotationSubmitPayload) => void) => {

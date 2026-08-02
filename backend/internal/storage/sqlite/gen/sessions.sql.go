@@ -20,7 +20,7 @@ SELECT id, COALESCE(project_id, '') AS project_id, num, issue_id, kind, harness,
        display_name, first_signal_at, preview_url, preview_revision, model,
        mix_selected, effort, prompt_policy_hash,
        mix_bucket_model, cleanup_generation, runtime_launch_id, workspace_repo_path,
-       terminate_on_pr_merge
+       terminate_on_pr_merge, diff_base_sha, diff_base_ref
 FROM sessions WHERE id = ?
 `
 
@@ -57,6 +57,8 @@ func (q *Queries) GetSession(ctx context.Context, id domain.SessionID) (Session,
 		&i.RuntimeLaunchID,
 		&i.WorkspaceRepoPath,
 		&i.TerminateOnPRMerge,
+		&i.DiffBaseSha,
+		&i.DiffBaseRef,
 	)
 	return i, err
 }
@@ -65,11 +67,11 @@ const insertSession = `-- name: InsertSession :exec
 INSERT INTO sessions (
     id, project_id, num, issue_id, kind, harness, display_name,
     activity_state, activity_last_at, first_signal_at, is_terminated,
-    branch, workspace_path, workspace_repo_path, runtime_handle_id,
+    branch, workspace_path, workspace_repo_path, diff_base_sha, diff_base_ref, runtime_handle_id,
     runtime_launch_id, agent_session_id, prompt,
     preview_url, preview_revision, model, effort, mix_selected, mix_bucket_model,
     prompt_policy_hash, terminate_on_pr_merge, cleanup_generation, created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type InsertSessionParams struct {
@@ -87,6 +89,8 @@ type InsertSessionParams struct {
 	Branch             string
 	WorkspacePath      string
 	WorkspaceRepoPath  string
+	DiffBaseSha        string
+	DiffBaseRef        string
 	RuntimeHandleID    string
 	RuntimeLaunchID    string
 	AgentSessionID     string
@@ -120,6 +124,8 @@ func (q *Queries) InsertSession(ctx context.Context, arg InsertSessionParams) er
 		arg.Branch,
 		arg.WorkspacePath,
 		arg.WorkspaceRepoPath,
+		arg.DiffBaseSha,
+		arg.DiffBaseRef,
 		arg.RuntimeHandleID,
 		arg.RuntimeLaunchID,
 		arg.AgentSessionID,
@@ -146,7 +152,7 @@ SELECT id, COALESCE(project_id, '') AS project_id, num, issue_id, kind, harness,
        display_name, first_signal_at, preview_url, preview_revision, model,
        mix_selected, effort, prompt_policy_hash,
        mix_bucket_model, cleanup_generation, runtime_launch_id, workspace_repo_path,
-       terminate_on_pr_merge
+       terminate_on_pr_merge, diff_base_sha, diff_base_ref
 FROM sessions ORDER BY COALESCE(project_id, ''), num
 `
 
@@ -189,6 +195,8 @@ func (q *Queries) ListAllSessions(ctx context.Context) ([]Session, error) {
 			&i.RuntimeLaunchID,
 			&i.WorkspaceRepoPath,
 			&i.TerminateOnPRMerge,
+			&i.DiffBaseSha,
+			&i.DiffBaseRef,
 		); err != nil {
 			return nil, err
 		}
@@ -210,7 +218,7 @@ SELECT id, COALESCE(project_id, '') AS project_id, num, issue_id, kind, harness,
        display_name, first_signal_at, preview_url, preview_revision, model,
        mix_selected, effort, prompt_policy_hash,
        mix_bucket_model, cleanup_generation, runtime_launch_id, workspace_repo_path,
-       terminate_on_pr_merge
+       terminate_on_pr_merge, diff_base_sha, diff_base_ref
 FROM sessions WHERE project_id = ? ORDER BY num
 `
 
@@ -253,6 +261,8 @@ func (q *Queries) ListSessionsByProject(ctx context.Context, projectID domain.Pr
 			&i.RuntimeLaunchID,
 			&i.WorkspaceRepoPath,
 			&i.TerminateOnPRMerge,
+			&i.DiffBaseSha,
+			&i.DiffBaseRef,
 		); err != nil {
 			return nil, err
 		}
@@ -363,7 +373,7 @@ const updateSession = `-- name: UpdateSession :exec
 UPDATE sessions SET
     issue_id = ?, kind = ?, harness = ?, display_name = ?,
     activity_state = ?, activity_last_at = ?, first_signal_at = ?, is_terminated = ?,
-    branch = ?, workspace_path = ?, workspace_repo_path = ?, runtime_handle_id = ?,
+    branch = ?, workspace_path = ?, workspace_repo_path = ?, diff_base_sha = ?, diff_base_ref = ?, runtime_handle_id = ?,
     runtime_launch_id = ?, agent_session_id = ?, prompt = ?,
     preview_url = ?, preview_revision = ?, model = ?, effort = ?, mix_selected = ?,
     mix_bucket_model = ?, prompt_policy_hash = ?, terminate_on_pr_merge = ?,
@@ -383,6 +393,8 @@ type UpdateSessionParams struct {
 	Branch             string
 	WorkspacePath      string
 	WorkspaceRepoPath  string
+	DiffBaseSha        string
+	DiffBaseRef        string
 	RuntimeHandleID    string
 	RuntimeLaunchID    string
 	AgentSessionID     string
@@ -413,6 +425,8 @@ func (q *Queries) UpdateSession(ctx context.Context, arg UpdateSessionParams) er
 		arg.Branch,
 		arg.WorkspacePath,
 		arg.WorkspaceRepoPath,
+		arg.DiffBaseSha,
+		arg.DiffBaseRef,
 		arg.RuntimeHandleID,
 		arg.RuntimeLaunchID,
 		arg.AgentSessionID,

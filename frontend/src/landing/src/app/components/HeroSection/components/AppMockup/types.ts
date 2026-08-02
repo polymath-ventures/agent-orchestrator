@@ -1,4 +1,8 @@
-export type ActiveDemo = "Use Any Agents" | "Create Parallel Branches" | "See Changes" | "Open in Any IDE";
+export type ActiveDemo =
+	| "Use Any Agents"
+	| "Create Parallel Branches"
+	| "See Changes"
+	| "Open in Any IDE";
 
 export type WorkspaceStatus = "permission" | "working" | "review";
 

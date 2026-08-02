@@ -8,7 +8,13 @@ import { HarnessCoverageDemo } from "./components/HarnessCoverageDemo/HarnessCov
 import { MobileAppDemo } from "./components/MobileAppDemo/MobileAppDemo";
 import { FEATURES } from "./constants";
 
-const DEMO_COMPONENTS = [DelegationDemo, FleetBoardDemo, FeedbackLoopDemo, HarnessCoverageDemo, MobileAppDemo];
+const DEMO_COMPONENTS = [
+	DelegationDemo,
+	FleetBoardDemo,
+	FeedbackLoopDemo,
+	HarnessCoverageDemo,
+	MobileAppDemo,
+];
 
 const FEATURE_BACKGROUNDS = [
 	"/feature3.png",
@@ -35,9 +41,13 @@ export function FeaturesSection() {
 								}`}
 							>
 								{/* Text Content */}
-								<div className={`space-y-6 ${isReversed ? "xl:order-2 xl:text-right" : "xl:order-1"}`}>
+								<div
+									className={`space-y-6 ${isReversed ? "xl:order-2 xl:text-right" : "xl:order-1"}`}
+								>
 									<div className="space-y-4">
-										<span className="text-sm font-mono text-muted-foreground tracking-[0.5px]">{feature.tag}</span>
+										<span className="text-sm font-mono text-muted-foreground tracking-[0.5px]">
+											{feature.tag}
+										</span>
 										<h3 className="text-balance text-2xl sm:text-3xl lg:text-4xl font-medium tracking-[-0.5px] text-foreground">
 											{feature.title}
 										</h3>
@@ -51,7 +61,11 @@ export function FeaturesSection() {
 
 								{/* Demo */}
 								<div className={`${isReversed ? "xl:order-1" : "xl:order-2"}`}>
-									<FeatureDemo backgroundImage={FEATURE_BACKGROUNDS[index % FEATURE_BACKGROUNDS.length]}>
+									<FeatureDemo
+										backgroundImage={
+											FEATURE_BACKGROUNDS[index % FEATURE_BACKGROUNDS.length]
+										}
+									>
 										{DemoComponent && <DemoComponent />}
 									</FeatureDemo>
 								</div>

@@ -1,6 +1,11 @@
 "use client";
 
-import { VscChevronDown, VscDiffAdded, VscDiffModified, VscDiffRemoved } from "react-icons/vsc";
+import {
+	VscChevronDown,
+	VscDiffAdded,
+	VscDiffModified,
+	VscDiffRemoved,
+} from "react-icons/vsc";
 import type { FileChangeType } from "../../types";
 
 interface FileChangeItemProps {
@@ -11,7 +16,13 @@ interface FileChangeItemProps {
 	type: FileChangeType;
 }
 
-export function FileChangeItem({ path, add = 0, del = 0, indent = 0, type }: FileChangeItemProps) {
+export function FileChangeItem({
+	path,
+	add = 0,
+	del = 0,
+	indent = 0,
+	type,
+}: FileChangeItemProps) {
 	const isFolder = type === "folder";
 
 	if (isFolder) {
@@ -26,10 +37,19 @@ export function FileChangeItem({ path, add = 0, del = 0, indent = 0, type }: Fil
 		);
 	}
 
-	const Icon = type === "add" ? VscDiffAdded : type === "delete" ? VscDiffRemoved : VscDiffModified;
+	const Icon =
+		type === "add"
+			? VscDiffAdded
+			: type === "delete"
+				? VscDiffRemoved
+				: VscDiffModified;
 
 	const iconColor =
-		type === "add" ? "text-emerald-400/85" : type === "delete" ? "text-rose-400/85" : "text-amber-300/85";
+		type === "add"
+			? "text-emerald-400/85"
+			: type === "delete"
+				? "text-rose-400/85"
+				: "text-amber-300/85";
 
 	return (
 		<div
@@ -38,7 +58,9 @@ export function FileChangeItem({ path, add = 0, del = 0, indent = 0, type }: Fil
 		>
 			<div className="flex min-w-0 items-center gap-2">
 				<Icon className={`size-3 shrink-0 ${iconColor}`} />
-				<span className="truncate text-[11px] text-muted-foreground">{path}</span>
+				<span className="truncate text-[11px] text-muted-foreground">
+					{path}
+				</span>
 			</div>
 			{(add > 0 || del > 0) && (
 				<span className="shrink-0 font-mono text-[10px] tabular-nums">

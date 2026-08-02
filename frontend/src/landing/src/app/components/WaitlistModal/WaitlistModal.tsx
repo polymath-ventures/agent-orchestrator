@@ -56,7 +56,10 @@ export function WaitlistModal({ isOpen, onClose }: WaitlistModalProps) {
 						</svg>
 					</button>
 
-					<WaitlistForm heading="Join the waitlist" description="Get notified about new releases and features." />
+					<WaitlistForm
+						heading="Join the waitlist"
+						description="Get notified about new releases and features."
+					/>
 				</div>
 			</div>
 		</>

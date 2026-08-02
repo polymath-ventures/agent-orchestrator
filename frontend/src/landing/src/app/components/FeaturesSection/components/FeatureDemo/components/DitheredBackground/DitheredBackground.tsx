@@ -13,9 +13,14 @@ interface DitheredBackgroundProps {
 	className?: string;
 }
 
-export function DitheredBackground({ colors, className = "" }: DitheredBackgroundProps) {
+export function DitheredBackground({
+	colors,
+	className = "",
+}: DitheredBackgroundProps) {
 	return (
-		<div className={`${className} pointer-events-none opacity-30 mix-blend-screen`}>
+		<div
+			className={`${className} pointer-events-none opacity-30 mix-blend-screen`}
+		>
 			<Suspense fallback={null}>
 				<Dithering
 					colorBack="#00000000"

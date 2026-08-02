@@ -6,7 +6,12 @@ function extractCodeFromChildren(children: React.ReactNode): {
 	code: string;
 	language: BundledLanguage;
 } {
-	if (children && typeof children === "object" && "props" in children && children.props) {
+	if (
+		children &&
+		typeof children === "object" &&
+		"props" in children &&
+		children.props
+	) {
 		const codeProps = children.props as {
 			children?: string;
 			className?: string;
@@ -32,7 +37,11 @@ function Video({ src, title }: { src: string; title?: string }) {
 				playsInline
 				preload="metadata"
 			/>
-			{title && <span className="block text-center text-sm text-muted-foreground mt-3">{title}</span>}
+			{title && (
+				<span className="block text-center text-sm text-muted-foreground mt-3">
+					{title}
+				</span>
+			)}
 		</span>
 	);
 }
@@ -58,7 +67,11 @@ export const mdxComponents = {
 		const { code, language } = extractCodeFromChildren(children);
 		return <BlogCodeBlock code={code} language={language} />;
 	},
-	code: ({ children, className, ...props }: React.HTMLAttributes<HTMLElement>) => {
+	code: ({
+		children,
+		className,
+		...props
+	}: React.HTMLAttributes<HTMLElement>) => {
 		if (className?.includes("language-")) {
 			return (
 				<code className={className} {...props}>
@@ -67,7 +80,10 @@ export const mdxComponents = {
 			);
 		}
 		return (
-			<code {...props} className="bg-white/5 px-1.5 py-0.5 rounded text-[0.875em] text-white/90 font-mono">
+			<code
+				{...props}
+				className="bg-white/5 px-1.5 py-0.5 rounded text-[0.875em] text-white/90 font-mono"
+			>
 				{children}
 			</code>
 		);
@@ -75,8 +91,17 @@ export const mdxComponents = {
 	img: ({ src, alt, ...props }: React.ImgHTMLAttributes<HTMLImageElement>) => (
 		<span className="block my-8 not-prose">
 			{/* biome-ignore lint/performance/noImgElement: MDX images have unknown dimensions */}
-			<img src={src} alt={alt} className="w-full rounded-xl border border-border" {...props} />
-			{alt && <span className="block text-center text-sm text-muted-foreground mt-3">{alt}</span>}
+			<img
+				src={src}
+				alt={alt}
+				className="w-full rounded-xl border border-border"
+				{...props}
+			/>
+			{alt && (
+				<span className="block text-center text-sm text-muted-foreground mt-3">
+					{alt}
+				</span>
+			)}
 		</span>
 	),
 	Video,

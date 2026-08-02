@@ -72,7 +72,16 @@ function otherField(field: Field): Field {
 }
 
 function HarnessIcon({ src }: { src: string }) {
-	return <Image src={src} alt="" width={16} height={16} className="size-4 shrink-0" draggable={false} />;
+	return (
+		<Image
+			src={src}
+			alt=""
+			width={16}
+			height={16}
+			className="size-4 shrink-0"
+			draggable={false}
+		/>
+	);
 }
 
 export function HarnessCoverageDemo() {
@@ -221,7 +230,9 @@ export function HarnessCoverageDemo() {
 	return (
 		<FeaturePreviewShell
 			title="Agent Orchestrator"
-			trailing={<span className="font-mono text-[9px] text-[var(--preview-muted-foreground)]">23 supported</span>}
+			trailing={
+				<span className="font-mono text-[9px] text-[var(--preview-muted-foreground)]">23 supported</span>
+			}
 		>
 			<div
 				ref={rootRef}
@@ -294,7 +305,8 @@ export function HarnessCoverageDemo() {
 						>
 							<div className="flex min-h-0 flex-1 flex-col gap-1.5 overflow-y-auto">
 								{harnesses.map((harness, index) => {
-									const selected = openField === "worker" ? worker === index : orchestrator === index;
+									const selected =
+										openField === "worker" ? worker === index : orchestrator === index;
 									const disabled = !isSelectable(harness.status);
 									return (
 										<button
@@ -311,7 +323,9 @@ export function HarnessCoverageDemo() {
 											<HarnessIcon src={harness.icon} />
 											<span
 												className={`min-w-0 flex-1 truncate text-[12px] ${
-													disabled ? "text-[var(--preview-muted-foreground)]" : "text-[var(--preview-foreground)]"
+													disabled
+														? "text-[var(--preview-muted-foreground)]"
+														: "text-[var(--preview-foreground)]"
 												}`}
 											>
 												{harness.label}
@@ -319,7 +333,10 @@ export function HarnessCoverageDemo() {
 											<span
 												className="shrink-0 text-[10px]"
 												style={{
-													color: harness.status === "Authorized" ? previewStatus.success : previewStatus.warning,
+													color:
+														harness.status === "Authorized"
+															? previewStatus.success
+															: previewStatus.warning,
 												}}
 											>
 												{harness.status}
@@ -351,7 +368,15 @@ export function HarnessCoverageDemo() {
 	);
 }
 
-function SettingsRow({ icon, label, trailing }: { icon: ReactNode; label: string; trailing: ReactNode }) {
+function SettingsRow({
+	icon,
+	label,
+	trailing,
+}: {
+	icon: ReactNode;
+	label: string;
+	trailing: ReactNode;
+}) {
 	return (
 		<div className="flex h-[42px] items-center justify-between gap-3 rounded-2xl bg-[var(--preview-card)] px-3.5 transition-[background-color,box-shadow] duration-150">
 			<div className="flex min-w-0 items-center gap-3">

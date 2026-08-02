@@ -2,7 +2,10 @@ import Link from "next/link";
 import { MDXRemote } from "next-mdx-remote/rsc";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { type ChangelogEntry as ChangelogEntryType, formatChangelogDate } from "@/lib/changelog-utils";
+import {
+	type ChangelogEntry as ChangelogEntryType,
+	formatChangelogDate,
+} from "@/lib/changelog-utils";
 import { changelogMdxComponents } from "./changelog-mdx-components";
 
 interface ChangelogEntryProps {
@@ -13,17 +16,28 @@ export async function ChangelogEntry({ entry }: ChangelogEntryProps) {
 	const formattedDate = formatChangelogDate(entry.date);
 
 	return (
-		<article id={`changelog-${entry.slug}`} className="relative border-b border-border pb-16 last:border-b-0">
+		<article
+			id={`changelog-${entry.slug}`}
+			className="relative border-b border-border pb-16 last:border-b-0"
+		>
 			{/* Sticky date label positioned to the left of the gridline */}
-			<div className="hidden lg:flex absolute top-0 bottom-0 items-start" style={{ right: "calc(100% + 24px)" }}>
+			<div
+				className="hidden lg:flex absolute top-0 bottom-0 items-start"
+				style={{ right: "calc(100% + 24px)" }}
+			>
 				<div className="sticky top-24 flex items-center gap-3 pt-1">
-					<span className="text-sm font-mono text-muted-foreground whitespace-nowrap">{formattedDate}</span>
+					<span className="text-sm font-mono text-muted-foreground whitespace-nowrap">
+						{formattedDate}
+					</span>
 					<div className="w-0.5 h-5 bg-orange-500" />
 				</div>
 			</div>
 
 			{/* Mobile date */}
-			<time dateTime={entry.date} className="lg:hidden block text-sm font-mono text-muted-foreground mb-4">
+			<time
+				dateTime={entry.date}
+				className="lg:hidden block text-sm font-mono text-muted-foreground mb-4"
+			>
 				{formattedDate}
 			</time>
 
@@ -43,7 +57,11 @@ export async function ChangelogEntry({ entry }: ChangelogEntryProps) {
 			)}
 
 			{/* Description */}
-			{entry.description && <p className="text-lg text-muted-foreground mb-6">{entry.description}</p>}
+			{entry.description && (
+				<p className="text-lg text-muted-foreground mb-6">
+					{entry.description}
+				</p>
+			)}
 
 			{/* Body. Curated entries compile as MDX (custom components); GitHub
 			    release bodies are plain Markdown, rendered without the MDX compiler

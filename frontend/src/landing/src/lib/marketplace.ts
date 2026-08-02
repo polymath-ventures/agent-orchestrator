@@ -117,7 +117,8 @@ export const themeListings: ThemeListing[] = [
 		type: "dark",
 		author: "Catppuccin",
 		submittedBy: "tamarazuk",
-		description: "The Macchiato variant from the Catppuccin theme PR for Agent Orchestrator.",
+		description:
+			"The Macchiato variant from the Catppuccin theme PR for Agent Orchestrator.",
 		addedOn: "March 21, 2026",
 		source: {
 			label: "Download",
@@ -153,7 +154,8 @@ export const themeListings: ThemeListing[] = [
 		type: "dark",
 		author: "Catppuccin",
 		submittedBy: "tamarazuk",
-		description: "The Frappé variant from the Catppuccin theme PR for Agent Orchestrator.",
+		description:
+			"The Frappé variant from the Catppuccin theme PR for Agent Orchestrator.",
 		addedOn: "March 21, 2026",
 		source: {
 			label: "Download",
@@ -225,7 +227,8 @@ export const themeListings: ThemeListing[] = [
 		type: "dark",
 		author: "Agent Orchestrator",
 		submittedBy: "AviPeltz",
-		description: "The standalone Ember theme introduced before its palette became the default Dark theme.",
+		description:
+			"The standalone Ember theme introduced before its palette became the default Dark theme.",
 		addedOn: "December 1, 2025",
 		source: {
 			label: "Download",
@@ -298,7 +301,8 @@ export const themeListings: ThemeListing[] = [
 		type: "dark",
 		author: "Atom",
 		submittedBy: "AviPeltz",
-		description: "The original One Dark Pro theme from the first desktop themes PR, preserved as an importable file.",
+		description:
+			"The original One Dark Pro theme from the first desktop themes PR, preserved as an importable file.",
 		addedOn: "November 27, 2025",
 		source: {
 			label: "Download",
@@ -408,7 +412,8 @@ export const themeListings: ThemeListing[] = [
 		type: "dark",
 		author: "Baris Can Sayin",
 		submittedBy: "itsbariscan",
-		description: "Phosphor green on a void that leans green, not blue. A 1980s P1-phosphor CRT, after midnight.",
+		description:
+			"Phosphor green on a void that leans green, not blue. A 1980s P1-phosphor CRT, after midnight.",
 		addedOn: "May 7, 2026",
 		source: {
 			label: "Download",
@@ -814,7 +819,8 @@ export const themeListings: ThemeListing[] = [
 		type: "dark",
 		author: "Pavel Pertsev",
 		submittedBy: "itsbariscan",
-		description: "Retro groove from Pavel Pertsev: warm dark base, ochre/olive/clay accents. Honest, woodgrain feel.",
+		description:
+			"Retro groove from Pavel Pertsev: warm dark base, ochre/olive/clay accents. Honest, woodgrain feel.",
 		addedOn: "May 7, 2026",
 		source: {
 			label: "Download",
