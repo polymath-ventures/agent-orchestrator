@@ -208,6 +208,9 @@ func (o *Observer) pollProject(ctx context.Context, project domain.ProjectRecord
 		o.logger.Error("tracker intake: list issues failed", "project", project.ID, "repo", repo.Native, "err", err)
 		return true
 	}
+	// Intake keeps its richer BuildIssuePrompt legacy fallback, so it resolves
+	// configured templates here and passes the exact rendered prompt to Spawn.
+	// The manager uses the same resolver/renderer for promptless manual spawns.
 	taskTemplate, taskSource := domain.ResolveWorkerTaskPrompt(project.Config, o.projectDefaults)
 	var spawnFailed bool
 	workerPoolFull := false

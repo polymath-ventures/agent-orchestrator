@@ -16,4 +16,4 @@
 
 - [x] 3.1 Document `AO_WORKER_TASK_PROMPT`, per-project precedence, `{issue}`, exact replacement, and the append-only system-prompt boundary.
 - [x] 3.2 Add the prompt-override mechanism to `docs/fork.md` with sync anchors and issue reference.
-- [ ] 3.3 Run focused Go/frontend tests, OpenSpec strict validation, `npm run ci-local`, and final independent review.
+- [x] 3.3 Run focused Go/frontend tests, OpenSpec strict validation, `npm run ci-local`, and final independent review.
