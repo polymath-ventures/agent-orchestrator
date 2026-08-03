@@ -20,6 +20,7 @@ import { cn } from "../lib/utils";
 import { buildIntake, type IntakeForm, IntakeFields, intakeNeedsRule } from "./IntakeFields";
 import type { ProjectKind } from "../types/workspace";
 import { ModelAvailabilityField } from "./ModelAvailabilityField";
+import { PermissionModeSelect } from "./PermissionModeSelect";
 import { Button } from "./ui/button";
 import { Label } from "./ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
@@ -30,6 +31,7 @@ export type CreateProjectAgentSelection = {
 	workerAgent: string;
 	orchestratorAgent: string;
 	reviewerAgent: string;
+	permissions: string;
 	modelDefaults: Record<string, { model: string; effort: string }>;
 	trackerIntake?: TrackerIntakeConfig;
 };
@@ -139,6 +141,7 @@ export function CreateProjectAgentSheet({
 	const [workerAgent, setWorkerAgent] = useState("");
 	const [orchestratorAgent, setOrchestratorAgent] = useState("");
 	const [reviewerAgent, setReviewerAgent] = useState("");
+	const [permissions, setPermissions] = useState("");
 	const [workerAgentTouched, setWorkerAgentTouched] = useState(false);
 	const [orchestratorAgentTouched, setOrchestratorAgentTouched] = useState(false);
 	const [modelDefaults, setModelDefaults] = useState<Record<string, { model: string; effort: string }>>({});
@@ -176,6 +179,7 @@ export function CreateProjectAgentSheet({
 			setWorkerAgent("");
 			setOrchestratorAgent("");
 			setReviewerAgent("");
+			setPermissions("");
 			setWorkerAgentTouched(false);
 			setOrchestratorAgentTouched(false);
 			setModelDefaults({});
@@ -217,6 +221,7 @@ export function CreateProjectAgentSheet({
 								workerAgent,
 								orchestratorAgent,
 								reviewerAgent,
+								permissions,
 								modelDefaults: selectedModelDefaults(selectedHarnesses, modelDefaults),
 								trackerIntake: buildIntake(intake),
 							});
@@ -271,6 +276,20 @@ export function CreateProjectAgentSheet({
 								contentClassName="agents-sheet-menu"
 								onChange={(value) => setReviewerAgent(value === AUTOMATIC_REVIEWER ? "" : value)}
 							/>
+							<div className="flex flex-col gap-1.5">
+								<Label htmlFor="newProjectPermissionMode" className="agents-sheet-label">
+									Permission mode
+								</Label>
+								<PermissionModeSelect
+									id="newProjectPermissionMode"
+									value={permissions}
+									onChange={setPermissions}
+									defaultLabel="Project default"
+									disabled={isBusy}
+									size="sm"
+									className="w-full text-control agents-sheet-control"
+								/>
+							</div>
 						</div>
 
 						<div className="space-y-3 border-t border-border pt-4">

@@ -851,7 +851,9 @@ describe("Sidebar", () => {
 				workerAgent: "codex",
 				orchestratorAgent: "claude-code",
 				reviewerAgent: "",
+				permissions: "",
 				modelDefaults: {},
+				trackerIntake: undefined,
 				asWorkspace: true,
 			}),
 		);
@@ -1094,6 +1096,7 @@ describe("Sidebar", () => {
 				workerAgent: "claude-code",
 				orchestratorAgent: "claude-code",
 				reviewerAgent: "",
+				permissions: "",
 				modelDefaults: {},
 				trackerIntake: undefined,
 				asWorkspace: false,

@@ -25,6 +25,7 @@ import { RequiredAgentField } from "./CreateProjectAgentSheet";
 import { DashboardSubhead } from "./DashboardSubhead";
 import { buildIntake, deriveGitHubRepo, IntakeFields, type IntakeForm, intakeNeedsRule } from "./IntakeFields";
 import { type ConfiguredModelPin, ModelAvailabilityField, type ModelSelection } from "./ModelAvailabilityField";
+import { PermissionModeSelect } from "./PermissionModeSelect";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Label } from "./ui/label";
@@ -43,13 +44,6 @@ type Project = components["schemas"]["Project"];
 type ProjectConfig = components["schemas"]["ProjectConfig"];
 type AgentConfig = components["schemas"]["AgentConfig"];
 type TrackerIntakeConfig = components["schemas"]["TrackerIntakeConfig"];
-
-const PERMISSION_MODE_OPTIONS = [
-	{ value: "default", label: "Default" },
-	{ value: "accept-edits", label: "Accept edits" },
-	{ value: "auto", label: "Auto" },
-	{ value: "bypass-permissions", label: "Bypass permissions" },
-] as const;
 
 const ROLE_PROMPT_OPTIONS = ["worker", "orchestrator", "reviewer"] as const;
 type RolePromptRole = (typeof ROLE_PROMPT_OPTIONS)[number];
@@ -513,6 +507,8 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 							id="permissionMode"
 							value={form.permissions}
 							onChange={(v) => setForm((f) => ({ ...f, permissions: v }))}
+							defaultLabel="Project default"
+							className="h-control-form w-full text-control"
 						/>
 					</Field>
 				</CardContent>
@@ -640,32 +636,6 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 				)}
 			</div>
 		</form>
-	);
-}
-
-function PermissionModeSelect({
-	id,
-	value,
-	onChange,
-}: {
-	id: string;
-	value: string;
-	onChange: (value: string) => void;
-}) {
-	return (
-		<Select value={value || "__default__"} onValueChange={(v) => onChange(v === "__default__" ? "" : v)}>
-			<SelectTrigger id={id} className="h-control-form w-full text-control">
-				<SelectValue />
-			</SelectTrigger>
-			<SelectContent>
-				<SelectItem value="__default__">Project default</SelectItem>
-				{PERMISSION_MODE_OPTIONS.map((opt) => (
-					<SelectItem key={opt.value} value={opt.value}>
-						{opt.label}
-					</SelectItem>
-				))}
-			</SelectContent>
-		</Select>
 	);
 }
 

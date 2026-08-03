@@ -13,9 +13,9 @@ import {
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { primeSettingsQueryKey, primeSettingsQueryOptions } from "../hooks/usePrimeSettingsQuery";
 import { ModelAvailabilityField, type ModelSelection } from "./ModelAvailabilityField";
+import { PermissionModeSelect } from "./PermissionModeSelect";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { Switch } from "./ui/switch";
 
 type PrimeSettings = components["schemas"]["DomainPrimeSettings"];
@@ -29,13 +29,6 @@ const emptySettings: PrimeSettings = {
 	rulesFile: "",
 	wakeInterval: "15m",
 };
-
-const PERMISSION_MODE_OPTIONS = [
-	{ value: "default", label: "Default" },
-	{ value: "accept-edits", label: "Accept edits" },
-	{ value: "auto", label: "Auto" },
-	{ value: "bypass-permissions", label: "Bypass permissions" },
-] as const;
 
 export function PrimeSection() {
 	const queryClient = useQueryClient();
@@ -172,6 +165,9 @@ export function PrimeSection() {
 						onChange={(permissions) =>
 							setForm((f) => ({ ...f, agentConfig: { ...(f.agentConfig ?? {}), permissions } }))
 						}
+						defaultLabel="Prime default"
+						ariaLabel="Permission mode"
+						className="h-control-form w-full text-control"
 					/>
 				</label>
 				{modelAvailabilityQuery.isError && (
@@ -256,24 +252,6 @@ function PrimeInput({
 				onChange={(event) => onChange(event.target.value)}
 			/>
 		</label>
-	);
-}
-
-function PermissionModeSelect({ value, onChange }: { value: string; onChange: (value: string) => void }) {
-	return (
-		<Select value={value || "__default__"} onValueChange={(v) => onChange(v === "__default__" ? "" : v)}>
-			<SelectTrigger className="h-control-form w-full text-control" aria-label="Permission mode">
-				<SelectValue />
-			</SelectTrigger>
-			<SelectContent>
-				<SelectItem value="__default__">Prime default</SelectItem>
-				{PERMISSION_MODE_OPTIONS.map((opt) => (
-					<SelectItem key={opt.value} value={opt.value}>
-						{opt.label}
-					</SelectItem>
-				))}
-			</SelectContent>
-		</Select>
 	);
 }
 

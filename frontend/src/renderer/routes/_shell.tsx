@@ -64,7 +64,7 @@ function errorMessage(error: unknown) {
 
 type CreateProjectConfigInput = Pick<
 	CreateProjectInput,
-	"workerAgent" | "orchestratorAgent" | "reviewerAgent" | "modelDefaults" | "trackerIntake"
+	"workerAgent" | "orchestratorAgent" | "reviewerAgent" | "permissions" | "modelDefaults" | "trackerIntake"
 >;
 
 export function createProjectConfig(input: CreateProjectConfigInput): components["schemas"]["ProjectConfig"] {
@@ -85,7 +85,15 @@ export function createProjectConfig(input: CreateProjectConfigInput): components
 			})
 			.filter(([, value]) => Object.keys(value).length > 0),
 	);
-	const agentConfig = Object.keys(modelByHarness).length > 0 ? { modelByHarness } : undefined;
+	const permissions = input.permissions.trim();
+	const hasModelDefaults = Object.keys(modelByHarness).length > 0;
+	const agentConfig =
+		permissions || hasModelDefaults
+			? {
+					...(permissions ? { permissions } : {}),
+					...(hasModelDefaults ? { modelByHarness } : {}),
+				}
+			: undefined;
 	return {
 		worker: { agent: input.workerAgent as components["schemas"]["RoleOverride"]["agent"] },
 		orchestrator: { agent: input.orchestratorAgent as components["schemas"]["RoleOverride"]["agent"] },

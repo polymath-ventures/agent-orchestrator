@@ -228,9 +228,22 @@ describe("CreateProjectAgentSheet", () => {
 			workerAgent: "claude-code",
 			orchestratorAgent: "claude-code",
 			reviewerAgent: "",
+			permissions: "",
 			modelDefaults: {},
 			trackerIntake: undefined,
 		});
+	});
+
+	it("submits a deliberate project permission mode", async () => {
+		const onSubmit = renderSheet();
+		const permissionMode = screen.getByRole("combobox", { name: "Permission mode" });
+
+		expect(permissionMode).toHaveTextContent("Project default");
+		await chooseOption(permissionMode, "Bypass permissions");
+		await userEvent.click(screen.getByRole("button", { name: "Create and start" }));
+
+		await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+		expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ permissions: "bypass-permissions" }));
 	});
 
 	it("uses harness terminology and keeps the reviewer automatic by default", () => {
@@ -269,6 +282,7 @@ describe("CreateProjectAgentSheet", () => {
 			workerAgent: "claude-code",
 			orchestratorAgent: "codex",
 			reviewerAgent: "codex",
+			permissions: "",
 			modelDefaults: {
 				"claude-code": { model: "opus", effort: "high" },
 				codex: { model: "gpt-5-codex", effort: "" },
@@ -397,6 +411,7 @@ describe("CreateProjectAgentSheet", () => {
 			workerAgent: "claude-code",
 			orchestratorAgent: "codex",
 			reviewerAgent: "",
+			permissions: "",
 			modelDefaults: {},
 			trackerIntake: { enabled: true, provider: "github", repo: undefined, assignee: "octocat" },
 		});
