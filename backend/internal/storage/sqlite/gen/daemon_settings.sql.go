@@ -31,6 +31,17 @@ func (q *Queries) GetPrimeSettingsJSON(ctx context.Context) (string, error) {
 	return prime_settings, err
 }
 
+const getSessionIDGeneration = `-- name: GetSessionIDGeneration :one
+SELECT session_id_generation FROM daemon_settings WHERE id = 1
+`
+
+func (q *Queries) GetSessionIDGeneration(ctx context.Context) (string, error) {
+	row := q.db.QueryRowContext(ctx, getSessionIDGeneration)
+	var session_id_generation string
+	err := row.Scan(&session_id_generation)
+	return session_id_generation, err
+}
+
 const setFleetPaused = `-- name: SetFleetPaused :exec
 UPDATE daemon_settings SET fleet_paused = ? WHERE id = 1
 `
