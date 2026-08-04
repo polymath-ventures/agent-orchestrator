@@ -190,7 +190,7 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 	f.StringVar(&opts.harness, "harness", "", "Agent harness / --agent: claude-code, codex, codex-fugu, aider, opencode, grok, droid, amp, agy, crush, cursor, qwen, copilot, goose, auggie, continue, devin, cline, kimi, kiro, kilocode, vibe, pi, autohand, fake (default: resolved by the daemon from the project's worker mix or worker.agent config)")
 	f.StringVar(&opts.model, "model", "", "Model for the session (default: resolved by the daemon from the worker mix or role/project config)")
 	f.StringVar(&opts.kind, "kind", "", "Session role: worker or orchestrator (default: worker)")
-	f.StringVar(&opts.branch, "branch", "", "Branch for git project sessions (default: ao/<namespace-key>/root; unsupported for Scratch)")
+	f.StringVar(&opts.branch, "branch", "", "Branch for git project sessions (default: ao/<namespace-key>/root; workspace projects: ao/<namespace-key>; unsupported for Scratch)")
 	f.StringVar(&opts.prompt, "prompt", "", "Initial prompt for the agent")
 	f.StringVar(&opts.issue, "issue", "", "Issue id to associate with the session")
 	f.StringVar(&opts.name, "name", "", "Override the daemon-computed session name (max 20 characters)")
