@@ -146,12 +146,13 @@ func Run(ctx context.Context, source, target Store, opts Options) (Report, error
 			continue
 		}
 
-		// New target registration: hold the id to the same strict launchable rule
-		// as project registration and legacy import (#256). Importing an older
-		// database's dotted id as new would mint unlaunchable sessions. Updates to
-		// an already-existing dotted target are handled above and stay allowed, so
-		// this never blocks recovering a project that predates the rule.
-		if !domain.IsValidProjectID(src.ID) {
+		// A new dotted id would mint unlaunchable sessions (#256), so it must not be
+		// imported as new. For a real import the store enforces this transactionally
+		// in importProject (authoritative under concurrency) and returns a conflict
+		// that the write branches below catch. Dry-run never reaches the store, so
+		// plan the same skip here from the preflight snapshot. Updates to an
+		// already-existing dotted target took the branch above and stay allowed.
+		if opts.DryRun && !domain.IsValidProjectID(src.ID) {
 			rep.addConflict(Conflict{
 				ProjectID: src.ID,
 				Path:      src.Path,

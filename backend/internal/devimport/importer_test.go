@@ -417,6 +417,26 @@ func TestRunSkipsNewDottedProjectID(t *testing.T) {
 	}
 }
 
+func TestRunDryRunSkipsNewDottedProjectID(t *testing.T) {
+	ctx := context.Background()
+	source := newStore(t)
+	target := newStore(t)
+	if err := source.UpsertWorkspaceProject(ctx, testProject("goodadbadad.net", "/repos/dotted"), nil); err != nil {
+		t.Fatal(err)
+	}
+
+	// Dry-run never reaches the store's transactional guard, so the preflight
+	// planning must still predict the skip for a new dotted id.
+	rep, err := Run(ctx, source, target, Options{SourceDataDir: "src", TargetDataDir: "dst", DryRun: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Inserted != 0 || rep.Skipped != 1 || len(rep.Conflicts) != 1 ||
+		rep.Conflicts[0].Reason != domain.ProjectImportConflictInvalidNewID {
+		t.Fatalf("dry-run report = %#v, want 1 InvalidNewID skip", rep)
+	}
+}
+
 func TestRunUpdatesExistingDottedProjectID(t *testing.T) {
 	ctx := context.Background()
 	source := newStore(t)
