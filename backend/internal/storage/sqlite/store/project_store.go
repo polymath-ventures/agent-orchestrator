@@ -126,7 +126,22 @@ func importProject(ctx context.Context, q *gen.Queries, r domain.ProjectRecord, 
 				TargetPath: existingByID.Path,
 			}}
 		}
-	} else if !errors.Is(err, sql.ErrNoRows) {
+	} else if errors.Is(err, sql.ErrNoRows) {
+		// Genuine new insert (no existing row for this id): hold a NEW id to the
+		// launchable charset, the same rule Add and legacy import enforce (#256).
+		// This is the transactionally authoritative point — the insert-vs-update
+		// decision is made here, so a concurrent write cannot let a dotted id slip
+		// in as new. An UPDATE of an existing dotted id (the err == nil branch
+		// above) is deliberately exempt so a project that predates this rule stays
+		// manageable.
+		if !domain.IsValidProjectID(r.ID) {
+			return &domain.ProjectImportConflictError{Conflict: domain.ProjectImportConflict{
+				ProjectID: r.ID,
+				Path:      r.Path,
+				Reason:    domain.ProjectImportConflictInvalidNewID,
+			}}
+		}
+	} else {
 		return fmt.Errorf("check imported project id conflict: %w", err)
 	}
 

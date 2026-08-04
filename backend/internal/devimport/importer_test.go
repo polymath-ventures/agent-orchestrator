@@ -391,6 +391,77 @@ func (s *concurrentConflictTarget) ImportWorkspaceProject(ctx context.Context, r
 	return s.Store.ImportWorkspaceProject(ctx, row, repos)
 }
 
+func TestRunSkipsNewDottedProjectID(t *testing.T) {
+	ctx := context.Background()
+	source := newStore(t)
+	target := newStore(t)
+	// An older source DB can hold a dotted id (it predates the launchable-id
+	// rule). Importing it as NEW must be skipped, not inserted, or the target
+	// gains an unlaunchable project (#256).
+	if err := source.UpsertWorkspaceProject(ctx, testProject("goodadbadad.net", "/repos/dotted"), nil); err != nil {
+		t.Fatal(err)
+	}
+
+	rep, err := Run(ctx, source, target, Options{SourceDataDir: "src", TargetDataDir: "dst"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Inserted != 0 || rep.Updated != 0 || rep.Skipped != 1 || len(rep.Conflicts) != 1 {
+		t.Fatalf("report = %#v, want 1 skip", rep)
+	}
+	if rep.Conflicts[0].Reason != domain.ProjectImportConflictInvalidNewID {
+		t.Fatalf("conflict reason = %q, want %q", rep.Conflicts[0].Reason, domain.ProjectImportConflictInvalidNewID)
+	}
+	if _, ok, err := target.GetProject(ctx, "goodadbadad.net"); err != nil || ok {
+		t.Fatalf("dotted project was imported (ok=%v, err=%v); want skipped", ok, err)
+	}
+}
+
+func TestRunDryRunSkipsNewDottedProjectID(t *testing.T) {
+	ctx := context.Background()
+	source := newStore(t)
+	target := newStore(t)
+	if err := source.UpsertWorkspaceProject(ctx, testProject("goodadbadad.net", "/repos/dotted"), nil); err != nil {
+		t.Fatal(err)
+	}
+
+	// Dry-run never reaches the store's transactional guard, so the preflight
+	// planning must still predict the skip for a new dotted id.
+	rep, err := Run(ctx, source, target, Options{SourceDataDir: "src", TargetDataDir: "dst", DryRun: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Inserted != 0 || rep.Skipped != 1 || len(rep.Conflicts) != 1 ||
+		rep.Conflicts[0].Reason != domain.ProjectImportConflictInvalidNewID {
+		t.Fatalf("dry-run report = %#v, want 1 InvalidNewID skip", rep)
+	}
+}
+
+func TestRunUpdatesExistingDottedProjectID(t *testing.T) {
+	ctx := context.Background()
+	source := newStore(t)
+	target := newStore(t)
+	// A dotted project that already exists in BOTH source and target must still
+	// be updatable — the strict rule gates creation only, so an operator can
+	// still manage (and ultimately remove) a pre-existing dotted project.
+	src := testProject("goodadbadad.net", "/repos/dotted")
+	src.Config = domain.ProjectConfig{SessionPrefix: "gn"}
+	if err := source.UpsertWorkspaceProject(ctx, src, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := target.UpsertWorkspaceProject(ctx, testProject("goodadbadad.net", "/repos/dotted"), nil); err != nil {
+		t.Fatal(err)
+	}
+
+	rep, err := Run(ctx, source, target, Options{SourceDataDir: "src", TargetDataDir: "dst"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Inserted != 0 || rep.Updated != 1 || rep.Skipped != 0 {
+		t.Fatalf("report = %#v, want 1 update", rep)
+	}
+}
+
 func testProject(id string, path string) domain.ProjectRecord {
 	return domain.ProjectRecord{
 		ID:            id,

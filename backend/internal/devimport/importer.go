@@ -146,6 +146,21 @@ func Run(ctx context.Context, source, target Store, opts Options) (Report, error
 			continue
 		}
 
+		// A new dotted id would mint unlaunchable sessions (#256), so it must not be
+		// imported as new. For a real import the store enforces this transactionally
+		// in importProject (authoritative under concurrency) and returns a conflict
+		// that the write branches below catch. Dry-run never reaches the store, so
+		// plan the same skip here from the preflight snapshot. Updates to an
+		// already-existing dotted target took the branch above and stay allowed.
+		if opts.DryRun && !domain.IsValidProjectID(src.ID) {
+			rep.addConflict(Conflict{
+				ProjectID: src.ID,
+				Path:      src.Path,
+				Reason:    domain.ProjectImportConflictInvalidNewID,
+			})
+			continue
+		}
+
 		if !opts.DryRun {
 			if err := target.ImportWorkspaceProject(ctx, src, repos); err != nil {
 				if c, ok := importConflict(err); ok {
