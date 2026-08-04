@@ -252,6 +252,13 @@ func TestSessionNamePassesThroughShortConforming(t *testing.T) {
 	}
 }
 
+func TestSessionNamePassesThroughLongConforming(t *testing.T) {
+	id := strings.Repeat("x", 200)
+	if got := SessionName(id); got != id {
+		t.Fatalf("SessionName changed a conforming %d-byte id: got %q", len(id), got)
+	}
+}
+
 func TestSessionNameMatchesCreateNaming(t *testing.T) {
 	long := domain.SessionID(strings.Repeat("x", 60) + "-1")
 	viaCreate, err := tmuxSessionName(long)
@@ -261,8 +268,41 @@ func TestSessionNameMatchesCreateNaming(t *testing.T) {
 	if got := SessionName(string(long)); got != viaCreate {
 		t.Fatalf("SessionName = %q, but Create uses %q", got, viaCreate)
 	}
-	if SessionName(string(long)) == string(long) {
-		t.Fatal("expected long id to be sanitised to a different name")
+	if SessionName(string(long)) != string(long) {
+		t.Fatal("expected a conforming long id to remain verbatim")
+	}
+}
+
+func TestNamespaceSessionNameKeepsCompleteReadableKeyAndGenerationIdentity(t *testing.T) {
+	const label = "ao-255-readable-work-with-complete-context"
+	keyA := label + "--agent-orchestrator-1-0123456789abcdef"
+	keyB := label + "--agent-orchestrator-1-fedcba9876543210"
+	nameA := NamespaceSessionName(keyA)
+	nameB := NamespaceSessionName(keyB)
+	if nameA == nameB {
+		t.Fatalf("different complete identities canonicalized to %q", nameA)
+	}
+	if nameA != keyA || nameB != keyB {
+		t.Fatalf("namespace tmux names were not returned verbatim: %q, %q", nameA, nameB)
+	}
+}
+
+func TestRuntimeSessionNameUsesStoredKeyWithLegacyFallback(t *testing.T) {
+	id := domain.SessionID("proj-1-0123456789abcdef")
+	key := "ao-255-readable--" + string(id)
+	got, err := runtimeSessionName(ports.RuntimeConfig{SessionID: id, NamespaceKey: key})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := NamespaceSessionName(key); got != want {
+		t.Fatalf("runtime session name = %q, want %q", got, want)
+	}
+	legacy, err := runtimeSessionName(ports.RuntimeConfig{SessionID: id})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := SessionName(string(id)); legacy != want {
+		t.Fatalf("legacy runtime session name = %q, want %q", legacy, want)
 	}
 }
 
@@ -667,6 +707,7 @@ func TestRestartRejectsMismatchedSessionHandle(t *testing.T) {
 	r, fr := newTestRuntime(0)
 	_, err := r.Restart(context.Background(), ports.RuntimeHandle{ID: "sess-1"}, ports.RuntimeConfig{
 		SessionID:     "sess-2",
+		NamespaceKey:  "sess-2",
 		WorkspacePath: "/tmp/ws",
 		Argv:          []string{"codex"},
 	})
@@ -675,6 +716,39 @@ func TestRestartRejectsMismatchedSessionHandle(t *testing.T) {
 	}
 	if len(fr.calls) != 0 {
 		t.Fatalf("runtime called after validation failure: %+v", fr.calls)
+	}
+}
+
+func TestRestartRejectsMismatchedLegacySessionHandle(t *testing.T) {
+	r, fr := newTestRuntime(0)
+	_, err := r.Restart(context.Background(), ports.RuntimeHandle{ID: "sess-1"}, ports.RuntimeConfig{
+		SessionID:     "sess-2",
+		WorkspacePath: "/tmp/ws",
+		Argv:          []string{"codex"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "does not match") {
+		t.Fatalf("Restart error = %v, want legacy handle mismatch", err)
+	}
+	if len(fr.calls) != 0 {
+		t.Fatalf("runtime called after validation failure: %+v", fr.calls)
+	}
+}
+
+func TestRestartPreservesPersistedLegacyHandleAfterCanonicalizationChanges(t *testing.T) {
+	r, _ := newTestRuntime(0)
+	legacyID := strings.Repeat("x", 60) + "-1"
+	handle := ports.RuntimeHandle{ID: sanitizedSessionName(legacyID)}
+
+	got, err := r.Restart(context.Background(), handle, ports.RuntimeConfig{
+		SessionID:     domain.SessionID(legacyID),
+		WorkspacePath: "/tmp/ws",
+		Argv:          []string{"codex"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != handle {
+		t.Fatalf("Restart handle = %+v, want persisted legacy handle %+v", got, handle)
 	}
 }
 
@@ -1376,13 +1450,6 @@ func TestSessionNameDistinguishesDatabaseGenerations(t *testing.T) {
 	idA := "agent-orchestrator-1-" + generationA
 	idB := "agent-orchestrator-1-" + generationB
 
-	// A 64-bit generation suffix keeps a realistic project's ids under the
-	// 48-byte verbatim threshold, so the tmux session name stays byte-equal to
-	// the id rather than falling through to the digest form. That is what keeps
-	// "the tmux session name is the session id" true after this change.
-	if len(idA) > 48 {
-		t.Fatalf("id %q is %d bytes, past the tmux verbatim threshold", idA, len(idA))
-	}
 	nameA := SessionName(idA)
 	nameB := SessionName(idB)
 	if nameA != idA || nameB != idB {

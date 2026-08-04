@@ -98,7 +98,10 @@ type RuntimeRestarter interface {
 // shell-quotes it for its own shell, so the command survives args with spaces
 // (e.g. a prompt) without the caller guessing the target shell's quoting.
 type RuntimeConfig struct {
-	SessionID     domain.SessionID
+	SessionID domain.SessionID
+	// NamespaceKey is the immutable creation-time key used for a new worker's
+	// runtime name. Empty preserves the legacy SessionID-derived behavior.
+	NamespaceKey  string
 	WorkspacePath string
 	Argv          []string
 	Env           map[string]string
@@ -255,7 +258,10 @@ var (
 type WorkspaceConfig struct {
 	ProjectID domain.ProjectID
 	SessionID domain.SessionID
-	Kind      domain.SessionKind
+	// NamespaceKey is the immutable creation-time key used for a new worker's
+	// managed path. Empty preserves the legacy SessionID-derived behavior.
+	NamespaceKey string
+	Kind         domain.SessionKind
 	// SessionPrefix is the human-readable project prefix used to name the
 	// orchestrator worktree. Defaults to a truncation of ProjectID when empty.
 	SessionPrefix string
@@ -286,12 +292,15 @@ type WorkspaceInfo struct {
 type WorkspaceProjectConfig struct {
 	ProjectID     domain.ProjectID
 	SessionID     domain.SessionID
+	NamespaceKey  string
 	Kind          domain.SessionKind
 	SessionPrefix string
-	Branch        string
-	RootRepoPath  string
-	BaseBranch    string
-	Repos         []WorkspaceProjectRepoConfig
+	// Branch is required. Session Manager supplies either the caller-owned
+	// explicit branch or the AO-generated workspace-project root branch.
+	Branch       string
+	RootRepoPath string
+	BaseBranch   string
+	Repos        []WorkspaceProjectRepoConfig
 }
 
 // WorkspaceProjectRepoConfig describes one registered child repo in a

@@ -166,9 +166,10 @@ func (w *Workspace) CreateWorkspaceProject(ctx context.Context, cfg ports.Worksp
 	rootPath, err := w.managedPath(ports.WorkspaceConfig{
 		ProjectID:     cfg.ProjectID,
 		SessionID:     cfg.SessionID,
+		NamespaceKey:  cfg.NamespaceKey,
 		Kind:          cfg.Kind,
 		SessionPrefix: cfg.SessionPrefix,
-		Branch:        firstNonEmpty(cfg.Branch, defaultSessionBranchName(cfg.SessionID)),
+		Branch:        cfg.Branch,
 	})
 	if err != nil {
 		return ports.WorkspaceProjectInfo{}, err
@@ -201,7 +202,7 @@ func (w *Workspace) CreateWorkspaceProject(ctx context.Context, cfg ports.Worksp
 			baseBranch:   firstNonEmpty(child.BaseBranch, cfg.BaseBranch),
 		})
 	}
-	branch, err := w.workspaceProjectBranch(ctx, repos, firstNonEmpty(cfg.Branch, defaultSessionBranchName(cfg.SessionID)))
+	branch, err := w.workspaceProjectBranch(ctx, repos, cfg.Branch)
 	if err != nil {
 		return ports.WorkspaceProjectInfo{}, err
 	}
@@ -1291,6 +1292,11 @@ func validateConfig(cfg ports.WorkspaceConfig) error {
 		if err := validatePathComponent("session id", string(cfg.SessionID)); err != nil {
 			return err
 		}
+		if namespaceKey := workspaceNamespaceComponent(cfg); namespaceKey != string(cfg.SessionID) {
+			if err := validatePathComponent("namespace key", namespaceKey); err != nil {
+				return err
+			}
+		}
 	}
 	if cfg.Branch == "" {
 		return errors.New("gitworktree: branch is required")
@@ -1302,9 +1308,10 @@ func validateWorkspaceProjectConfig(cfg ports.WorkspaceProjectConfig) error {
 	if err := validateConfig(ports.WorkspaceConfig{
 		ProjectID:     cfg.ProjectID,
 		SessionID:     cfg.SessionID,
+		NamespaceKey:  cfg.NamespaceKey,
 		Kind:          cfg.Kind,
 		SessionPrefix: cfg.SessionPrefix,
-		Branch:        firstNonEmpty(cfg.Branch, defaultSessionBranchName(cfg.SessionID)),
+		Branch:        cfg.Branch,
 		BaseBranch:    cfg.BaseBranch,
 	}); err != nil {
 		return err
@@ -1352,7 +1359,7 @@ func (w *Workspace) managedPath(cfg ports.WorkspaceConfig) (string, error) {
 	} else if cfg.Kind == domain.KindPrime && cfg.ProjectID == "" {
 		path = filepath.Join(w.managedRoot, "prime", string(cfg.SessionID))
 	} else {
-		path = filepath.Join(w.managedRoot, string(cfg.ProjectID), string(cfg.SessionID))
+		path = filepath.Join(w.managedRoot, string(cfg.ProjectID), workspaceNamespaceComponent(cfg))
 	}
 	return w.validateManagedPath(path)
 }
@@ -1377,8 +1384,16 @@ func resolvedSessionPrefix(cfg ports.WorkspaceConfig) string {
 	return id[:12]
 }
 
-func defaultSessionBranchName(id domain.SessionID) string {
-	return "ao/" + string(id)
+// workspaceNamespaceComponent selects the immutable presentation key for new
+// worker resources. Role singletons and legacy records continue to use their
+// existing identity-derived paths.
+func workspaceNamespaceComponent(cfg ports.WorkspaceConfig) string {
+	if cfg.Kind == domain.KindWorker {
+		if key := strings.TrimSpace(cfg.NamespaceKey); key != "" {
+			return key
+		}
+	}
+	return string(cfg.SessionID)
 }
 
 func firstNonEmpty(values ...string) string {

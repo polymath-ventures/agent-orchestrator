@@ -24,14 +24,15 @@ func TestWorkspaceCreatesBranchlessPerSessionDirectories(t *testing.T) {
 	}
 
 	worker, err := ws.Create(context.Background(), ports.WorkspaceConfig{
-		ProjectID: "scratch",
-		SessionID: "scratch-1",
-		Kind:      domain.KindWorker,
+		ProjectID:    "scratch",
+		SessionID:    "scratch-1",
+		NamespaceKey: "ao-255-readable--scratch-1",
+		Kind:         domain.KindWorker,
 	})
 	if err != nil {
 		t.Fatalf("Create worker: %v", err)
 	}
-	if want := filepath.Join(physicalRoot, "scratch", "workers", "scratch-1"); worker.Path != want {
+	if want := filepath.Join(physicalRoot, "scratch", "workers", "ao-255-readable--scratch-1"); worker.Path != want {
 		t.Fatalf("worker path = %q, want %q", worker.Path, want)
 	}
 	if worker.Branch != "" {
@@ -42,9 +43,10 @@ func TestWorkspaceCreatesBranchlessPerSessionDirectories(t *testing.T) {
 	}
 
 	orchestrator, err := ws.Create(context.Background(), ports.WorkspaceConfig{
-		ProjectID: "scratch",
-		SessionID: "scratch-2",
-		Kind:      domain.KindOrchestrator,
+		ProjectID:    "scratch",
+		SessionID:    "scratch-2",
+		NamespaceKey: "must-not-move-the-singleton",
+		Kind:         domain.KindOrchestrator,
 	})
 	if err != nil {
 		t.Fatalf("Create orchestrator: %v", err)
@@ -54,6 +56,19 @@ func TestWorkspaceCreatesBranchlessPerSessionDirectories(t *testing.T) {
 	}
 	if orchestrator.Branch != "" {
 		t.Fatalf("orchestrator branch = %q, want empty", orchestrator.Branch)
+	}
+
+	prime, err := ws.Create(context.Background(), ports.WorkspaceConfig{
+		ProjectID:    "scratch",
+		SessionID:    "scratch-prime-1",
+		NamespaceKey: "must-not-move-role-resources",
+		Kind:         domain.KindPrime,
+	})
+	if err != nil {
+		t.Fatalf("Create Prime role workspace: %v", err)
+	}
+	if want := filepath.Join(physicalRoot, "scratch", "workers", "scratch-prime-1"); prime.Path != want {
+		t.Fatalf("Prime role path = %q, want unchanged %q", prime.Path, want)
 	}
 }
 

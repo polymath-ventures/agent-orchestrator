@@ -115,18 +115,52 @@ func TestManagedPathSafety(t *testing.T) {
 	if want := filepath.Join(ws.managedRoot, "proj", "sess"); path != want {
 		t.Fatalf("path = %q, want %q", path, want)
 	}
-	primePath, err := ws.managedPath(ports.WorkspaceConfig{Kind: domain.KindPrime, SessionID: "prime-1", Branch: "ao/prime", RepoPath: filepath.Join(root, "prime", "repo")})
+	readableKey := "ao-255-readable--proj-1-0123456789abcdef"
+	path, err = ws.managedPath(ports.WorkspaceConfig{
+		ProjectID:    "proj",
+		SessionID:    "proj-1-0123456789abcdef",
+		NamespaceKey: readableKey,
+		Kind:         domain.KindWorker,
+	})
+	if err != nil {
+		t.Fatalf("readable managed path: %v", err)
+	}
+	if want := filepath.Join(ws.managedRoot, "proj", readableKey); path != want {
+		t.Fatalf("readable path = %q, want %q", path, want)
+	}
+	primePath, err := ws.managedPath(ports.WorkspaceConfig{Kind: domain.KindPrime, SessionID: "prime-1", NamespaceKey: readableKey, Branch: "ao/prime", RepoPath: filepath.Join(root, "prime", "repo")})
 	if err != nil {
 		t.Fatalf("projectless prime managed path: %v", err)
 	}
 	if want := filepath.Join(ws.managedRoot, "prime", "prime-1"); primePath != want {
 		t.Fatalf("prime path = %q, want %q", primePath, want)
 	}
+	projectPrimePath, err := ws.managedPath(ports.WorkspaceConfig{ProjectID: "proj", Kind: domain.KindPrime, SessionID: "proj-prime-1", NamespaceKey: readableKey, Branch: "ao/proj-prime"})
+	if err != nil {
+		t.Fatalf("project Prime managed path: %v", err)
+	}
+	if want := filepath.Join(ws.managedRoot, "proj", "proj-prime-1"); projectPrimePath != want {
+		t.Fatalf("project Prime path = %q, want unchanged %q", projectPrimePath, want)
+	}
 	if _, err := ws.validateManagedPath(filepath.Join(root, "..", "outside")); !errors.Is(err, ErrUnsafePath) {
 		t.Fatalf("outside error = %v, want ErrUnsafePath", err)
 	}
 	if _, err := ws.validateManagedPath("relative/path"); !errors.Is(err, ErrUnsafePath) {
 		t.Fatalf("relative error = %v, want ErrUnsafePath", err)
+	}
+}
+
+func TestValidateWorkspaceProjectConfigRequiresManagerOwnedBranch(t *testing.T) {
+	err := validateWorkspaceProjectConfig(ports.WorkspaceProjectConfig{
+		ProjectID:     "proj",
+		SessionID:     "proj-1-0123456789abcdef",
+		NamespaceKey:  "readable--proj-1-0123456789abcdef",
+		Kind:          domain.KindWorker,
+		RootRepoPath:  t.TempDir(),
+		SessionPrefix: "proj",
+	})
+	if err == nil || !strings.Contains(err.Error(), "branch is required") {
+		t.Fatalf("validation error = %v, want branch is required", err)
 	}
 }
 
@@ -141,6 +175,7 @@ func TestOrchestratorManagedPath(t *testing.T) {
 		cfg := ports.WorkspaceConfig{
 			ProjectID:     "proj",
 			SessionID:     "proj-1",
+			NamespaceKey:  "must-not-move-the-singleton",
 			Kind:          domain.KindOrchestrator,
 			SessionPrefix: "ao-agents",
 		}

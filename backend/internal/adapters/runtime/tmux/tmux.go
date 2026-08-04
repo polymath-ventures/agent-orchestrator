@@ -370,7 +370,7 @@ func New(opts Options) *Runtime {
 // Create starts a new tmux session in the workspace, running the agent's
 // launch command with a keep-alive shell, and returns a handle to it.
 func (r *Runtime) Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.RuntimeHandle, error) {
-	id, err := tmuxSessionName(cfg.SessionID)
+	id, err := runtimeSessionName(cfg)
 	if err != nil {
 		return ports.RuntimeHandle{}, err
 	}
@@ -444,11 +444,12 @@ func (r *Runtime) Restart(ctx context.Context, handle ports.RuntimeHandle, cfg p
 	if err != nil {
 		return ports.RuntimeHandle{}, err
 	}
-	expectedID, err := tmuxSessionName(cfg.SessionID)
+	expectedID, err := runtimeSessionName(cfg)
 	if err != nil {
 		return ports.RuntimeHandle{}, err
 	}
-	if expectedID != id {
+	matchesLegacyHandle := strings.TrimSpace(cfg.NamespaceKey) == "" && legacyLengthCappedSessionName(string(cfg.SessionID)) == id
+	if expectedID != id && !matchesLegacyHandle {
 		return ports.RuntimeHandle{}, fmt.Errorf("tmux runtime: restart handle %s does not match session %s", id, cfg.SessionID)
 	}
 	if cfg.WorkspacePath == "" {
@@ -1020,17 +1021,63 @@ func tmuxSessionName(id domain.SessionID) (string, error) {
 	return SessionName(raw), nil
 }
 
-// SessionName returns the tmux session name the runtime registers for a given
-// session id, applying the same sanitisation Create does. Callers that print an
-// attach hint must use this rather than the raw id.
+func runtimeSessionName(cfg ports.RuntimeConfig) (string, error) {
+	if _, err := tmuxSessionName(cfg.SessionID); err != nil {
+		return "", err
+	}
+	if key := strings.TrimSpace(cfg.NamespaceKey); key != "" {
+		return NamespaceSessionName(key), nil
+	}
+	return tmuxSessionName(cfg.SessionID)
+}
+
+// SessionName returns the tmux name Create registers for a new session id.
+// Existing sessions are addressed by their persisted RuntimeHandle.ID instead
+// of reconstructing historical handles through this helper.
 func SessionName(id string) string {
+	if sessionIDPattern.MatchString(id) {
+		return id
+	}
+	return sanitizedSessionName(id)
+}
+
+// NamespaceSessionName returns the deterministic tmux handle for a persisted
+// namespace key. Safe keys remain complete; only unsupported characters require
+// canonicalization.
+func NamespaceSessionName(key string) string {
+	if sessionIDPattern.MatchString(key) {
+		return key
+	}
+	return sanitizedNamespaceSessionName(key)
+}
+
+// legacyLengthCappedSessionName reproduces the pre-#255 handle only to
+// recognize persisted key-less sessions during restart. It is not a creation
+// limit: new safe names remain verbatim regardless of length.
+func legacyLengthCappedSessionName(id string) string {
 	if sessionIDPattern.MatchString(id) && len(id) <= 48 {
 		return id
 	}
 	return sanitizedSessionName(id)
 }
 
+// Namespace keys use a wider digest than the frozen legacy session-id fallback
+// so invalid-character canonicalization retains the complete identity's
+// collision resistance. These forms must not be unified: persisted handles are
+// external identities.
+func sanitizedNamespaceSessionName(raw string) string {
+	base := sanitizedSessionNameBase(raw, 31)
+	sum := sha256.Sum256([]byte(raw))
+	return base + "-" + hex.EncodeToString(sum[:8])
+}
+
 func sanitizedSessionName(raw string) string {
+	base := sanitizedSessionNameBase(raw, 32)
+	sum := sha256.Sum256([]byte(raw))
+	return base + "-" + hex.EncodeToString(sum[:4])
+}
+
+func sanitizedSessionNameBase(raw string, maxBytes int) string {
 	var b strings.Builder
 	lastDash := false
 	for _, r := range raw {
@@ -1049,11 +1096,10 @@ func sanitizedSessionName(raw string) string {
 	if base == "" {
 		base = "session"
 	}
-	if len(base) > 32 {
-		base = strings.TrimRight(base[:32], "-")
+	if len(base) > maxBytes {
+		base = strings.TrimRight(base[:maxBytes], "-")
 	}
-	sum := sha256.Sum256([]byte(raw))
-	return base + "-" + hex.EncodeToString(sum[:4])
+	return base
 }
 
 func handleID(handle ports.RuntimeHandle) (string, error) {

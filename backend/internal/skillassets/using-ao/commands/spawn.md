@@ -12,7 +12,7 @@ aong spawn [flags]
 
 | Flag | Meaning | Default / Required |
 |---|---|---|
-| `--branch string` | Branch for the session worktree | `ao/<session-id>/root` |
+| `--branch string` | Branch for the session worktree | `ao/<namespace-key>/root` (single repo) or `ao/<namespace-key>` (workspace project) |
 | `--claim-pr string` | Immediately claim an existing PR for the spawned session | - |
 | `--harness string` | Agent harness to use (see list below) | Project `worker.agent`; required if the project has none |
 | `--issue string` | Issue id to associate with the session | - |
@@ -23,6 +23,10 @@ aong spawn [flags]
 | `--prompt string` | Initial prompt for the agent | - |
 
 `--agent` is an alias for `--harness`.
+
+AO computes the immutable namespace key once from the creation-time work label
+and the complete session identity. Passing `--branch` opts out of that generated
+branch name; AO uses the supplied branch unchanged.
 
 Do not pass a session name. The daemon computes it from the session's role and
 work item and delivers that same name to the agent's own session list, so a

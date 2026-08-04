@@ -29,7 +29,7 @@ SELECT id, COALESCE(project_id, '') AS project_id, num, issue_id, kind, harness,
        display_name, first_signal_at, preview_url, preview_revision, model,
        mix_selected, effort, prompt_policy_hash,
        mix_bucket_model, cleanup_generation, runtime_launch_id, workspace_repo_path,
-       terminate_on_pr_merge, diff_base_sha, diff_base_ref, last_error
+       terminate_on_pr_merge, diff_base_sha, diff_base_ref, last_error, namespace_key
 FROM sessions WHERE id = ?;
 
 -- name: ListSessionsByProject :many
@@ -39,7 +39,7 @@ SELECT id, COALESCE(project_id, '') AS project_id, num, issue_id, kind, harness,
        display_name, first_signal_at, preview_url, preview_revision, model,
        mix_selected, effort, prompt_policy_hash,
        mix_bucket_model, cleanup_generation, runtime_launch_id, workspace_repo_path,
-       terminate_on_pr_merge, diff_base_sha, diff_base_ref, last_error
+       terminate_on_pr_merge, diff_base_sha, diff_base_ref, last_error, namespace_key
 FROM sessions WHERE project_id = ? ORDER BY num;
 
 -- name: ListAllSessions :many
@@ -49,8 +49,14 @@ SELECT id, COALESCE(project_id, '') AS project_id, num, issue_id, kind, harness,
        display_name, first_signal_at, preview_url, preview_revision, model,
        mix_selected, effort, prompt_policy_hash,
        mix_bucket_model, cleanup_generation, runtime_launch_id, workspace_repo_path,
-       terminate_on_pr_merge, diff_base_sha, diff_base_ref, last_error
+       terminate_on_pr_merge, diff_base_sha, diff_base_ref, last_error, namespace_key
 FROM sessions ORDER BY COALESCE(project_id, ''), num;
+
+-- name: SetSessionNamespaceKey :execrows
+-- Namespace keys are a write-once worker fact. General UpdateSession omits the
+-- column so lifecycle/display updates cannot move external resources later.
+UPDATE sessions SET namespace_key = ?
+WHERE id = ? AND kind = 'worker' AND namespace_key = '';
 
 
 -- name: RenameSession :execrows

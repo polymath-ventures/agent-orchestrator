@@ -748,6 +748,55 @@ func TestSessionRenameUpdatesDisplayName(t *testing.T) {
 	}
 }
 
+func TestSessionNamespaceKeyIsWriteOnceAndSurvivesMutableUpdates(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+	r, err := s.CreateSession(ctx, sampleRecord("mer"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.NamespaceKey != "" {
+		t.Fatalf("seed namespace key = %q, want empty", r.NamespaceKey)
+	}
+	if ok, err := s.SetSessionNamespaceKey(ctx, r.ID, "  "); err == nil || ok {
+		t.Fatalf("empty SetSessionNamespaceKey: ok=%v err=%v, want rejected", ok, err)
+	}
+
+	key := "ao-255-readable--" + string(r.ID)
+	ok, err := s.SetSessionNamespaceKey(ctx, r.ID, key)
+	if err != nil || !ok {
+		t.Fatalf("SetSessionNamespaceKey: ok=%v err=%v", ok, err)
+	}
+	if ok, err := s.SetSessionNamespaceKey(ctx, r.ID, "replacement--"+string(r.ID)); err != nil || ok {
+		t.Fatalf("second SetSessionNamespaceKey: ok=%v err=%v, want refused", ok, err)
+	}
+
+	got, found, err := s.GetSession(ctx, r.ID)
+	if err != nil || !found {
+		t.Fatalf("GetSession: found=%v err=%v", found, err)
+	}
+	if got.NamespaceKey != key {
+		t.Fatalf("stored namespace key = %q, want %q", got.NamespaceKey, key)
+	}
+
+	got.NamespaceKey = "mutated-in-memory"
+	got.Metadata.Prompt = "mutable update"
+	if err := s.UpdateSession(ctx, got); err != nil {
+		t.Fatalf("UpdateSession: %v", err)
+	}
+	if ok, err := s.RenameSession(ctx, r.ID, "Renamed later", got.UpdatedAt.Add(time.Minute)); err != nil || !ok {
+		t.Fatalf("RenameSession: ok=%v err=%v", ok, err)
+	}
+	got, _, err = s.GetSession(ctx, r.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.NamespaceKey != key {
+		t.Fatalf("mutable updates replaced namespace key: got %q, want %q", got.NamespaceKey, key)
+	}
+}
+
 func TestSessionTerminateOnPRMergePolicyRoundTripAndCDC(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()

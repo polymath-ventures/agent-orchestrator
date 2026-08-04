@@ -126,11 +126,17 @@ func (w *Workspace) managedPath(cfg ports.WorkspaceConfig) (string, error) {
 	if err := validatePathComponent("session id", string(cfg.SessionID)); err != nil {
 		return "", err
 	}
+	pathComponent := string(cfg.SessionID)
 	roleDir := "workers"
 	if cfg.Kind == domain.KindOrchestrator {
 		roleDir = "orchestrators"
+	} else if key := strings.TrimSpace(cfg.NamespaceKey); cfg.Kind == domain.KindWorker && key != "" {
+		if err := validatePathComponent("namespace key", key); err != nil {
+			return "", err
+		}
+		pathComponent = key
 	}
-	return w.validateManagedPath(filepath.Join(w.managedRoot, string(cfg.ProjectID), roleDir, string(cfg.SessionID)))
+	return w.validateManagedPath(filepath.Join(w.managedRoot, string(cfg.ProjectID), roleDir, pathComponent))
 }
 
 func (w *Workspace) restorePath(cfg ports.WorkspaceConfig) (string, error) {

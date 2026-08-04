@@ -267,13 +267,19 @@ func TestWiring_StartSessionSpawnsScratchWithoutGitRepo(t *testing.T) {
 	if session.Metadata.Branch != "" {
 		t.Fatalf("scratch branch = %q, want empty", session.Metadata.Branch)
 	}
-	wantWorkspace := filepath.Join(dataDir, "worktrees", "scratch", "workers", string(session.ID))
+	if session.NamespaceKey == "" {
+		t.Fatal("scratch worker namespace key is empty")
+	}
+	wantWorkspace := filepath.Join(dataDir, "worktrees", "scratch", "workers", session.NamespaceKey)
 	physicalWorkspace, err := filepath.EvalSymlinks(wantWorkspace)
 	if err != nil {
 		t.Fatalf("resolve scratch workspace %q: %v", wantWorkspace, err)
 	}
 	if runtime.lastCfg.WorkspacePath != physicalWorkspace {
 		t.Fatalf("runtime workspace = %q, want %q", runtime.lastCfg.WorkspacePath, physicalWorkspace)
+	}
+	if runtime.lastCfg.NamespaceKey != session.NamespaceKey {
+		t.Fatalf("runtime namespace key = %q, want %q", runtime.lastCfg.NamespaceKey, session.NamespaceKey)
 	}
 	if _, err := os.Stat(wantWorkspace); err != nil {
 		t.Fatalf("scratch workspace not created at %q: %v", wantWorkspace, err)

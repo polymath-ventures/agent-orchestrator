@@ -71,10 +71,14 @@ type SessionRecord struct {
 	// a caller pinning a harness. MixBucketModel preserves the selected
 	// configured bucket's model for census when a model-only spawn launches an
 	// explicit overlay model. Internal facts, not part of the API read model.
-	MixSelected    bool     `json:"-"`
-	MixBucketModel string   `json:"-"`
-	DisplayName    string   `json:"displayName,omitempty"`
-	Activity       Activity `json:"activity"`
+	MixSelected    bool   `json:"-"`
+	MixBucketModel string `json:"-"`
+	DisplayName    string `json:"displayName,omitempty"`
+	// NamespaceKey is the immutable creation-time key used to name managed
+	// external worker resources. Empty identifies a legacy row or a singleton
+	// role session whose canonical resources intentionally do not use it.
+	NamespaceKey string   `json:"-"`
+	Activity     Activity `json:"activity"`
 	// LastError is the bounded diagnostic from the latest managed-agent launch
 	// failure. It remains available after terminal state changes until a new
 	// spawn supersedes that process.

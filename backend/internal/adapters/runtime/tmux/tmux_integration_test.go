@@ -79,6 +79,51 @@ func TestRuntimeIntegration(t *testing.T) {
 	}
 }
 
+func TestRuntimeIntegrationReadableNamespaceKeysStayDistinct(t *testing.T) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux unavailable")
+	}
+
+	ctx := context.Background()
+	r := New(Options{Timeout: 5 * time.Second, DataDir: t.TempDir()})
+	idA := domain.SessionID("proj-1-0123456789abcdef")
+	idB := domain.SessionID("proj-1-fedcba9876543210")
+	keyA := "ao-255-readable-work-with-complete-context--" + string(idA)
+	keyB := "ao-255-readable-work-with-complete-context--" + string(idB)
+	create := func(id domain.SessionID, key string) ports.RuntimeHandle {
+		h, err := r.Create(ctx, ports.RuntimeConfig{
+			SessionID: id, NamespaceKey: key, WorkspacePath: t.TempDir(),
+			Argv: []string{"sh", "-c", "echo namespace-ready"},
+		})
+		if err != nil {
+			t.Fatalf("Create %s: %v", id, err)
+		}
+		t.Cleanup(func() { _ = r.Destroy(context.Background(), h) })
+		return h
+	}
+	hA := create(idA, keyA)
+	hB := create(idB, keyB)
+	if hA.ID != keyA || hB.ID != keyB {
+		t.Fatalf("tmux handles do not preserve complete readable keys: A=%q B=%q", hA.ID, hB.ID)
+	}
+	for _, h := range []ports.RuntimeHandle{hA, hB} {
+		alive, err := r.IsAlive(ctx, h)
+		if err != nil || !alive {
+			t.Fatalf("IsAlive(%q) = %v, %v", h.ID, alive, err)
+		}
+	}
+	restarted, err := r.Restart(ctx, hA, ports.RuntimeConfig{
+		SessionID: idA, NamespaceKey: keyA, WorkspacePath: t.TempDir(),
+		Argv: []string{"sh", "-c", "echo namespace-restarted"},
+	})
+	if err != nil {
+		t.Fatalf("Restart: %v", err)
+	}
+	if restarted != hA {
+		t.Fatalf("restart changed handle: got %+v want %+v", restarted, hA)
+	}
+}
+
 // TestRuntimeIntegrationExactSessionParsing verifies that IsAlive uses exact
 // session matching and does not treat a prefix as a live session.
 func TestRuntimeIntegrationExactSessionParsing(t *testing.T) {
