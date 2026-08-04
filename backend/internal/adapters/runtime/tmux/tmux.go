@@ -1031,9 +1031,9 @@ func runtimeSessionName(cfg ports.RuntimeConfig) (string, error) {
 	return tmuxSessionName(cfg.SessionID)
 }
 
-// SessionName returns the tmux session name the runtime registers for a given
-// session id, applying the same sanitisation Create does. Callers that print an
-// attach hint must use this rather than the raw id.
+// SessionName returns the tmux name Create registers for a new session id.
+// Existing sessions are addressed by their persisted RuntimeHandle.ID instead
+// of reconstructing historical handles through this helper.
 func SessionName(id string) string {
 	if sessionIDPattern.MatchString(id) {
 		return id
@@ -1061,6 +1061,10 @@ func legacyLengthCappedSessionName(id string) string {
 	return sanitizedSessionName(id)
 }
 
+// Namespace keys use a wider digest than the frozen legacy session-id fallback
+// so invalid-character canonicalization retains the complete identity's
+// collision resistance. These forms must not be unified: persisted handles are
+// external identities.
 func sanitizedNamespaceSessionName(raw string) string {
 	base := sanitizedSessionNameBase(raw, 31)
 	sum := sha256.Sum256([]byte(raw))
