@@ -26,6 +26,27 @@ rebuild cannot reuse a key that still exists on the host.
 | 8   | VCS branch                    | External identity namespace | Worker root branch derives from the complete AO session ID (`ao/<namespace>/<id>/root`)                                                                     | Non-recycling for workers. Project Orc and fleet Prime branches are canonical singleton role branches by design, and replacement reuses them intentionally. Explicit caller-supplied branches remain caller-owned.                                                |
 | 9   | `agent_session_id`            | Native harness identity     | Adapter-native identity persisted on the session row                                                                                                        | Used by harnesses for restore. It is not a replacement display name and is never shown as one.                                                                                                                                                                    |
 
+## Constraints
+
+The surface map above says what each surface _is_; this says what they
+_require_. A session ID is composed from the project id, so the project id
+carries the constraints of every surface below it. tmux is the binding one: `.`
+and `:` are tmux's target grammar (`session:window.pane`), and tmux silently
+rewrites them to `_` in a session name rather than rejecting them — the original
+string is then unaddressable, so AO would lose track of a live session. git
+rejects `..` and `:` in a refname but tolerates a lone `.`. Workspace paths,
+Claude project slugs, and request paths tolerate all three.
+
+The intersection is `[A-Za-z0-9_-]`. It is enforced in exactly one place —
+`domain.ProjectIDPattern` / `domain.IsValidProjectID` — where the id enters the
+system: `validateProjectID` calls it at project registration, and the legacy
+importer calls it before writing a migrated project. `cli.sessionIDPattern`
+re-checks the same class on the composed session id where it is placed in a
+request path. Any new surface stricter than this belongs in this section and in
+`domain.ProjectIDPattern`, not as a local sanitizer at the point of use — a
+surface that quietly rewrites its own copy of the id produces a second identity
+AO cannot map back.
+
 ## Database generations
 
 `daemon_settings.session_id_generation` is a 16-character lowercase-hex token
