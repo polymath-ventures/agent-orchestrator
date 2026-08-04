@@ -80,10 +80,12 @@ stored identity.
 ### D4 — Namespace-specific canonicalization preserves readability and identity
 
 Workspace paths and git branches can consume the complete namespace key after
-normal path/ref validation. tmux keeps its one `SessionName` canonicalizer: if
-the key fits the verbatim threshold it is used directly; otherwise the existing
-readable-prefix + digest form preserves a useful head and collision-safe tail.
-Every create/lookup/attach/destroy path must canonicalize the same stored key.
+normal path/ref validation. tmux derives new worker handles through
+`NamespaceSessionName`: if the key fits the verbatim threshold it is used
+directly; otherwise a readable 31-byte head plus a 64-bit digest of the complete
+key preserves a useful prefix and collision-safe tail. Create and restart derive
+the same handle; lookup, attach, and destroy consume the persisted opaque handle.
+The legacy `SessionName` algorithm remains unchanged for existing key-less rows.
 
 ### D5 — Explicit and singleton namespaces remain explicit
 

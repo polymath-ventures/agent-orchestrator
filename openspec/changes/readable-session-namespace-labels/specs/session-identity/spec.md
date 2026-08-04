@@ -49,8 +49,9 @@ human-readable creation-time label with the complete non-recycling session
 identity. No one of those namespaces SHALL replace, truncate without a
 collision-safe digest, or re-derive the identity from presentation.
 
-Namespace-specific canonicalization SHALL be deterministic. tmux create, lookup,
-attach, restart, and destroy paths SHALL all canonicalize the same stored key.
+Namespace-specific canonicalization SHALL be deterministic. tmux create and
+restart SHALL derive the same handle from the stored key; lookup, attach, and
+destroy SHALL consume that persisted opaque handle without re-deriving it.
 Explicit caller-supplied branches SHALL remain caller-owned and unchanged.
 Project Orc and fleet Prime canonical singleton namespaces SHALL remain explicit
 exceptions unless a separate requirement changes them.

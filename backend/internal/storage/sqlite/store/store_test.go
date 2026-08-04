@@ -759,6 +759,9 @@ func TestSessionNamespaceKeyIsWriteOnceAndSurvivesMutableUpdates(t *testing.T) {
 	if r.NamespaceKey != "" {
 		t.Fatalf("seed namespace key = %q, want empty", r.NamespaceKey)
 	}
+	if ok, err := s.SetSessionNamespaceKey(ctx, r.ID, "  "); err == nil || ok {
+		t.Fatalf("empty SetSessionNamespaceKey: ok=%v err=%v, want rejected", ok, err)
+	}
 
 	key := "ao-255-readable--" + string(r.ID)
 	ok, err := s.SetSessionNamespaceKey(ctx, r.ID, key)

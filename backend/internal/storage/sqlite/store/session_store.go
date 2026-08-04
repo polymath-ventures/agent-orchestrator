@@ -130,6 +130,9 @@ func (s *Store) UpdateSession(ctx context.Context, rec domain.SessionRecord) err
 // SetSessionNamespaceKey initializes a worker's external namespace key exactly
 // once. ok=false means the row is absent, is not a worker, or already has a key.
 func (s *Store) SetSessionNamespaceKey(ctx context.Context, id domain.SessionID, key string) (bool, error) {
+	if strings.TrimSpace(key) == "" {
+		return false, errors.New("session namespace key is required")
+	}
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	rows, err := s.qw.SetSessionNamespaceKey(ctx, gen.SetSessionNamespaceKeyParams{
