@@ -85,7 +85,9 @@ normal path/ref validation. tmux derives new worker handles through
 cutoff. A key containing unsupported characters retains a readable head plus a
 digest of the complete key. Create derives a handle from the stored key;
 restart, lookup, attach, and destroy consume the persisted opaque handle.
-Existing key-less rows keep their stored handle authoritative across restart.
+Existing key-less rows keep their stored handle authoritative across restart,
+with validation against both current naming and the historical length-capped
+canonicalization so a stale cross-session handle is still rejected.
 
 ### D5 — Explicit and singleton namespaces remain explicit
 

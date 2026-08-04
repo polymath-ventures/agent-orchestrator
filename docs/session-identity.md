@@ -72,8 +72,10 @@ sessions keep their current workspaces, runtime handles, branches, and native
 harness session IDs. Only newly created workers receive readable namespace keys;
 role singletons and explicit caller branches keep their existing ownership
 rules. Restart treats a key-less session's persisted runtime handle as opaque,
-so changing the canonical name for future sessions cannot rename a live legacy
-tmux session.
+accepting it only when it matches either the current safe name or AO's historical
+48-byte canonicalization. Changing the canonical name for future sessions
+therefore cannot rename a live legacy tmux session or target another session's
+handle.
 
 Project Orc remains a canonical singleton at
 `<project>/orchestrator/<prefix>-orchestrator` with branch

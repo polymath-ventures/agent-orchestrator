@@ -719,6 +719,21 @@ func TestRestartRejectsMismatchedSessionHandle(t *testing.T) {
 	}
 }
 
+func TestRestartRejectsMismatchedLegacySessionHandle(t *testing.T) {
+	r, fr := newTestRuntime(0)
+	_, err := r.Restart(context.Background(), ports.RuntimeHandle{ID: "sess-1"}, ports.RuntimeConfig{
+		SessionID:     "sess-2",
+		WorkspacePath: "/tmp/ws",
+		Argv:          []string{"codex"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "does not match") {
+		t.Fatalf("Restart error = %v, want legacy handle mismatch", err)
+	}
+	if len(fr.calls) != 0 {
+		t.Fatalf("runtime called after validation failure: %+v", fr.calls)
+	}
+}
+
 func TestRestartPreservesPersistedLegacyHandleAfterCanonicalizationChanges(t *testing.T) {
 	r, _ := newTestRuntime(0)
 	legacyID := strings.Repeat("x", 60) + "-1"

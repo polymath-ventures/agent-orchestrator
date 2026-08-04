@@ -444,18 +444,13 @@ func (r *Runtime) Restart(ctx context.Context, handle ports.RuntimeHandle, cfg p
 	if err != nil {
 		return ports.RuntimeHandle{}, err
 	}
-	if strings.TrimSpace(cfg.NamespaceKey) == "" {
-		if _, err := tmuxSessionName(cfg.SessionID); err != nil {
-			return ports.RuntimeHandle{}, err
-		}
-	} else {
-		expectedID, err := runtimeSessionName(cfg)
-		if err != nil {
-			return ports.RuntimeHandle{}, err
-		}
-		if expectedID != id {
-			return ports.RuntimeHandle{}, fmt.Errorf("tmux runtime: restart handle %s does not match session %s", id, cfg.SessionID)
-		}
+	expectedID, err := runtimeSessionName(cfg)
+	if err != nil {
+		return ports.RuntimeHandle{}, err
+	}
+	matchesLegacyHandle := strings.TrimSpace(cfg.NamespaceKey) == "" && legacyLengthCappedSessionName(string(cfg.SessionID)) == id
+	if expectedID != id && !matchesLegacyHandle {
+		return ports.RuntimeHandle{}, fmt.Errorf("tmux runtime: restart handle %s does not match session %s", id, cfg.SessionID)
 	}
 	if cfg.WorkspacePath == "" {
 		return ports.RuntimeHandle{}, errors.New("tmux runtime: workspace path is required")
@@ -1054,6 +1049,16 @@ func NamespaceSessionName(key string) string {
 		return key
 	}
 	return sanitizedNamespaceSessionName(key)
+}
+
+// legacyLengthCappedSessionName reproduces the pre-#255 handle only to
+// recognize persisted key-less sessions during restart. It is not a creation
+// limit: new safe names remain verbatim regardless of length.
+func legacyLengthCappedSessionName(id string) string {
+	if sessionIDPattern.MatchString(id) && len(id) <= 48 {
+		return id
+	}
+	return sanitizedSessionName(id)
 }
 
 func sanitizedNamespaceSessionName(raw string) string {
