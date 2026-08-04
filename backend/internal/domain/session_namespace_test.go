@@ -34,11 +34,12 @@ func TestComposeSessionNamespaceKey(t *testing.T) {
 	}
 }
 
-func TestComposeSessionNamespaceKeyCapsOnlyTheReadableLabel(t *testing.T) {
+func TestComposeSessionNamespaceKeyDoesNotTruncateTheReadableLabel(t *testing.T) {
 	t.Parallel()
 
 	const id = SessionID("agent-orchestrator-14-fedcba9876543210")
-	key, err := ComposeSessionNamespaceKey(strings.Repeat("readable", 20), id)
+	displayName := strings.Repeat("readable-", 20) + "tail"
+	key, err := ComposeSessionNamespaceKey(displayName, id)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,8 +47,9 @@ func TestComposeSessionNamespaceKeyCapsOnlyTheReadableLabel(t *testing.T) {
 	if !ok {
 		t.Fatalf("namespace key %q has no separator", key)
 	}
-	if len(label) == 0 || len(label) > MaxSessionNamespaceLabelBytes {
-		t.Fatalf("label %q has %d bytes, want 1..%d", label, len(label), MaxSessionNamespaceLabelBytes)
+	wantLabel := strings.TrimSuffix(displayName, "-")
+	if label != wantLabel {
+		t.Fatalf("label = %q, want the complete normalized label %q", label, wantLabel)
 	}
 	if suffix != string(id) {
 		t.Fatalf("identity suffix = %q, want complete id %q", suffix, id)

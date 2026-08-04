@@ -23,7 +23,8 @@ an existing workspace, tmux session, or branch.
 
 - **WHEN** two new workers resolve to identical or similar readable labels
 - **THEN** their external namespace keys remain distinct because their complete session identities differ
-- **AND** no namespace canonicalization removes the collision-safe identity or digest
+- **AND** safe namespace keys retain that complete identity verbatim
+- **AND** any invalid-character compatibility canonicalization hashes the complete key, including that identity
 
 #### Scenario: Rename changes presentation only
 
@@ -47,11 +48,14 @@ workspace path, Claude project-directory slug, tmux runtime session, and default
 VCS branch on one stored external namespace key. That key SHALL combine a
 human-readable creation-time label with the complete non-recycling session
 identity. No one of those namespaces SHALL replace, truncate without a
-collision-safe digest, or re-derive the identity from presentation.
+collision-safe digest of the complete key, or re-derive the identity from
+presentation. Safe tmux namespace keys SHALL remain verbatim without an
+AO-imposed length cutoff.
 
-Namespace-specific canonicalization SHALL be deterministic. tmux create and
-restart SHALL derive the same handle from the stored key; lookup, attach, and
-destroy SHALL consume that persisted opaque handle without re-deriving it.
+Namespace-specific canonicalization SHALL be deterministic. tmux create SHALL
+derive the handle from the stored key; restart, lookup, attach, and destroy SHALL
+consume the persisted opaque handle without re-deriving it. Existing key-less
+sessions SHALL likewise keep their persisted runtime handle authoritative.
 Explicit caller-supplied branches SHALL remain caller-owned and unchanged.
 Project Orc and fleet Prime canonical singleton namespaces SHALL remain explicit
 exceptions unless a separate requirement changes them.

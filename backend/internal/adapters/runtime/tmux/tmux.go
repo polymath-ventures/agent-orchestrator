@@ -444,12 +444,18 @@ func (r *Runtime) Restart(ctx context.Context, handle ports.RuntimeHandle, cfg p
 	if err != nil {
 		return ports.RuntimeHandle{}, err
 	}
-	expectedID, err := runtimeSessionName(cfg)
-	if err != nil {
-		return ports.RuntimeHandle{}, err
-	}
-	if expectedID != id {
-		return ports.RuntimeHandle{}, fmt.Errorf("tmux runtime: restart handle %s does not match session %s", id, cfg.SessionID)
+	if strings.TrimSpace(cfg.NamespaceKey) == "" {
+		if _, err := tmuxSessionName(cfg.SessionID); err != nil {
+			return ports.RuntimeHandle{}, err
+		}
+	} else {
+		expectedID, err := runtimeSessionName(cfg)
+		if err != nil {
+			return ports.RuntimeHandle{}, err
+		}
+		if expectedID != id {
+			return ports.RuntimeHandle{}, fmt.Errorf("tmux runtime: restart handle %s does not match session %s", id, cfg.SessionID)
+		}
 	}
 	if cfg.WorkspacePath == "" {
 		return ports.RuntimeHandle{}, errors.New("tmux runtime: workspace path is required")
@@ -1034,17 +1040,17 @@ func runtimeSessionName(cfg ports.RuntimeConfig) (string, error) {
 // session id, applying the same sanitisation Create does. Callers that print an
 // attach hint must use this rather than the raw id.
 func SessionName(id string) string {
-	if sessionIDPattern.MatchString(id) && len(id) <= 48 {
+	if sessionIDPattern.MatchString(id) {
 		return id
 	}
 	return sanitizedSessionName(id)
 }
 
 // NamespaceSessionName returns the deterministic tmux handle for a persisted
-// namespace key. The larger digest preserves collision resistance when tmux's
-// 48-byte practical handle limit requires canonicalization.
+// namespace key. Safe keys remain complete; only unsupported characters require
+// canonicalization.
 func NamespaceSessionName(key string) string {
-	if sessionIDPattern.MatchString(key) && len(key) <= 48 {
+	if sessionIDPattern.MatchString(key) {
 		return key
 	}
 	return sanitizedNamespaceSessionName(key)

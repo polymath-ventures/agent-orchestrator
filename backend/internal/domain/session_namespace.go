@@ -5,10 +5,6 @@ import (
 	"strings"
 )
 
-// MaxSessionNamespaceLabelBytes bounds only the readable decoration on an
-// external namespace key. The complete session ID is always appended verbatim.
-const MaxSessionNamespaceLabelBytes = 24
-
 // ComposeSessionNamespaceKey combines a safe creation-time work label with the
 // complete non-recycling AO session identity. The result is stored once and is
 // never parsed to recover identity; SessionRecord.ID remains authoritative.
@@ -41,9 +37,6 @@ func sessionNamespaceLabel(name string) string {
 				lastDash = true
 			}
 			continue
-		}
-		if b.Len() >= MaxSessionNamespaceLabelBytes {
-			break
 		}
 		b.WriteByte(out)
 		lastDash = false

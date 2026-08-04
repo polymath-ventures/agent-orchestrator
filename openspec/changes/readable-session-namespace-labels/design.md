@@ -25,7 +25,7 @@ and branch generation. Existing live resources cannot be renamed in place.
 - Workspace, tmux, and AO-generated root branches consume that same stored key.
 - The complete non-recycling session identity remains the collision key.
 - Existing sessions and explicit caller branches continue resolving unchanged.
-- Namespace length handling stays deterministic and testable.
+- Namespace safe-character handling stays deterministic and testable.
 
 **Non-Goals:**
 
@@ -81,11 +81,11 @@ stored identity.
 
 Workspace paths and git branches can consume the complete namespace key after
 normal path/ref validation. tmux derives new worker handles through
-`NamespaceSessionName`: if the key fits the verbatim threshold it is used
-directly; otherwise a readable 31-byte head plus a 64-bit digest of the complete
-key preserves a useful prefix and collision-safe tail. Create and restart derive
-the same handle; lookup, attach, and destroy consume the persisted opaque handle.
-The legacy `SessionName` algorithm remains unchanged for existing key-less rows.
+`NamespaceSessionName`: a safe key is used verbatim with no AO-imposed length
+cutoff. A key containing unsupported characters retains a readable head plus a
+digest of the complete key. Create derives a handle from the stored key;
+restart, lookup, attach, and destroy consume the persisted opaque handle.
+Existing key-less rows keep their stored handle authoritative across restart.
 
 ### D5 — Explicit and singleton namespaces remain explicit
 
@@ -95,9 +95,10 @@ role semantics rather than gaining a worker work-item label.
 
 ## Risks / Trade-offs
 
-- **Long paths and refs** → cap only the readable label; never truncate the
-  authoritative identity without a digest. Add boundary tests for filesystem,
-  git-ref, and tmux limits.
+- **Long paths and refs** → the creation-time display-name contract already
+  bounds the readable input, so do not add a second namespace-label budget.
+  Preserve the authoritative identity and verify filesystem, git-ref, and long
+  tmux handles at their owning adapters.
 - **Spawn crash between seed insert and key persistence** → persist the key before
   any external resource creation; a key-less untouched seed row remains safely
   rollbackable.
@@ -126,6 +127,6 @@ sessions.
 
 ## Open Questions
 
-None required before implementation. Exact readable-label cap and separator are
-implementation details: choose the shortest shape that preserves a useful label,
-passes all namespace validators, and keeps identity unambiguous.
+None required before implementation. The separator and safe-character mapping
+are implementation details; the namespace layer does not impose another length
+budget on the already-bounded creation-time display label.

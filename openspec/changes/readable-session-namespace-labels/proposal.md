@@ -20,10 +20,10 @@ identity reuse.
   one shared external namespace key that combines the readable label with the
   complete non-recycling session identity. Readability decorates identity; it
   never replaces or weakens the collision key.
-- Namespace-specific length constraints preserve a readable prefix and a
-  collision-safe digest/token rather than silently dropping identity. In
-  particular, tmux create, lookup, attach, and destroy continue to share one
-  canonicalization path.
+- Safe tmux namespace keys remain verbatim without an AO-imposed length cutoff.
+  Unsupported characters use compatibility canonicalization over the complete
+  key rather than silently dropping identity, while persisted handles remain
+  authoritative for lookup, attach, restart, and destroy.
 - Existing sessions keep their persisted paths, runtime handles, and branches.
   The new naming applies only to newly created resources; restore never moves or
   renames live state.
@@ -55,8 +55,8 @@ None.
   launch configuration.
 - **Workspace adapter** — managed worker paths consume the shared key rather than
   reconstructing a label independently.
-- **tmux runtime adapter** — session canonicalization consumes the shared key and
-  preserves deterministic create/lookup/attach behavior within tmux limits.
+- **tmux runtime adapter** — session canonicalization consumes the shared key,
+  preserves long safe keys verbatim, and keeps persisted handles authoritative.
 - **Branch generation** — AO-generated worker root branches include the shared
   readable key while retaining the stable session namespace required for
   sibling-PR attribution.

@@ -88,8 +88,8 @@ func TestRuntimeIntegrationReadableNamespaceKeysStayDistinct(t *testing.T) {
 	r := New(Options{Timeout: 5 * time.Second, DataDir: t.TempDir()})
 	idA := domain.SessionID("proj-1-0123456789abcdef")
 	idB := domain.SessionID("proj-1-fedcba9876543210")
-	keyA := "ao-255-readable--" + string(idA)
-	keyB := "ao-255-readable--" + string(idB)
+	keyA := "ao-255-readable-work-with-complete-context--" + string(idA)
+	keyB := "ao-255-readable-work-with-complete-context--" + string(idB)
 	create := func(id domain.SessionID, key string) ports.RuntimeHandle {
 		h, err := r.Create(ctx, ports.RuntimeConfig{
 			SessionID: id, NamespaceKey: key, WorkspacePath: t.TempDir(),
@@ -103,8 +103,8 @@ func TestRuntimeIntegrationReadableNamespaceKeysStayDistinct(t *testing.T) {
 	}
 	hA := create(idA, keyA)
 	hB := create(idB, keyB)
-	if hA.ID == hB.ID || !strings.HasPrefix(hA.ID, "ao-255-readable") || !strings.HasPrefix(hB.ID, "ao-255-readable") {
-		t.Fatalf("tmux handles are not readable and distinct: A=%q B=%q", hA.ID, hB.ID)
+	if hA.ID != keyA || hB.ID != keyB {
+		t.Fatalf("tmux handles do not preserve complete readable keys: A=%q B=%q", hA.ID, hB.ID)
 	}
 	for _, h := range []ports.RuntimeHandle{hA, hB} {
 		alive, err := r.IsAlive(ctx, h)
