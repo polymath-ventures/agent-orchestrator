@@ -193,4 +193,4 @@ session identity SHALL be explicitly justified rather than left implicit.
 
 - **WHEN** a maintainer reads the session-identity schema document
 - **THEN** the AO session ID, display name, `sessionPrefix`, Claude UUID, workspace path, Claude project-directory slug, tmux session, branch, and `agent_session_id` are all present
-- **AND** the document distinguishes current behavior from deferred per-surface readability adoption
+- **AND** the document describes the current per-surface readability and compatibility derivations
