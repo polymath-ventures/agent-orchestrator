@@ -115,7 +115,20 @@ func TestManagedPathSafety(t *testing.T) {
 	if want := filepath.Join(ws.managedRoot, "proj", "sess"); path != want {
 		t.Fatalf("path = %q, want %q", path, want)
 	}
-	primePath, err := ws.managedPath(ports.WorkspaceConfig{Kind: domain.KindPrime, SessionID: "prime-1", Branch: "ao/prime", RepoPath: filepath.Join(root, "prime", "repo")})
+	readableKey := "ao-255-readable--proj-1-0123456789abcdef"
+	path, err = ws.managedPath(ports.WorkspaceConfig{
+		ProjectID:    "proj",
+		SessionID:    "proj-1-0123456789abcdef",
+		NamespaceKey: readableKey,
+		Kind:         domain.KindWorker,
+	})
+	if err != nil {
+		t.Fatalf("readable managed path: %v", err)
+	}
+	if want := filepath.Join(ws.managedRoot, "proj", readableKey); path != want {
+		t.Fatalf("readable path = %q, want %q", path, want)
+	}
+	primePath, err := ws.managedPath(ports.WorkspaceConfig{Kind: domain.KindPrime, SessionID: "prime-1", NamespaceKey: readableKey, Branch: "ao/prime", RepoPath: filepath.Join(root, "prime", "repo")})
 	if err != nil {
 		t.Fatalf("projectless prime managed path: %v", err)
 	}
@@ -141,6 +154,7 @@ func TestOrchestratorManagedPath(t *testing.T) {
 		cfg := ports.WorkspaceConfig{
 			ProjectID:     "proj",
 			SessionID:     "proj-1",
+			NamespaceKey:  "must-not-move-the-singleton",
 			Kind:          domain.KindOrchestrator,
 			SessionPrefix: "ao-agents",
 		}

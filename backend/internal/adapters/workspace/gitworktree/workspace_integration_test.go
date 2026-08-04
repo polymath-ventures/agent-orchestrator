@@ -66,6 +66,58 @@ func TestWorkspaceIntegrationCreateRestoreDestroy(t *testing.T) {
 	}
 }
 
+func TestWorkspaceIntegrationReadableNamespaceKeysStayDistinct(t *testing.T) {
+	git := requireGit(t)
+	tmp := t.TempDir()
+	repo := setupOriginClone(t, git, tmp)
+	root := filepath.Join(tmp, "managed")
+	ws, err := New(Options{Binary: git, ManagedRoot: root, RepoResolver: StaticRepoResolver{"proj": repo}})
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	ctx := context.Background()
+	idA := domain.SessionID("proj-1-0123456789abcdef")
+	idB := domain.SessionID("proj-1-fedcba9876543210")
+	keyA := "ao-255-readable--" + string(idA)
+	keyB := "ao-255-readable--" + string(idB)
+	branchA := "ao/" + keyA + "/root"
+	branchB := "ao/" + keyB + "/root"
+
+	infoA, err := ws.Create(ctx, ports.WorkspaceConfig{ProjectID: "proj", SessionID: idA, NamespaceKey: keyA, Kind: domain.KindWorker, Branch: branchA})
+	if err != nil {
+		t.Fatalf("create A: %v", err)
+	}
+	t.Cleanup(func() { _ = ws.Destroy(context.Background(), infoA) })
+	infoB, err := ws.Create(ctx, ports.WorkspaceConfig{ProjectID: "proj", SessionID: idB, NamespaceKey: keyB, Kind: domain.KindWorker, Branch: branchB})
+	if err != nil {
+		t.Fatalf("create B: %v", err)
+	}
+	t.Cleanup(func() { _ = ws.Destroy(context.Background(), infoB) })
+
+	if infoA.Path == infoB.Path || infoA.Branch == infoB.Branch {
+		t.Fatalf("same-label workers collided: A=%+v B=%+v", infoA, infoB)
+	}
+	if filepath.Base(infoA.Path) != keyA || filepath.Base(infoB.Path) != keyB {
+		t.Fatalf("worktree basenames = %q, %q; want complete readable keys", filepath.Base(infoA.Path), filepath.Base(infoB.Path))
+	}
+	for _, info := range []ports.WorkspaceInfo{infoA, infoB} {
+		gotBranch := strings.TrimSpace(string(runGitOutput(t, git, info.Path, "branch", "--show-current")))
+		if gotBranch != info.Branch {
+			t.Fatalf("worktree %q branch = %q, want %q", info.Path, gotBranch, info.Branch)
+		}
+	}
+	records, err := ws.listRecords(ctx, repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := findWorktree(records, infoA.Path); !ok {
+		t.Fatalf("git did not register worktree A %q", infoA.Path)
+	}
+	if _, ok := findWorktree(records, infoB.Path); !ok {
+		t.Fatalf("git did not register worktree B %q", infoB.Path)
+	}
+}
+
 func TestWorkspaceIntegrationDestroyRefusesLockedWorktree(t *testing.T) {
 	git := requireGit(t)
 	tmp := t.TempDir()

@@ -1248,10 +1248,14 @@ func TestRestore_RotatesSupervisedAgentGeneration(t *testing.T) {
 	st := newFakeStore()
 	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
 	seedTerminal(st, "mer-1", domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "b", AgentSessionID: "agent-x", RuntimeLaunchID: "launch-old"})
+	rec := st.sessions["mer-1"]
+	rec.NamespaceKey = "ao-255-readable--mer-1"
+	st.sessions["mer-1"] = rec
 	rt := &fakeRuntime{}
+	ws := &fakeWorkspace{}
 	agent := supervisedLaunchAgent{launchArgvAgent{argv: []string{"codex", "resume", "agent-x"}}}
 	m := New(Deps{
-		Runtime: rt, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st,
+		Runtime: rt, Agents: singleAgent{agent: agent}, Workspace: ws, Store: st,
 		Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st},
 		LookPath:    func(string) (string, error) { return "/bin/true", nil },
 		Executable:  func() (string, error) { return "/opt/ao", nil },
@@ -1267,6 +1271,9 @@ func TestRestore_RotatesSupervisedAgentGeneration(t *testing.T) {
 	}
 	if got := rt.lastCfg.Env[EnvRuntimeLaunchID]; got != "launch-new" {
 		t.Fatalf("restored launch env = %q, want launch-new", got)
+	}
+	if rt.lastCfg.NamespaceKey != rec.NamespaceKey || ws.lastCfg.NamespaceKey != rec.NamespaceKey {
+		t.Fatalf("restore namespace keys: runtime=%q workspace=%q, want %q", rt.lastCfg.NamespaceKey, ws.lastCfg.NamespaceKey, rec.NamespaceKey)
 	}
 	wantArgv := []string{"/opt/ao", "agent-process", "supervise", "--session", "mer-1", "--launch", "launch-new", "--", "codex", "resume", "agent-x"}
 	if !reflect.DeepEqual(rt.lastCfg.Argv, wantArgv) {

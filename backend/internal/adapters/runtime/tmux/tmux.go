@@ -370,7 +370,7 @@ func New(opts Options) *Runtime {
 // Create starts a new tmux session in the workspace, running the agent's
 // launch command with a keep-alive shell, and returns a handle to it.
 func (r *Runtime) Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.RuntimeHandle, error) {
-	id, err := tmuxSessionName(cfg.SessionID)
+	id, err := runtimeSessionName(cfg)
 	if err != nil {
 		return ports.RuntimeHandle{}, err
 	}
@@ -444,7 +444,7 @@ func (r *Runtime) Restart(ctx context.Context, handle ports.RuntimeHandle, cfg p
 	if err != nil {
 		return ports.RuntimeHandle{}, err
 	}
-	expectedID, err := tmuxSessionName(cfg.SessionID)
+	expectedID, err := runtimeSessionName(cfg)
 	if err != nil {
 		return ports.RuntimeHandle{}, err
 	}
@@ -1020,6 +1020,16 @@ func tmuxSessionName(id domain.SessionID) (string, error) {
 	return SessionName(raw), nil
 }
 
+func runtimeSessionName(cfg ports.RuntimeConfig) (string, error) {
+	if _, err := tmuxSessionName(cfg.SessionID); err != nil {
+		return "", err
+	}
+	if key := strings.TrimSpace(cfg.NamespaceKey); key != "" {
+		return NamespaceSessionName(key), nil
+	}
+	return tmuxSessionName(cfg.SessionID)
+}
+
 // SessionName returns the tmux session name the runtime registers for a given
 // session id, applying the same sanitisation Create does. Callers that print an
 // attach hint must use this rather than the raw id.
@@ -1030,7 +1040,29 @@ func SessionName(id string) string {
 	return sanitizedSessionName(id)
 }
 
+// NamespaceSessionName returns the deterministic tmux handle for a persisted
+// namespace key. The larger digest preserves collision resistance when tmux's
+// 48-byte practical handle limit requires canonicalization.
+func NamespaceSessionName(key string) string {
+	if sessionIDPattern.MatchString(key) && len(key) <= 48 {
+		return key
+	}
+	return sanitizedNamespaceSessionName(key)
+}
+
+func sanitizedNamespaceSessionName(raw string) string {
+	base := sanitizedSessionNameBase(raw, 31)
+	sum := sha256.Sum256([]byte(raw))
+	return base + "-" + hex.EncodeToString(sum[:8])
+}
+
 func sanitizedSessionName(raw string) string {
+	base := sanitizedSessionNameBase(raw, 32)
+	sum := sha256.Sum256([]byte(raw))
+	return base + "-" + hex.EncodeToString(sum[:4])
+}
+
+func sanitizedSessionNameBase(raw string, maxBytes int) string {
 	var b strings.Builder
 	lastDash := false
 	for _, r := range raw {
@@ -1049,11 +1081,10 @@ func sanitizedSessionName(raw string) string {
 	if base == "" {
 		base = "session"
 	}
-	if len(base) > 32 {
-		base = strings.TrimRight(base[:32], "-")
+	if len(base) > maxBytes {
+		base = strings.TrimRight(base[:maxBytes], "-")
 	}
-	sum := sha256.Sum256([]byte(raw))
-	return base + "-" + hex.EncodeToString(sum[:4])
+	return base
 }
 
 func handleID(handle ports.RuntimeHandle) (string, error) {

@@ -266,6 +266,48 @@ func TestSessionNameMatchesCreateNaming(t *testing.T) {
 	}
 }
 
+func TestNamespaceSessionNameKeepsReadableHeadAndGenerationDigest(t *testing.T) {
+	const label = "ao-255-readable-work"
+	keyA := label + "--agent-orchestrator-1-0123456789abcdef"
+	keyB := label + "--agent-orchestrator-1-fedcba9876543210"
+	nameA := NamespaceSessionName(keyA)
+	nameB := NamespaceSessionName(keyB)
+	if nameA == nameB {
+		t.Fatalf("different complete identities canonicalized to %q", nameA)
+	}
+	for _, name := range []string{nameA, nameB} {
+		if len(name) > 48 || !sessionIDPattern.MatchString(name) {
+			t.Fatalf("namespace tmux name %q is invalid or longer than 48 bytes", name)
+		}
+		if !strings.HasPrefix(name, label) {
+			t.Fatalf("namespace tmux name %q lost readable label %q", name, label)
+		}
+		parts := strings.Split(name, "-")
+		if tail := parts[len(parts)-1]; len(tail) != 16 {
+			t.Fatalf("namespace tmux digest %q has %d hex chars, want 16", tail, len(tail))
+		}
+	}
+}
+
+func TestRuntimeSessionNameUsesStoredKeyWithLegacyFallback(t *testing.T) {
+	id := domain.SessionID("proj-1-0123456789abcdef")
+	key := "ao-255-readable--" + string(id)
+	got, err := runtimeSessionName(ports.RuntimeConfig{SessionID: id, NamespaceKey: key})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := NamespaceSessionName(key); got != want {
+		t.Fatalf("runtime session name = %q, want %q", got, want)
+	}
+	legacy, err := runtimeSessionName(ports.RuntimeConfig{SessionID: id})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := SessionName(string(id)); legacy != want {
+		t.Fatalf("legacy runtime session name = %q, want %q", legacy, want)
+	}
+}
+
 // -- env key validation --
 
 func TestCreateRejectsInvalidEnvKeys(t *testing.T) {
