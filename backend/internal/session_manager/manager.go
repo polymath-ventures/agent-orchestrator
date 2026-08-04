@@ -219,6 +219,7 @@ type Store interface {
 	GetPrimeSettings(ctx context.Context) (domain.PrimeSettings, error)
 	ListWorkspaceRepos(ctx context.Context, projectID string) ([]domain.WorkspaceRepoRecord, error)
 	CreateSession(ctx context.Context, rec domain.SessionRecord) (domain.SessionRecord, error)
+	SetSessionNamespaceKey(ctx context.Context, id domain.SessionID, key string) (bool, error)
 	UpdateSession(ctx context.Context, rec domain.SessionRecord) error
 	GetSession(ctx context.Context, id domain.SessionID) (domain.SessionRecord, bool, error)
 	ListSessions(ctx context.Context, project domain.ProjectID) ([]domain.SessionRecord, error)
@@ -712,6 +713,22 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		unlockSpawnAdmission = nil
 	}
 	id := rec.ID
+	if cfg.Kind == domain.KindWorker {
+		namespaceKey, keyErr := domain.ComposeSessionNamespaceKey(cfg.DisplayName, id)
+		if keyErr != nil {
+			m.rollbackSpawnSeedRow(ctx, id)
+			return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: namespace key: %w", id, keyErr)
+		}
+		stored, keyErr := m.store.SetSessionNamespaceKey(ctx, id, namespaceKey)
+		if keyErr != nil || !stored {
+			m.rollbackSpawnSeedRow(ctx, id)
+			if keyErr != nil {
+				return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: namespace key: %w", id, keyErr)
+			}
+			return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: namespace key was not initialized", id)
+		}
+		rec.NamespaceKey = namespaceKey
+	}
 	systemPromptFile, err := m.prepareSystemPromptFile(id, cfg.Harness, systemPrompt)
 	if err != nil {
 		m.rollbackSpawnSeedRow(ctx, id)
@@ -720,9 +737,9 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 
 	branch := cfg.Branch
 	if branch == "" {
-		branch = DefaultSpawnBranch(id, cfg.Kind, sessionPrefix(project), projectKind, m.dataDir)
+		branch = DefaultSpawnBranch(id, rec.NamespaceKey, cfg.Kind, sessionPrefix(project), projectKind, m.dataDir)
 	}
-	ws, workspaceProject, err := m.createSessionWorkspace(ctx, project, cfg, id, branch)
+	ws, workspaceProject, err := m.createSessionWorkspace(ctx, project, cfg, id, rec.NamespaceKey, branch)
 	if err != nil {
 		// Nothing observable exists yet — no worktree, no runtime — so the seed
 		// row is deleted outright instead of accumulating as a terminated orphan
@@ -845,6 +862,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	defer m.lcm.CancelLaunch(id, launchID)
 	handle, err := m.runtime.Create(ctx, ports.RuntimeConfig{
 		SessionID:     id,
+		NamespaceKey:  rec.NamespaceKey,
 		WorkspacePath: ws.Path,
 		Argv:          argv,
 		Env:           env,
@@ -958,11 +976,12 @@ func (m *Manager) loadProject(ctx context.Context, projectID domain.ProjectID) (
 	return row, nil
 }
 
-func (m *Manager) createSessionWorkspace(ctx context.Context, project domain.ProjectRecord, cfg ports.SpawnConfig, id domain.SessionID, branch string) (ports.WorkspaceInfo, *ports.WorkspaceProjectInfo, error) {
+func (m *Manager) createSessionWorkspace(ctx context.Context, project domain.ProjectRecord, cfg ports.SpawnConfig, id domain.SessionID, namespaceKey, branch string) (ports.WorkspaceInfo, *ports.WorkspaceProjectInfo, error) {
 	if cfg.Kind == domain.KindPrime && cfg.ProjectID == "" {
 		ws, err := m.workspace.Create(ctx, ports.WorkspaceConfig{
 			ProjectID:     "",
 			SessionID:     id,
+			NamespaceKey:  namespaceKey,
 			Kind:          cfg.Kind,
 			SessionPrefix: "prime",
 			Branch:        branch,
@@ -980,6 +999,7 @@ func (m *Manager) createSessionWorkspace(ctx context.Context, project domain.Pro
 		ws, err := m.workspace.Create(ctx, ports.WorkspaceConfig{
 			ProjectID:     cfg.ProjectID,
 			SessionID:     id,
+			NamespaceKey:  namespaceKey,
 			Kind:          cfg.Kind,
 			SessionPrefix: sessionPrefix(project),
 			Branch:        branch,
@@ -1006,6 +1026,7 @@ func (m *Manager) createSessionWorkspace(ctx context.Context, project domain.Pro
 	info, err := workspaceProject.CreateWorkspaceProject(ctx, ports.WorkspaceProjectConfig{
 		ProjectID:     cfg.ProjectID,
 		SessionID:     id,
+		NamespaceKey:  namespaceKey,
 		Kind:          cfg.Kind,
 		SessionPrefix: sessionPrefix(project),
 		Branch:        branch,
@@ -2285,6 +2306,7 @@ func (m *Manager) relaunchSession(ctx context.Context, operation string, rec dom
 	defer m.lcm.CancelLaunch(rec.ID, launchID)
 	runtimeCfg := ports.RuntimeConfig{
 		SessionID:     rec.ID,
+		NamespaceKey:  rec.NamespaceKey,
 		WorkspacePath: ws.Path,
 		Argv:          argv,
 		Env:           env,
@@ -2657,6 +2679,7 @@ func (m *Manager) RestoreAll(ctx context.Context) error {
 			ws, restoreErr = m.workspace.Restore(ctx, ports.WorkspaceConfig{
 				ProjectID:     rec.ProjectID,
 				SessionID:     rec.ID,
+				NamespaceKey:  rec.NamespaceKey,
 				Kind:          rec.Kind,
 				SessionPrefix: sessionPrefix(project),
 				Branch:        rec.Metadata.Branch,
@@ -2764,6 +2787,7 @@ func (m *Manager) restoreSessionWorkspace(ctx context.Context, project domain.Pr
 		return m.workspace.Restore(ctx, ports.WorkspaceConfig{
 			ProjectID:     rec.ProjectID,
 			SessionID:     rec.ID,
+			NamespaceKey:  rec.NamespaceKey,
 			Kind:          rec.Kind,
 			SessionPrefix: sessionPrefix(project),
 			Branch:        rec.Metadata.Branch,
@@ -3399,27 +3423,31 @@ func defaultSessionBranch(id domain.SessionID, kind domain.SessionKind, prefix, 
 
 // DefaultSpawnBranch returns AO's generated work branch for a spawn. Explicit
 // user-provided branches bypass this helper.
-func DefaultSpawnBranch(id domain.SessionID, kind domain.SessionKind, prefix string, projectKind domain.ProjectKind, dataDir string) string {
+func DefaultSpawnBranch(id domain.SessionID, namespaceKey string, kind domain.SessionKind, prefix string, projectKind domain.ProjectKind, dataDir string) string {
 	if projectKind == domain.ProjectKindScratch {
 		return ""
 	}
+	resourceID := id
+	if kind == domain.KindWorker && namespaceKey != "" {
+		resourceID = domain.SessionID(namespaceKey)
+	}
 	branchNamespace := generatedBranchNamespace(dataDir)
 	if projectKind == domain.ProjectKindWorkspace {
-		return aoBranch(branchNamespace, string(id))
+		return aoBranch(branchNamespace, string(resourceID))
 	}
-	return defaultSessionBranch(id, kind, prefix, branchNamespace)
+	return defaultSessionBranch(resourceID, kind, prefix, branchNamespace)
 }
 
 // DefaultOrchestratorBranch returns the generated canonical orchestrator branch
 // for a project in the current data-dir namespace.
 func DefaultOrchestratorBranch(prefix, dataDir string) string {
-	return defaultSessionBranch("", domain.KindOrchestrator, prefix, generatedBranchNamespace(dataDir))
+	return DefaultSpawnBranch("", "", domain.KindOrchestrator, prefix, domain.ProjectKindSingleRepo, dataDir)
 }
 
 // DefaultPrimeBranch returns the generated canonical branch for the projectless
 // fleet Prime singleton in the current data-dir namespace.
 func DefaultPrimeBranch(dataDir string) string {
-	return defaultSessionBranch("", domain.KindPrime, "", generatedBranchNamespace(dataDir))
+	return DefaultSpawnBranch("", "", domain.KindPrime, "", domain.ProjectKindSingleRepo, dataDir)
 }
 
 func fleetPrimeRepoPath(dataDir string) string {

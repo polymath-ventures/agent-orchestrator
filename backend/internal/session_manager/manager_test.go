@@ -24,17 +24,19 @@ import (
 var ctx = context.Background()
 
 type fakeStore struct {
-	mu             sync.Mutex
-	sessions       map[domain.SessionID]domain.SessionRecord
-	pr             map[domain.SessionID]domain.PRFacts
-	projects       map[string]domain.ProjectRecord
-	workspaceRepo  map[string][]domain.WorkspaceRepoRecord
-	fleetPaused    bool
-	fleetPausedErr error
-	prime          domain.PrimeSettings
-	num            int
-	deleteErr      error
-	upsertWTErr    error
+	mu                sync.Mutex
+	sessions          map[domain.SessionID]domain.SessionRecord
+	pr                map[domain.SessionID]domain.PRFacts
+	projects          map[string]domain.ProjectRecord
+	workspaceRepo     map[string][]domain.WorkspaceRepoRecord
+	fleetPaused       bool
+	fleetPausedErr    error
+	prime             domain.PrimeSettings
+	num               int
+	deleteErr         error
+	upsertWTErr       error
+	namespaceKeyErr   error
+	namespaceKeyCalls int
 	// worktrees maps session ID to its saved worktree rows (shutdown-saved marker).
 	worktrees map[domain.SessionID][]domain.SessionWorktreeRecord
 	// getProjectErr, when non-nil, is the error GetProject returns, so a test
@@ -106,6 +108,24 @@ func (f *fakeStore) UpdateSession(_ context.Context, rec domain.SessionRecord) e
 	defer f.mu.Unlock()
 	f.sessions[rec.ID] = rec
 	return nil
+}
+func (f *fakeStore) SetSessionNamespaceKey(_ context.Context, id domain.SessionID, key string) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.namespaceKeyCalls++
+	if f.sharedLog != nil {
+		*f.sharedLog = append(*f.sharedLog, "SetSessionNamespaceKey:"+string(id))
+	}
+	if f.namespaceKeyErr != nil {
+		return false, f.namespaceKeyErr
+	}
+	rec, ok := f.sessions[id]
+	if !ok || rec.Kind != domain.KindWorker || rec.NamespaceKey != "" {
+		return false, nil
+	}
+	rec.NamespaceKey = key
+	f.sessions[id] = rec
+	return true, nil
 }
 func (f *fakeStore) GetSession(_ context.Context, id domain.SessionID) (domain.SessionRecord, bool, error) {
 	f.mu.Lock()
@@ -318,6 +338,9 @@ func (r *blockingRestartRuntime) Restart(_ context.Context, handle ports.Runtime
 }
 
 func (r *fakeRuntime) Create(_ context.Context, cfg ports.RuntimeConfig) (ports.RuntimeHandle, error) {
+	if r.sharedLog != nil {
+		*r.sharedLog = append(*r.sharedLog, "RuntimeCreate:"+string(cfg.SessionID))
+	}
 	if r.createErr != nil {
 		return ports.RuntimeHandle{}, r.createErr
 	}
@@ -684,6 +707,9 @@ type fakeWorkspace struct {
 }
 
 func (w *fakeWorkspace) Create(_ context.Context, cfg ports.WorkspaceConfig) (ports.WorkspaceInfo, error) {
+	if w.sharedLog != nil {
+		*w.sharedLog = append(*w.sharedLog, "WorkspaceCreate:"+string(cfg.SessionID))
+	}
 	if w.createErr != nil {
 		return ports.WorkspaceInfo{}, w.createErr
 	}
@@ -1997,8 +2023,11 @@ func TestSpawn_WorkspaceProjectRecordsRootAndChildWorktrees(t *testing.T) {
 	if rec.Metadata.WorkspacePath != managedPath {
 		t.Fatalf("workspace path = %q, want root worktree path", rec.Metadata.WorkspacePath)
 	}
-	if rec.Metadata.Branch != "ao/mer-1" {
-		t.Fatalf("workspace branch = %q, want ao/mer-1", rec.Metadata.Branch)
+	if want := "ao/" + rec.NamespaceKey; rec.Metadata.Branch != want {
+		t.Fatalf("workspace branch = %q, want %q", rec.Metadata.Branch, want)
+	}
+	if ws.lastProjectCfg.NamespaceKey != rec.NamespaceKey {
+		t.Fatalf("workspace namespace key = %q, want %q", ws.lastProjectCfg.NamespaceKey, rec.NamespaceKey)
 	}
 	if got := ws.lastProjectCfg.RootRepoPath; got != projectPath {
 		t.Fatalf("root repo path = %q, want %q", got, projectPath)
@@ -2838,16 +2867,63 @@ func TestCleanup_WorkspaceProjectDirtyRowsAreSkipped(t *testing.T) {
 	}
 }
 
-func TestSpawn_DefaultsBranchFromSessionID(t *testing.T) {
+func TestSpawn_DefaultsBranchFromNamespaceKey(t *testing.T) {
 	m, st, _, _ := newManager()
 	s, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
 	if err != nil {
 		t.Fatal(err)
 	}
-	// An empty SpawnConfig.Branch defaults to a unique per-session root branch
-	// under a namespace that can also hold sibling PR branches.
-	if got := st.sessions[s.ID].Metadata.Branch; got != "ao/mer-1/root" {
-		t.Fatalf("default branch = %q, want ao/mer-1/root", got)
+	// An empty SpawnConfig.Branch defaults to the immutable readable namespace
+	// key, under a namespace that can also hold sibling PR branches.
+	want := "ao/" + s.NamespaceKey + "/root"
+	if got := st.sessions[s.ID].Metadata.Branch; got != want {
+		t.Fatalf("default branch = %q, want %q", got, want)
+	}
+}
+
+func TestSpawn_PersistsNamespaceKeyBeforeCreatingExternalResources(t *testing.T) {
+	m, st, rt, ws := newManager()
+	var calls []string
+	st.sharedLog = &calls
+	rt.sharedLog = &calls
+	ws.sharedLog = &calls
+
+	s, _, _, err := m.Spawn(ctx, ports.SpawnConfig{
+		ProjectID:  "mer",
+		Kind:       domain.KindWorker,
+		IssueID:    "255",
+		IssueTitle: "Readable work labels",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.NamespaceKey == "" || !strings.HasPrefix(s.NamespaceKey, "mer-255-readable") || !strings.HasSuffix(s.NamespaceKey, "--"+string(s.ID)) {
+		t.Fatalf("namespace key = %q, want readable label plus complete id %q", s.NamespaceKey, s.ID)
+	}
+	if ws.lastCfg.NamespaceKey != s.NamespaceKey || rt.lastCfg.NamespaceKey != s.NamespaceKey {
+		t.Fatalf("adapter keys: workspace=%q runtime=%q, want %q", ws.lastCfg.NamespaceKey, rt.lastCfg.NamespaceKey, s.NamespaceKey)
+	}
+	if got, want := s.Metadata.Branch, "ao/"+s.NamespaceKey+"/root"; got != want {
+		t.Fatalf("generated branch = %q, want %q", got, want)
+	}
+	if len(calls) < 3 || !strings.HasPrefix(calls[0], "SetSessionNamespaceKey:") || !strings.HasPrefix(calls[1], "WorkspaceCreate:") || !strings.HasPrefix(calls[2], "RuntimeCreate:") {
+		t.Fatalf("spawn order = %v, want namespace persistence before workspace and runtime", calls)
+	}
+}
+
+func TestSpawn_NamespaceKeyPersistenceFailureCreatesNoExternalResources(t *testing.T) {
+	m, st, rt, ws := newManager()
+	st.namespaceKeyErr = errors.New("namespace persistence failed")
+
+	_, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	if err == nil || !strings.Contains(err.Error(), "namespace") {
+		t.Fatalf("Spawn err = %v, want namespace persistence failure", err)
+	}
+	if rt.created != 0 || ws.lastCfg.SessionID != "" {
+		t.Fatalf("external resources created: runtime=%d workspace=%+v", rt.created, ws.lastCfg)
+	}
+	if len(st.sessions) != 0 {
+		t.Fatalf("seed row survived failed namespace persistence: %+v", st.sessions)
 	}
 }
 
@@ -2861,8 +2937,8 @@ func TestSpawn_DefaultsBranchUnderDevNamespaceForDevDataDir(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := st.sessions[worker.ID].Metadata.Branch; got != "ao/dev/mer-1/root" {
-		t.Fatalf("worker branch = %q, want ao/dev/mer-1/root", got)
+	if want, got := "ao/dev/"+worker.NamespaceKey+"/root", st.sessions[worker.ID].Metadata.Branch; got != want {
+		t.Fatalf("worker branch = %q, want %q", got, want)
 	}
 
 	orchestrator, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindOrchestrator})
@@ -7289,8 +7365,8 @@ func TestDefaultSpawnBranchDistinguishesDatabaseGenerations(t *testing.T) {
 		idA = domain.SessionID("agent-orchestrator-1-0123456789abcdef")
 		idB = domain.SessionID("agent-orchestrator-1-fedcba9876543210")
 	)
-	branchA := DefaultSpawnBranch(idA, domain.KindWorker, "ao", domain.ProjectKindSingleRepo, "")
-	branchB := DefaultSpawnBranch(idB, domain.KindWorker, "ao", domain.ProjectKindSingleRepo, "")
+	branchA := DefaultSpawnBranch(idA, "", domain.KindWorker, "ao", domain.ProjectKindSingleRepo, "")
+	branchB := DefaultSpawnBranch(idB, "", domain.KindWorker, "ao", domain.ProjectKindSingleRepo, "")
 	if branchA == branchB {
 		t.Fatalf("different generation ids produced the same default branch %q", branchA)
 	}
