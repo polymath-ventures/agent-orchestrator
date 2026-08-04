@@ -127,6 +127,21 @@ func (s *Store) UpdateSession(ctx context.Context, rec domain.SessionRecord) err
 	return s.qw.UpdateSession(ctx, recordToUpdate(rec))
 }
 
+// SetSessionNamespaceKey initializes a worker's external namespace key exactly
+// once. ok=false means the row is absent, is not a worker, or already has a key.
+func (s *Store) SetSessionNamespaceKey(ctx context.Context, id domain.SessionID, key string) (bool, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	rows, err := s.qw.SetSessionNamespaceKey(ctx, gen.SetSessionNamespaceKeyParams{
+		ID:           id,
+		NamespaceKey: key,
+	})
+	if err != nil {
+		return false, fmt.Errorf("set namespace key for session %s: %w", id, err)
+	}
+	return rows > 0, nil
+}
+
 // RenameSession updates only the user-facing display name for an existing
 // session. It returns ok=false when the session id does not exist. The
 // sessions_cdc_update trigger fans out a session_updated CDC event when the
@@ -303,6 +318,7 @@ func rowToRecord(row gen.Session) domain.SessionRecord {
 		MixSelected:    row.MixSelected,
 		MixBucketModel: row.MixBucketModel,
 		DisplayName:    row.DisplayName,
+		NamespaceKey:   row.NamespaceKey,
 		Activity: domain.Activity{
 			State:          row.ActivityState,
 			LastActivityAt: row.ActivityLastAt,

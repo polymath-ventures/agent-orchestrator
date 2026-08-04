@@ -232,6 +232,7 @@ type Session struct {
 	DiffBaseSha        string
 	DiffBaseRef        string
 	LastError          string
+	NamespaceKey       string
 }
 
 type SessionCleanupFact struct {
