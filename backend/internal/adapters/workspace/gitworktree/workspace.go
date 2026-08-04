@@ -169,7 +169,7 @@ func (w *Workspace) CreateWorkspaceProject(ctx context.Context, cfg ports.Worksp
 		NamespaceKey:  cfg.NamespaceKey,
 		Kind:          cfg.Kind,
 		SessionPrefix: cfg.SessionPrefix,
-		Branch:        firstNonEmpty(cfg.Branch, defaultWorkspaceProjectBranchName(cfg)),
+		Branch:        cfg.Branch,
 	})
 	if err != nil {
 		return ports.WorkspaceProjectInfo{}, err
@@ -202,7 +202,7 @@ func (w *Workspace) CreateWorkspaceProject(ctx context.Context, cfg ports.Worksp
 			baseBranch:   firstNonEmpty(child.BaseBranch, cfg.BaseBranch),
 		})
 	}
-	branch, err := w.workspaceProjectBranch(ctx, repos, firstNonEmpty(cfg.Branch, defaultWorkspaceProjectBranchName(cfg)))
+	branch, err := w.workspaceProjectBranch(ctx, repos, cfg.Branch)
 	if err != nil {
 		return ports.WorkspaceProjectInfo{}, err
 	}
@@ -1311,7 +1311,7 @@ func validateWorkspaceProjectConfig(cfg ports.WorkspaceProjectConfig) error {
 		NamespaceKey:  cfg.NamespaceKey,
 		Kind:          cfg.Kind,
 		SessionPrefix: cfg.SessionPrefix,
-		Branch:        firstNonEmpty(cfg.Branch, defaultWorkspaceProjectBranchName(cfg)),
+		Branch:        cfg.Branch,
 		BaseBranch:    cfg.BaseBranch,
 	}); err != nil {
 		return err
@@ -1384,28 +1384,14 @@ func resolvedSessionPrefix(cfg ports.WorkspaceConfig) string {
 	return id[:12]
 }
 
-func defaultSessionBranchName(id domain.SessionID) string {
-	return "ao/" + string(id)
-}
-
-func defaultWorkspaceProjectBranchName(cfg ports.WorkspaceProjectConfig) string {
-	return defaultSessionBranchName(domain.SessionID(workspaceNamespaceComponent(ports.WorkspaceConfig{
-		ProjectID:    cfg.ProjectID,
-		SessionID:    cfg.SessionID,
-		NamespaceKey: cfg.NamespaceKey,
-		Kind:         cfg.Kind,
-	})))
-}
-
 // workspaceNamespaceComponent selects the immutable presentation key for new
 // worker resources. Role singletons and legacy records continue to use their
 // existing identity-derived paths.
 func workspaceNamespaceComponent(cfg ports.WorkspaceConfig) string {
-	if cfg.Kind == domain.KindOrchestrator || cfg.Kind == domain.KindPrime && cfg.ProjectID == "" {
-		return string(cfg.SessionID)
-	}
-	if key := strings.TrimSpace(cfg.NamespaceKey); key != "" {
-		return key
+	if cfg.Kind == domain.KindWorker {
+		if key := strings.TrimSpace(cfg.NamespaceKey); key != "" {
+			return key
+		}
 	}
 	return string(cfg.SessionID)
 }

@@ -130,7 +130,7 @@ func (w *Workspace) managedPath(cfg ports.WorkspaceConfig) (string, error) {
 	roleDir := "workers"
 	if cfg.Kind == domain.KindOrchestrator {
 		roleDir = "orchestrators"
-	} else if key := strings.TrimSpace(cfg.NamespaceKey); key != "" {
+	} else if key := strings.TrimSpace(cfg.NamespaceKey); cfg.Kind == domain.KindWorker && key != "" {
 		if err := validatePathComponent("namespace key", key); err != nil {
 			return "", err
 		}

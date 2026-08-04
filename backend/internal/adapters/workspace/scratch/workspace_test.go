@@ -57,6 +57,19 @@ func TestWorkspaceCreatesBranchlessPerSessionDirectories(t *testing.T) {
 	if orchestrator.Branch != "" {
 		t.Fatalf("orchestrator branch = %q, want empty", orchestrator.Branch)
 	}
+
+	prime, err := ws.Create(context.Background(), ports.WorkspaceConfig{
+		ProjectID:    "scratch",
+		SessionID:    "scratch-prime-1",
+		NamespaceKey: "must-not-move-role-resources",
+		Kind:         domain.KindPrime,
+	})
+	if err != nil {
+		t.Fatalf("Create Prime role workspace: %v", err)
+	}
+	if want := filepath.Join(physicalRoot, "scratch", "workers", "scratch-prime-1"); prime.Path != want {
+		t.Fatalf("Prime role path = %q, want unchanged %q", prime.Path, want)
+	}
 }
 
 func TestWorkspaceDestroyPreservesNonEmptyDirectory(t *testing.T) {

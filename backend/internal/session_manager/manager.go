@@ -3441,13 +3441,13 @@ func DefaultSpawnBranch(id domain.SessionID, namespaceKey string, kind domain.Se
 // DefaultOrchestratorBranch returns the generated canonical orchestrator branch
 // for a project in the current data-dir namespace.
 func DefaultOrchestratorBranch(prefix, dataDir string) string {
-	return DefaultSpawnBranch("", "", domain.KindOrchestrator, prefix, domain.ProjectKindSingleRepo, dataDir)
+	return defaultSessionBranch("", domain.KindOrchestrator, prefix, generatedBranchNamespace(dataDir))
 }
 
 // DefaultPrimeBranch returns the generated canonical branch for the projectless
 // fleet Prime singleton in the current data-dir namespace.
 func DefaultPrimeBranch(dataDir string) string {
-	return DefaultSpawnBranch("", "", domain.KindPrime, "", domain.ProjectKindSingleRepo, dataDir)
+	return defaultSessionBranch("", domain.KindPrime, "", generatedBranchNamespace(dataDir))
 }
 
 func fleetPrimeRepoPath(dataDir string) string {
