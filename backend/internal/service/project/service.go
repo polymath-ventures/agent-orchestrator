@@ -1169,7 +1169,8 @@ func defaultProjectID(path string) domain.ProjectID {
 // validateProjectID for why management ops are deliberately looser.
 func validateNewProjectID(id domain.ProjectID) error {
 	if !domain.IsValidProjectID(string(id)) {
-		return apierr.Invalid("INVALID_PROJECT_ID", "Project id failed storage-path validation", nil)
+		return apierr.Invalid("INVALID_PROJECT_ID",
+			"Project id must start with a letter or digit and use only letters, digits, '_' and '-' (e.g. a dotted host name like example.net must be given as example-net)", nil)
 	}
 	return nil
 }

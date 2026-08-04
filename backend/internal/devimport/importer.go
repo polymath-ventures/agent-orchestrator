@@ -146,6 +146,20 @@ func Run(ctx context.Context, source, target Store, opts Options) (Report, error
 			continue
 		}
 
+		// New target registration: hold the id to the same strict launchable rule
+		// as project registration and legacy import (#256). Importing an older
+		// database's dotted id as new would mint unlaunchable sessions. Updates to
+		// an already-existing dotted target are handled above and stay allowed, so
+		// this never blocks recovering a project that predates the rule.
+		if !domain.IsValidProjectID(src.ID) {
+			rep.addConflict(Conflict{
+				ProjectID: src.ID,
+				Path:      src.Path,
+				Reason:    domain.ProjectImportConflictInvalidNewID,
+			})
+			continue
+		}
+
 		if !opts.DryRun {
 			if err := target.ImportWorkspaceProject(ctx, src, repos); err != nil {
 				if c, ok := importConflict(err); ok {

@@ -11,7 +11,7 @@ import "regexp"
 // the session untrackable. git tolerates a lone `.` in a refname but rejects
 // `..` and `:`; workspace paths and request paths tolerate all of them. The
 // intersection is [A-Za-z0-9_-]. The leading-alphanumeric anchor plus this class
-// already reject "", ".", "..", "/", and "\\".
+// already rejects "", ".", "..", "/", and "\\".
 //
 // It is unexported on purpose: callers get the predicate, not a mutable
 // *regexp.Regexp they could reassign or call Longest on and change the invariant

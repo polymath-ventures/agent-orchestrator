@@ -8,6 +8,7 @@ const (
 	ProjectImportConflictSameIDArchivedTarget      = "same id matches archived target project"
 	ProjectImportConflictSameIDDifferentActivePath = "same id with different active path"
 	ProjectImportConflictSamePathDifferentActiveID = "same path with different active id"
+	ProjectImportConflictInvalidNewID              = "invalid project id for a new import"
 )
 
 // ProjectImportConflict describes a target project that prevents an imported
