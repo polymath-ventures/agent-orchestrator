@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -233,7 +234,7 @@ func (m *Service) Add(ctx context.Context, in AddInput) (Project, error) {
 	if in.ProjectID != nil {
 		id = domain.ProjectID(strings.TrimSpace(*in.ProjectID))
 	}
-	if err := validateProjectID(id); err != nil {
+	if err := validateNewProjectID(id); err != nil {
 		return Project{}, err
 	}
 
@@ -1160,12 +1161,36 @@ func defaultProjectID(path string) domain.ProjectID {
 	return domain.ProjectID(id)
 }
 
-// validateProjectID rejects a project id whose character set would not survive
-// intact through every surface derived from it. The rule itself lives at
-// domain.ProjectIDPattern (its comment explains why the class is [A-Za-z0-9_-]);
-// this is the entry-point check that shapes the failure into an API error.
-func validateProjectID(id domain.ProjectID) error {
+// validateNewProjectID gates a project id at the moment it enters the system as
+// a NEW id (registration). It enforces the strict launchable charset — the rule
+// lives at domain.IsValidProjectID, whose comment explains why the class is
+// [A-Za-z0-9_-] — so a dotted id can never be minted into an unlaunchable
+// session id. Registration is the only place strict enough to belong here; see
+// validateProjectID for why management ops are deliberately looser.
+func validateNewProjectID(id domain.ProjectID) error {
 	if !domain.IsValidProjectID(string(id)) {
+		return apierr.Invalid("INVALID_PROJECT_ID", "Project id failed storage-path validation", nil)
+	}
+	return nil
+}
+
+// projectIDLookupPattern is the traversal-safe class for addressing an
+// ALREADY-STORED project. It intentionally still tolerates a lone "." because a
+// project registered before validateNewProjectID tightened must remain
+// retrievable, pausable, and — above all — removable, which is how the operator
+// cleans a dotted project up. It only guards path safety, which every stored id
+// still needs.
+var projectIDLookupPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+
+// validateProjectID gates operations on an id that may already be stored (Get,
+// Remove, pause, settings/config updates). It is deliberately looser than
+// validateNewProjectID: it rejects only ids that are unsafe as a path component
+// ("", ".", "..", "/", "\\"), so a pre-existing dotted project stays manageable
+// while traversal is still blocked. New ids are held to the stricter rule at
+// registration.
+func validateProjectID(id domain.ProjectID) error {
+	raw := string(id)
+	if raw == "" || raw == "." || strings.Contains(raw, "..") || strings.ContainsAny(raw, `/\`) || !projectIDLookupPattern.MatchString(raw) {
 		return apierr.Invalid("INVALID_PROJECT_ID", "Project id failed storage-path validation", nil)
 	}
 	return nil

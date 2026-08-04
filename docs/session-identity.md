@@ -37,15 +37,23 @@ string is then unaddressable, so AO would lose track of a live session. git
 rejects `..` and `:` in a refname but tolerates a lone `.`. Workspace paths,
 Claude project slugs, and request paths tolerate all three.
 
-The intersection is `[A-Za-z0-9_-]`. It is enforced in exactly one place —
-`domain.ProjectIDPattern` / `domain.IsValidProjectID` — where the id enters the
-system: `validateProjectID` calls it at project registration, and the legacy
-importer calls it before writing a migrated project. `cli.sessionIDPattern`
-re-checks the same class on the composed session id where it is placed in a
-request path. Any new surface stricter than this belongs in this section and in
-`domain.ProjectIDPattern`, not as a local sanitizer at the point of use — a
-surface that quietly rewrites its own copy of the id produces a second identity
-AO cannot map back.
+The intersection is `[A-Za-z0-9_-]`. It is enforced in one place —
+`domain.IsValidProjectID` — at the moment an id enters the system as **new**:
+project registration (`validateNewProjectID`) and legacy import both call it, so a
+dotted id can never be minted into an unlaunchable session id. `cli.sessionIDPattern`
+re-checks the same class on the composed session id where it is placed in a request
+path. Any new surface stricter than this belongs in this section and in
+`domain.IsValidProjectID`, not as a local sanitizer at the point of use — a surface
+that quietly rewrites its own copy of the id produces a second identity AO cannot
+map back.
+
+Operations on an id that is **already stored** — get, pause, settings/config
+updates, and removal — use a looser, traversal-safe check (`validateProjectID` in
+the project service) that still rejects `""`, `.`, `..`, `/`, and `\` but tolerates
+a lone `.`. That is deliberate: a project registered before this rule tightened
+must stay retrievable and, above all, **removable**, which is how the operator
+cleans a dotted project up. Tightening the lookup path to the strict rule would
+strand exactly the projects the strict rule is meant to help retire.
 
 ## Database generations
 
