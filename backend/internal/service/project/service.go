@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -1161,14 +1160,12 @@ func defaultProjectID(path string) domain.ProjectID {
 	return domain.ProjectID(id)
 }
 
-var projectIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
-
+// validateProjectID rejects a project id whose character set would not survive
+// intact through every surface derived from it. The rule itself lives at
+// domain.ProjectIDPattern (its comment explains why the class is [A-Za-z0-9_-]);
+// this is the entry-point check that shapes the failure into an API error.
 func validateProjectID(id domain.ProjectID) error {
-	raw := string(id)
-	// Reject any "." run: a "." prefix fails the pattern, but an embedded ".."
-	// (e.g. "a..b") passes it yet yields a branch like "ao/a..b-1" that git's
-	// check-ref-format rejects — surfacing as an opaque 500 at spawn time.
-	if raw == "" || raw == "." || strings.Contains(raw, "..") || strings.ContainsAny(raw, `/\`) || !projectIDPattern.MatchString(raw) {
+	if !domain.IsValidProjectID(string(id)) {
 		return apierr.Invalid("INVALID_PROJECT_ID", "Project id failed storage-path validation", nil)
 	}
 	return nil

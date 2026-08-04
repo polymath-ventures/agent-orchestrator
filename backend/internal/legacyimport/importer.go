@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -68,14 +67,14 @@ func LegacyConfigError(ctx context.Context, root string) error {
 	return err
 }
 
-// rewriteProjectID gates the rewrite project-id charset (validateProjectID,
-// service.go). Legacy ids are a strict subset, so this all but always passes;
-// it guards against a hand-edited legacy config carrying an illegal id.
-var rewriteProjectID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
-
+// isValidRewriteProjectID gates the rewrite project-id charset. It derives from
+// domain.IsValidProjectID — the single source of truth — rather than carrying a
+// local copy, so a legacy config with an id tmux/git cannot address (e.g. a
+// dotted "goodadbadad.net") is skipped here for the same reason it is rejected
+// at registration. Legacy ids are almost always a strict subset already; this
+// guards against a hand-edited legacy config carrying an illegal id.
 func isValidRewriteProjectID(id string) bool {
-	return id != "" && id != "." && !strings.Contains(id, "..") &&
-		!strings.ContainsAny(id, `/\`) && rewriteProjectID.MatchString(id)
+	return domain.IsValidProjectID(id)
 }
 
 // Run reads the legacy store and writes projects into store. It never modifies
