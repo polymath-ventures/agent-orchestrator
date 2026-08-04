@@ -27,5 +27,5 @@
 
 ## 5. Review and landing
 
-- [ ] 5.1 Rebase onto current `main`, push, open the implementation PR, and complete independent final review
-- [ ] 5.2 After merge, archive `readable-session-namespace-labels`, close GH #255 / bead `ao-wmh`, and deploy/verify if production code changed
+- [x] 5.1 Rebase onto current `main`, push, open the implementation PR, and complete independent final review
+- [x] 5.2 After merge, archive `readable-session-namespace-labels`, close GH #255 / bead `ao-wmh`, and deploy/verify if production code changed
