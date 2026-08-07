@@ -12,72 +12,56 @@ curated set of ported features. Keep product changes small, rebase-friendly,
 and suitable for later upstream submission unless a ticket is explicitly
 fork-only.
 
-## Tracking: GitHub Issues + Beads, always paired
+## Tracking: GitHub Issues are the sole tracker
 
-Durable work lives in **two places on purpose**:
+The GitHub issue is the durable record and collaboration surface for humans,
+agents, automation, dependency relationships, assignment, and status.
 
-- The **GitHub issue** is the canonical record and the collaboration surface —
-  what humans, other agents, and CI see and link to.
-- The **Bead** (`bd`) mirrors it and adds what GitHub lacks: dependency edges,
-  claims, ready/blocked queries, cross-agent state.
+1. **New bug/feature/task → `/capture`**, which files the GitHub issue and
+   records native blocker or parent relationships when supplied.
+2. Durable coordination, design decisions, progress, park reasons, and cold
+   handoffs live in issue or pull-request comments. Do not create a parallel
+   tracker or mirror GitHub state elsewhere.
+3. **TodoWrite/TaskCreate are in-task scratch only.** If losing an item at
+   session end would lose information someone else needs, it belongs in the
+   GitHub issue, not a local todo.
+4. Claim = GitHub assignee. Completion = the closing PR body says `Closes #N`.
 
-The pairing rules:
+## Issue size and PR closure
 
-1. **New bug/feature/task → `/capture`**, which files the GitHub issue *and*
-   the linked bead (`Tracks GH #N`) together. Never one without the other.
-2. Issues filed outside `/capture` (bulk filings, web UI) get beads backfilled
-   via `/sync-issues-to-beads`. Audit before ending a filing or queue session:
-   any open bead without a `Tracks GH #…` link either gets linked or gets a
-   written reason it's internal-only.
-3. Raw `bd create` without a GitHub issue is reserved for explicit
-   internal-only records and tool-managed follow-ups.
-4. **TodoWrite/TaskCreate are in-task scratch only** — sub-steps of the bead
-   you've claimed. If losing it at session end would lose information someone
-   else needs, it's an issue + bead, not a todo.
-5. **No beads? Degrade, don't stop.** On a repo without `.beads/`, the GitHub
-   issue is the sole tracker and every skill runs in GitHub-only mode
-   (claim = GH assignee, close = `Closes #N`).
+An epic is simply an issue that has sub-issues. Routers and work skills never
+split an issue themselves, and never infer from its prose or scope that it
+should be split — that is the user's call. A router handed an epic reports it,
+says whether the epic carries work of its own, and asks whether to run the
+sub-issues as a queue or to stop there.
+
+Every PR closes exactly one issue and says so in its body (`Closes #N`). The
+sole exception is a ministerial post-merge OpenSpec archive PR: it inherits the
+parent work item's closure and never gets its own issue. Otherwise,
+work that does not close an issue does not get a PR: it either belongs on the
+existing open PR where it was found, or it needs an issue first.
 
 ## Claim vs author contract
 
-Trackers carry identity in two different ways, and skills must not mix them:
+GitHub carries identity in two different ways, and skills must not mix them:
 
-- **Author/creator fields are informational.** GitHub `author`, Beads `owner`,
-  Beads `created_by`, and similar fields say who filed or created the record.
+- **Author/creator fields are informational.** GitHub `author` and similar
+  creator fields say who filed or created the record.
   They MUST NEVER block dispatch, routing, reservation, cleanup, or review.
-- **Only assignee/claim fields gate ownership.** GitHub `assignees` and the
-  Beads `assignee` set by `bd update <id> --claim` are the active claim. Every
-  `EXPECTED_ASSIGNEE` check and cross-agent ownership gate keys only on those
-  fields.
-- **Unassigned work is claimable.** A linked issue or bead with no assignee is
+- **Only assignee fields gate ownership.** GitHub `assignees` are the active
+  claim. Every cross-agent ownership gate keys only on those fields.
+- **Unassigned work is claimable.** An issue with no assignee is
   available to any agent identity, regardless of who authored or created it.
-- **Starting work claims both trackers.** When an agent begins work, it claims
-  the bead with `bd update <id> --claim` when Beads are present and mirrors the
-  claim to GitHub with `gh issue edit <n> --add-assignee <gh-login>`.
+- **Starting work claims GitHub.** When an agent begins work, it runs
+  `gh issue edit <n> --add-assignee <gh-login>` using the login defined by its
+  agent identity.
 - **Foreign assignee means park, not steal.** If another agent family is the
   current assignee, park or skip the item unless the user explicitly reassigns
   it. A different author/creator is never a foreign claim.
 
-## Beads backend — shared host is configuration, not code
-
-A repo's `bd` may attach to a **shared beads host** so every agent — across
-machines and accounts — sees the same live state. This is configured per repo,
-never hardcoded in skills:
-
-- The attachment is established at repo setup (`/nickify`) or by a
-  session-start hook: `BEADS_DIR`, a shared Dolt server
-  (`bd init --server …` / `--database …`), or an orchestrator-provisioned DB.
-- When `.beads/metadata.json` records canonical shared-server metadata —
-  `dolt_mode = "server"` plus non-empty `dolt_server_host` and `dolt_database` — durable `bd` writes
-  MUST reach that shared backend. A session that can't reach it does not fake
-  durability: file the GitHub half (the issue) now, and materialize the bead
-  later via `/sync-issues-to-beads` from a connected host.
-- Skills assume `bd` is attached to whatever the repo configured and never
-  select or name a host themselves. Put the host specifics in a repo fragment,
-  not in a skill.
-- Similarly, skills derive the target GitHub repo from the git remote; an
-  orchestrator may pin it instead via `POLYPOWERS_REPO=owner/repo`
-  (`AO_PROJECT_REPO` honored as a legacy alias).
+Skills derive the target GitHub repository from the git remote. An orchestrator
+may pin it instead via `POLYPOWERS_REPO=owner/repo` (`AO_PROJECT_REPO` is
+honored as a legacy alias).
 
 ## Development Rules
 
@@ -88,7 +72,7 @@ Non-negotiable. Violating any of these is a bug in your behavior.
    tests to make machinery that should not exist look rigorous; deciding
    whether the code should exist happens first, under Rule 9.
 2. **Worktree per task — ALWAYS, for ALL mutating work.** Every change you
-   make — bead-tracked or ad-hoc, code or docs or config — happens in a
+   make — issue-tracked or ad-hoc, code or docs or config — happens in a
    worktree YOU created under the repo-local agent worktree directory, never in
    the shared main checkout and never in the launcher-supplied session anchor.
    Create it with the ownership helper, which records the
@@ -166,12 +150,12 @@ which can only be staler.
 
 ## Session habits
 
-**Start ("what's next"):** check `bd list --status=in_progress --assignee=@me`,
-`bd ready`, `bd blocked` (or open GH issues on beads-less repos). Finish
-in-progress work first; recommend 1–3 unclaimed items, not the full list.
+**Start ("what's next"):** inspect open GitHub issues assigned to your login,
+then unassigned issues with no open blockers. Finish in-progress work first; recommend
+1–3 unclaimed items, not the full list.
 
-**End:** close/update beads and issues, run CI, `git pull --rebase && git
-push`, report. Merge only under rule 6's authorization (user's word, or
+**End:** update the GitHub issue and PR, run CI, `git pull --rebase && git push`,
+and report. Merge only under rule 6's authorization (user's word, or
 autonomous mode with the gate satisfied) — never on your own initiative.
 
 ## Agent reviewers run in the foreground
@@ -434,8 +418,7 @@ is already blocking/attached and stays that way.
 Shared skills describe process; each agent identity supplies the concrete
 mechanics. The client-specific identity body appended after this module defines
 how that client invokes skills, spawns subagents, runs independent review,
-monitors review cycles, maps Beads assignees to GitHub logins, and invokes
-OpenSpec flows.
+monitors review cycles, identifies its GitHub login, and invokes OpenSpec flows.
 
 Subagents are selected by capability tier, not by a hardcoded model in shared
 skill text:

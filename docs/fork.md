@@ -192,7 +192,7 @@ them as the starting point for a search, not as an exhaustive file list.
    `backend/internal/cli/agent_process.go`. Reference issue: #244.
 8. **Ops / SDLC infrastructure.** `ops/deploy.sh` + the web server + systemd /
    Tailscale wiring; the Prettier CI the fork keeps (upstream removed it); and
-   the agent SDLC files (`CLAUDE.md`, the repo-carried `skills/`, Beads,
+   the agent SDLC files (`CLAUDE.md`, the repo-carried `skills/`,
    OpenSpec, `agent-instructions/`). Sync anchors: the whole of `ops/` is
    fork-owned — `ops/deploy.sh`, the `ops/*.service` / `ops/*.timer` units, and
    their `ops/*.test.mjs` guards, of which `ops/ao-systemd-units.test.mjs` is the

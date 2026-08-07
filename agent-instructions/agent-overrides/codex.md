@@ -43,10 +43,7 @@ Codex subagent when keeping the parent context clean matters.
 
 ### Identity Facts
 
-Beads assignee family: `polymath-codex`.
-
-Default Beads-to-GitHub map: `nhod-codex|polymath-codex -> nhod-codex`,
-`nhod-claude|polymath-claude -> nhod-claude`.
+GitHub login: `nhod-codex`.
 
 OpenSpec flows: propose -> `openspec-propose`, apply ->
 `openspec-apply-change`, archive -> `openspec-archive-change`.

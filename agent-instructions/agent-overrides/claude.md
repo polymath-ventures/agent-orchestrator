@@ -41,10 +41,7 @@ available, or monitor inline by tracking findings cycle by cycle.
 
 ### Identity Facts
 
-Beads assignee family: `polymath-claude`.
-
-Default Beads-to-GitHub map: `nhod-claude|polymath-claude -> nhod-claude`,
-`nhod-codex|polymath-codex -> nhod-codex`.
+GitHub login: `nhod-claude`.
 
 OpenSpec flows: propose -> `openspec-propose`, apply ->
 `openspec-apply-change`, archive -> `openspec-archive-change`.

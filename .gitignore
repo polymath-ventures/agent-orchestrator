@@ -91,17 +91,18 @@ skills-lock.json
 .codex/skills/
 .codex/commands/
 .playwright-cli/
+# Retired tracker: Beads is gone (#262). Its tracked config is deleted, but
+# existing checkouts keep local residue (a Dolt DB, jsonl logs, a credential
+# key) that used to be ignored by the now-deleted .beads/.gitignore. These
+# entries stay so that residue cannot dirty a checkout.
+.beads/
 .beads-credential-key
-.beads/.env
 .beads.gate.lock
 # e2e pod gate: downloaded pod logs/traces (uploaded as CI artifacts, not committed)
 e2e-artifacts/
 
 # Local pnpm artifacts
 pnpm-lock.yaml
-
-# Beads / Dolt files (added by bd init)
-.dolt/
 
 .reviewcache/
 .reviewtmp/
