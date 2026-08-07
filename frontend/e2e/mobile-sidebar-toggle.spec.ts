@@ -46,18 +46,18 @@ test("mobile: browser topbar toggle opens the sidebar without macOS titlebar chr
 	await expect(projectsLabel).toBeHidden();
 });
 
-test("mobile: settings route hides the topbar but still exposes the browser sidebar opener", async ({ page }) => {
+test("mobile: settings deep link returns to a topbar with the browser sidebar opener", async ({ page }) => {
 	await installBrowserModeApiFixtures(page);
-	// Settings is a hideShellTopbar route: ShellTopbar (and its inline opener) is
-	// gone, so the floating opener must keep the Sheet reachable (GH #54). The
-	// app uses hash routing, so the settings deep link is /#/settings.
+	// Settings now opens as a modal over the board. Close it before interacting
+	// with the app chrome, then prove the shared topbar still exposes the mobile
+	// sidebar opener.
 	await page.goto("/#/settings");
 
-	// Confirm we are actually on the topbar-less settings route (not the board):
-	// ShellTopbar's header must be absent, so the opener under test is the
-	// floating one, not the topbar's inline copy.
-	await expect(page.getByRole("heading", { name: /settings/i }).first()).toBeVisible();
-	await expect(page.locator(".dashboard-app-header")).toHaveCount(0);
+	const settings = page.getByRole("dialog", { name: "General" });
+	await expect(settings).toBeVisible();
+	await page.keyboard.press("Escape");
+	await expect(settings).toBeHidden();
+	await expect(page.locator(".dashboard-app-header")).toBeVisible();
 	await expect(page.locator(".titlebar-nav")).toHaveCount(0);
 	const projectsLabel = page.getByText("Projects", { exact: true });
 	await expect(projectsLabel).toBeHidden();

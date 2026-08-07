@@ -13,6 +13,7 @@ import { TerminalCacheProvider, TerminalPane, providerScrollsByKeyboard } from "
 
 const {
 	attachMock,
+	focusTerminalMock,
 	getMock,
 	postMock,
 	prepareForActivationMock,
@@ -25,6 +26,7 @@ const {
 	xtermUnmounts,
 } = vi.hoisted(() => ({
 	attachMock: vi.fn(() => vi.fn()),
+	focusTerminalMock: vi.fn(),
 	getMock: vi.fn(async (_path: string, _options: unknown) => ({ data: undefined })),
 	postMock: vi.fn(),
 	prepareForActivationMock: vi.fn(async (): Promise<void> => undefined),
@@ -59,6 +61,7 @@ vi.mock("./XtermTerminal", () => ({
 			props.onReady?.({
 				cols: 80,
 				rows: 24,
+				focus: focusTerminalMock,
 				write: vi.fn((_data, done) => done?.()),
 				writeln: vi.fn(),
 				showLatestOutput: vi.fn(),
@@ -119,6 +122,7 @@ beforeEach(() => {
 	replaySettled.value = true;
 	terminalLinkHandler = undefined;
 	terminalOutputHandlers.clear();
+	focusTerminalMock.mockClear();
 	terminalSessionOptions.length = 0;
 	attachMock.mockClear();
 	prepareForActivationMock.mockReset();
@@ -160,11 +164,13 @@ function workspaceWithSessions(sessions: WorkspaceSession[]) {
 }
 
 function renderCachedPane({
+	autoFocus = false,
 	session,
 	sessions,
 	shellTerminals = [],
 	terminalTarget,
 }: {
+	autoFocus?: boolean;
 	session?: WorkspaceSession;
 	sessions: WorkspaceSession[];
 	shellTerminals?: ShellTerminal[];
@@ -180,7 +186,15 @@ function renderCachedPane({
 		<QueryClientProvider client={queryClient}>
 			<TerminalCacheProvider daemonReady theme="dark">
 				{showPane ? (
-					<TerminalPane daemonReady fontSize={12} session={nextSession} terminalTarget={nextTarget} theme="dark" />
+					<TerminalPane
+						autoFocus={autoFocus}
+						daemonReady
+						focusRequest={autoFocus ? 1 : undefined}
+						fontSize={12}
+						session={nextSession}
+						terminalTarget={nextTarget}
+						theme="dark"
+					/>
 				) : (
 					<div data-testid="away" />
 				)}
@@ -397,6 +411,27 @@ describe("TerminalCacheProvider", () => {
 			view.show(sessions[0]);
 			await waitFor(() => expect(activeXterm()).toBe(oldest));
 			expect(xtermMounts.value).toBe(7);
+		} finally {
+			view.restore();
+		}
+	});
+
+	it("focuses a retained terminal after it becomes interactive again", async () => {
+		const view = renderCachedPane({ autoFocus: true, session: sessionA, sessions: [sessionA, sessionB] });
+		try {
+			await waitFor(() => expect(activeXterm()).toBeInTheDocument());
+			view.show(sessionB);
+			await waitFor(() =>
+				expect(document.querySelector(`[data-terminal-cache-key^="session:${sessionA.id}:worker|"]`)).toHaveAttribute(
+					"data-terminal-activation-phase",
+					"parked",
+				),
+			);
+			focusTerminalMock.mockClear();
+
+			view.show(sessionA);
+
+			await waitFor(() => expect(focusTerminalMock).toHaveBeenCalledTimes(1));
 		} finally {
 			view.restore();
 		}

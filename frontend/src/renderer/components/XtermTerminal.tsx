@@ -211,6 +211,10 @@ type DevXtermHost = HTMLDivElement & {
 	__aoXtermForTest?: Terminal;
 };
 
+type TerminalTestWindow = Window & {
+	__aoEnableTerminalTestHooks?: boolean;
+};
+
 type TerminalContextMenuState = {
 	canCopy: boolean;
 	open: boolean;
@@ -432,7 +436,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		// Browser integration tests need to wait on xterm's buffer state, not
 		// infer it from a hidden viewport element whose scrollTop can lag.
 		// Vite removes this development-only seam from packaged builds.
-		if (import.meta.env.DEV) {
+		if (import.meta.env.DEV || (window as TerminalTestWindow).__aoEnableTerminalTestHooks) {
 			(host as DevXtermHost).__aoXtermForTest = term;
 		}
 		// xterm reserves a 15px fallback for macOS overlay scrollbars even when CSS
@@ -916,6 +920,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			get rows() {
 				return term.rows;
 			},
+			focus: focusTerminal,
 			// Forward xterm's write callback: it fires once THIS chunk has been
 			// parsed into the buffer, which is what lets the attachment reveal the
 			// pane at the replay's settled scroll position (issue #3160).

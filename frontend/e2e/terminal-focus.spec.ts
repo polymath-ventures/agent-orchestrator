@@ -12,7 +12,7 @@ const activeElementClass = (page: import("@playwright/test").Page) =>
 test("terminals screen hands keyboard focus to the terminal with no extra click", async ({ page }) => {
 	await installBrowserModeApiFixtures(page);
 	await page.goto("/#/terminals");
-	await expect(page.getByTestId("session-terminal")).toBeVisible();
+	await expect(page.getByTestId("session-terminal-slot").getByTestId("session-terminal")).toBeVisible();
 
 	await expect.poll(() => activeElementClass(page)).toContain("xterm-helper-textarea");
 });
@@ -26,7 +26,7 @@ test("returning to the terminals screen focuses the selected terminal", async ({
 	await expect(page.locator(".xterm-helper-textarea")).toBeAttached();
 
 	await page.goto("/#/terminals");
-	await expect(page.getByTestId("session-terminal")).toBeVisible();
+	await expect(page.getByTestId("session-terminal-slot").getByTestId("session-terminal")).toBeVisible();
 	await expect.poll(() => activeElementClass(page)).toContain("xterm-helper-textarea");
 });
 
@@ -83,9 +83,9 @@ test("focus follows a shell selected from a session's tab strip", async ({ page 
 
 	// Scope tab lookups to the terminal pane so the sidebar's same-named controls
 	// do not collide.
-	const pane = page.locator(".terminal-pane-frame");
-	const sessionTab = pane.getByRole("button", { name: "Split terminal mux responsibilities", exact: true });
-	const shellTab = pane.getByRole("button", { name: "api-gateway", exact: true });
+	const topbar = page.getByTestId("session-workspace-topbar");
+	const sessionTab = topbar.getByRole("tab", { name: /Split terminal mux responsibilities/ });
+	const shellTab = topbar.getByRole("tab", { name: "api-gateway", exact: true });
 
 	await sessionTab.click();
 	await expect(sessionTab).toHaveAttribute("aria-current", "true");

@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/fake"
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -48,7 +50,13 @@ func TestNamingNeverTakesThePositionalSlot(t *testing.T) {
 	}
 
 	exercised := 0
-	for _, ha := range Harnessed() {
+	// Fake is deliberately excluded from the shipped registry, but it remains
+	// the hermetic argv fixture for hosts without any proprietary agent CLI.
+	launchHarnesses := append(Harnessed(), HarnessAgent{
+		Harness: domain.HarnessFake,
+		Agent:   fake.New(),
+	})
+	for _, ha := range launchHarnesses {
 		cmd, err := ha.Agent.GetLaunchCommand(context.Background(), ports.LaunchConfig{
 			SessionID:   "11111111-1111-4111-8111-111111111111",
 			DisplayName: namingProbeName,

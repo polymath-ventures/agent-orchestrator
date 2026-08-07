@@ -1,4 +1,9 @@
 import { expect, test } from "@playwright/test";
+import { installBrowserModeApiFixtures } from "./fixtures";
+
+test.beforeEach(async ({ page }) => {
+	await installBrowserModeApiFixtures(page);
+});
 
 // Standalone shell terminals (#2822): shells the user opens by hand, with no
 // agent session behind them. They render as tabs beside the session's own pane.
@@ -6,7 +11,7 @@ import { expect, test } from "@playwright/test";
 // an in-memory shell list — enough to cover the parts that live in the renderer:
 // which tab is current, and that opening/closing updates the strip.
 test("opens, selects, and closes standalone shell terminals from the tab strip", async ({ page }) => {
-	await page.goto("/#/projects/ao-demo/sessions/demo-working");
+	await page.goto("/#/projects/api-gateway/sessions/refactor-mux");
 	await expect(page.getByRole("button", { name: "New terminal" })).toBeVisible();
 
 	const closeButtons = page.getByRole("button", { name: /^Close terminal / });
@@ -21,29 +26,33 @@ test("opens, selects, and closes standalone shell terminals from the tab strip",
 	// Selecting the session tab hands the pane back to the agent. Matched by the
 	// session's own title: the tab's accessible name is that title, and its
 	// title attribute falls back to the label once the strip truncates it.
-	// Scoped to the terminal panel: the sidebar carries the same session name.
-	const sessionTab = page.getByTestId("terminal").getByRole("tab", { name: /^Build screenshot-ready dashboard data/ });
+	// Scoped to the terminal tablist: the sidebar carries the same session name.
+	const terminalTabs = page.getByRole("tablist", { name: "Open terminals" });
+	const sessionTab = terminalTabs.getByRole("tab", { name: /^Split terminal mux responsibilities/ });
 	await sessionTab.click();
 	await expect(sessionTab).toHaveAttribute("aria-selected", "true");
 
-	// Closing a shell removes exactly its own tab.
+	// Return to the shell so its active-tab close control is visible, then close
+	// it and verify that only that tab was removed.
+	await terminalTabs.getByRole("tab", { name: "api-gateway", exact: true }).click();
 	await closeButtons.last().click();
 	await expect(closeButtons).toHaveCount(initialCount);
 });
 
-// Regression: the open request used to be consumed by the session view, which
-// only mounts on a session route — so on the board (or any project with no
-// sessions yet) the topbar button and Ctrl+` raised the signal and nothing was
-// listening. Both silently did nothing. The shell layout owns it now, and
-// routes to the standalone terminals view when there is no session on screen.
-test("opens a terminal from the board, where no session view is mounted", async ({ page }) => {
-	await page.goto("/#/projects/ao-demo");
+// Regression: the open request used to be consumed by the session view, so the
+// standalone terminals route could not open another shell. The shell layout
+// owns it now even when no session view is mounted.
+test("opens another terminal from the standalone view", async ({ page }) => {
+	await page.goto("/#/terminals");
 	await expect(page.getByRole("button", { name: "New terminal" })).toBeVisible();
 
+	const closeButtons = page.getByRole("button", { name: /^Close terminal / });
+	await expect(closeButtons).not.toHaveCount(0);
+	const initialCount = await closeButtons.count();
 	await page.getByRole("button", { name: "New terminal" }).click();
 
 	await expect(page).toHaveURL(/#\/terminals$/);
-	await expect(page.getByRole("button", { name: /^Close terminal / })).not.toHaveCount(0);
+	await expect(closeButtons).toHaveCount(initialCount + 1);
 });
 
 test("shows an empty state once every standalone terminal is closed", async ({ page }) => {

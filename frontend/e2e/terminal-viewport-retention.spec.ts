@@ -40,6 +40,10 @@ const handleD = `${sessionD.id}/terminal_0`;
 const handleE = `${sessionE.id}/terminal_0`;
 const handleF = `${sessionF.id}/terminal_0`;
 const orchestratorHandle = "fake-proj-orchestrator/terminal_0";
+const handleByTitle = new Map([
+	...allSessions.map((session) => [session.title, `${session.id}/terminal_0`] as const),
+	["fake-proj orchestrator", orchestratorHandle] as const,
+]);
 
 const longReplay = [
 	"\x1b[?25l",
@@ -58,6 +62,7 @@ type TestXterm = {
 	};
 	getSelection: () => string;
 	options: { fontSize: number };
+	scrollLines: (amount: number) => void;
 	selectLines: (start: number, end: number) => void;
 };
 
@@ -86,11 +91,20 @@ function activeViewport(page: Page): Locator {
 
 function activeBufferAtBottom(page: Page): Promise<boolean> {
 	return activeTerminal(page)
-		.locator("[aria-label='Session terminal']")
+		.locator("[aria-label^='Session terminal']")
 		.evaluate((element) => {
 			const terminal = (element as HTMLElement & { __aoXtermForTest?: TestXterm }).__aoXtermForTest;
 			return Boolean(terminal && terminal.buffer.active.viewportY === terminal.buffer.active.baseY);
 		});
+}
+
+function scrollActiveBuffer(page: Page, amount: number): Promise<void> {
+	return activeTerminal(page)
+		.locator("[aria-label^='Session terminal']")
+		.evaluate((element, lines) => {
+			const terminal = (element as HTMLElement & { __aoXtermForTest?: TestXterm }).__aoXtermForTest!;
+			terminal.scrollLines(lines);
+		}, amount);
 }
 
 async function muxStats(page: Page): Promise<FakeTerminalMuxStats> {
@@ -109,7 +123,7 @@ async function observeNextReveal(container: Locator): Promise<void> {
 		state.__aoRevealSamples = samples;
 		state.__aoRevealFrames = framePhases;
 		const captureVisibleSample = () => {
-			const host = element.querySelector<HTMLElement>("[aria-label='Session terminal']");
+			const host = element.querySelector<HTMLElement>("[aria-label^='Session terminal']");
 			const viewport = host?.querySelector<HTMLElement>(".xterm-viewport");
 			const terminal = (host as (HTMLElement & { __aoXtermForTest?: TestXterm }) | null)?.__aoXtermForTest;
 			if (
@@ -169,6 +183,8 @@ async function openSession(page: Page, title: string): Promise<void> {
 	await expect(
 		page.getByTestId("session-terminal-slot").locator("[data-terminal-activation-phase='visible']"),
 	).toHaveCount(1);
+	const handle = handleByTitle.get(title);
+	if (handle) await expect.poll(async () => (await muxStats(page)).opens[handle] ?? 0).toBeGreaterThan(0);
 }
 
 async function installHarness(page: Page): Promise<void> {
@@ -187,6 +203,15 @@ async function installHarness(page: Page): Promise<void> {
 	await page.goto(`/#/projects/fake-proj/sessions/${sessionA.id}`);
 	await expect(activeTerminal(page)).toBeVisible();
 	await expect(page.getByTestId("terminal-replay-cover")).toHaveCount(0);
+	// The route is interactive before xterm has necessarily parsed every replay
+	// line. Tests that create a historical viewport must wait for real scrollback.
+	await expect
+		.poll(() => activeViewport(page).evaluate((element) => element.scrollHeight - element.clientHeight))
+		.toBeGreaterThan(500);
+	await expect.poll(async () => (await muxStats(page)).opens[handleA] ?? 0).toBe(1);
+	// Let the bounded xterm renderer/font warm-up finish before tests establish a
+	// historical viewport or use later resize counts as their baseline.
+	await page.waitForTimeout(1_300);
 }
 
 test.describe("retained terminal viewport", () => {
@@ -198,7 +223,7 @@ test.describe("retained terminal viewport", () => {
 			.toBeGreaterThan(500);
 
 		await activeTerminal(page)
-			.locator("[aria-label='Session terminal']")
+			.locator("[aria-label^='Session terminal']")
 			.evaluate((element) => element.setAttribute("data-six-session-instance", "a"));
 
 		for (const session of [sessionB, sessionC, sessionD, sessionE, sessionF]) {
@@ -219,7 +244,7 @@ test.describe("retained terminal viewport", () => {
 		await observeNextReveal(parkedA);
 
 		await openSession(page, sessionA.title);
-		await expect(activeTerminal(page).locator("[aria-label='Session terminal']")).toHaveAttribute(
+		await expect(activeTerminal(page).locator("[aria-label^='Session terminal']")).toHaveAttribute(
 			"data-six-session-instance",
 			"a",
 		);
@@ -277,8 +302,7 @@ test.describe("retained terminal viewport", () => {
 		// Frame-sensitive bottom-follow case: hidden output leaves xterm's
 		// offscreen DOM scrollTop stale even though its canonical buffer is at
 		// bottom. The reveal observer must never see that stale frame.
-		await activeTerminal(page).locator(".xterm-screen").hover();
-		await page.mouse.wheel(0, 100_000);
+		await scrollActiveBuffer(page, 100_000);
 		await expect.poll(() => activeBufferAtBottom(page)).toBe(true);
 		await openSession(page, sessionB.title);
 		await page.evaluate(
@@ -302,8 +326,7 @@ test.describe("retained terminal viewport", () => {
 			.poll(() => viewport.evaluate((element) => element.scrollHeight - element.clientHeight))
 			.toBeGreaterThan(500);
 
-		await activeTerminal(page).locator(".xterm-screen").hover();
-		await page.mouse.wheel(0, -1_400);
+		await scrollActiveBuffer(page, -100);
 		await expect
 			.poll(async () => {
 				const metrics = await viewport.evaluate((element) => ({
@@ -325,9 +348,12 @@ test.describe("retained terminal viewport", () => {
 		const parkedA = page.locator(`[data-terminal-cache-key^="session:${sessionA.id}:worker|"]`);
 		await expect(parkedA).toHaveAttribute("aria-hidden", "true");
 		expect(await parkedA.evaluate((element) => (element as HTMLElement).inert)).toBe(true);
+		await expect.poll(async () => (await muxStats(page)).opens[handleB] ?? 0).toBe(1);
 
 		const beforeResize = await muxStats(page);
-		await page.setViewportSize({ width: 1040, height: 680 });
+		// The merged shell now has a wider minimum layout; grow the viewport so the
+		// active terminal's grid definitely changes instead of hitting that floor.
+		await page.setViewportSize({ width: 1680, height: 900 });
 		await expect
 			.poll(async () => (await muxStats(page)).resizes[handleB]?.length ?? 0)
 			.toBeGreaterThan(beforeResize.resizes[handleB]?.length ?? 0);
@@ -375,15 +401,21 @@ test.describe("retained terminal viewport", () => {
 
 	test("does not republish stable grids across warmed orchestrator-worker switches", async ({ page }) => {
 		await installHarness(page);
-		await openSession(page, "Project orchestrator");
+		await openSession(page, "fake-proj orchestrator");
 		await openSession(page, sessionA.title);
+		// Exhaust xterm's bounded font/renderer warm-up fits before declaring the
+		// grids stable and measuring whether route switches republish them.
+		await page.waitForTimeout(1_300);
+		await openSession(page, "fake-proj orchestrator");
+		await openSession(page, sessionA.title);
+		await page.waitForTimeout(1_300);
 
 		const before = await muxStats(page);
 		const workerResizes = before.resizes[handleA]?.length ?? 0;
 		const orchestratorResizes = before.resizes[orchestratorHandle]?.length ?? 0;
 
 		for (let index = 0; index < 3; index += 1) {
-			await openSession(page, "Project orchestrator");
+			await openSession(page, "fake-proj orchestrator");
 			await openSession(page, sessionA.title);
 		}
 
@@ -398,11 +430,10 @@ test.describe("retained terminal viewport", () => {
 		await installHarness(page);
 		const originalViewport = activeViewport(page);
 		await originalViewport.evaluate((element) => element.setAttribute("data-reconnect-instance", "a"));
-		await activeTerminal(page).locator(".xterm-screen").hover();
-		await page.mouse.wheel(0, -1_400);
+		await scrollActiveBuffer(page, -100_000);
 		await expect.poll(() => activeBufferAtBottom(page)).toBe(false);
 		const retainedSelection = await activeTerminal(page)
-			.locator("[aria-label='Session terminal']")
+			.locator("[aria-label^='Session terminal']")
 			.evaluate((element) => {
 				const terminal = (element as HTMLElement & { __aoXtermForTest?: TestXterm }).__aoXtermForTest!;
 				terminal.selectLines(125, 125);
@@ -462,7 +493,7 @@ test.describe("retained terminal viewport", () => {
 		await expect(page.getByTestId("terminal-replay-cover")).toHaveCount(0);
 		await expect(activeViewport(page)).toHaveAttribute("data-reconnect-instance", "a");
 		const afterReconnectSelection = await activeTerminal(page)
-			.locator("[aria-label='Session terminal']")
+			.locator("[aria-label^='Session terminal']")
 			.evaluate((element) => {
 				const terminal = (element as HTMLElement & { __aoXtermForTest?: TestXterm }).__aoXtermForTest!;
 				return terminal.getSelection();
@@ -488,8 +519,7 @@ test.describe("retained terminal viewport", () => {
 
 	test("reveals the latest output after hidden output evicts old scrollback", async ({ page }) => {
 		await installHarness(page);
-		await activeTerminal(page).locator(".xterm-screen").hover();
-		await page.mouse.wheel(0, -100_000);
+		await scrollActiveBuffer(page, -100_000);
 		await expect.poll(() => activeBufferAtBottom(page)).toBe(false);
 
 		await openSession(page, sessionB.title);
@@ -505,7 +535,7 @@ test.describe("retained terminal viewport", () => {
 		}, handleA);
 		await expect
 			.poll(() =>
-				parkedA.locator("[aria-label='Session terminal']").evaluate((element) => {
+				parkedA.locator("[aria-label^='Session terminal']").evaluate((element) => {
 					const terminal = (element as HTMLElement & { __aoXtermForTest?: TestXterm }).__aoXtermForTest!;
 					return terminal.buffer.active.baseY;
 				}),
@@ -515,7 +545,7 @@ test.describe("retained terminal viewport", () => {
 		await observeNextReveal(parkedA);
 		await openSession(page, sessionA.title);
 		const restored = await activeTerminal(page)
-			.locator("[aria-label='Session terminal']")
+			.locator("[aria-label^='Session terminal']")
 			.evaluate((element) => {
 				const terminal = (element as HTMLElement & { __aoXtermForTest?: TestXterm }).__aoXtermForTest!;
 				return {

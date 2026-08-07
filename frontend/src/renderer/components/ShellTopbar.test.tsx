@@ -50,6 +50,9 @@ vi.mock("../lib/telemetry", () => ({
 }));
 vi.mock("./NewTaskDialog", () => ({ NewTaskDialog: () => null }));
 vi.mock("./NotificationCenter", () => ({ NotificationCenter: () => null }));
+vi.mock("./MobileSidebarOpener", () => ({
+	MobileSidebarOpener: () => <button aria-label="Open sidebar" type="button" />,
+}));
 
 const worker: WorkspaceSession = {
 	id: "sess-1",
@@ -158,6 +161,12 @@ beforeEach(() => {
 });
 
 describe("ShellTopbar status pill", () => {
+	it("includes the browser-mobile sidebar opener", () => {
+		renderTopbar(sessionWith());
+
+		expect(screen.getByRole("button", { name: "Open sidebar" })).toBeInTheDocument();
+	});
+
 	it("renders only session actions when embedded in the terminal bar", () => {
 		renderTopbar(sessionWith(), true);
 

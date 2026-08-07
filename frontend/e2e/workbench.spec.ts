@@ -19,7 +19,10 @@ test("deep-links into a worker session", async ({ page }) => {
 	// Worker view = emdash three-pane with the Git review rail, which upstream
 	// defaults open, so the Summary tab is already mounted.
 	await expect(page.getByRole("tab", { name: "Summary" })).toBeVisible();
-	await expect(page.getByTestId("terminal").getByText("Split terminal mux responsibilities")).toBeVisible();
+	await expect(page.getByRole("tab", { name: /Split terminal mux responsibilities/ })).toHaveAttribute(
+		"aria-selected",
+		"true",
+	);
 });
 
 test("drilling into a worker opens its Git review rail", async ({ page }) => {

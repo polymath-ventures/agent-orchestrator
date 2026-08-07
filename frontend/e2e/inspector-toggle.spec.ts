@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { installBrowserModeApiFixtures } from "./fixtures";
 
 // Regression for the dead inspector toggle: rrp v4 derives panel sizes from
 // the observed DOM layout, so the flex-grow transition animating an
@@ -9,8 +10,8 @@ import { expect, test } from "@playwright/test";
 // profiles to collapsed. Only real separator drags may write back; this needs
 // the real rrp + CSS pipeline, which the mocked unit tests can't exercise.
 test("topbar button collapses and reopens the inspector rail", async ({ page }) => {
-	// A worker session from the dev:web mock dataset (lib/mock-data.ts).
-	await page.goto("/#/projects/ao-demo/sessions/demo-working");
+	await installBrowserModeApiFixtures(page);
+	await page.goto("/#/projects/api-gateway/sessions/refactor-mux");
 
 	// Fresh profile: the rail must mount open, not get toggled shut by
 	// mount-time layout events.

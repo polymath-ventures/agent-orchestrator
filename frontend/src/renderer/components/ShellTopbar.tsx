@@ -30,6 +30,7 @@ import { useWindowFullScreen } from "../hooks/useWindowFullScreen";
 import { StatusPill } from "./StatusPill";
 import { TopbarButton, TopbarKillError, topbarHeaderClass, topbarProjectLabelClass } from "./TopbarButton";
 import { SessionTerminationPopover } from "./SessionTerminationPopover";
+import { MobileSidebarOpener } from "./MobileSidebarOpener";
 
 const isMac = isMacPlatform();
 const boardActionsInPanel = usesBoardActionsInPanel();
@@ -224,6 +225,7 @@ export function ShellTopbar({ embedded = false }: { embedded?: boolean } = {}) {
 				{!embedded ? <div className="min-w-0 flex-1" /> : null}
 
 				<div className="flex shrink-0 items-center gap-1.5">
+					<MobileSidebarOpener />
 					{!boardActionsInPanel && isProjectBoardRoute ? (
 						<>
 							{boardSpawnError ? (

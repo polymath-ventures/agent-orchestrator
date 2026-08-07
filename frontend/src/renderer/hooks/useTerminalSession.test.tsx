@@ -122,6 +122,7 @@ function createFakeTerminal(): FakeTerminal {
 		showLatestOutput: () => {
 			terminal.latestOutputRequests += 1;
 		},
+		focus: () => undefined,
 		prepareForActivation: async () => undefined,
 		onUserInput: (listener) => {
 			inputListeners.add(listener);

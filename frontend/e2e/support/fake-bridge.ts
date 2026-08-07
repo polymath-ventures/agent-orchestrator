@@ -131,6 +131,10 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 
 	await page.addInitScript(
 		({ version, daemonState, daemonPort, workspaces }) => {
+			// The production-bundle terminal retention specs need the same narrow
+			// xterm inspection seam that Vite development builds expose. Real pages
+			// never set this opt-in marker.
+			(window as Window & { __aoEnableTerminalTestHooks?: boolean }).__aoEnableTerminalTestHooks = true;
 			const unsubscribe = () => () => undefined;
 			const status: DaemonStatus =
 				daemonState === "ready" ? { state: "ready", port: daemonPort } : { state: daemonState };
@@ -361,6 +365,7 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 
 	await page.addInitScript(
 		({ version, daemonPort, projectId, projectName, platform, workers }) => {
+			(window as Window & { __aoEnableTerminalTestHooks?: boolean }).__aoEnableTerminalTestHooks = true;
 			if (platform) {
 				try {
 					Object.defineProperty(navigator, "platform", { get: () => platform, configurable: true });

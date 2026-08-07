@@ -29,6 +29,8 @@ export type TerminalUserInputSource = "keyboard" | "paste" | "composition" | "sh
 export type AttachableTerminal = {
 	cols: number;
 	rows: number;
+	/** Focus xterm's hidden input once its retained container is interactive. */
+	focus: () => void;
 	/**
 	 * `done` fires once this exact chunk has been parsed into the buffer (xterm's
 	 * own write callback). The attachment uses it to reveal the pane at the

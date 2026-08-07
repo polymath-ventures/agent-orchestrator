@@ -472,6 +472,10 @@ export function TerminalCacheProvider({
 				return;
 			}
 			activateTerminal(entry);
+			// A retained terminal is non-interactive while its viewport is prepared.
+			// The focus request can therefore arrive before xterm is allowed to take
+			// focus; honor it after the cache entry becomes visible.
+			if (entry.props.autoFocus) entry.terminal?.focus();
 			rerender();
 		},
 		[rerender],

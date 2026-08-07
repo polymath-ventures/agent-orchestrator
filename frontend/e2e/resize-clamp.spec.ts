@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { installBrowserModeApiFixtures } from "./fixtures";
 
 // Dragging a panel edge must clamp at the panel's minimum width — never
 // auto-collapse. Both rails had drag-to-collapse behavior: the sidebar's
@@ -17,6 +18,7 @@ async function dragPointer(page: Page, from: { x: number; y: number }, to: { x: 
 }
 
 test("sidebar drag stops at its minimum width instead of collapsing", async ({ page }) => {
+	await installBrowserModeApiFixtures(page);
 	await page.goto("/");
 
 	const sidebar = page.locator('[data-slot="sidebar"]');
@@ -40,8 +42,8 @@ test("sidebar drag stops at its minimum width instead of collapsing", async ({ p
 });
 
 test("inspector drag stops at minSize instead of collapsing; buttons still toggle", async ({ page }) => {
-	// A worker session from the dev:web mock dataset (lib/mock-data.ts).
-	await page.goto("/#/projects/ao-demo/sessions/demo-working");
+	await installBrowserModeApiFixtures(page);
+	await page.goto("/#/projects/api-gateway/sessions/refactor-mux");
 
 	const inspector = page.locator("#inspector");
 	await expect(inspector).toBeVisible();
