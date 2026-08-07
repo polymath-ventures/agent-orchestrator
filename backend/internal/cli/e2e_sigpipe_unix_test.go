@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"testing"
 	"time"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/runfile"
 )
 
 func TestE2E_DaemonClosedOutputPipeShutdownRemovesRunFile(t *testing.T) {
@@ -91,7 +93,22 @@ func TestE2E_DaemonClosedOutputPipeShutdownRemovesRunFile(t *testing.T) {
 		t.Fatalf("GET /healthz = %d, want 200", resp.StatusCode)
 	}
 
-	resp, err = client.Post("http://127.0.0.1:"+strconv.Itoa(e.port)+"/shutdown", "application/json", nil)
+	info, err := runfile.Read(e.runFile)
+	if err != nil {
+		t.Fatalf("read run-file: %v", err)
+	}
+	if info == nil {
+		t.Fatal("run-file info = nil, want daemon handshake")
+	}
+	if info.ShutdownToken == "" {
+		t.Fatal("run-file shutdown token is empty")
+	}
+	req, err := http.NewRequest(http.MethodPost, "http://127.0.0.1:"+strconv.Itoa(e.port)+"/shutdown", nil)
+	if err != nil {
+		t.Fatalf("build POST /shutdown: %v", err)
+	}
+	req.Header.Set(runfile.ShutdownTokenHeader, info.ShutdownToken)
+	resp, err = client.Do(req)
 	if err != nil {
 		t.Fatalf("POST /shutdown after output reader closed: %v", err)
 	}

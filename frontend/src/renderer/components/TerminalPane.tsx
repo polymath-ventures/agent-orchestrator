@@ -20,6 +20,7 @@ import { useUiStore, type Theme } from "../stores/ui-store";
 import { useTerminalSession, type AttachableTerminal, type TerminalSessionState } from "../hooks/useTerminalSession";
 import { apiClient, getApiBaseUrl } from "../lib/api-client";
 import { createUrlWatcher, type UrlWatcher } from "../lib/detect-urls";
+import { usesPreviewWorkspaceData } from "../lib/preview-mode";
 import {
 	createTerminalMux,
 	createTerminalMuxPool,
@@ -623,7 +624,7 @@ export function TerminalPane({
 			? terminalTarget.handleId
 			: (session?.terminalHandleId ?? "empty");
 
-	if (!window.ao) {
+	if (!window.ao && !usesPreviewWorkspaceData) {
 		// A standalone shell has no agent and no branch, so it previews as a plain
 		// prompt rather than borrowing the session's agent transcript.
 		if (terminalTarget?.kind === "shell") {
