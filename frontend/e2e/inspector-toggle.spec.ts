@@ -6,16 +6,15 @@ import { installBrowserModeApiFixtures } from "./fixtures";
 // imperative expand()/collapse() fired onResize with transient sizes.
 // SessionView mirrored every onResize into the ui-store, so a mid-collapse
 // frame read as "dragged back open" and re-expanded the panel — the topbar
-// button did nothing visible. Only real separator drags may write back; this
-// needs the real rrp + CSS pipeline, which the mocked unit tests can't
-// exercise. The rail is per-session and starts open (upstream shell), so the
-// toggle must close it, reopen it, then close it again on demand.
-test("topbar button opens and recloses the inspector rail", async ({ page }) => {
+// button did nothing visible — and a mount-time 0-size event flipped fresh
+// profiles to collapsed. Only real separator drags may write back; this needs
+// the real rrp + CSS pipeline, which the mocked unit tests can't exercise.
+test("topbar button collapses and reopens the inspector rail", async ({ page }) => {
 	await installBrowserModeApiFixtures(page);
-	await page.goto("/");
-	await page.getByRole("button", { name: "Open Split terminal mux responsibilities" }).click();
-	await expect(page).toHaveURL(/sessions\/refactor-mux/);
+	await page.goto("/#/projects/api-gateway/sessions/refactor-mux");
 
+	// Fresh profile: the rail must mount open, not get toggled shut by
+	// mount-time layout events.
 	const inspector = page.locator("#inspector");
 	await expect(inspector).toBeVisible();
 
@@ -24,7 +23,4 @@ test("topbar button opens and recloses the inspector rail", async ({ page }) => 
 
 	await page.getByRole("button", { name: "Open inspector panel" }).click();
 	await expect(inspector).toBeVisible();
-
-	await page.getByRole("button", { name: "Close inspector panel" }).click();
-	await expect(inspector).toBeHidden();
 });

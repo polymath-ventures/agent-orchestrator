@@ -10,14 +10,37 @@ import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { DEFAULT_POSTHOG_HOST } from "./src/shared/posthog-config";
 
-const POSTHOG_ORIGIN = (() => {
+const POSTHOG_ORIGINS = (() => {
 	const configured = process.env.VITE_AO_POSTHOG_HOST?.trim() || DEFAULT_POSTHOG_HOST;
-	if (!configured) return "";
+	if (!configured) return [];
+	let url: URL;
 	try {
-		return new URL(configured).origin;
+		url = new URL(configured);
 	} catch {
-		return "";
+		return [];
 	}
+	// posthog-js serves capture from api_host but fetches remote config from a
+	// sibling "-assets" host it derives from the same name, so a CSP built only
+	// from api_host blocks that request and logs a console error on every launch
+	// of a packaged build. Capture is unaffected (it uses api_host), and AO
+	// ignores what remote config offers, since replay, flags, and surveys are all
+	// disabled in the client. Allowing the origin only silences the error; the
+	// client settings still win over anything the server would say.
+	//
+	// The asset_host option deliberately does not cover this: per its own docs it
+	// "only applies to /static/* asset paths; dynamic assets like remote config
+	// continue to use the regular asset host derived from api_host".
+	// Scoped to PostHog Cloud, matching what posthog-js itself does: it only
+	// rewrites to an "-assets" sibling for *.posthog.com. A self-hosted instance
+	// or a loopback capture endpoint serves everything from one origin, and
+	// deriving there would emit a nonsense entry (127.0.0.1 would become
+	// "127-assets.0.0.1").
+	const origins = [url.origin];
+	if (/\.posthog\.com$/i.test(url.hostname)) {
+		const assetsHost = url.hostname.replace(/^([^.]+)\./, "$1-assets.");
+		if (assetsHost !== url.hostname) origins.push(`${url.protocol}//${assetsHost}`);
+	}
+	return origins;
 })();
 
 const SAME_ORIGIN_BROWSER_BUILD =
@@ -25,14 +48,13 @@ const SAME_ORIGIN_BROWSER_BUILD =
 const CONNECT_SRC = [
 	"'self'",
 	...(SAME_ORIGIN_BROWSER_BUILD ? [] : ["http://127.0.0.1:*", "ws://127.0.0.1:*"]),
-	POSTHOG_ORIGIN,
+	...POSTHOG_ORIGINS,
 ].filter(Boolean);
 
 // CSP for the built renderer. The daemon is loopback-only, so network access is
-// pinned to 127.0.0.1 in Electron/package builds. Production browser builds use
-// same-origin proxying and should not grant a tailnet page access to a viewer
-// machine's loopback services. Injected at build time rather than written into
-// index.html because the dev server needs inline scripts.
+// pinned to 127.0.0.1 (REST + SSE over http, terminal mux over ws). Injected at
+// build time rather than written into index.html because the dev server needs
+// inline scripts (react-refresh preamble) that a static meta tag would block.
 const CONTENT_SECURITY_POLICY = [
 	"default-src 'self'",
 	"script-src 'self'",
@@ -44,22 +66,6 @@ const CONTENT_SECURITY_POLICY = [
 	"base-uri 'self'",
 	"frame-src 'none'",
 ].join("; ");
-
-function gitRevision(): string {
-	try {
-		return execSync("git rev-parse HEAD", { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
-	} catch {
-		return "";
-	}
-}
-
-function gitFrontendTree(): string {
-	try {
-		return execSync("git rev-parse HEAD:frontend", { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
-	} catch {
-		return "";
-	}
-}
 
 const injectCspMeta: Plugin = {
 	name: "inject-csp-meta",
@@ -75,8 +81,16 @@ const injectCspMeta: Plugin = {
 	},
 };
 
-const rendererBuildRevision = process.env.AO_RENDERER_BUILD_REVISION || gitRevision();
-const rendererFrontendTree = process.env.AO_RENDERER_FRONTEND_TREE || gitFrontendTree();
+function gitObject(object: string): string {
+	try {
+		return execSync(`git rev-parse ${object}`, { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+	} catch {
+		return "";
+	}
+}
+
+const rendererBuildRevision = process.env.AO_RENDERER_BUILD_REVISION || gitObject("HEAD");
+const rendererFrontendTree = process.env.AO_RENDERER_FRONTEND_TREE || gitObject("HEAD:frontend");
 
 const buildManifestPlugin: Plugin = {
 	name: "ao-web-build-manifest",
@@ -140,8 +154,6 @@ export default defineConfig({
 		buildManifestPlugin,
 	],
 	build: {
-		// The full PostHog browser client is intentionally bundled so the CSP does
-		// not need to allow third-party script injection.
 		chunkSizeWarningLimit: 700,
 	},
 	test: {

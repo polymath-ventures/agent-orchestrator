@@ -249,9 +249,9 @@ describe("CreateProjectAgentSheet", () => {
 	it("uses harness terminology and keeps the reviewer automatic by default", () => {
 		renderSheet();
 
-		expect(screen.getByRole("dialog", { name: "Project harnesses" })).toBeInTheDocument();
-		expect(screen.getByRole("combobox", { name: "Worker harness" })).toBeInTheDocument();
-		expect(screen.getByRole("combobox", { name: "Orchestrator harness" })).toBeInTheDocument();
+		expect(screen.getByRole("dialog", { name: "Project agents" })).toBeInTheDocument();
+		expect(screen.getByRole("combobox", { name: "Worker agent" })).toBeInTheDocument();
+		expect(screen.getByRole("combobox", { name: "Orchestrator agent" })).toBeInTheDocument();
 		expect(screen.getByRole("combobox", { name: "Reviewer harness" })).toHaveTextContent(
 			"Automatic independent reviewer",
 		);
@@ -264,7 +264,7 @@ describe("CreateProjectAgentSheet", () => {
 	it("shows one default model row per selected harness and submits configured defaults", async () => {
 		const onSubmit = renderSheet();
 
-		await chooseOption(screen.getByRole("combobox", { name: "Orchestrator harness" }), "codex");
+		await chooseOption(screen.getByRole("combobox", { name: "Orchestrator agent" }), "codex");
 		await chooseOption(screen.getByRole("combobox", { name: "Reviewer harness" }), "codex");
 		expect(screen.getByText("Claude Code default model")).toBeInTheDocument();
 		expect(screen.getByText("codex default model")).toBeInTheDocument();
@@ -328,7 +328,7 @@ describe("CreateProjectAgentSheet", () => {
 		};
 		renderSheetContext(vi.fn(), { availability: setupAvailability });
 
-		await chooseOption(screen.getByRole("combobox", { name: "Worker harness" }), "codex");
+		await chooseOption(screen.getByRole("combobox", { name: "Worker agent" }), "codex");
 		await userEvent.type(document.getElementById("newProjectModel-codex-model")!, "gpt-5.5");
 
 		expect(screen.queryByText(/Status: unknown/i)).not.toBeInTheDocument();
@@ -345,19 +345,19 @@ describe("CreateProjectAgentSheet", () => {
 	it("restores an edited harness tuple and clears a harness with no edit", async () => {
 		renderSheet();
 
-		await chooseOption(screen.getByRole("combobox", { name: "Worker harness" }), "codex");
+		await chooseOption(screen.getByRole("combobox", { name: "Worker agent" }), "codex");
 		await userEvent.type(document.getElementById("newProjectModel-codex-model")!, "gpt-5-codex");
-		await chooseOption(screen.getByRole("combobox", { name: "Worker harness" }), "claude-code");
+		await chooseOption(screen.getByRole("combobox", { name: "Worker agent" }), "claude-code");
 		expect(document.getElementById("newProjectModel-codex-model")).not.toBeInTheDocument();
 
-		await chooseOption(screen.getByRole("combobox", { name: "Worker harness" }), "codex");
+		await chooseOption(screen.getByRole("combobox", { name: "Worker agent" }), "codex");
 		expect(document.getElementById("newProjectModel-codex-model")).toHaveValue("gpt-5-codex");
 	});
 
 	it("shows fallback provenance for the selected create-project harness", async () => {
 		renderSheet();
 
-		await chooseOption(screen.getByRole("combobox", { name: "Worker harness" }), "Codex Fugu");
+		await chooseOption(screen.getByRole("combobox", { name: "Worker agent" }), "Codex Fugu");
 		expect(screen.getByText(/known fallback catalog/i)).toBeInTheDocument();
 		expect(screen.getByText(/installed catalog could not be read/i)).toBeInTheDocument();
 	});
@@ -377,7 +377,7 @@ describe("CreateProjectAgentSheet", () => {
 		).toBeInTheDocument();
 		expect(screen.getByText("claude-code default model")).toBeInTheDocument();
 
-		await chooseOption(screen.getByRole("combobox", { name: "Worker harness" }), "codex");
+		await chooseOption(screen.getByRole("combobox", { name: "Worker agent" }), "codex");
 		await userEvent.type(document.getElementById("newProjectModel-codex-model")!, "private/codex-model");
 		expect(document.getElementById("newProjectModel-codex-model")).toHaveValue("private/codex-model");
 	});
@@ -385,7 +385,7 @@ describe("CreateProjectAgentSheet", () => {
 	it("keeps cached model rows when an explicit refresh fails", async () => {
 		getMock.mockResolvedValue({ data: undefined, error: { message: "refresh offline" } });
 		renderSheetContext();
-		await chooseOption(screen.getByRole("combobox", { name: "Worker harness" }), "Codex Fugu");
+		await chooseOption(screen.getByRole("combobox", { name: "Worker agent" }), "Codex Fugu");
 
 		await userEvent.click(screen.getAllByRole("button", { name: "Refresh model catalog" })[0]);
 		await waitFor(() => expect(getMock).toHaveBeenCalledWith("/api/v1/agents/models", expect.anything()));
@@ -395,8 +395,8 @@ describe("CreateProjectAgentSheet", () => {
 
 	it("blocks submit when intake is enabled with no assignee, then passes the intake payload once one is set", async () => {
 		const onSubmit = renderSheet();
-		await chooseOption(screen.getByRole("combobox", { name: "Worker harness" }), "claude-code");
-		await chooseOption(screen.getByRole("combobox", { name: "Orchestrator harness" }), "codex");
+		await chooseOption(screen.getByRole("combobox", { name: "Worker agent" }), "claude-code");
+		await chooseOption(screen.getByRole("combobox", { name: "Orchestrator agent" }), "codex");
 
 		await userEvent.click(screen.getByLabelText("Enable issue intake"));
 		// Enabled with no eligibility rule → submit stays disabled (compact sheet

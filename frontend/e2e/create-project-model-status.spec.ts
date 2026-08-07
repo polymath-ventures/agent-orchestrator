@@ -86,8 +86,8 @@ test("project setup hides advisory not-probed model status", async ({ page }) =>
 	await page.getByRole("textbox", { name: "Path" }).fill("/home/orchestrator/coachclaw");
 	await page.getByRole("button", { name: "Continue" }).click();
 
-	await expect(page.getByRole("dialog", { name: "Project harnesses" })).toBeVisible();
-	await page.getByRole("combobox", { name: "Worker harness" }).click();
+	await expect(page.getByRole("dialog", { name: "Project agents" })).toBeVisible();
+	await page.getByRole("combobox", { name: "Worker agent" }).click();
 	await page.getByRole("option", { name: "Codex" }).click();
 	await page.locator("#newProjectModel-codex-model").fill("gpt-5.5");
 

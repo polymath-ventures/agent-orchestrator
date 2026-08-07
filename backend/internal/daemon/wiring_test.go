@@ -23,6 +23,7 @@ import (
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
 	sessionmanager "github.com/aoagents/agent-orchestrator/backend/internal/session_manager"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
+	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite/sqlitetest"
 )
 
 // TestWiring_WriteFlowsToBroadcaster exercises the real boot path end to end:
@@ -30,7 +31,7 @@ import (
 // broadcaster, through the same cdc.Source implementation the daemon uses.
 func TestWiring_WriteFlowsToBroadcaster(t *testing.T) {
 	ctx := context.Background()
-	store, err := sqlite.Open(t.TempDir())
+	store, err := sqlitetest.Open(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,6 +104,7 @@ func TestWiring_AgentResolverResolvesRealAdapters(t *testing.T) {
 		{domain.HarnessQwen, "qwen"},
 		{domain.HarnessCopilot, "copilot"},
 		{domain.HarnessKimi, "kimi"},
+		{domain.HarnessMuse, "muse"},
 		{domain.HarnessDroid, "droid"},
 		{domain.HarnessAmp, "amp"},
 		{domain.HarnessAgy, "agy"},
@@ -171,7 +173,7 @@ func TestWiring_ActiveTurnSteeringComesFromAdapters(t *testing.T) {
 // gitworktree workspace + session manager over the shared store/LCM), which is
 // what gets mounted at httpd APIDeps.Sessions.
 func TestWiring_StartSessionBuildsSessionService(t *testing.T) {
-	store, err := sqlite.Open(t.TempDir())
+	store, err := sqlitetest.Open(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,7 +189,7 @@ func TestWiring_StartSessionBuildsSessionService(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildAgentResolver: %v", err)
 	}
-	svc, reviewSvc, lc, err := startSession(cfg, rt, store, lcm, messenger, nil, telemetryadapter.NoopSink{}, agents, nil, nil, nil, log)
+	svc, reviewSvc, lc, err := startSession(context.Background(), cfg, rt, store, lcm, messenger, nil, telemetryadapter.NoopSink{}, agents, nil, nil, nil, nil, nil, log)
 	if err != nil {
 		t.Fatalf("startSession: %v", err)
 	}
@@ -211,7 +213,7 @@ func TestWiring_StartSessionBuildsSessionService(t *testing.T) {
 
 func TestWiring_StartSessionSpawnsScratchWithoutGitRepo(t *testing.T) {
 	ctx := context.Background()
-	store, err := sqlite.Open(t.TempDir())
+	store, err := sqlitetest.Open(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -255,7 +257,7 @@ func TestWiring_StartSessionSpawnsScratchWithoutGitRepo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildAgentResolver: %v", err)
 	}
-	svc, _, _, err := startSession(cfg, runtime, store, lcm, messenger, nil, telemetryadapter.NoopSink{}, agents, nil, nil, nil, log)
+	svc, _, _, err := startSession(context.Background(), cfg, runtime, store, lcm, messenger, nil, telemetryadapter.NoopSink{}, agents, nil, nil, nil, nil, nil, log)
 	if err != nil {
 		t.Fatalf("startSession: %v", err)
 	}
@@ -297,7 +299,7 @@ func TestStartSession_SpawnDoesNotPanicWhenNoTrackerToken(t *testing.T) {
 	t.Setenv("GITHUB_TOKEN", "")
 
 	ctx := context.Background()
-	store, err := sqlite.Open(t.TempDir())
+	store, err := sqlitetest.Open(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -316,7 +318,7 @@ func TestStartSession_SpawnDoesNotPanicWhenNoTrackerToken(t *testing.T) {
 	if agentsErr != nil {
 		t.Fatalf("buildAgentResolver: %v", agentsErr)
 	}
-	svc, _, _, err := startSession(cfg, rt, store, lcm, messenger, nil, telemetryadapter.NoopSink{}, agents, nil, nil, nil, log)
+	svc, _, _, err := startSession(context.Background(), cfg, rt, store, lcm, messenger, nil, telemetryadapter.NoopSink{}, agents, nil, nil, nil, nil, nil, log)
 	if err != nil {
 		t.Fatalf("startSession: %v", err)
 	}
@@ -329,7 +331,7 @@ func TestStartSession_SpawnDoesNotPanicWhenNoTrackerToken(t *testing.T) {
 
 func TestWiring_SeedScratchProjectOnBootUsesDataDir(t *testing.T) {
 	ctx := context.Background()
-	store, err := sqlite.Open(t.TempDir())
+	store, err := sqlitetest.Open(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -360,7 +362,7 @@ func TestWiring_SeedScratchProjectOnBootUsesDataDir(t *testing.T) {
 // intake after daemon boot was silently never picked up until a restart. The
 // loop must always start; Poll is what decides whether there's work to do.
 func TestStartTrackerIntake_RunsEvenWithoutEnabledProjects(t *testing.T) {
-	store, err := sqlite.Open(t.TempDir())
+	store, err := sqlitetest.Open(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -375,7 +377,7 @@ func TestStartTrackerIntake_RunsEvenWithoutEnabledProjects(t *testing.T) {
 	if agentsErr != nil {
 		t.Fatalf("buildAgentResolver: %v", agentsErr)
 	}
-	svc, _, _, err := startSession(cfg, rt, store, lcm, messenger, nil, telemetryadapter.NoopSink{}, agents, nil, nil, nil, log)
+	svc, _, _, err := startSession(context.Background(), cfg, rt, store, lcm, messenger, nil, telemetryadapter.NoopSink{}, agents, nil, nil, nil, nil, nil, log)
 	if err != nil {
 		t.Fatalf("startSession: %v", err)
 	}
@@ -432,7 +434,7 @@ func TestStartSessionInjectsSharedSpawnModelValidator(t *testing.T) {
 	if agentsErr != nil {
 		t.Fatalf("buildAgentResolver: %v", agentsErr)
 	}
-	svc, _, _, err := startSession(config.Config{DataDir: t.TempDir()}, rt, store, lcm, messenger, validator, telemetryadapter.NoopSink{}, agents, nil, nil, nil, log)
+	svc, _, _, err := startSession(ctx, config.Config{DataDir: t.TempDir()}, rt, store, lcm, messenger, validator, telemetryadapter.NoopSink{}, agents, nil, nil, nil, nil, nil, log)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -472,7 +474,7 @@ func (c *captureRuntimeSender) SendMessage(_ context.Context, handle ports.Runti
 // TestWiring_SessionMessengerSendsToRuntimePane asserts the daemon wires ao
 // send to the live runtime pane and resolves the handle from the shared store.
 func TestWiring_SessionMessengerSendsToRuntimePane(t *testing.T) {
-	store, err := sqlite.Open(t.TempDir())
+	store, err := sqlitetest.Open(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -505,7 +507,7 @@ func TestWiring_SessionMessengerSendsToRuntimePane(t *testing.T) {
 }
 
 func TestWiring_SessionMessengerWrapsLookupErrors(t *testing.T) {
-	store, err := sqlite.Open(t.TempDir())
+	store, err := sqlitetest.Open(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -519,7 +521,7 @@ func TestWiring_SessionMessengerWrapsLookupErrors(t *testing.T) {
 }
 
 func TestWiring_SessionMessengerRequiresRuntimeHandle(t *testing.T) {
-	store, err := sqlite.Open(t.TempDir())
+	store, err := sqlitetest.Open(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -544,7 +546,7 @@ func TestWiring_SessionMessengerRequiresRuntimeHandle(t *testing.T) {
 }
 
 func TestWiring_SessionMessengerRejectsTerminatedSession(t *testing.T) {
-	store, err := sqlite.Open(t.TempDir())
+	store, err := sqlitetest.Open(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -596,7 +598,7 @@ func TestWiring_StartLifecycleThreadsMessengerIntoLCM(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	// Cancel must run BEFORE Stop so the reaper goroutine's ctx.Done() fires;
 	// Stop is a no-op otherwise. Cleanup is LIFO, so register Stop first.
-	store, err := sqlite.Open(t.TempDir())
+	store, err := sqlitetest.Open(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -643,7 +645,7 @@ func TestWiring_StartLifecycleThreadsMessengerIntoLCM(t *testing.T) {
 // resolver turns a registered project into its on-disk repo path (so spawns
 // materialise a worktree), and fails loudly for an unregistered project.
 func TestProjectRepoResolver_ResolvesRegisteredProject(t *testing.T) {
-	store, err := sqlite.Open(t.TempDir())
+	store, err := sqlitetest.Open(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -682,6 +684,8 @@ type fakeSessionLifecycle struct {
 	restoreErr       error
 }
 
+func (f *fakeSessionLifecycle) Send(context.Context, domain.SessionID, string) error { return nil }
+
 func (f *fakeSessionLifecycle) Kill(_ context.Context, _ domain.SessionID) (bool, error) {
 	return false, nil
 }
@@ -705,6 +709,7 @@ func (f *fakeSessionLifecycle) EffectiveWorkerTaskPrompt(_ context.Context, _ do
 }
 
 func (f *fakeSessionLifecycle) SetShellTerminalCloser(sessionmanager.ShellTerminalCloser) {}
+func (f *fakeSessionLifecycle) SetTerminalInputGate(sessionmanager.TerminalInputGate)     {}
 
 // TestWiring_SessionLifecycleInterfaceInvokedByDaemon asserts the
 // sessionLifecycle interface is satisfied by *sessionmanager.Manager (compile

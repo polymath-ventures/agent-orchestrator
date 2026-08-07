@@ -80,6 +80,16 @@ type TelemetryConfig struct {
 	Remote      TelemetryRemote
 	PostHogKey  string
 	PostHogHost string
+	// DisabledEvents names event streams that must never reach the remote
+	// (billed) sink. This is the kill switch: a stream that turns out to be
+	// noisy or expensive can be silenced by configuration, without waiting for
+	// users to install a new build. Local storage still records everything.
+	DisabledEvents []string
+	// AppVersion is the desktop app version the daemon was launched by, stamped
+	// on remote events so failures can be attributed to a release. The daemon
+	// binary has no reliable version of its own (see cli.Version, which release
+	// tooling does not currently override), so the supervisor passes it in.
+	AppVersion string
 }
 
 // MetricsConfig controls the daemon metrics observer. Interval <=0 disables
@@ -360,6 +370,12 @@ func Load() (Config, error) {
 		}
 		cfg.Metrics.QuotaProbeInterval = d
 	}
+	if raw := os.Getenv("AO_TELEMETRY_DISABLED_EVENTS"); raw != "" {
+		cfg.Telemetry.DisabledEvents = parseTelemetryDisabledEvents(raw)
+	}
+	if raw := os.Getenv("AO_TELEMETRY_APP_VERSION"); raw != "" {
+		cfg.Telemetry.AppVersion = strings.TrimSpace(raw)
+	}
 
 	runFile, err := resolveRunFilePath()
 	if err != nil {
@@ -407,6 +423,21 @@ func parseNonNegativeFloat(name, raw string) (float64, error) {
 		return 0, fmt.Errorf("invalid %s %q: must be >= 0", name, raw)
 	}
 	return v, nil
+}
+
+// parseTelemetryDisabledEvents reads the comma-separated kill-switch list.
+// Unlike the other telemetry env vars this never fails: an unparseable or
+// misspelled entry must not stop the daemon from booting, because the whole
+// point of the switch is to be usable in a hurry during an incident. An entry
+// that matches no event name is simply inert.
+func parseTelemetryDisabledEvents(raw string) []string {
+	var names []string
+	for _, part := range strings.Split(raw, ",") {
+		if name := strings.TrimSpace(part); name != "" {
+			names = append(names, name)
+		}
+	}
+	return names
 }
 
 // parsePositiveDuration rejects zero and negative durations: a zero

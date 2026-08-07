@@ -1,58 +1,67 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
-import type { components } from "../../api/schema";
-import { agentsQueryKey, agentsQueryOptions, refreshAgents } from "../hooks/useAgentsQuery";
+import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
+import { useEffect, useState } from "react";
 import {
-	modelAvailabilityQueryKey,
-	type AgentModelAvailabilityResponse,
-	useModelAvailabilityQuery,
-	useRefreshModelAvailability,
-} from "../hooks/useModelAvailabilityQuery";
+	Bot,
+	Fingerprint,
+	FolderGit2,
+	FolderOpen,
+	GitBranch,
+	Hash,
+	Layers,
+	Link,
+	Network,
+	RefreshCw,
+	ScanEye,
+	Shield,
+	Sparkles,
+	Tag,
+	TriangleAlert,
+	type LucideIcon,
+} from "lucide-react";
+import type { components } from "../../api/schema";
+import {
+	agentModelsQueryKey,
+	agentModelsQueryOptions,
+	refreshAgentModels,
+	revalidateAgentModels,
+	type AgentModelCatalog,
+} from "../hooks/useAgentModelsQuery";
+import { agentsQueryKey, agentsQueryOptions, refreshAgents } from "../hooks/useAgentsQuery";
 import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
-import {
-	agentDisplayLabel,
-	type AgentInfo,
-	effectiveDisplayHarness,
-	filterModelAvailabilityToSelectableAgents,
-	modelAvailabilityFromAgentInventory,
-	selectableAgentCatalog,
-} from "../lib/agent-selection";
 import { captureRendererEvent } from "../lib/telemetry";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
+import { cn } from "../lib/utils";
 import { newestActiveOrchestrator } from "../types/workspace";
 import { RequiredAgentField } from "./CreateProjectAgentSheet";
-import { DashboardSubhead } from "./DashboardSubhead";
 import { buildIntake, deriveGitHubRepo, IntakeFields, type IntakeForm, intakeNeedsRule } from "./IntakeFields";
-import { type ConfiguredModelPin, ModelAvailabilityField, type ModelSelection } from "./ModelAvailabilityField";
-import { PermissionModeSelect } from "./PermissionModeSelect";
+import { ReviewerSelect } from "./ReviewerSelect";
+import { AgentModelCombobox } from "./settings/AgentModelCombobox";
+import { SettingsOptionMenu } from "./settings/SettingsOptionMenu";
+import { SettingsRow } from "./settings/SettingsRow";
+import { SettingsSection } from "./settings/SettingsSection";
 import { Button } from "./ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
-import { Label } from "./ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
-import {
-	buildWorkerMix,
-	parseMaxLiveWorkers,
-	toWorkerMixForm,
-	WorkerMixFields,
-	workerMixInvalid,
-	workerMixRowError,
-	workerMixTotal,
-} from "./WorkerMixFields";
 
 type Project = components["schemas"]["Project"];
 type ProjectConfig = components["schemas"]["ProjectConfig"];
-type AgentConfig = components["schemas"]["AgentConfig"];
 type TrackerIntakeConfig = components["schemas"]["TrackerIntakeConfig"];
 
-const ROLE_PROMPT_OPTIONS = ["worker", "orchestrator", "reviewer"] as const;
-type RolePromptRole = (typeof ROLE_PROMPT_OPTIONS)[number];
-const MAX_PROJECT_DISPLAY_NAME_RUNES = 20;
+const PERMISSION_MODE_VALUES = ["default", "accept-edits", "auto", "bypass-permissions"] as const;
 
 const projectQueryKey = (id: string) => ["project", id] as const;
-const rolePromptQueryKey = (id: string, role: string) => ["project", id, "role-prompt", role] as const;
 
-export function ProjectSettingsForm({ projectId }: { projectId: string }) {
+export type ProjectSettingsSection = "general" | "agents" | "workflow" | "intake";
+
+export function ProjectSettingsForm({
+	projectId,
+	section = "general",
+}: {
+	projectId: string;
+	section?: ProjectSettingsSection;
+}) {
+	const { t } = useTranslation();
 	const queryClient = useQueryClient();
 
 	const query = useQuery({
@@ -62,36 +71,44 @@ export function ProjectSettingsForm({ projectId }: { projectId: string }) {
 				params: { path: { id: projectId } },
 			});
 			if (error) throw new Error(apiErrorMessage(error));
-			if (data?.status !== "ok") throw new Error("Project config is unavailable (degraded).");
+			if (data?.status !== "ok") throw new Error(t("settings.project.degraded"));
 			return data.project as Project;
 		},
 	});
 
-	if (query.isLoading) {
-		return <CenteredNote>Loading project settings…</CenteredNote>;
-	}
-	if (query.isError || !query.data) {
-		return (
-			<CenteredNote>{query.error instanceof Error ? query.error.message : "Could not load project."}</CenteredNote>
-		);
-	}
-
 	return (
-		<div className="flex h-full min-h-0 flex-col bg-background text-foreground">
-			<DashboardSubhead title="Settings" subtitle={query.data.path} />
-			<div className="min-h-0 flex-1 overflow-y-auto p-4.5">
+		<>
+			{query.isLoading ? (
+				<p className="text-sm text-settings-muted">{t("settings.project.loading")}</p>
+			) : query.isError || !query.data ? (
+				<p className="text-sm text-error">
+					{query.error instanceof Error ? query.error.message : t("settings.project.loadFailed")}
+				</p>
+			) : (
 				<SettingsBody
 					key={projectId}
 					project={query.data}
 					onSaved={() => queryClient.invalidateQueries({ queryKey: workspaceQueryKey })}
 					projectId={projectId}
+					section={section}
 				/>
-			</div>
-		</div>
+			)}
+		</>
 	);
 }
 
-function SettingsBody({ project, projectId, onSaved }: { project: Project; projectId: string; onSaved: () => void }) {
+function SettingsBody({
+	project,
+	projectId,
+	onSaved,
+	section = "general",
+}: {
+	project: Project;
+	projectId: string;
+	onSaved: () => void;
+	section?: ProjectSettingsSection;
+}) {
+	const { t } = useTranslation();
 	const queryClient = useQueryClient();
 	const workspaceQuery = useWorkspaceQuery();
 	const config = project.config ?? {};
@@ -99,57 +116,34 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 	const workspace = workspaceQuery.data?.find((item) => item.id === projectId);
 	const activeOrchestrator = newestActiveOrchestrator(workspace?.sessions ?? []);
 	const intake: TrackerIntakeConfig = config.trackerIntake ?? {};
-	const firstReviewer = config.reviewers?.[0];
-	const initialProjectHarness = firstConfiguredHarness(config.agentConfig);
-	const initialWorkerAgent = config.worker?.agent ?? "";
-	const initialOrchestratorAgent = config.orchestrator?.agent ?? "";
-	const initialReviewerHarness = firstReviewer?.harness ?? "";
 	const [form, setForm] = useState({
 		displayName: project.name,
 		defaultBranch: config.defaultBranch ?? project.defaultBranch ?? "",
 		sessionPrefix: config.sessionPrefix ?? "",
-		projectHarness: initialProjectHarness,
-		model: config.agentConfig?.model ?? "",
-		effort: config.agentConfig?.effort ?? "",
-		modelByHarness: toHarnessModelForm(config.agentConfig?.modelByHarness),
-		workerAgent: initialWorkerAgent,
-		workerModels: toRoleHarnessModelForm(config.worker?.agentConfig, initialWorkerAgent),
-		orchestratorAgent: initialOrchestratorAgent,
-		orchestratorModels: toRoleHarnessModelForm(config.orchestrator?.agentConfig, initialOrchestratorAgent),
+		workerAgent: config.worker?.agent ?? "",
+		orchestratorAgent: config.orchestrator?.agent ?? "",
+		workerModel: config.worker?.agentConfig?.model ?? config.agentConfig?.model ?? "",
+		orchestratorModel: config.orchestrator?.agentConfig?.model ?? config.agentConfig?.model ?? "",
+		workerMode: config.worker?.agentConfig?.mode ?? config.agentConfig?.mode ?? "",
+		orchestratorMode: config.orchestrator?.agentConfig?.mode ?? config.agentConfig?.mode ?? "",
 		permissions: config.agentConfig?.permissions ?? "",
-		reviewerHarness: initialReviewerHarness,
-		reviewerModels: toRoleHarnessModelForm(firstReviewer?.agentConfig, initialReviewerHarness),
-		workerTaskPrompt: config.workerTaskPrompt ?? "",
-		agentRules: config.agentRules ?? "",
-		agentRulesFile: config.agentRulesFile ?? "",
-		orchestratorRules: config.orchestratorRules ?? "",
-		orchestratorRulesFile: config.orchestratorRulesFile ?? "",
-		reviewerRules: config.reviewerRules ?? "",
-		reviewerRulesFile: config.reviewerRulesFile ?? "",
+		reviewerHarness: config.reviewers?.[0]?.harness ?? "",
 		intakeEnabled: intake.enabled ?? false,
 		intakeRepo: intake.repo ?? "",
 		intakeAssignee: intake.assignee ?? "",
-		workerMix: toWorkerMixForm(config.workerMix),
-		maxLiveWorkers: config.maxLiveWorkers ? String(config.maxLiveWorkers) : "",
 	});
 	const [savedAt, setSavedAt] = useState<number | null>(null);
 	const [replacementError, setReplacementError] = useState<string | null>(null);
 	const [validationError, setValidationError] = useState<string | null>(null);
+	const initialOrchestratorAgent = config.orchestrator?.agent ?? "";
 	const missingRequiredAgent = form.workerAgent === "" || form.orchestratorAgent === "";
 	const agentsQuery = useQuery(agentsQueryOptions);
-	const modelAvailabilityQuery = useModelAvailabilityQuery();
-	const { refresh: refreshModels, isRefreshing: isRefreshingModels } = useRefreshModelAvailability();
 	const agentCatalog = agentsQuery.data;
-	const agentSelectorsDisabled = agentsQuery.isFetching && agentCatalog === undefined;
-	const effectiveModelAvailability = modelAvailabilityQuery.data ?? modelAvailabilityFromAgentInventory(agentCatalog);
 	const refreshAgentsMutation = useMutation({
 		mutationFn: refreshAgents,
 		onSuccess: (next) => queryClient.setQueryData(agentsQueryKey, next),
 	});
 
-	// Git projects can derive owner/repo from origin when trackerIntake.repo is unset.
-	// Scratch hides tracker intake entirely, so this display-only preview is only
-	// rendered for git-backed projects.
 	const intakeForm: IntakeForm = {
 		enabled: form.intakeEnabled,
 		repo: form.intakeRepo,
@@ -169,58 +163,56 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 		mutationFn: async () => {
 			void captureRendererEvent("ao.renderer.settings_save_requested", { project_id: projectId });
 			const displayName = form.displayName.trim();
-			// PUT replaces the whole config; merge the edited fields over what loaded
-			// so we don't drop env/symlinks/postCreate the form doesn't expose.
-			const next: ProjectConfig = {
-				...config,
-				defaultBranch: isScratchProject ? undefined : form.defaultBranch || undefined,
-				sessionPrefix: form.sessionPrefix || undefined,
-				worker: {
-					...config.worker,
-					agent: form.workerAgent,
-					agentConfig: buildRoleAgentConfig(
-						config.worker?.agentConfig,
-						initialWorkerAgent,
-						form.workerAgent,
-						form.workerModels,
-					),
-				},
-				orchestrator: {
-					...config.orchestrator,
-					agent: form.orchestratorAgent,
-					agentConfig: buildRoleAgentConfig(
-						config.orchestrator?.agentConfig,
-						initialOrchestratorAgent,
-						form.orchestratorAgent,
-						form.orchestratorModels,
-					),
-				},
-				agentConfig: buildAgentConfig(
-					config.agentConfig,
-					form.model,
-					form.effort,
-					form.permissions,
-					form.modelByHarness,
-				),
-				workerTaskPrompt: form.workerTaskPrompt || undefined,
-				agentRules: form.agentRules.trim() || undefined,
-				agentRulesFile: form.agentRulesFile.trim() || undefined,
-				orchestratorRules: form.orchestratorRules.trim() || undefined,
-				orchestratorRulesFile: form.orchestratorRulesFile.trim() || undefined,
-				reviewerRules: form.reviewerRules.trim() || undefined,
-				reviewerRulesFile: form.reviewerRulesFile.trim() || undefined,
-				trackerIntake: isScratchProject ? undefined : buildIntake(intakeForm),
-				workerMix: buildWorkerMix(form.workerMix),
-				maxLiveWorkers: parseMaxLiveWorkers(form.maxLiveWorkers),
-				reviewers: isScratchProject
-					? undefined
-					: buildReviewerConfig(config.reviewers, form.reviewerHarness, initialReviewerHarness, form.reviewerModels),
-			};
+			const { model: _legacyModel, mode: _legacyMode, ...sharedAgentConfig } = config.agentConfig ?? {};
+			const next: ProjectConfig = isScratchProject
+				? {
+						...scratchSupportedConfig(config),
+						worker: {
+							...config.worker,
+							agent: form.workerAgent,
+							agentConfig: buildRoleAgentConfig(config.worker?.agentConfig, form.workerModel, form.workerMode),
+						},
+						orchestrator: {
+							...config.orchestrator,
+							agent: form.orchestratorAgent,
+							agentConfig: buildRoleAgentConfig(
+								config.orchestrator?.agentConfig,
+								form.orchestratorModel,
+								form.orchestratorMode,
+							),
+						},
+						agentConfig: blankToUndefined({
+							...sharedAgentConfig,
+							permissions: form.permissions || undefined,
+						}),
+					}
+				: {
+						...config,
+						defaultBranch: form.defaultBranch || undefined,
+						sessionPrefix: form.sessionPrefix || undefined,
+						worker: {
+							...config.worker,
+							agent: form.workerAgent,
+							agentConfig: buildRoleAgentConfig(config.worker?.agentConfig, form.workerModel, form.workerMode),
+						},
+						orchestrator: {
+							...config.orchestrator,
+							agent: form.orchestratorAgent,
+							agentConfig: buildRoleAgentConfig(
+								config.orchestrator?.agentConfig,
+								form.orchestratorModel,
+								form.orchestratorMode,
+							),
+						},
+						agentConfig: blankToUndefined({
+							...sharedAgentConfig,
+							permissions: form.permissions || undefined,
+						}),
+						reviewers: form.reviewerHarness ? [{ harness: form.reviewerHarness }] : undefined,
+						trackerIntake: buildIntake(intakeForm),
+					};
 			const { error } = await apiClient.PUT("/api/v1/projects/{id}", {
-				params: {
-					path: { id: projectId },
-					header: project.configETag ? { "If-Match": project.configETag } : undefined,
-				},
+				params: { path: { id: projectId } },
 				body: { displayName, config: next },
 			});
 			if (error) throw new Error(apiErrorMessage(error));
@@ -232,7 +224,7 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 					await spawnOrchestrator(projectId, "settings", true);
 				} catch (error) {
 					return {
-						replacementError: error instanceof Error ? error.message : "Could not replace orchestrator",
+						replacementError: error instanceof Error ? error.message : t("settings.project.replaceOrchestratorFailed"),
 					};
 				}
 			}
@@ -244,7 +236,6 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 			setReplacementError(result.replacementError);
 			setValidationError(null);
 			void queryClient.invalidateQueries({ queryKey: ["project", projectId] });
-			void queryClient.invalidateQueries({ queryKey: modelAvailabilityQueryKey });
 			onSaved();
 		},
 		onError: () => {
@@ -252,781 +243,557 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 		},
 	});
 
+	const saveFooter = (
+		<SaveChangesFooter
+			isPending={mutation.isPending}
+			validationError={validationError}
+			mutationError={mutation.isError ? mutation.error : null}
+			savedAt={savedAt}
+			replacementError={replacementError}
+		/>
+	);
+
 	return (
 		<form
-			noValidate
-			className="mx-auto flex max-w-2xl flex-col gap-4"
+			className="flex w-full flex-col gap-(--size-settings-section-gap)"
 			onSubmit={(event) => {
 				event.preventDefault();
 				setSavedAt(null);
 				setReplacementError(null);
 				if (missingRequiredAgent) {
-					setValidationError("Worker and orchestrator agents are required.");
+					setValidationError(t("settings.project.agentsRequired"));
 					return;
 				}
 				if (form.displayName.trim() === "") {
-					setValidationError("Project name is required.");
-					return;
-				}
-				if (
-					form.displayName.trim() !== project.name &&
-					Array.from(form.displayName.trim()).length > MAX_PROJECT_DISPLAY_NAME_RUNES
-				) {
-					setValidationError("Project name must be 20 characters or fewer.");
+					setValidationError(t("settings.project.nameRequired"));
 					return;
 				}
 				if (intakeIncomplete) {
-					setValidationError("Enabling intake requires an assignee.");
-					return;
-				}
-				const rowError = workerMixRowError(form.workerMix);
-				if (rowError) {
-					setValidationError(rowError);
-					return;
-				}
-				if (workerMixInvalid(form.workerMix)) {
-					setValidationError(`Worker mix weights must sum to 100 (currently ${workerMixTotal(form.workerMix)}).`);
+					setValidationError(t("settings.project.intakeAssigneeRequired"));
 					return;
 				}
 				setValidationError(null);
 				mutation.mutate();
 			}}
 		>
-			<Card>
-				<CardHeader>
-					<CardTitle className="text-control">Identity</CardTitle>
-				</CardHeader>
-				<CardContent className="flex flex-col gap-4 font-mono text-xs text-muted-foreground">
-					<Field label="Project name" htmlFor="projectName">
-						<input
+			{/* ── General: identity + workspace repos ───────────────────── */}
+			{section === "general" && (
+				<>
+					<SettingsSection title={t("settings.project.identity")}>
+						<SettingsInputRow
+							icon={Tag}
+							label={t("settings.project.name")}
 							id="projectName"
-							className="h-control-form w-full rounded-md border border-input bg-transparent px-2.5 font-sans text-control text-foreground placeholder:text-passive focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-weak"
 							value={form.displayName}
-							maxLength={Math.max(MAX_PROJECT_DISPLAY_NAME_RUNES, project.name.length)}
-							onChange={(e) => setForm((f) => ({ ...f, displayName: e.target.value }))}
+							onChange={(value) => setForm((f) => ({ ...f, displayName: value }))}
 						/>
-					</Field>
-					<ReadonlyRow label="id" value={project.id} />
-					<ReadonlyRow label="kind" value={projectKindLabel(project.kind)} />
-					<ReadonlyRow label="path" value={project.path} />
-					<ReadonlyRow label="repo" value={project.repo || "—"} />
-				</CardContent>
-			</Card>
+						<SettingsValueRow icon={Fingerprint} label={t("settings.project.id")} value={project.id} />
+						<SettingsValueRow
+							icon={Layers}
+							label={t("settings.project.kind")}
+							value={projectKindLabel(project.kind, t)}
+						/>
+						<SettingsValueRow icon={FolderOpen} label={t("settings.project.path")} value={project.path} />
+						<SettingsValueRow icon={Link} label={t("settings.project.repo")} value={project.repo || "—"} />
+					</SettingsSection>
+					{project.kind === "workspace" && (
+						<SettingsSection title={t("settings.project.workspaceRepos")}>
+							{project.workspaceRepos?.length ? (
+								project.workspaceRepos.map((repo) => (
+									<SettingsRow key={repo.name} icon={FolderGit2} label={repo.name}>
+										<span className="settings-row-value">
+											{repo.relativePath}
+											{repo.repo ? ` · ${repo.repo}` : ""}
+										</span>
+									</SettingsRow>
+								))
+							) : (
+								<p className="px-1 text-xs text-settings-muted">{t("settings.project.childReposEmpty")}</p>
+							)}
+						</SettingsSection>
+					)}
+					{saveFooter}
+				</>
+			)}
 
-			{project.kind === "workspace" && (
-				<Card>
-					<CardHeader>
-						<CardTitle className="text-[13px]">Workspace repos</CardTitle>
-					</CardHeader>
-					<CardContent className="flex flex-col gap-2">
-						{project.workspaceRepos?.length ? (
-							project.workspaceRepos.map((repo) => (
-								<div
-									key={repo.name}
-									className="grid grid-cols-[minmax(0,120px)_minmax(0,1fr)] gap-3 rounded-md border border-border px-3 py-2 font-mono text-[12px]"
-								>
-									<span className="truncate text-foreground">{repo.name}</span>
-									<span className="min-w-0 truncate text-muted-foreground">
-										{repo.relativePath}
-										{repo.repo ? ` · ${repo.repo}` : ""}
-									</span>
-								</div>
-							))
-						) : (
-							<p className="text-[12px] text-muted-foreground">No child repositories are registered.</p>
+			{/* ── Agents: worker, orchestrator, model, permissions ───────── */}
+			{section === "agents" && (
+				<>
+					<SettingsSection title={t("settings.project.agents")}>
+						<RequiredAgentField
+							id="workerAgent"
+							variant="settings-row"
+							icon={Bot}
+							value={form.workerAgent}
+							placeholder={t("settings.project.selectWorker")}
+							label={t("settings.project.defaultWorker")}
+							authorized={agentCatalog?.authorized}
+							installed={agentCatalog?.installed}
+							supported={agentCatalog?.supported}
+							disabled={agentsQuery.isFetching && agentCatalog === undefined}
+							invalid={validationError !== null && form.workerAgent === ""}
+							onChange={(v) => setForm((f) => ({ ...f, workerAgent: v, workerModel: "", workerMode: "" }))}
+						/>
+						<AgentModelField
+							role="worker"
+							agentId={form.workerAgent}
+							projectId={projectId}
+							model={form.workerModel}
+							mode={form.workerMode}
+							onModelChange={(workerModel) => setForm((f) => ({ ...f, workerModel }))}
+							onModeChange={(workerMode) => setForm((f) => ({ ...f, workerMode }))}
+						/>
+						<RequiredAgentField
+							id="orchestratorAgent"
+							variant="settings-row"
+							icon={Network}
+							value={form.orchestratorAgent}
+							placeholder={t("settings.project.selectOrchestrator")}
+							label={t("settings.project.defaultOrchestrator")}
+							authorized={agentCatalog?.authorized}
+							installed={agentCatalog?.installed}
+							supported={agentCatalog?.supported}
+							disabled={agentsQuery.isFetching && agentCatalog === undefined}
+							invalid={validationError !== null && form.orchestratorAgent === ""}
+							onChange={(v) =>
+								setForm((f) => ({ ...f, orchestratorAgent: v, orchestratorModel: "", orchestratorMode: "" }))
+							}
+						/>
+						<AgentModelField
+							role="orchestrator"
+							agentId={form.orchestratorAgent}
+							projectId={projectId}
+							model={form.orchestratorModel}
+							mode={form.orchestratorMode}
+							onModelChange={(orchestratorModel) => setForm((f) => ({ ...f, orchestratorModel }))}
+							onModeChange={(orchestratorMode) => setForm((f) => ({ ...f, orchestratorMode }))}
+						/>
+						<SettingsRow icon={Shield} label={t("settings.project.permissionMode")}>
+							<PermissionModeSelect
+								value={form.permissions}
+								onChange={(v) => setForm((f) => ({ ...f, permissions: v }))}
+							/>
+						</SettingsRow>
+						<SettingsRow icon={RefreshCw} label={t("settings.project.refreshAgents")}>
+							<button
+								type="button"
+								aria-label={t("settings.project.refreshAgents")}
+								className="settings-option-trigger inline-flex items-center gap-1.5 disabled:pointer-events-none disabled:opacity-50"
+								disabled={refreshAgentsMutation.isPending}
+								onClick={() => refreshAgentsMutation.mutate()}
+							>
+								<RefreshCw
+									className={cn("size-icon-base", refreshAgentsMutation.isPending && "animate-spin")}
+									aria-hidden="true"
+								/>
+								{refreshAgentsMutation.isPending ? t("settings.project.refreshing") : t("settings.project.refresh")}
+							</button>
+						</SettingsRow>
+						{refreshAgentsMutation.isError && (
+							<p className="px-1 text-xs leading-row text-error">
+								{refreshAgentsMutation.error instanceof Error
+									? refreshAgentsMutation.error.message
+									: t("settings.project.refreshFailed")}
+							</p>
 						)}
-					</CardContent>
-				</Card>
+						{missingRequiredAgent && (
+							<p className="px-1 text-xs leading-row text-error">{t("settings.project.agentsRequired")}</p>
+						)}
+					</SettingsSection>
+					{saveFooter}
+				</>
 			)}
 
-			{!isScratchProject && (
-				<Card>
-					<CardHeader>
-						<CardTitle className="text-control">Worktrees</CardTitle>
-					</CardHeader>
-					<CardContent className="flex flex-col gap-4">
-						<Field label="Default branch" htmlFor="defaultBranch">
-							<input
-								id="defaultBranch"
-								className="h-control-form w-full rounded-md border border-input bg-transparent px-2.5 text-control text-foreground placeholder:text-passive focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-weak"
-								value={form.defaultBranch}
-								onChange={(e) => setForm((f) => ({ ...f, defaultBranch: e.target.value }))}
-								placeholder="main"
+			{/* ── Workflow: branch, prefix, reviewer ────────────────────── */}
+			{section === "workflow" && (
+				<>
+					{!isScratchProject ? (
+						<>
+							<SettingsSection title={t("settings.project.worktrees")}>
+								<SettingsInputRow
+									icon={GitBranch}
+									label={t("settings.project.defaultBranch")}
+									id="defaultBranch"
+									value={form.defaultBranch}
+									placeholder="main"
+									onChange={(value) => setForm((f) => ({ ...f, defaultBranch: value }))}
+								/>
+								<SettingsInputRow
+									icon={Hash}
+									label={t("settings.project.sessionPrefix")}
+									id="sessionPrefix"
+									value={form.sessionPrefix}
+									placeholder="ao"
+									onChange={(value) => setForm((f) => ({ ...f, sessionPrefix: value }))}
+								/>
+							</SettingsSection>
+							<SettingsSection title={t("settings.project.reviewers")}>
+								<SettingsRow icon={ScanEye} label={t("settings.project.defaultReviewer")}>
+									<ReviewerSelect
+										value={form.reviewerHarness}
+										onChange={(v) => setForm((f) => ({ ...f, reviewerHarness: v }))}
+										ariaLabel={t("settings.project.defaultReviewer")}
+										authorized={agentCatalog?.authorized}
+										defaultOptionLabel={t("settings.project.default")}
+										defaultTriggerLabel={t("settings.project.default")}
+										installed={agentCatalog?.installed}
+										supported={agentCatalog?.supported}
+										disabled={agentsQuery.isFetching && agentCatalog === undefined}
+									/>
+								</SettingsRow>
+							</SettingsSection>
+							{saveFooter}
+						</>
+					) : (
+						<p className="px-1 text-xs text-settings-muted">{t("settings.project.workflow")}</p>
+					)}
+				</>
+			)}
+
+			{/* ── Intake: tracker intake ────────────────────────────────── */}
+			{section === "intake" && (
+				<>
+					{!isScratchProject ? (
+						<SettingsSection title={t("settings.project.trackerIntake")}>
+							<IntakeFields
+								variant="settings"
+								form={intakeForm}
+								onChange={patchIntake}
+								repoPreview={{ value: effectiveIntakeRepo }}
 							/>
-						</Field>
-						<Field label="Session prefix" htmlFor="sessionPrefix">
-							<input
-								id="sessionPrefix"
-								className="h-control-form w-full rounded-md border border-input bg-transparent px-2.5 text-control text-foreground placeholder:text-passive focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-weak"
-								value={form.sessionPrefix}
-								onChange={(e) => setForm((f) => ({ ...f, sessionPrefix: e.target.value }))}
-								// No placeholder on purpose. A literal one ("ao") names a single
-								// project's prefix as if it were every project's default, which is
-								// the collision a derived prefix exists to avoid; a word like "auto"
-								// reads as a value to type. New projects arrive with the field
-								// already filled, so there is nothing left for a hint to say.
-							/>
-						</Field>
-					</CardContent>
-				</Card>
+						</SettingsSection>
+					) : (
+						<p className="px-1 text-xs text-settings-muted">{t("settings.project.trackerIntake")}</p>
+					)}
+					{!isScratchProject && saveFooter}
+				</>
 			)}
-
-			<Card>
-				<CardHeader>
-					<CardTitle className="text-control">Harnesses and models</CardTitle>
-				</CardHeader>
-				<CardContent className="flex flex-col gap-4">
-					<p className="text-xs leading-row text-muted-foreground">
-						Each role keeps an independent harness-native model and effort pair. Switching harnesses restores that
-						harness's saved pair or clears the fields when none exists.
-					</p>
-					<p className="text-xs leading-row text-muted-foreground">
-						Harnesses are polled from the server. If a harness becomes unavailable without a settings change, it is
-						dropped from the list and the selection falls back to Claude Code.
-					</p>
-					<HarnessModelRow
-						id="project-model"
-						harnessLabel="Project model harness"
-						modelLabel="Project model and effort"
-						selection={projectSelection(form.projectHarness, form.model, form.effort, form.modelByHarness)}
-						configuredPins={[
-							{ harness: "", model: form.model, effort: form.effort },
-							...modelPins(form.modelByHarness),
-						]}
-						agentCatalog={agentCatalog}
-						availability={effectiveModelAvailability}
-						allowDefaultHarness
-						allowScalar
-						defaultHarnessLabel="Scalar fallback"
-						disabled={agentSelectorsDisabled}
-						isRefreshingModels={isRefreshingModels || modelAvailabilityQuery.isFetching}
-						onRefreshModels={refreshModels}
-						onChange={(selection) =>
-							setForm((f) =>
-								selection.harness === ""
-									? { ...f, projectHarness: "", model: selection.model, effort: selection.effort }
-									: {
-											...f,
-											projectHarness: selection.harness,
-											modelByHarness: patchHarnessSelection(f.modelByHarness, selection),
-										},
-							)
-						}
-					/>
-					<HarnessModelRow
-						id="worker-model"
-						harnessLabel="Default worker agent"
-						modelLabel="Worker model and effort"
-						selection={roleSelection(form.workerAgent, form.workerModels)}
-						configuredPins={modelPins(form.workerModels)}
-						agentCatalog={agentCatalog}
-						availability={effectiveModelAvailability}
-						disabled={agentSelectorsDisabled}
-						invalidHarness={validationError !== null && form.workerAgent === ""}
-						isRefreshingModels={isRefreshingModels || modelAvailabilityQuery.isFetching}
-						onRefreshModels={refreshModels}
-						onChange={(selection) =>
-							setForm((f) => ({
-								...f,
-								workerAgent: selection.harness,
-								workerModels: patchHarnessSelection(f.workerModels, selection),
-							}))
-						}
-					/>
-					<HarnessModelRow
-						id="orchestrator-model"
-						harnessLabel="Default orchestrator agent"
-						modelLabel="Orchestrator model and effort"
-						selection={roleSelection(form.orchestratorAgent, form.orchestratorModels)}
-						configuredPins={modelPins(form.orchestratorModels)}
-						agentCatalog={agentCatalog}
-						availability={effectiveModelAvailability}
-						disabled={agentSelectorsDisabled}
-						invalidHarness={validationError !== null && form.orchestratorAgent === ""}
-						isRefreshingModels={isRefreshingModels || modelAvailabilityQuery.isFetching}
-						onRefreshModels={refreshModels}
-						onChange={(selection) =>
-							setForm((f) => ({
-								...f,
-								orchestratorAgent: selection.harness,
-								orchestratorModels: patchHarnessSelection(f.orchestratorModels, selection),
-							}))
-						}
-					/>
-					<HarnessModelRow
-						id="reviewer-model"
-						harnessLabel="Default reviewer agent"
-						modelLabel="Reviewer model and effort"
-						selection={roleSelection(form.reviewerHarness, form.reviewerModels)}
-						configuredPins={modelPins(form.reviewerModels)}
-						agentCatalog={agentCatalog}
-						availability={effectiveModelAvailability}
-						allowDefaultHarness
-						defaultHarnessLabel="Automatic independent reviewer"
-						description="Automatic independent reviewer picks a reviewer from a different model family than the worker, so every change gets an independent review. Choose a specific harness to override that."
-						disabled={agentSelectorsDisabled}
-						reviewerOnly
-						isRefreshingModels={isRefreshingModels || modelAvailabilityQuery.isFetching}
-						onRefreshModels={refreshModels}
-						onChange={(selection) =>
-							setForm((f) => ({
-								...f,
-								reviewerHarness: selection.harness,
-								reviewerModels: patchHarnessSelection(f.reviewerModels, selection),
-							}))
-						}
-					/>
-					<div className="flex items-center justify-between gap-3 text-xs leading-row text-muted-foreground">
-						<span>Agent availability is cached.</span>
-						<button
-							type="button"
-							className="shrink-0 rounded text-foreground underline-offset-2 hover:underline disabled:pointer-events-none disabled:opacity-50"
-							disabled={refreshAgentsMutation.isPending}
-							onClick={() => refreshAgentsMutation.mutate()}
-						>
-							{refreshAgentsMutation.isPending ? "Refreshing..." : "Refresh agents"}
-						</button>
-					</div>
-					{refreshAgentsMutation.isError && (
-						<p className="text-xs leading-row text-error">
-							{refreshAgentsMutation.error instanceof Error
-								? refreshAgentsMutation.error.message
-								: "Could not refresh agent catalog."}
-						</p>
-					)}
-					{missingRequiredAgent && (
-						<p className="text-xs leading-row text-error">Worker and orchestrator agents are required.</p>
-					)}
-					{modelAvailabilityQuery.isError && (
-						<p className="text-xs leading-row text-warning">
-							Model catalogs are unavailable; saved pins and the agent inventory remain usable.
-						</p>
-					)}
-					<Field label="Permission mode" htmlFor="permissionMode">
-						<PermissionModeSelect
-							id="permissionMode"
-							value={form.permissions}
-							onChange={(v) => setForm((f) => ({ ...f, permissions: v }))}
-							defaultLabel="Project default"
-							className="h-control-form w-full text-control"
-						/>
-					</Field>
-				</CardContent>
-			</Card>
-
-			<Card>
-				<CardHeader>
-					<CardTitle className="text-control">Role instructions</CardTitle>
-				</CardHeader>
-				<CardContent className="flex flex-col gap-4">
-					<Field label="Worker task prompt template" htmlFor="workerTaskPrompt">
-						<textarea
-							id="workerTaskPrompt"
-							className="min-h-[64px] w-full resize-y rounded-md border border-input bg-transparent px-2.5 py-1.5 font-mono text-control text-foreground placeholder:text-passive focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-weak"
-							value={form.workerTaskPrompt}
-							onChange={(e) => setForm((f) => ({ ...f, workerTaskPrompt: e.target.value }))}
-							placeholder="/address-issue {issue}"
-						/>
-					</Field>
-					<p className="text-xs leading-row text-muted-foreground">
-						When set, this fully replaces AO&apos;s issue-driven worker task message. Every literal
-						{" {issue} "}is replaced with the native issue id; no issue body or context block is appended. Leave empty
-						to inherit the daemon&apos;s AO_WORKER_TASK_PROMPT default or AO&apos;s built-in message.
-					</p>
-					<p className="text-xs leading-row text-muted-foreground">
-						Operator-controlled standing instructions injected into each role's prompt on the next spawn,
-						content-preserving (only surrounding whitespace is normalized). Inline content is loaded first, then file
-						content is appended after it. A configured repo-relative or absolute file path that is missing, empty, or
-						oversized fails the spawn loudly rather than silently dropping the instructions.
-					</p>
-					<RulesField
-						label="Worker instructions"
-						fileLabel="Worker instructions file path (repo-relative or absolute)"
-						idPrefix="agentRules"
-						rules={form.agentRules}
-						file={form.agentRulesFile}
-						onRules={(v) => setForm((f) => ({ ...f, agentRules: v }))}
-						onFile={(v) => setForm((f) => ({ ...f, agentRulesFile: v }))}
-					/>
-					<RulesField
-						label="Orchestrator instructions"
-						fileLabel="Orchestrator instructions file path (repo-relative or absolute)"
-						idPrefix="orchestratorRules"
-						rules={form.orchestratorRules}
-						file={form.orchestratorRulesFile}
-						onRules={(v) => setForm((f) => ({ ...f, orchestratorRules: v }))}
-						onFile={(v) => setForm((f) => ({ ...f, orchestratorRulesFile: v }))}
-					/>
-					<RulesField
-						label="Reviewer instructions"
-						fileLabel="Reviewer instructions file path (repo-relative or absolute)"
-						idPrefix="reviewerRules"
-						rules={form.reviewerRules}
-						file={form.reviewerRulesFile}
-						onRules={(v) => setForm((f) => ({ ...f, reviewerRules: v }))}
-						onFile={(v) => setForm((f) => ({ ...f, reviewerRulesFile: v }))}
-					/>
-				</CardContent>
-			</Card>
-
-			<Card>
-				<CardHeader>
-					<CardTitle className="text-control">Prompt inspector</CardTitle>
-				</CardHeader>
-				<CardContent className="flex flex-col gap-3">
-					<p className="text-xs leading-row text-muted-foreground">
-						The exact, fully-assembled system prompt a role receives for this project, plus the worker task template
-						when one is configured. Reflects saved config; save your changes above to see it here.
-					</p>
-					<RolePromptInspector projectId={projectId} />
-				</CardContent>
-			</Card>
-
-			<Card>
-				<CardHeader>
-					<CardTitle className="text-control">Worker mix</CardTitle>
-				</CardHeader>
-				<CardContent className="flex flex-col gap-4">
-					<WorkerMixFields
-						buckets={form.workerMix}
-						onChange={(next) => setForm((f) => ({ ...f, workerMix: next }))}
-						agentCatalog={agentCatalog}
-						availability={effectiveModelAvailability}
-						isRefreshing={isRefreshingModels || modelAvailabilityQuery.isFetching}
-						onRefresh={refreshModels}
-					/>
-					<Field label="Max live workers (0 = unlimited)" htmlFor="maxLiveWorkers">
-						<input
-							id="maxLiveWorkers"
-							type="number"
-							min={0}
-							className="h-control-form w-full rounded-md border border-input bg-transparent px-2.5 text-control text-foreground placeholder:text-passive focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-weak"
-							value={form.maxLiveWorkers}
-							onChange={(e) => setForm((f) => ({ ...f, maxLiveWorkers: e.target.value }))}
-							placeholder="0"
-						/>
-					</Field>
-				</CardContent>
-			</Card>
-
-			{!isScratchProject && (
-				<Card>
-					<CardHeader>
-						<CardTitle className="text-control">Tracker intake</CardTitle>
-					</CardHeader>
-					<CardContent>
-						<IntakeFields form={intakeForm} onChange={patchIntake} repoPreview={{ value: effectiveIntakeRepo }} />
-					</CardContent>
-				</Card>
-			)}
-
-			<div className="flex items-center gap-3">
-				<Button type="submit" variant="primary" disabled={mutation.isPending}>
-					{mutation.isPending ? "Saving…" : "Save changes"}
-				</Button>
-				{validationError && <span className="text-xs text-error">{validationError}</span>}
-				{mutation.isError && (
-					<span className="text-xs text-error">
-						{mutation.error instanceof Error ? mutation.error.message : "Save failed"}
-					</span>
-				)}
-				{savedAt && !mutation.isPending && !mutation.isError && <span className="text-xs text-success">Saved.</span>}
-				{replacementError && !mutation.isPending && !mutation.isError && (
-					<span className="text-xs text-warning">Orchestrator restart failed: {replacementError}</span>
-				)}
-			</div>
 		</form>
 	);
 }
 
-const DEFAULT_HARNESS_ID = "__project_default__";
-
-function HarnessModelRow({
-	id,
-	harnessLabel,
-	modelLabel,
-	selection,
-	configuredPins,
-	agentCatalog,
-	availability,
-	allowDefaultHarness = false,
-	allowScalar = false,
-	defaultHarnessLabel = "Project default",
-	description,
-	disabled = false,
-	reviewerOnly = false,
-	invalidHarness = false,
-	isRefreshingModels,
-	onRefreshModels,
-	onChange,
+function SaveChangesFooter({
+	isPending,
+	validationError,
+	mutationError,
+	savedAt,
+	replacementError,
 }: {
-	id: string;
-	harnessLabel: string;
-	modelLabel: string;
-	selection: ModelSelection;
-	configuredPins: ConfiguredModelPin[];
-	agentCatalog: { authorized?: AgentInfo[]; installed?: AgentInfo[]; supported?: AgentInfo[] } | undefined;
-	availability?: AgentModelAvailabilityResponse;
-	allowDefaultHarness?: boolean;
-	allowScalar?: boolean;
-	defaultHarnessLabel?: string;
-	description?: string;
-	disabled?: boolean;
-	reviewerOnly?: boolean;
-	invalidHarness?: boolean;
-	isRefreshingModels: boolean;
-	onRefreshModels: () => void | Promise<unknown>;
-	onChange: (selection: ModelSelection) => void;
+	isPending: boolean;
+	validationError: string | null;
+	mutationError: unknown;
+	savedAt: number | null;
+	replacementError: string | null;
 }) {
-	// Display-only: if the configured harness has dropped out of the polled model
-	// catalog (the daemon omits a harness whose binary is missing), the picker
-	// shows Claude Code instead of the stale harness. Keyed on `availability`, not
-	// the inventory — a missing harness lingers in the inventory's supported set
-	// but is absent from availability. The saved form state is never rewritten
-	// here — only an explicit user selection (changeHarness) mutates it.
-	const displayHarness = effectiveDisplayHarness(selection.harness, availability);
-	// When the display has fallen back to Claude Code because the configured
-	// harness disappeared, the harness shown and the saved harness diverge. Do not
-	// let the model/effort field keep editing the now-missing harness underneath a
-	// "Claude Code" label: show it empty and disabled until the user explicitly
-	// picks a harness (which resets both through changeHarness). Saved state stays
-	// untouched — this is still display-only.
-	const harnessFellBack = displayHarness !== selection.harness;
-	const modelFieldValue = harnessFellBack ? { harness: displayHarness, model: "", effort: "" } : selection;
-	const scopedAvailability = filterModelAvailabilityToSelectableAgents(availability, agentCatalog, {
-		current: displayHarness,
-		reviewerOnly,
-	});
-	const defaultAgent = allowDefaultHarness
-		? { id: DEFAULT_HARNESS_ID, label: defaultHarnessLabel, authStatus: "authorized" as const, reviewerCapable: false }
-		: undefined;
-	const scopedCatalog = selectableAgentCatalog(agentCatalog, {
-		current: displayHarness,
-		currentLabel: displayHarness ? agentDisplayLabel(agentCatalog, availability, displayHarness) : undefined,
-		reviewerOnly,
-		includeDefault: defaultAgent,
-	});
-	const harnessValue = allowDefaultHarness && displayHarness === "" ? DEFAULT_HARNESS_ID : displayHarness;
-	const changeHarness = (rawHarness: string) => {
-		// RequiredAgentField never renders an item whose value is the empty string
-		// (the default/automatic choice uses DEFAULT_HARNESS_ID). So a raw "" here
-		// is never a user selection — it is Radix Select clearing itself when the
-		// currently-displayed item unmounts, which happens when a configured harness
-		// drops out of the catalog and the display falls back to Claude Code. Honor
-		// the display-only contract: ignore it so saved state is not rewritten.
-		if (rawHarness === "") return;
-		const harness = rawHarness === DEFAULT_HARNESS_ID ? "" : rawHarness;
-		const saved = configuredPins.find((pin) => pin.harness === harness);
-		onChange({ harness, model: saved?.model ?? "", effort: saved?.effort ?? "" });
-	};
-
+	const { t } = useTranslation();
 	return (
-		<div className="rounded-md border border-border px-3 py-3">
-			<div className="grid gap-3 md:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
-				<RequiredAgentField
-					id={`${id}-harness`}
-					value={harnessValue}
-					placeholder={`Select ${harnessLabel.toLowerCase()}`}
-					label={harnessLabel}
-					authorized={scopedCatalog.authorized}
-					installed={scopedCatalog.installed}
-					supported={scopedCatalog.supported}
-					disabled={disabled}
-					invalid={invalidHarness}
-					onChange={changeHarness}
-					// ModelAvailabilityField's header row is exactly h-control-form tall (the
-					// refresh button's height token), so pin this label to the same token —
-					// not a hand-matched pixel value — to keep the two columns' controls on
-					// the same row regardless of future header changes.
-					labelClassName="flex h-control-form items-center"
-					fieldGapClassName="gap-2"
-				/>
-				<ModelAvailabilityField
-					id={id}
-					label={modelLabel}
-					value={modelFieldValue}
-					onChange={onChange}
-					availability={scopedAvailability}
-					configuredPins={configuredPins}
-					disabled={disabled || (selection.harness === "" && !allowScalar) || harnessFellBack}
-					isRefreshing={isRefreshingModels}
-					onRefresh={onRefreshModels}
-					showHarness={false}
-					fieldLabelsVisible={false}
-					emptyLabel="Inherit default"
-					showManualModelNotice
-				/>
-			</div>
-			{description ? <p className="mt-2 text-xs leading-row text-muted-foreground">{description}</p> : null}
-		</div>
-	);
-}
-
-const controlInputClass =
-	"h-control-form w-full rounded-md border border-input bg-transparent px-2.5 text-control text-foreground placeholder:text-passive focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-weak";
-
-function RulesField({
-	label,
-	fileLabel,
-	idPrefix,
-	rules,
-	file,
-	onRules,
-	onFile,
-}: {
-	label: string;
-	fileLabel: string;
-	idPrefix: string;
-	rules: string;
-	file: string;
-	onRules: (value: string) => void;
-	onFile: (value: string) => void;
-}) {
-	return (
-		<div className="flex flex-col gap-2 rounded-md border border-border p-3">
-			<Field label={label} htmlFor={`${idPrefix}Inline`}>
-				<textarea
-					id={`${idPrefix}Inline`}
-					className="min-h-[64px] w-full resize-y rounded-md border border-input bg-transparent px-2.5 py-1.5 font-mono text-control text-foreground placeholder:text-passive focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-weak"
-					value={rules}
-					onChange={(e) => onRules(e.target.value)}
-					placeholder="(none)"
-				/>
-			</Field>
-			<Field label={fileLabel} htmlFor={`${idPrefix}File`}>
-				<input
-					id={`${idPrefix}File`}
-					className={controlInputClass}
-					value={file}
-					onChange={(e) => onFile(e.target.value)}
-					placeholder="docs/role-rules.md"
-				/>
-			</Field>
-		</div>
-	);
-}
-
-function RolePromptInspector({ projectId }: { projectId: string }) {
-	const [role, setRole] = useState<RolePromptRole>("worker");
-	const query = useQuery({
-		queryKey: rolePromptQueryKey(projectId, role),
-		queryFn: async () => {
-			const { data, error } = await apiClient.GET("/api/v1/projects/{id}/roles/{role}/prompt", {
-				params: { path: { id: projectId, role } },
-			});
-			if (error) throw new Error(apiErrorMessage(error, "Could not load the assembled prompt."));
-			return data;
-		},
-	});
-	return (
-		<div className="flex flex-col gap-2">
-			<Field label="Role" htmlFor="rolePromptRole">
-				<Select value={role} onValueChange={(v) => setRole(v as RolePromptRole)}>
-					<SelectTrigger id="rolePromptRole" className="h-control-form w-full text-control">
-						<SelectValue />
-					</SelectTrigger>
-					<SelectContent>
-						{ROLE_PROMPT_OPTIONS.map((opt) => (
-							<SelectItem key={opt} value={opt}>
-								{opt}
-							</SelectItem>
-						))}
-					</SelectContent>
-				</Select>
-			</Field>
-			{query.isPending ? (
-				<p className="text-xs text-muted-foreground">Loading…</p>
-			) : query.isError ? (
-				<p className="text-xs text-error">
-					{query.error instanceof Error ? query.error.message : "Could not load the assembled prompt."}
-				</p>
-			) : (
-				<>
-					{query.data.taskPromptTemplate && (
-						<div className="flex flex-col gap-1.5">
-							<p className="text-xs text-muted-foreground">Task prompt template ({query.data.taskPromptSource})</p>
-							<pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-md bg-terminal px-3 py-3 font-mono text-xs leading-row text-terminal-foreground">
-								{query.data.taskPromptTemplate}
-							</pre>
-						</div>
-					)}
-					<pre className="max-h-96 overflow-auto whitespace-pre-wrap break-words rounded-md bg-terminal px-3 py-3 font-mono text-xs leading-row text-terminal-foreground">
-						{query.data.prompt}
-					</pre>
-				</>
+		<div className="flex flex-col items-start">
+			<Button type="submit" variant="footer-primary" disabled={isPending}>
+				{isPending ? t("settings.project.saving") : t("settings.project.saveChanges")}
+			</Button>
+			{validationError && (
+				<span className="inline-flex items-center gap-1.5 text-xs text-error">
+					<TriangleAlert className="size-3 shrink-0 text-error" aria-hidden="true" />
+					{validationError}
+				</span>
+			)}
+			{mutationError != null && (
+				<span className="text-xs text-error">
+					{mutationError instanceof Error ? mutationError.message : t("settings.project.saveFailed")}
+				</span>
+			)}
+			{savedAt && !isPending && !mutationError && (
+				<span className="text-xs text-success">{t("settings.project.saved")}</span>
+			)}
+			{replacementError && !isPending && !mutationError && (
+				<span className="text-xs text-warning">{t("settings.project.restartFailed", { error: replacementError })}</span>
 			)}
 		</div>
 	);
 }
 
-function Field({ label, htmlFor, children }: { label: string; htmlFor?: string; children: React.ReactNode }) {
+function AgentModelField({
+	role,
+	agentId,
+	projectId,
+	model,
+	mode,
+	onModelChange,
+	onModeChange,
+}: {
+	role: "worker" | "orchestrator";
+	agentId: string;
+	projectId: string;
+	model: string;
+	mode: string;
+	onModelChange: (value: string) => void;
+	onModeChange: (value: string) => void;
+}) {
+	const { t } = useTranslation();
+	const queryClient = useQueryClient();
+	const [customAgentId, setCustomAgentId] = useState<string | null>(null);
+	const query = useQuery(agentModelsQueryOptions(agentId, projectId));
+	const catalog: AgentModelCatalog | undefined = query.data;
+	const revalidationQuery = useQuery({
+		queryKey: ["agent-model-revalidation", agentId, projectId, catalog?.validatedAt ?? ""],
+		queryFn: () => revalidateAgentModels(agentId, projectId),
+		enabled: agentId !== "" && catalog?.refreshRecommended === true,
+		staleTime: Number.POSITIVE_INFINITY,
+		retry: false,
+	});
+	useEffect(() => {
+		if (revalidationQuery.data) {
+			queryClient.setQueryData(agentModelsQueryKey(agentId, projectId), revalidationQuery.data);
+		}
+	}, [agentId, projectId, queryClient, revalidationQuery.data]);
+	const refreshMutation = useMutation({
+		mutationFn: () => refreshAgentModels(agentId, projectId),
+		onSuccess: (catalog) => queryClient.setQueryData(agentModelsQueryKey(agentId, projectId), catalog),
+	});
+	const isMode = catalog?.selectionMode === "mode";
+	const label = t(`settings.models.${role}${isMode ? "Mode" : "Model"}`);
+	const datalistID = `${role}-model-options`;
+	const warning =
+		(refreshMutation.isError
+			? refreshMutation.error instanceof Error
+				? refreshMutation.error.message
+				: t("settings.models.refreshFailed")
+			: undefined) ??
+		(revalidationQuery.isError
+			? revalidationQuery.error instanceof Error
+				? revalidationQuery.error.message
+				: t("settings.models.validateFailed")
+			: undefined) ??
+		catalog?.warning ??
+		(query.isError
+			? query.error instanceof Error
+				? query.error.message
+				: t("settings.models.loadFailed")
+			: undefined);
+
+	if (isMode) {
+		const options = [
+			{ value: "__default__", label: t("settings.models.agentDefault") },
+			...(catalog.models ?? []).map((item) => ({ value: item.id, label: item.label })),
+		];
+		return (
+			<>
+				<SettingsRow icon={Sparkles} label={label}>
+					<div className="flex min-w-0 items-center gap-2">
+						<ModelRefreshButton
+							label={label}
+							pending={refreshMutation.isPending}
+							disabled={agentId === ""}
+							onClick={() => refreshMutation.mutate()}
+						/>
+						<SettingsOptionMenu
+							aria-label={label}
+							value={mode || "__default__"}
+							options={options}
+							triggerClassName="justify-end"
+							onChange={(value) => {
+								onModeChange(value === "__default__" ? "" : value);
+								onModelChange("");
+							}}
+						/>
+					</div>
+				</SettingsRow>
+				{warning && <p className="px-1 text-xs leading-row text-warning">{warning}</p>}
+			</>
+		);
+	}
+
+	const hasCatalog = catalog?.selectionMode === "catalog" && (catalog.models?.length ?? 0) > 0;
+	const modelIsInCatalog = catalog?.models?.some((item) => item.id === model) ?? false;
+	const showCustomInput = hasCatalog && (customAgentId === agentId || (model !== "" && !modelIsInCatalog));
+	const selectCatalogModel = (value: string) => {
+		setCustomAgentId(null);
+		onModelChange(value);
+		onModeChange("");
+	};
+	const selectCustomModel = (value: string) => {
+		setCustomAgentId(agentId);
+		onModelChange(value);
+		onModeChange("");
+	};
 	return (
-		<div className="flex flex-col gap-1.5">
-			<Label htmlFor={htmlFor} className="text-xs text-muted-foreground">
-				{label}
-			</Label>
-			{children}
-		</div>
+		<>
+			<SettingsRow icon={Sparkles} label={label}>
+				<div className="flex min-w-0 items-center gap-2">
+					<ModelRefreshButton
+						label={label}
+						pending={refreshMutation.isPending}
+						disabled={agentId === ""}
+						onClick={() => refreshMutation.mutate()}
+					/>
+					{hasCatalog && !showCustomInput ? (
+						<AgentModelCombobox
+							aria-label={label}
+							value={model}
+							models={catalog.models}
+							allowCustom={catalog.allowCustom}
+							onChange={selectCatalogModel}
+							onCustom={selectCustomModel}
+							triggerClassName="justify-end"
+						/>
+					) : (
+						<>
+							<input
+								id={datalistID}
+								aria-label={label}
+								className="settings-inline-input settings-model-control"
+								value={model}
+								disabled={agentId === ""}
+								onChange={(event) => {
+									onModelChange(event.target.value);
+									onModeChange("");
+								}}
+								placeholder={query.isFetching ? t("settings.models.loading") : t("settings.project.agentDefault")}
+							/>
+							{hasCatalog && (
+								<AgentModelCombobox
+									aria-label={t("settings.models.optionsAria", { label })}
+									value={model}
+									models={catalog.models}
+									allowCustom={catalog.allowCustom}
+									onChange={selectCatalogModel}
+									onCustom={selectCustomModel}
+									triggerLabel={t("settings.models.browse")}
+									triggerClassName="shrink-0"
+								/>
+							)}
+						</>
+					)}
+				</div>
+			</SettingsRow>
+			{warning && <p className="px-1 text-xs leading-row text-warning">{warning}</p>}
+		</>
 	);
 }
 
-function ReadonlyRow({ label, value }: { label: string; value: string }) {
+function ModelRefreshButton({
+	label,
+	pending,
+	disabled,
+	onClick,
+}: {
+	label: string;
+	pending: boolean;
+	disabled: boolean;
+	onClick: () => void;
+}) {
+	const { t } = useTranslation();
 	return (
-		<div className="flex items-center gap-3">
-			<span className="w-12 shrink-0 text-passive">{label}</span>
-			<span className="min-w-0 flex-1 truncate text-foreground">{value}</span>
-		</div>
+		<button
+			type="button"
+			aria-label={t("settings.models.refreshAria", { label: label.toLocaleLowerCase() })}
+			title={t("settings.models.refreshAria", { label: label.toLocaleLowerCase() })}
+			className="settings-option-trigger shrink-0 disabled:pointer-events-none disabled:opacity-50"
+			disabled={disabled || pending}
+			onClick={onClick}
+		>
+			<RefreshCw className={cn("size-icon-sm", pending && "animate-spin")} aria-hidden="true" />
+		</button>
 	);
 }
 
-function CenteredNote({ children }: { children: React.ReactNode }) {
+function SettingsInputRow({
+	icon,
+	label,
+	id,
+	value,
+	onChange,
+	placeholder,
+}: {
+	icon?: LucideIcon;
+	label: string;
+	id: string;
+	value: string;
+	onChange: (value: string) => void;
+	placeholder?: string;
+}) {
 	return (
-		<div className="grid h-full place-items-center bg-background p-6 text-center text-xs text-passive">{children}</div>
+		<SettingsRow icon={icon} label={label}>
+			<input
+				id={id}
+				aria-label={label}
+				className="settings-inline-input"
+				value={value}
+				onChange={(event) => onChange(event.target.value)}
+				placeholder={placeholder}
+			/>
+		</SettingsRow>
 	);
 }
 
-function projectKindLabel(kind: string): string {
+function SettingsValueRow({ icon, label, value }: { icon?: LucideIcon; label: string; value: string }) {
+	return (
+		<SettingsRow icon={icon} label={label}>
+			<span className="settings-row-value" title={value}>
+				{value}
+			</span>
+		</SettingsRow>
+	);
+}
+
+function PermissionModeSelect({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+	const { t } = useTranslation();
+	const options = [
+		{ value: "__default__", label: t("settings.project.default") },
+		...PERMISSION_MODE_VALUES.map((value) => ({
+			value,
+			label:
+				value === "default"
+					? t("settings.project.permissionDefault")
+					: value === "accept-edits"
+						? t("settings.project.permissionAcceptEdits")
+						: value === "auto"
+							? t("settings.project.permissionAuto")
+							: t("settings.project.permissionBypass"),
+		})),
+	];
+
+	return (
+		<SettingsOptionMenu
+			aria-label={t("settings.project.permissionMode")}
+			value={value || "__default__"}
+			options={options}
+			onChange={(v) => onChange(v === "__default__" ? "" : v)}
+		/>
+	);
+}
+
+function projectKindLabel(kind: string, t: TFunction): string {
 	switch (kind) {
 		case "single_repo":
-			return "single repo";
+			return t("settings.project.kind.singleRepo");
 		case "workspace":
-			return "workspace";
+			return t("settings.project.kind.workspace");
 		case "scratch":
-			return "scratch";
+			return t("settings.project.kind.scratch");
 		default:
-			return kind || "unknown";
+			return kind || t("settings.project.kind.unknown");
 	}
 }
 
-// Drop an object whose every value is undefined so we send `undefined` (omit)
-// rather than an empty {} the daemon would persist.
+function scratchSupportedConfig(config: ProjectConfig): ProjectConfig {
+	const { defaultBranch: _defaultBranch, reviewers: _reviewers, trackerIntake: _trackerIntake, ...supported } = config;
+	return supported;
+}
+
 function blankToUndefined<T extends object>(obj: T): T | undefined {
 	return Object.values(obj).some((v) => v !== undefined) ? obj : undefined;
 }
 
-type HarnessModelForm = Record<string, { model: string; effort: string }>;
-
-function firstConfiguredHarness(config: AgentConfig | undefined) {
-	return Object.keys(config?.modelByHarness ?? {}).sort()[0] ?? "";
-}
-
-function toHarnessModelForm(modelByHarness: AgentConfig["modelByHarness"] | undefined) {
-	const out: HarnessModelForm = {};
-	for (const [harness, value] of Object.entries(modelByHarness ?? {})) {
-		out[harness] = { model: value?.model ?? "", effort: value?.effort ?? "" };
-	}
-	return out;
-}
-
-function toRoleHarnessModelForm(config: AgentConfig | undefined, harness: string) {
-	const out = toHarnessModelForm(config?.modelByHarness);
-	if (harness) {
-		const current = out[harness] ?? { model: "", effort: "" };
-		out[harness] = {
-			model: current.model || config?.model || "",
-			effort: current.effort || config?.effort || "",
-		};
-	}
-	return out;
-}
-
-function projectSelection(harness: string, model: string, effort: string, form: HarnessModelForm): ModelSelection {
-	if (!harness) return { harness: "", model, effort };
-	return roleSelection(harness, form);
-}
-
-function roleSelection(harness: string, form: HarnessModelForm): ModelSelection {
-	const pair = form[harness];
-	return { harness, model: pair?.model ?? "", effort: pair?.effort ?? "" };
-}
-
-function patchHarnessSelection(form: HarnessModelForm, selection: ModelSelection) {
-	if (!selection.harness) return form;
-	return {
-		...form,
-		[selection.harness]: { model: selection.model, effort: selection.effort },
-	};
-}
-
-function modelPins(form: HarnessModelForm): ConfiguredModelPin[] {
-	return Object.entries(form).map(([harness, pair]) => ({ harness, ...pair }));
-}
-
-function buildHarnessModelConfig(form: HarnessModelForm) {
-	const entries = Object.entries(form)
-		.map(([harness, value]) => {
-			const model = value.model.trim();
-			// An entry is kept if it pins a model OR carries an effort: the
-			// daemon accepts effort-only overrides, so an empty model field
-			// must not delete a persisted effort the form cannot display.
-			const out: components["schemas"]["DomainHarnessModel"] = {};
-			if (model) out.model = model;
-			const effort = value.effort.trim();
-			if (effort) out.effort = effort;
-			return [harness, out] as const;
-		})
-		.filter(([, value]) => Object.keys(value).length > 0);
-	return entries.length > 0 ? Object.fromEntries(entries) : undefined;
-}
-
-function buildAgentConfig(
-	current: ProjectConfig["agentConfig"],
-	model: string,
-	effort: string,
-	permissions: string,
-	modelByHarnessForm: HarnessModelForm,
-) {
-	const next = {
-		...current,
-		model: model.trim() || undefined,
-		effort: effort.trim() || undefined,
-		permissions: permissions || undefined,
-	};
-	const modelByHarness = buildHarnessModelConfig(modelByHarnessForm);
-	if (modelByHarness) {
-		return blankToUndefined({ ...next, modelByHarness });
-	}
-	const withoutHarnessMap = { ...next } as components["schemas"]["AgentConfig"];
-	delete withoutHarnessMap.modelByHarness;
-	return blankToUndefined(withoutHarnessMap);
-}
-
 function buildRoleAgentConfig(
-	current: AgentConfig | undefined,
-	initialHarness: string,
-	selectedHarness: string,
-	form: HarnessModelForm,
-) {
-	const next: AgentConfig = { ...(current ?? {}) };
-	// A legacy scalar role pair belongs to the harness that was configured when
-	// the form loaded. The form seeds it into that harness's map. Once a concrete
-	// role harness is involved, remove the scalar so it cannot leak when the role
-	// later switches providers.
-	if (initialHarness || selectedHarness) {
-		delete next.model;
-		delete next.effort;
-	}
-	const modelByHarness = buildHarnessModelConfig(form);
-	if (modelByHarness) next.modelByHarness = modelByHarness;
-	else delete next.modelByHarness;
-	return blankToUndefined(next);
-}
-
-function buildReviewerConfig(
-	current: ProjectConfig["reviewers"],
-	harness: string,
-	initialHarness: string,
-	form: HarnessModelForm,
-) {
-	const rest = current?.slice(1) ?? [];
-	if (!harness) return rest.length > 0 ? rest : undefined;
-	const first = current?.[0];
-	return [
-		{
-			...(first ?? {}),
-			harness,
-			agentConfig: buildRoleAgentConfig(first?.agentConfig, initialHarness, harness, form),
-		},
-		...rest,
-	];
+	existing: components["schemas"]["AgentConfig"] | undefined,
+	model: string,
+	mode: string,
+): components["schemas"]["AgentConfig"] | undefined {
+	const next = { ...existing };
+	if (model) next.model = model;
+	else delete next.model;
+	if (mode) next.mode = mode;
+	else delete next.mode;
+	return Object.keys(next).length > 0 ? next : undefined;
 }

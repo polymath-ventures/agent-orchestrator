@@ -1,15 +1,17 @@
 import { expect, test } from "@playwright/test";
 import { installBrowserModeApiFixtures } from "./fixtures";
 
-test("browser mode uses daemon-shaped data and hides desktop updater actions", async ({ page }) => {
+test("browser mode uses daemon-shaped data and opens tabbed settings", async ({ page }) => {
 	await installBrowserModeApiFixtures(page);
 	await page.goto("/");
 	await expect(page.getByRole("button", { name: "Orchestrator board", exact: true })).toBeVisible();
 	await expect(page.getByRole("button", { name: "Open fix-webgl-fallback" })).toBeVisible();
 
 	await page.goto("/#/settings");
-	await expect(page.getByText("Desktop updates are managed outside browser mode.")).toBeVisible();
-	await expect(page.getByRole("button", { name: "Check for updates" })).toHaveCount(0);
+	const settings = page.getByRole("dialog");
+	await expect(settings).toBeVisible();
+	await settings.getByRole("button", { name: "Updates", exact: true }).click();
+	await expect(settings.getByRole("button", { name: "Check for updates" })).toBeVisible();
 });
 
 test("browser mode opens a real mux websocket for terminal panes", async ({ page }) => {

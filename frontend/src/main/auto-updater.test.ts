@@ -61,9 +61,24 @@ async function importAutoUpdater(
 	const dialog = {
 		showMessageBox: vi.fn(),
 	};
-	const BrowserWindow = {
-		getAllWindows: vi.fn(() => []),
+	// Records what actually reaches renderers, by channel. Update telemetry rides
+	// a channel separate from "updates:status" precisely so that suppressing a UI
+	// status never suppresses its telemetry, and only a per-channel view can tell
+	// those two apart.
+	const sent: { channel: string; payload: unknown }[] = [];
+	const fakeWindow = {
+		isDestroyed: () => false,
+		webContents: {
+			send: (channel: string, payload: unknown) => {
+				sent.push({ channel, payload });
+			},
+		},
 	};
+	const BrowserWindow = {
+		getAllWindows: vi.fn(() => [fakeWindow]),
+	};
+	const statusMessages = () => sent.filter((m) => m.channel === "updates:status");
+	const telemetryMessages = () => sent.filter((m) => m.channel === "updates:telemetry");
 	vi.doMock("electron-updater", () => ({ autoUpdater }));
 	vi.doMock("electron", () => ({
 		app: {
@@ -94,6 +109,9 @@ async function importAutoUpdater(
 	}));
 	const module = await import("./auto-updater");
 	return {
+		sent,
+		statusMessages,
+		telemetryMessages,
 		module,
 		autoUpdater,
 		dialog,
@@ -235,7 +253,7 @@ describe("startAutoUpdates", () => {
 
 	it("logs updater error events during automatic checks without broadcasting renderer errors", async () => {
 		const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
-		const { module, autoUpdater, BrowserWindow, updaterEvents } = await importAutoUpdater();
+		const { module, autoUpdater, updaterEvents, statusMessages, telemetryMessages } = await importAutoUpdater();
 		const err = new Error("feed failed");
 		autoUpdater.checkForUpdates.mockImplementationOnce(() => {
 			updaterEvents.get("error")?.(err);
@@ -245,8 +263,19 @@ describe("startAutoUpdates", () => {
 		await module.startAutoUpdates(stateDir);
 
 		expect(consoleErrorSpy).toHaveBeenCalledWith("auto-update check failed:", err);
-		expect(BrowserWindow.getAllWindows).not.toHaveBeenCalled();
+		// The UI stays quiet: no status is pushed and the status never leaves idle.
+		expect(statusMessages()).toEqual([]);
 		expect(module.getUpdateStatus()).toEqual({ state: "idle" });
+		// But the outcome is still reported. Automatic checks run hourly and are how
+		// installs go silently stale, so suppressing the UI must not lose the signal.
+		expect(telemetryMessages().map((m) => m.payload)).toEqual([
+			{
+				event: "ao.renderer.update_failed",
+				phase: "check",
+				trigger: "automatic",
+				error_category: "unknown",
+			},
+		]);
 	});
 
 	it("restores the prior renderer status when an automatic check emits checking before an error", async () => {
@@ -446,7 +475,7 @@ describe("startAutoUpdates", () => {
 	it("keeps automatic download errors silent after checkForUpdates resolves", async () => {
 		const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
 		const lateDownload = deferred();
-		const { module, autoUpdater, BrowserWindow, updaterEvents } = await importAutoUpdater();
+		const { module, autoUpdater, updaterEvents, statusMessages, telemetryMessages } = await importAutoUpdater();
 		const err = new Error("download failed");
 		autoUpdater.checkForUpdates.mockResolvedValueOnce({
 			downloadPromise: lateDownload.promise,
@@ -465,7 +494,15 @@ describe("startAutoUpdates", () => {
 		updaterEvents.get("error")?.(err);
 
 		expect(consoleErrorSpy).toHaveBeenCalledWith("auto-update check failed:", err);
-		expect(BrowserWindow.getAllWindows).not.toHaveBeenCalled();
+		expect(statusMessages()).toEqual([]);
+		expect(telemetryMessages().map((m) => m.payload)).toEqual([
+			{
+				event: "ao.renderer.update_failed",
+				phase: "check",
+				trigger: "automatic",
+				error_category: "unknown",
+			},
+		]);
 		lateDownload.resolve();
 		await startPromise;
 	});

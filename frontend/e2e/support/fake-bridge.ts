@@ -131,6 +131,10 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 
 	await page.addInitScript(
 		({ version, daemonState, daemonPort, workspaces }) => {
+			// The production-bundle terminal retention specs need the same narrow
+			// xterm inspection seam that Vite development builds expose. Real pages
+			// never set this opt-in marker.
+			(window as Window & { __aoEnableTerminalTestHooks?: boolean }).__aoEnableTerminalTestHooks = true;
 			const unsubscribe = () => () => undefined;
 			const status: DaemonStatus =
 				daemonState === "ready" ? { state: "ready", port: daemonPort } : { state: daemonState };
@@ -156,9 +160,13 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 					onNewSessionShortcut: unsubscribe,
 					onKeyboardShortcutsHelp: unsubscribe,
 					onNewShellTerminalShortcut: unsubscribe,
+					onCloseShellTerminalShortcut: unsubscribe,
+					setCloseShellTerminalShortcutEnabled: () => undefined,
 					onOpenSettingsShortcut: unsubscribe,
 					onPreviousSessionShortcut: unsubscribe,
 					onNextSessionShortcut: unsubscribe,
+					onPreviousTabShortcut: unsubscribe,
+					onNextTabShortcut: unsubscribe,
 					onFocusTerminalShortcut: unsubscribe,
 				},
 				terminal: { saveDroppedFile: async () => "" },
@@ -225,7 +233,13 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 				},
 				notifications: {
 					show: async () => undefined,
+					setBadge: async (_count: number) => undefined,
+					devBounce: async () => undefined,
 					onClick: unsubscribe,
+				},
+				tray: {
+					setAttentionState: () => undefined,
+					onOpenSession: unsubscribe,
 				},
 				appState: {
 					getMigration: async () => ({ status: "completed" }),
@@ -234,6 +248,10 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 				updateSettings: {
 					get: async () => ({ enabled: false, channel: "latest", nightlyAck: false, feature: null }),
 					set: async () => undefined,
+				},
+				uiSettings: {
+					get: async () => ({ locale: "en" }),
+					set: async (settings) => settings,
 				},
 				keybindings: {
 					get: async () => ({}),
@@ -247,6 +265,7 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 					download: async () => undefined,
 					install: async () => undefined,
 					onStatus: unsubscribe,
+					onTelemetry: unsubscribe,
 				},
 				// UpdatesSection calls featureBuilds.getActive() immediately on mount; an
 				// omitted namespace would surface as a swallowed React Query error.
@@ -317,7 +336,9 @@ export type FakeAgentOptions = {
 export type FakeAgentController = {
 	snapshot: () => unknown[];
 	createWorker: (worker: FakeWorker) => void;
+	removeWorker: (id: string) => void;
 	setStatus: (id: string, status: string, activity?: string) => void;
+	setTerminalHandle: (id: string, handleId: string) => void;
 	setPreview: (id: string, previewUrl: string, previewRevision?: number) => void;
 	setBrowserError: (message: string | null) => void;
 	notify: (n: { id: string; type: string; title: string; body?: string; sessionId?: string }) => void;
@@ -344,6 +365,7 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 
 	await page.addInitScript(
 		({ version, daemonPort, projectId, projectName, platform, workers }) => {
+			(window as Window & { __aoEnableTerminalTestHooks?: boolean }).__aoEnableTerminalTestHooks = true;
 			if (platform) {
 				try {
 					Object.defineProperty(navigator, "platform", { get: () => platform, configurable: true });
@@ -484,12 +506,25 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 					if (!findSession(w.id)) (project.sessions as Session[]).push(makeWorker(w));
 					pushWorkspaces("session_created");
 				},
+				removeWorker: (id) => {
+					const sessions = project.sessions as Session[];
+					const index = sessions.findIndex((session) => session.id === id);
+					if (index >= 0) sessions.splice(index, 1);
+					pushWorkspaces();
+				},
 				setStatus: (id, status, activity) => {
 					const s = findSession(id);
 					if (!s) return;
 					s.status = status;
 					s.displayStatus = undefined;
 					if (activity) s.activity = { state: activity, lastActivityAt: new Date().toISOString() };
+					touch(s);
+					pushWorkspaces();
+				},
+				setTerminalHandle: (id, handleId) => {
+					const s = findSession(id);
+					if (!s) return;
+					s.terminalHandleId = handleId;
 					touch(s);
 					pushWorkspaces();
 				},
@@ -542,9 +577,13 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 					onNewSessionShortcut: unsubscribe,
 					onKeyboardShortcutsHelp: unsubscribe,
 					onNewShellTerminalShortcut: unsubscribe,
+					onCloseShellTerminalShortcut: unsubscribe,
+					setCloseShellTerminalShortcutEnabled: () => undefined,
 					onOpenSettingsShortcut: unsubscribe,
 					onPreviousSessionShortcut: unsubscribe,
 					onNextSessionShortcut: unsubscribe,
+					onPreviousTabShortcut: unsubscribe,
+					onNextTabShortcut: unsubscribe,
 					onFocusTerminalShortcut: unsubscribe,
 				},
 				terminal: { saveDroppedFile: async () => "" },
@@ -605,11 +644,21 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 					onTabsState: unsubscribe,
 					onAgentActivity: unsubscribe,
 				},
-				notifications: { show: async () => undefined, onClick: unsubscribe },
+				notifications: {
+					show: async () => undefined,
+					setBadge: async (_count: number) => undefined,
+					devBounce: async () => undefined,
+					onClick: unsubscribe,
+				},
+				tray: { setAttentionState: () => undefined, onOpenSession: unsubscribe },
 				appState: { getMigration: async () => ({ status: "completed" }), setMigration: async () => undefined },
 				updateSettings: {
 					get: async () => ({ enabled: false, channel: "latest", nightlyAck: false, feature: null }),
 					set: async () => undefined,
+				},
+				uiSettings: {
+					get: async () => ({ locale: "en" }),
+					set: async (settings) => settings,
 				},
 				keybindings: {
 					get: async () => ({}),
@@ -623,6 +672,7 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 					download: async () => undefined,
 					install: async () => undefined,
 					onStatus: unsubscribe,
+					onTelemetry: unsubscribe,
 				},
 				// UpdatesSection calls featureBuilds.getActive() immediately on mount; an
 				// omitted namespace would surface as a swallowed React Query error.

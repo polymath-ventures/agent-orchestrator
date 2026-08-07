@@ -8,16 +8,16 @@ test.beforeEach(async ({ page }) => {
 	await installBrowserModeApiFixtures(page);
 });
 
-test("the Reviews tab renders the reviewer panel for a session that owns PRs", async ({ page }) => {
+test("the Summary tab renders the reviewer panel for a session that owns PRs", async ({ page }) => {
 	await page.goto("/");
 	await page.getByRole("button", { name: "Open auth stack" }).click();
 	await expect(page).toHaveURL(/sessions\/stacked-auth/);
 
-	// Upstream's worker inspector rail defaults open, so it is already mounted.
+	// Reviews now live in Summary beside the PR they describe rather than in a
+	// separate inspector tab.
 	const inspector = page.locator("#inspector");
 	await expect(inspector).toBeVisible();
-
-	await inspector.getByRole("tab", { name: "Reviews" }).click();
+	await expect(inspector.getByRole("tab", { name: "Summary" })).toHaveAttribute("aria-selected", "true");
 
 	// The reviewer card surfaces the harness, its approved verdict, and both
 	// actions — never the empty state, since this session owns a PR. Upstream
@@ -25,13 +25,13 @@ test("the Reviews tab renders the reviewer panel for a session that owns PRs", a
 	// rather than an aggregate testid.
 	await expect(inspector.getByText("No pull request opened yet.")).toHaveCount(0);
 	const reviewsSection = inspector.getByTestId("inspector-section").filter({ hasText: "Reviews" });
-	await expect(reviewsSection.getByText("codex")).toBeVisible();
 	await expect(reviewsSection.getByText("Approved", { exact: true })).toBeVisible();
-	await expect(reviewsSection.getByRole("button", { name: "Re-run review" })).toBeVisible();
-	await expect(reviewsSection.getByRole("button", { name: "Open terminal" })).toBeVisible();
+	await expect(inspector.getByRole("button", { name: "Select reviewer agent" })).toContainText("codex");
+	await expect(inspector.getByRole("button", { name: "Re-run review" })).toBeVisible();
+	await expect(inspector.getByRole("button", { name: "Open terminal" })).toBeVisible();
 });
 
-test("the Reviews tab shows the empty state for a session with no PRs", async ({ page }) => {
+test("the Summary tab shows the empty state for a session with no PRs", async ({ page }) => {
 	await page.goto("/");
 	await page.getByRole("button", { name: "Open Split terminal mux responsibilities" }).click();
 	await expect(page).toHaveURL(/sessions\/refactor-mux/);
@@ -40,8 +40,8 @@ test("the Reviews tab shows the empty state for a session with no PRs", async ({
 	const inspector = page.locator("#inspector");
 	await expect(inspector).toBeVisible();
 
-	await inspector.getByRole("tab", { name: "Reviews" }).click();
 	await expect(inspector.getByText("No pull request opened yet.")).toBeVisible();
+	await expect(inspector.getByText("Reviews", { exact: true })).toHaveCount(0);
 });
 
 test("reviewer terminal activation and back-to-agent activation focus the selected terminal", async ({ page }) => {
@@ -51,7 +51,6 @@ test("reviewer terminal activation and back-to-agent activation focus the select
 
 	// Upstream's worker inspector rail defaults open, so it is already mounted.
 	const inspector = page.locator("#inspector");
-	await inspector.getByRole("tab", { name: "Reviews" }).click();
 	await inspector.getByRole("button", { name: "Open terminal" }).click();
 
 	await expect(page.getByRole("button", { name: "Back to agent terminal" })).toBeVisible();

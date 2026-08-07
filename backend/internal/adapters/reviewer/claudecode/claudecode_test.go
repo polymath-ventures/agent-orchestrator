@@ -56,6 +56,9 @@ func TestReviewCommandLaunchesReadOnlyOffBypass(t *testing.T) {
 	if agent.got.Config.Model != "claude-opus-4-5" {
 		t.Fatalf("agent config = %#v, want reviewer model", agent.got.Config)
 	}
+	if agent.got.SessionID != "" {
+		t.Fatalf("reviewer must not pin a resumable Claude session id; got %q", agent.got.SessionID)
+	}
 	if !contains(agent.got.AllowedTools, "Read") || !contains(agent.got.AllowedTools, "Bash(ao review submit:*)") {
 		t.Fatalf("allowlist missing read-only review tools: %#v", agent.got.AllowedTools)
 	}

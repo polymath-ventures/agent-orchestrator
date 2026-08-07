@@ -321,6 +321,7 @@ describe("orchestratorHealth", () => {
 describe("toAgentProvider", () => {
 	it("passes through a known provider", () => {
 		expect(toAgentProvider("opencode")).toBe("opencode");
+		expect(toAgentProvider("muse")).toBe("muse");
 	});
 
 	it("passes through codex-fugu rather than collapsing it to codex", () => {

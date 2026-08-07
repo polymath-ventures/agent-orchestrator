@@ -66,7 +66,7 @@ test("project board route: brand clears the titlebar band and stays readable", a
 	await expect(page.getByText("Projects")).toBeVisible();
 
 	// In-app nav to /projects/:id (a hard load boots the router at the board).
-	await page.getByRole("button", { name: "Open api-gateway dashboard" }).click();
+	await page.locator('[data-sidebar="menu-button"]').filter({ hasText: "api-gateway" }).first().click();
 	// The active project row marks itself aria-current=page once navigation lands.
 	await expect(page.locator('[aria-current="page"]')).toBeVisible();
 
@@ -89,5 +89,10 @@ test("brand stays put and readable when navigating board → session", async ({ 
 	// Persistent shell element: no vertical/horizontal jump across the transition.
 	expect(Math.abs(sessionBrandBox!.x - boardBrandBox!.x)).toBeLessThanOrEqual(1);
 	expect(Math.abs(sessionBrandBox!.y - boardBrandBox!.y)).toBeLessThanOrEqual(1);
-	await expectBrandClearsHeader(page);
+	// Session actions are embedded into the terminal bar, so the board header is
+	// intentionally absent. The persistent sidebar brand must still remain
+	// readable and browser mode must still exclude Electron titlebar controls.
+	await expect(page.locator(".dashboard-app-header")).toHaveCount(0);
+	await expect(page.locator(".titlebar-nav")).toHaveCount(0);
+	expect(await isTruncated(brand(page))).toBe(false);
 });

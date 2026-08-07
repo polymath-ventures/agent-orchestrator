@@ -59,14 +59,16 @@ type harnessProbe struct {
 	// PreArgs precede VersionArg, for wrapper binaries that need a leading flag
 	// parsed at top level (codex-fugu's --no-update, without which the wrapper
 	// can block on its update prompt during the probe).
-	PreArgs    []string
-	VersionArg string
+	PreArgs               []string
+	VersionArg            string
+	ExpectedVersionPrefix string
 }
 
 var doctorHarnesses = []harnessProbe{
 	{Name: "claude-code", BinaryName: "claude", VersionArg: "--version"},
 	{Name: "codex", BinaryName: "codex", VersionArg: "--version"},
 	{Name: "codex-fugu", BinaryName: "codex-fugu", PreArgs: []string{"--no-update"}, VersionArg: "--version"},
+	{Name: "muse", BinaryName: "muse", VersionArg: "--version", ExpectedVersionPrefix: "Muse Code "},
 }
 
 func newDoctorCommand(ctx *commandContext) *cobra.Command {
@@ -430,6 +432,12 @@ func (c *commandContext) checkHarness(ctx context.Context, harness harnessProbe)
 	version := firstOutputLine(out)
 	if version == "" {
 		version = "version output was empty"
+	}
+	if harness.ExpectedVersionPrefix != "" && !strings.HasPrefix(version, harness.ExpectedVersionPrefix) {
+		return doctorCheck{
+			Level: doctorWarn, Section: doctorSectionAgents, Name: harness.Name,
+			Message: fmt.Sprintf("%s resolves to %s, but its version output %q does not identify the expected CLI (%q prefix)", harness.BinaryName, path, version, harness.ExpectedVersionPrefix),
+		}
 	}
 	return doctorCheck{Level: doctorPass, Section: doctorSectionAgents, Name: harness.Name, Message: fmt.Sprintf("%s resolves to %s (%s)", harness.BinaryName, path, version)}
 }

@@ -53,7 +53,7 @@ describe("ShellTerminalsView", () => {
 		expect(shellMocks.terminalPaneProps.autoFocus).toBe(true);
 		expect(shellMocks.terminalPaneProps.focusRequest).toBe(1);
 
-		fireEvent.click(screen.getByRole("button", { name: "one" }));
+		fireEvent.click(screen.getByRole("tab", { name: "one" }));
 		rerender(<ShellTerminalsView />);
 
 		expect(shellMocks.terminalPaneProps.autoFocus).toBe(true);

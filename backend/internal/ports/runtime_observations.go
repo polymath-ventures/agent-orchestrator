@@ -57,6 +57,11 @@ type ActivitySignal struct {
 	LaunchID string
 	Usage    *UsageSignal
 	Quotas   []domain.QuotaSnapshot
+	// ControllerGeneration is the equivalent fence for a runtime-less Chat
+	// controller. It is intentionally internal (provider events never call the
+	// public hook endpoint): lifecycle rejects it after a mode handoff or Chat
+	// controller replacement.
+	ControllerGeneration string
 }
 
 // UsageSignal carries allowlisted per-turn token/cost facts from agent hooks.

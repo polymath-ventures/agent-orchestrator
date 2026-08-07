@@ -27,10 +27,17 @@ Never mutate the shared checkout. Create an isolated worktree and merge there:
 ```bash
 git worktree add .claude/worktrees/sync-upstream-<YYYYMMDD> -b sync/upstream-<YYYYMMDD> origin/main
 cd .claude/worktrees/sync-upstream-<YYYYMMDD>
-git merge upstream/main   # merge, not rebase — preserve both histories
+git merge origin/main     # absorb any main movement after branch creation
+git merge upstream/main   # preserve both histories
 ```
 
 Remove the worktree in cleanup after landing or parking.
+
+**Never rebase a sync branch.** Rebasing replays upstream commits as fork
+commits, destroys the shared merge ancestry that makes the next sync tractable,
+and reopens conflicts already resolved by an earlier sync. If `origin/main`
+moves, merge it into the sync branch, rerun the affected verification, and
+repeat final review for the new head.
 
 ### 3. Conflict resolution defaults (document EVERY file in the PR body: ours/theirs/blend + one line why)
 
@@ -38,9 +45,36 @@ Remove the worktree in cleanup after landing or parking.
 - Surfaces the fork never touched: **theirs**.
 - Both-sides files: **blend** — upstream as base, fork fixes reapplied; explicitly check whether upstream's version _supersedes_ a fork fix, and say so. The authority for _which_ fork behavior must survive a blend is the **`docs/fork.md` → "Fork Features To Preserve" checklist** — reapply every named feature that lives in a both-sides file (e.g. the codex-fugu **reviewer** registration in `domain.AllReviewerHarnesses` + the `codex.NewFugu()` adapter). If a blend would drop a checklist item, it is a STOP condition (step 4), not a silent "theirs".
 
+#### Routine migration reconciliation
+
+Migration-version collisions are expected when both histories add migrations;
+they are sync work, not by themselves a STOP condition. Preserve every applied
+fork migration at its existing filename and version. Never renumber an existing
+fork migration or rewrite `goose_db_version`: production has already recorded
+those identities.
+
+For incoming upstream migrations:
+
+1. Identify already-ported upstream migrations by purpose, filename suffix,
+   and SQL content even when the fork previously assigned a different version.
+   Keep the fork copy and remove the duplicate incoming path.
+2. Rename only genuinely new upstream migration files, assigning consecutive
+   unused versions above the fork's current maximum while preserving their
+   upstream relative order. This is the fork's durable upstream-to-fork mapping;
+   document every mapping in the PR body.
+3. Adapt each incoming migration to the schema produced by the applied fork
+   chain. Exact `sqlite_master` replacements and other state-sensitive SQL must
+   match the fork's current schema and preserve fork-only values; a version-only
+   rename is not sufficient evidence.
+4. Run the unique-version test plus migration tests from both a fresh database
+   and an upgrade fixture representing the current production migration level.
+
+Park only when a migration cannot be mapped or adapted without choosing between
+different product/data outcomes. The existence of a numeric collision is not
+such a decision.
+
 ### 4. STOP conditions → park (step 7), never resolve unilaterally
 
-- **Migration-version collision** between upstream's new migrations and the fork's applied chain (fork migrations are applied to the production DB — renumbering either side is an operator decision).
 - An upstream change that removes/renames something a fork-only surface depends on (deploy script, units, browser-mode seam) with no obvious blend.
 
 ### 5. Gates
@@ -60,6 +94,7 @@ On any STOP condition or unresolved review finding: push the branch, open the PR
 ## Hard rules
 
 - Never use GitHub's web Sync fork / discard flow.
+- Never rebase a sync branch; merge `origin/main` and re-review the resulting head.
 - Never land with failing gates or without an independent review — a clean git merge is not evidence of semantic safety.
 - One sync PR in flight at a time; re-runs while one is open are no-ops.
 - Deploy is out of scope — post-merge deploy is the operator's call (`deploy-verify` / `land-and-deploy`).

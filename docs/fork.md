@@ -153,20 +153,19 @@ them as the starting point for a search, not as an exhaustive file list.
    `backend/internal/session_manager/manager.go`; `BucketKey` in
    `backend/internal/domain/workermix.go`; and the four migrations
    `backend/internal/storage/sqlite/migrations/{0028_add_session_model,0029_add_session_mix_selected,0036_add_session_effort,0038_add_session_mix_bucket_model}.sql`.
-   Note the fork's migration numbering has already diverged from upstream's,
-   which is why a version collision is a sync STOP condition rather than a
-   mechanical renumber. **The scratch-workspace adapter is currently identical to
-   upstream's**, so it needs no preservation today. That is a claim about
-   `backend/internal/adapters/workspace/scratch/` only — fork code elsewhere
-   (spawn resolution, project-config validation, workspace routing, session
-   management) does touch scratch projects — the derived `SessionPrefix` on the
-   default scratch project is one such delta — so do not read this as "the fork
-   never changes scratch". Re-establish it each sync rather than trusting this
-   line, from inside the merge worktree so the comparison covers the tree you are
-   about to land rather than the pre-merge `origin/main`:
-   `git diff --exit-code upstream/main..HEAD -- backend/internal/adapters/workspace/scratch/`.
+   The fork's applied migration numbering has diverged from upstream's. During a
+   sync, preserve every released fork migration number, discard incoming copies
+   already ported under a fork number, and map genuinely new upstream migrations
+   onto the next free fork tail in upstream order; see `skills/sync-upstream`.
+   The scratch-workspace adapter is now fork-specific: worker scratch paths use
+   `WorkspaceConfig.NamespaceKey` so they share the same readable session
+   namespace convention as git worktrees, while orchestrator and Prime scratch
+   paths remain keyed by session ID. Sync anchors:
+   `backend/internal/adapters/workspace/scratch/{workspace.go,workspace_test.go}`.
+   Preserve this behavior when upstream changes the adapter.
    Reference issues/PRs: worker mix #3 → #17, #80 — the session `model` and
-   `mix_selected` columns landed in #17; session prefix #151 → #179.
+   `mix_selected` columns landed in #17; session prefix #151 → #179; readable
+   session namespace #257 → #259.
 7. **Bug fixes.** Any fork divergence that fixes a real bug beats re-absorbing
    the upstream behavior it fixed. The clusters most likely to be silently
    reverted by a blend, because they live in shared upstream files: compensating

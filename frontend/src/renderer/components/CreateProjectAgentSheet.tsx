@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import * as Dialog from "@radix-ui/react-dialog";
-import { TriangleAlert, X } from "lucide-react";
+import { TriangleAlert, X, type LucideIcon } from "lucide-react";
 import { memo, useEffect, useMemo, useState } from "react";
 import type { components } from "../../api/schema";
 import { agentsQueryKey, agentsQueryOptions, refreshAgents } from "../hooks/useAgentsQuery";
@@ -17,7 +18,12 @@ import {
 	selectableAgentCatalog,
 } from "../lib/agent-selection";
 import { cn } from "../lib/utils";
+import { AgentAvatar } from "./AgentAvatar";
+import { FieldDefaultHint } from "./FieldDefaultHint";
 import { buildIntake, type IntakeForm, IntakeFields, intakeNeedsRule } from "./IntakeFields";
+import { AgentSelectMenuItem } from "./settings/AgentSelectMenuItem";
+import { SettingsRow } from "./settings/SettingsRow";
+import { SettingsOptionMenu } from "./settings/SettingsOptionMenu";
 import type { ProjectKind } from "../types/workspace";
 import { ModelAvailabilityField } from "./ModelAvailabilityField";
 import { PermissionModeSelect } from "./PermissionModeSelect";
@@ -112,6 +118,7 @@ export function CreateProjectAgentSheet({
 	repositorySetupNeeded = false,
 	repositorySetupWarning = null,
 }: CreateProjectAgentSheetProps) {
+	const { t } = useTranslation();
 	const queryClient = useQueryClient();
 	const agentsQuery = useQuery({
 		...agentsQueryOptions,
@@ -195,7 +202,7 @@ export function CreateProjectAgentSheet({
 					<div className="flex items-start justify-between gap-4 border-b border-[var(--color-border-agents-sheet)] px-6 py-5">
 						<div className="min-w-0">
 							<Dialog.Title className="text-subtitle font-semibold text-[var(--color-text-agents-sheet-title)]">
-								{kind === "workspace" ? "Workspace harnesses" : "Project harnesses"}
+								{kind === "workspace" ? t("createProject.workspaceAgents") : t("createProject.projectAgents")}
 							</Dialog.Title>
 							<Dialog.Description className="mt-1 break-all text-xs text-[var(--color-text-agents-sheet-description)]">
 								{path ?? ""}
@@ -230,8 +237,8 @@ export function CreateProjectAgentSheet({
 						<div className="grid gap-4 sm:grid-cols-2">
 							<RequiredAgentField
 								id="newProjectWorkerAgent"
-								label="Worker harness"
-								placeholder="Select worker harness"
+								label={t("createProject.workerAgent")}
+								placeholder={t("createProject.selectWorker")}
 								value={workerAgent}
 								authorized={agentOptions}
 								installed={installedAgents}
@@ -247,8 +254,8 @@ export function CreateProjectAgentSheet({
 							/>
 							<RequiredAgentField
 								id="newProjectOrchestratorAgent"
-								label="Orchestrator harness"
-								placeholder="Select orchestrator harness"
+								label={t("createProject.orchestratorAgent")}
+								placeholder={t("createProject.selectOrchestrator")}
 								value={orchestratorAgent}
 								authorized={agentOptions}
 								installed={installedAgents}
@@ -440,6 +447,8 @@ export function CreateProjectAgentSheet({
 export const RequiredAgentField = memo(function RequiredAgentField({
 	authorized,
 	disabled = false,
+	hint,
+	icon,
 	id,
 	invalid = false,
 	installed,
@@ -452,9 +461,12 @@ export const RequiredAgentField = memo(function RequiredAgentField({
 	contentClassName,
 	fieldGapClassName = "gap-1.5",
 	value,
+	variant = "stacked",
 }: {
 	authorized?: AgentInfo[];
 	disabled?: boolean;
+	hint?: string;
+	icon?: LucideIcon;
 	id: string;
 	invalid?: boolean;
 	installed?: AgentInfo[];
@@ -467,6 +479,7 @@ export const RequiredAgentField = memo(function RequiredAgentField({
 	contentClassName?: string;
 	fieldGapClassName?: string;
 	value: string;
+	variant?: "stacked" | "settings-row" | "chip";
 }) {
 	const catalog = selectableAgentCatalog({ authorized, installed, supported }, { current: value });
 	const supportedAgents = catalog.supported ?? [];
@@ -492,12 +505,95 @@ export const RequiredAgentField = memo(function RequiredAgentField({
 			};
 		})
 		.sort((a, b) => a.rank - b.rank || a.priorityRank - b.priorityRank || agentLabelCompare(a, b));
+	const selectedOption = options.find((agent) => agent.id === value);
+
+	if (variant === "settings-row") {
+		return (
+			<SettingsRow icon={icon} label={label}>
+				<SettingsOptionMenu
+					aria-label={label}
+					value={value}
+					placeholder={placeholder}
+					options={options.map((agent) => ({ value: agent.id, label: agent.label, disabled: agent.disabled }))}
+					disabled={disabled}
+					onChange={onChange}
+					triggerClassName={invalid ? "text-error" : undefined}
+					menuClassName="settings-agent-menu-surface"
+					menuItemClassName="settings-agent-menu-item"
+					renderTrigger={(selected, triggerPlaceholder) => (
+						<>
+							{selected ? <AgentAvatar provider={selected.value} className="size-icon-lg" /> : null}
+							<span className="min-w-0 truncate">{selected?.label ?? triggerPlaceholder}</span>
+						</>
+					)}
+					renderMenuItem={(option, selected) => {
+						const agent = options.find((entry) => entry.id === option.value);
+						if (!agent) return option.label;
+						return (
+							<AgentSelectMenuItem
+								agentId={agent.id}
+								label={agent.label}
+								selected={selected}
+								status={agent.reason}
+								statusTone={agent.warning ? "warning" : agent.reason ? "muted" : "success"}
+								disabled={agent.disabled}
+							/>
+						);
+					}}
+				/>
+			</SettingsRow>
+		);
+	}
+
+	if (variant === "chip") {
+		return (
+			<Select value={value} onValueChange={onChange} disabled={disabled}>
+				<SelectTrigger
+					id={id}
+					size="sm"
+					className={cn(
+						"composer-chip h-control-md! bg-(--color-bg-composer-chip)! px-2! text-control! [&_svg]:size-icon-sm",
+						invalid && "text-error",
+						triggerClassName,
+					)}
+					aria-label={label}
+					aria-invalid={invalid || undefined}
+				>
+					<SelectValue placeholder={placeholder}>
+						{selectedOption ? (
+							<span className="flex min-w-0 items-center gap-2">
+								<AgentAvatar provider={selectedOption.id} className="size-icon-base" decorative />
+								<span className="min-w-0 truncate">{selectedOption.label}</span>
+							</span>
+						) : null}
+					</SelectValue>
+				</SelectTrigger>
+				<SelectContent position="popper" side="bottom" align="start" sideOffset={6} className={contentClassName}>
+					{options.map((agent) => (
+						<SelectItem key={agent.id} value={agent.id} disabled={agent.disabled}>
+							<AgentSelectMenuItem
+								agentId={agent.id}
+								label={agent.label}
+								selected={value === agent.id}
+								status={agent.reason}
+								statusTone={agent.warning ? "warning" : agent.reason ? "muted" : "success"}
+								disabled={agent.disabled}
+							/>
+						</SelectItem>
+					))}
+				</SelectContent>
+			</Select>
+		);
+	}
 
 	return (
 		<div className={cn("flex flex-col", fieldGapClassName)}>
-			<Label htmlFor={id} className={cn("text-xs font-medium text-muted-foreground", labelClassName)}>
-				{label}
-			</Label>
+			<div className="flex min-w-0 items-baseline gap-1.5">
+				<Label htmlFor={id} className={cn("text-xs font-medium text-muted-foreground", labelClassName)}>
+					{label}
+				</Label>
+				{hint ? <FieldDefaultHint text={hint} /> : null}
+			</div>
 			<Select value={value} onValueChange={onChange} disabled={disabled}>
 				<SelectTrigger
 					id={id}
