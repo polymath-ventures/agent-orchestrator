@@ -1,5 +1,6 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { AttachableTerminal } from "../hooks/useTerminalSession";
 import { XtermTerminal } from "./XtermTerminal";
 
 const state = vi.hoisted(() => ({
@@ -12,6 +13,8 @@ const state = vi.hoisted(() => ({
 		modes: { bracketedPasteMode: boolean; mouseTrackingMode: string };
 		buffer: { active: { type: string } };
 		scrollLines: ReturnType<typeof vi.fn>;
+		scrollToBottom: ReturnType<typeof vi.fn>;
+		refresh: ReturnType<typeof vi.fn>;
 		clear: ReturnType<typeof vi.fn>;
 		focus: ReturnType<typeof vi.fn>;
 		selectAll: ReturnType<typeof vi.fn>;
@@ -20,6 +23,7 @@ const state = vi.hoisted(() => ({
 		selectionListeners: Set<() => void>;
 		_core: {
 			element: { classList: { add: ReturnType<typeof vi.fn>; remove: ReturnType<typeof vi.fn> } };
+			viewport: { scrollBarWidth: number };
 			_selectionService: {
 				enable: ReturnType<typeof vi.fn>;
 				shouldForceSelection: (event: MouseEvent) => boolean;
@@ -39,20 +43,17 @@ vi.mock("@xterm/xterm", () => ({
 		modes = { bracketedPasteMode: false, mouseTrackingMode: "vt200" };
 		buffer = { active: { type: "normal" } };
 		scrollLines = vi.fn();
+		scrollToBottom = vi.fn();
+		refresh = vi.fn();
 		clear = vi.fn();
-		// Mirrors xterm: focus() moves DOM focus to the hidden helper textarea, so
-		// tests can assert on document.activeElement the way the user experiences
-		// it rather than only on the spy.
-		focus = vi.fn(() => {
-			this.helperTextarea?.focus();
-		});
+		focus = vi.fn();
 		selectAll = vi.fn();
-		helperTextarea: HTMLTextAreaElement | null = null;
 		dataListeners = new Set<(data: string) => void>();
 		keyListeners = new Set<(event: { key: string }) => void>();
 		selectionListeners = new Set<() => void>();
 		_core = {
 			element: { classList: { add: vi.fn(), remove: vi.fn() } },
+			viewport: { scrollBarWidth: 15 },
 			_selectionService: {
 				enable: vi.fn(),
 				shouldForceSelection: () => false,
@@ -66,10 +67,7 @@ vi.mock("@xterm/xterm", () => ({
 
 		loadAddon() {}
 		open(host: HTMLElement) {
-			this.helperTextarea = host.appendChild(document.createElement("textarea"));
-		}
-		get textarea() {
-			return this.helperTextarea ?? undefined;
+			host.appendChild(document.createElement("textarea"));
 		}
 		write() {}
 		writeln() {}
@@ -161,93 +159,34 @@ describe("XtermTerminal", () => {
 		window.ao!.clipboard.readText = vi.fn().mockResolvedValue("");
 	});
 
-	// An autoFocus mount is the owner saying "the user just switched to this
-	// terminal", so keystrokes must reach the shell straight away. Without it the
-	// terminals screen renders attached but deaf until a second click.
-	it("takes keyboard focus when an autoFocus pane mounts", () => {
-		const { container } = render(<XtermTerminal autoFocus theme="dark" />);
-
-		expect(document.activeElement).toBe(container.querySelector("textarea"));
-	});
-
-	// Session panes mount for reasons that are not a user switching to them —
-	// behind a pop-out overlay, or re-keyed by a background poll assigning a
-	// terminal handle. They must not move focus.
-	it("leaves focus alone when the owner did not ask for autoFocus", () => {
-		const sidebarButton = document.body.appendChild(document.createElement("button"));
-		sidebarButton.focus();
-
-		render(<XtermTerminal theme="dark" />);
-
-		expect(document.activeElement).toBe(sidebarButton);
-		sidebarButton.remove();
-	});
-
-	// Selecting another shell tab remounts the pane (TerminalPane keys mounts by
-	// terminal handle) while focus sits on the tab button that was just clicked.
-	it("takes focus from the control that mounted it, such as a shell tab button", () => {
-		const tab = document.body.appendChild(document.createElement("button"));
-		tab.focus();
-
-		const { container } = render(<XtermTerminal autoFocus theme="dark" />);
-
-		expect(document.activeElement).toBe(container.querySelector("textarea"));
-		tab.remove();
-	});
-
-	it("focuses an already-mounted terminal when the owner sends a focus request", () => {
-		const tab = document.body.appendChild(document.createElement("button"));
-		const { container, rerender } = render(<XtermTerminal focusRequest={0} theme="dark" />);
-		tab.focus();
-
-		rerender(<XtermTerminal focusRequest={1} theme="dark" />);
-
-		expect(document.activeElement).toBe(container.querySelector("textarea"));
-		tab.remove();
-	});
-
-	it("keeps focus on a text field that is not inside an overlay", () => {
-		const filter = document.body.appendChild(document.createElement("input"));
-		filter.focus();
-
-		render(<XtermTerminal autoFocus theme="dark" />);
-
-		expect(document.activeElement).toBe(filter);
-		filter.remove();
-	});
-
-	// The shared open-overlay predicate covers menus too, so a mount underneath an
-	// open dropdown does not yank the keyboard out of it.
-	it.each([
-		["dialog", "dialog"],
-		["alertdialog", "alertdialog"],
-		["menu", "menu"],
-	])("keeps focus inside an open %s overlay", (_label, role) => {
-		const overlay = document.createElement("div");
-		overlay.setAttribute("role", role);
-		overlay.setAttribute("data-state", "open");
-		const item = overlay.appendChild(document.createElement("button"));
-		document.body.appendChild(overlay);
-		item.focus();
-
-		render(<XtermTerminal autoFocus theme="dark" />);
-
-		expect(document.activeElement).toBe(item);
-		overlay.remove();
-	});
-
-	// The mount effect runs once, so yielding to an overlay that merely exists
-	// would leave the pane deaf for good once that overlay closed.
-	it("still focuses when an overlay is open but holds no keyboard focus", () => {
-		const overlay = document.createElement("div");
-		overlay.setAttribute("role", "menu");
-		overlay.setAttribute("data-state", "open");
-		document.body.appendChild(overlay);
-
-		const { container } = render(<XtermTerminal autoFocus theme="dark" />);
-
-		expect(document.activeElement).toBe(container.querySelector("textarea"));
-		overlay.remove();
+	it("finishes retained activation when xterm emits no render event", async () => {
+		vi.useFakeTimers();
+		vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) =>
+			window.setTimeout(() => callback(performance.now()), 0),
+		);
+		vi.stubGlobal("cancelAnimationFrame", (id: number) => window.clearTimeout(id));
+		try {
+			let terminal: AttachableTerminal | undefined;
+			render(
+				<XtermTerminal
+					theme="dark"
+					onReady={(ready) => {
+						terminal = ready;
+					}}
+				/>,
+			);
+			const preparation = terminal!.prepareForActivation();
+			await act(async () => {
+				vi.advanceTimersByTime(250);
+				vi.runAllTimers();
+				await preparation;
+			});
+			expect(state.lastTerminal!.scrollToBottom).toHaveBeenCalled();
+			expect(state.lastTerminal!.refresh).not.toHaveBeenCalled();
+		} finally {
+			vi.useRealTimers();
+			vi.unstubAllGlobals();
+		}
 	});
 
 	it("preserves the agent TUI palette without contrast remapping", () => {
@@ -255,6 +194,12 @@ describe("XtermTerminal", () => {
 
 		expect(state.lastTerminal!.options.drawBoldTextInBrightColors).toBe(true);
 		expect(state.lastTerminal!.options.minimumContrastRatio).toBe(1);
+	});
+
+	it("does not reserve width for the hidden terminal scrollbar", () => {
+		render(<XtermTerminal theme="dark" />);
+
+		expect(state.lastTerminal!._core.viewport.scrollBarWidth).toBe(0);
 	});
 
 	it("copies selected terminal text on the terminal copy shortcut", () => {
@@ -274,66 +219,6 @@ describe("XtermTerminal", () => {
 		expect(allowed).toBe(false);
 		expect(event.preventDefault).toHaveBeenCalled();
 		expect(window.ao!.clipboard.writeText).toHaveBeenCalledWith("copied selection");
-	});
-
-	it("leaves bare Escape for the terminal but exits focus on Ctrl+F6", () => {
-		const onExitFocus = vi.fn();
-		render(<XtermTerminal onExitFocus={onExitFocus} theme="dark" />);
-		const escape = {
-			key: "Escape",
-			ctrlKey: false,
-			metaKey: false,
-			altKey: false,
-			shiftKey: false,
-			preventDefault: vi.fn(),
-			stopPropagation: vi.fn(),
-		} as unknown as KeyboardEvent;
-		const exit = {
-			key: "F6",
-			ctrlKey: true,
-			metaKey: false,
-			altKey: false,
-			shiftKey: false,
-			preventDefault: vi.fn(),
-			stopPropagation: vi.fn(),
-		} as unknown as KeyboardEvent;
-
-		expect(state.lastTerminal!.keyHandler!(escape)).toBe(true);
-		expect(onExitFocus).not.toHaveBeenCalled();
-		expect(state.lastTerminal!.keyHandler!(exit)).toBe(false);
-		expect(onExitFocus).toHaveBeenCalledTimes(1);
-		expect(exit.preventDefault).toHaveBeenCalled();
-	});
-
-	it("leaves Ctrl+F6 for the terminal when there is no focus exit target", () => {
-		render(<XtermTerminal theme="dark" />);
-		const exit = {
-			key: "F6",
-			ctrlKey: true,
-			metaKey: false,
-			altKey: false,
-			shiftKey: false,
-			preventDefault: vi.fn(),
-			stopPropagation: vi.fn(),
-		} as unknown as KeyboardEvent;
-
-		expect(state.lastTerminal!.keyHandler!(exit)).toBe(true);
-		expect(exit.preventDefault).not.toHaveBeenCalled();
-	});
-
-	it("only advertises the focus-exit shortcut when a focus exit target exists", () => {
-		const { container, rerender } = render(<XtermTerminal ariaLabel="Agent terminal" theme="dark" />);
-		const host = container.firstElementChild;
-		const textarea = () => container.querySelector("textarea");
-
-		expect(host).toHaveAttribute("aria-label", "Agent terminal");
-		expect(textarea()).toHaveAttribute("aria-label", "Agent terminal");
-		expect(screen.queryByLabelText(/press Ctrl\+F6/)).not.toBeInTheDocument();
-
-		rerender(<XtermTerminal ariaLabel="Agent terminal" onExitFocus={() => undefined} theme="dark" />);
-
-		expect(host).toHaveAttribute("aria-label", "Agent terminal; press Ctrl+F6 to move focus out");
-		expect(textarea()).toHaveAttribute("aria-label", "Agent terminal; press Ctrl+F6 to move focus out");
 	});
 
 	it("handles native copy events from inside the terminal", () => {

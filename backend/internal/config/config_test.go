@@ -10,7 +10,7 @@ import (
 func TestLoadDefaults(t *testing.T) {
 	// Clear every recognised var so we observe pure defaults regardless of the
 	// surrounding environment.
-	for _, k := range []string{"AO_PORT", "AO_REQUEST_TIMEOUT", "AO_SHUTDOWN_TIMEOUT", "AO_RUN_FILE", "AO_DATA_DIR", "AO_AGENT", "AO_AGENT_HEALTH_INTERVAL", "AO_MODEL_REVALIDATION_INTERVAL", "AO_ALLOWED_ORIGINS", "AO_MOBILE_ADVERTISED_HOST", "AO_TELEMETRY_EVENTS", "AO_TELEMETRY_METRICS", "AO_TELEMETRY_REMOTE", "AO_TELEMETRY_POSTHOG_KEY", "AO_TELEMETRY_POSTHOG_HOST", "AO_METRICS_INTERVAL", "AO_METRICS_LOW_QUOTA_PERCENT", "AO_QUOTA_PROBE_INTERVAL", "AO_WORKER_TASK_PROMPT"} {
+	for _, k := range []string{"AO_PORT", "AO_REQUEST_TIMEOUT", "AO_SHUTDOWN_TIMEOUT", "AO_RUN_FILE", "AO_DATA_DIR", "AO_AGENT", "AO_AGENT_HEALTH_INTERVAL", "AO_MODEL_REVALIDATION_INTERVAL", "AO_ALLOWED_ORIGINS", "AO_MOBILE_ADVERTISED_HOST", "AO_TELEMETRY_EVENTS", "AO_TELEMETRY_METRICS", "AO_TELEMETRY_REMOTE", "AO_TELEMETRY_POSTHOG_KEY", "AO_TELEMETRY_POSTHOG_HOST", "AO_TELEMETRY_DISABLED_EVENTS", "AO_TELEMETRY_APP_VERSION", "AO_METRICS_INTERVAL", "AO_METRICS_LOW_QUOTA_PERCENT", "AO_QUOTA_PROBE_INTERVAL", "AO_WORKER_TASK_PROMPT"} {
 		t.Setenv(k, "")
 	}
 
@@ -319,5 +319,48 @@ func TestLoadOwner(t *testing.T) {
 				t.Fatalf("Owner = %q, want %q", cfg.Owner, tc.want)
 			}
 		})
+	}
+}
+
+// The kill switch and the supervisor-supplied version are user-visible
+// boundaries: the daemon reads them from the environment the desktop app hands
+// it, so a parsing regression here silently disables the switch.
+func TestLoadTelemetryDisabledEventsAndAppVersion(t *testing.T) {
+	t.Setenv("AO_TELEMETRY_DISABLED_EVENTS", " ao.v2.app.active , ao.renderer.* ,, ")
+	t.Setenv("AO_TELEMETRY_APP_VERSION", "  0.11.2  ")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	want := []string{"ao.v2.app.active", "ao.renderer.*"}
+	if len(cfg.Telemetry.DisabledEvents) != len(want) {
+		t.Fatalf("DisabledEvents = %#v, want %#v", cfg.Telemetry.DisabledEvents, want)
+	}
+	for i, name := range want {
+		if cfg.Telemetry.DisabledEvents[i] != name {
+			t.Fatalf("DisabledEvents[%d] = %q, want %q", i, cfg.Telemetry.DisabledEvents[i], name)
+		}
+	}
+	if cfg.Telemetry.AppVersion != "0.11.2" {
+		t.Fatalf("AppVersion = %q, want trimmed 0.11.2", cfg.Telemetry.AppVersion)
+	}
+}
+
+// An unparseable or blank list must never stop the daemon booting: the switch
+// has to be usable in a hurry, so a bad entry is inert rather than fatal.
+func TestLoadTelemetryDisabledEventsBlankIsInert(t *testing.T) {
+	t.Setenv("AO_TELEMETRY_DISABLED_EVENTS", " , , ")
+	t.Setenv("AO_TELEMETRY_APP_VERSION", "")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(cfg.Telemetry.DisabledEvents) != 0 {
+		t.Fatalf("DisabledEvents = %#v, want empty", cfg.Telemetry.DisabledEvents)
+	}
+	if cfg.Telemetry.AppVersion != "" {
+		t.Fatalf("AppVersion = %q, want empty", cfg.Telemetry.AppVersion)
 	}
 }

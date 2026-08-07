@@ -511,6 +511,10 @@ func (f *fakePrimeNotifier) Notify(_ context.Context, intent ports.NotificationI
 	return nil
 }
 
+func (f *fakePrimeNotifier) Resolve(context.Context, ports.NotificationResolution) error {
+	return nil
+}
+
 // A prime that has never spawned successfully must still alert when the restart budget caps —
 // silence here was the failure mode: three Warn logs and nothing else.
 func TestEnsurePrimeCapAlertsWhenPrimeNeverSpawned(t *testing.T) {

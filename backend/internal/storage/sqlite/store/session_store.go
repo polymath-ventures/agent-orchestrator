@@ -145,6 +145,31 @@ func (s *Store) SetSessionNamespaceKey(ctx context.Context, id domain.SessionID,
 	return rows > 0, nil
 }
 
+// ClaimChatControllerGeneration makes generation the only Chat controller that
+// may project provider events for this session. The narrow update avoids writing
+// a stale full SessionRecord over lifecycle facts changed by another goroutine.
+func (s *Store) ClaimChatControllerGeneration(
+	ctx context.Context,
+	id domain.SessionID,
+	generation string,
+	updatedAt time.Time,
+) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	rows, err := s.qw.ClaimChatControllerGeneration(ctx, gen.ClaimChatControllerGenerationParams{
+		ControllerGeneration: generation,
+		UpdatedAt:            updatedAt,
+		ID:                   id,
+	})
+	if err != nil {
+		return fmt.Errorf("claim chat controller generation for %s: %w", id, err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("claim chat controller generation for %s: chat session not found", id)
+	}
+	return nil
+}
+
 // RenameSession updates only the user-facing display name for an existing
 // session. It returns ok=false when the session id does not exist. The
 // sessions_cdc_update trigger fans out a session_updated CDC event when the
@@ -159,6 +184,22 @@ func (s *Store) RenameSession(ctx context.Context, id domain.SessionID, displayN
 	})
 	if err != nil {
 		return false, fmt.Errorf("rename session %s: %w", id, err)
+	}
+	return rows > 0, nil
+}
+
+// SetSessionPinned updates the pinned status of a session.
+func (s *Store) SetSessionPinned(ctx context.Context, id domain.SessionID, isPinned bool, pinnedAt *time.Time, updatedAt time.Time) (bool, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	rows, err := s.qw.SetSessionPinned(ctx, gen.SetSessionPinnedParams{
+		ID:        id,
+		IsPinned:  isPinned,
+		PinnedAt:  timePtrToNullTime(pinnedAt),
+		UpdatedAt: updatedAt,
+	})
+	if err != nil {
+		return false, fmt.Errorf("set session pinned %s: %w", id, err)
 	}
 	return rows > 0, nil
 }
@@ -193,6 +234,21 @@ func (s *Store) SetSessionTerminateOnPRMerge(ctx context.Context, id domain.Sess
 	})
 	if err != nil {
 		return false, fmt.Errorf("set terminate-on-pr-merge for session %s: %w", id, err)
+	}
+	return rows > 0, nil
+}
+
+// SetSessionReviewerHarness persists the reviewer preference for one session.
+func (s *Store) SetSessionReviewerHarness(ctx context.Context, id domain.SessionID, harness domain.ReviewerHarness, updatedAt time.Time) (bool, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	rows, err := s.qw.SetSessionReviewerHarness(ctx, gen.SetSessionReviewerHarnessParams{
+		ReviewerHarness: harness,
+		UpdatedAt:       updatedAt,
+		ID:              id,
+	})
+	if err != nil {
+		return false, fmt.Errorf("set reviewer harness for %s: %w", id, err)
 	}
 	return rows > 0, nil
 }
@@ -311,17 +367,19 @@ func mapSessionRows(rows []gen.Session) []domain.SessionRecord {
 
 func rowToRecord(row gen.Session) domain.SessionRecord {
 	return domain.SessionRecord{
-		ID:             row.ID,
-		ProjectID:      domain.ProjectID(strings.TrimSpace(string(row.ProjectID))),
-		IssueID:        row.IssueID,
-		Kind:           row.Kind,
-		Harness:        row.Harness,
-		Model:          row.Model,
-		Effort:         domain.Effort(row.Effort),
-		MixSelected:    row.MixSelected,
-		MixBucketModel: row.MixBucketModel,
-		DisplayName:    row.DisplayName,
-		NamespaceKey:   row.NamespaceKey,
+		ID:              row.ID,
+		ProjectID:       domain.ProjectID(strings.TrimSpace(string(row.ProjectID))),
+		IssueID:         row.IssueID,
+		Kind:            row.Kind,
+		Harness:         row.Harness,
+		Model:           row.Model,
+		Effort:          domain.Effort(row.Effort),
+		MixSelected:     row.MixSelected,
+		MixBucketModel:  row.MixBucketModel,
+		DisplayName:     row.DisplayName,
+		NamespaceKey:    row.NamespaceKey,
+		ReviewerHarness: row.ReviewerHarness,
+		Mode:            domain.NormalizeSessionMode(row.SessionMode),
 		Activity: domain.Activity{
 			State:          row.ActivityState,
 			LastActivityAt: row.ActivityLastAt,
@@ -329,6 +387,8 @@ func rowToRecord(row gen.Session) domain.SessionRecord {
 		LastError:          row.LastError,
 		FirstSignalAt:      nullTimeToTime(row.FirstSignalAt),
 		IsTerminated:       row.IsTerminated,
+		IsPinned:           row.IsPinned,
+		PinnedAt:           nullTimeToTimePtr(row.PinnedAt),
 		TerminateOnPRMerge: row.TerminateOnPRMerge,
 		Metadata: domain.SessionMetadata{
 			Branch:            row.Branch,
@@ -343,6 +403,9 @@ func rowToRecord(row gen.Session) domain.SessionRecord {
 			PromptPolicyHash:  row.PromptPolicyHash,
 			PreviewURL:        row.PreviewURL,
 			PreviewRevision:   row.PreviewRevision,
+
+			ProviderConversationID: row.ProviderConversationID,
+			ControllerGeneration:   row.ControllerGeneration,
 		},
 		CleanupGeneration: row.CleanupGeneration,
 		CreatedAt:         row.CreatedAt,
@@ -363,12 +426,15 @@ func recordToInsert(rec domain.SessionRecord, num int64) gen.InsertSessionParams
 		Effort:             string(rec.Effort),
 		MixSelected:        rec.MixSelected,
 		MixBucketModel:     rec.MixBucketModel,
+		ReviewerHarness:    rec.ReviewerHarness,
 		DisplayName:        rec.DisplayName,
 		ActivityState:      activity.State,
 		ActivityLastAt:     activity.LastActivityAt,
 		LastError:          rec.LastError,
 		FirstSignalAt:      timeToNullTime(rec.FirstSignalAt),
 		IsTerminated:       rec.IsTerminated,
+		IsPinned:           rec.IsPinned,
+		PinnedAt:           timePtrToNullTime(rec.PinnedAt),
 		Branch:             rec.Metadata.Branch,
 		WorkspacePath:      rec.Metadata.WorkspacePath,
 		WorkspaceRepoPath:  rec.Metadata.WorkspaceRepoPath,
@@ -383,8 +449,13 @@ func recordToInsert(rec domain.SessionRecord, num int64) gen.InsertSessionParams
 		PreviewRevision:    rec.Metadata.PreviewRevision,
 		TerminateOnPRMerge: rec.TerminateOnPRMerge,
 		CleanupGeneration:  rec.CleanupGeneration,
-		CreatedAt:          rec.CreatedAt,
-		UpdatedAt:          rec.UpdatedAt,
+
+		SessionMode:            domain.NormalizeSessionMode(rec.Mode),
+		ProviderConversationID: rec.Metadata.ProviderConversationID,
+		ControllerGeneration:   rec.Metadata.ControllerGeneration,
+
+		CreatedAt: rec.CreatedAt,
+		UpdatedAt: rec.UpdatedAt,
 	}
 }
 
@@ -399,12 +470,15 @@ func recordToUpdate(rec domain.SessionRecord) gen.UpdateSessionParams {
 		Effort:             string(rec.Effort),
 		MixSelected:        rec.MixSelected,
 		MixBucketModel:     rec.MixBucketModel,
+		ReviewerHarness:    rec.ReviewerHarness,
 		DisplayName:        rec.DisplayName,
 		ActivityState:      activity.State,
 		ActivityLastAt:     activity.LastActivityAt,
 		LastError:          rec.LastError,
 		FirstSignalAt:      timeToNullTime(rec.FirstSignalAt),
 		IsTerminated:       rec.IsTerminated,
+		IsPinned:           rec.IsPinned,
+		PinnedAt:           timePtrToNullTime(rec.PinnedAt),
 		Branch:             rec.Metadata.Branch,
 		WorkspacePath:      rec.Metadata.WorkspacePath,
 		WorkspaceRepoPath:  rec.Metadata.WorkspaceRepoPath,
@@ -419,7 +493,11 @@ func recordToUpdate(rec domain.SessionRecord) gen.UpdateSessionParams {
 		PreviewRevision:    rec.Metadata.PreviewRevision,
 		TerminateOnPRMerge: rec.TerminateOnPRMerge,
 		CleanupGeneration:  rec.CleanupGeneration,
-		UpdatedAt:          rec.UpdatedAt,
+
+		ProviderConversationID: rec.Metadata.ProviderConversationID,
+		ControllerGeneration:   rec.Metadata.ControllerGeneration,
+
+		UpdatedAt: rec.UpdatedAt,
 	}
 }
 
@@ -437,6 +515,20 @@ func timeToNullTime(t time.Time) sql.NullTime {
 		return sql.NullTime{}
 	}
 	return sql.NullTime{Time: t, Valid: true}
+}
+
+func nullTimeToTimePtr(t sql.NullTime) *time.Time {
+	if !t.Valid {
+		return nil
+	}
+	return &t.Time
+}
+
+func timePtrToNullTime(t *time.Time) sql.NullTime {
+	if t == nil {
+		return sql.NullTime{}
+	}
+	return sql.NullTime{Time: *t, Valid: true}
 }
 
 func normalActivity(a domain.Activity, fallback time.Time) domain.Activity {

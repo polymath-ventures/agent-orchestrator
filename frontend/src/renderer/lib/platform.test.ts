@@ -63,14 +63,14 @@ describe("renderer platform behavior", () => {
 		expect(usesBoardActionsInPanel()).toBe(false);
 	});
 
-	it("hides the shell topbar on Linux and keeps board actions in the panel", () => {
+	it("shows the shell topbar on Linux (same as Windows, not macOS)", () => {
 		spoofPlatform("Linux x86_64");
 
 		expect(isLinuxPlatform()).toBe(true);
 		expect(isWindowsPlatform()).toBe(false);
 		expect(usesFramedAppTopbar()).toBe(true);
-		expect(hidesShellTopbar()).toBe(true);
-		expect(usesBoardActionsInPanel()).toBe(true);
+		expect(hidesShellTopbar()).toBe(false);
+		expect(usesBoardActionsInPanel()).toBe(false);
 	});
 
 	it("keeps browser-mode shell topbar visible on Apple mobile browser UAs", () => {

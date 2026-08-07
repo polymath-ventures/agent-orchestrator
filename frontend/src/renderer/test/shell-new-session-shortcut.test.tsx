@@ -79,10 +79,9 @@ const shellMocks = vi.hoisted(() => {
 vi.mock("@tanstack/react-query", async (importOriginal) => ({
 	...(await importOriginal<typeof import("@tanstack/react-query")>()),
 	useQueryClient: () => shellMocks.queryClient,
-	// The shell reads Prime enablement from persisted settings so the Prime nav
-	// entry survives a dead Prime. This suite is about the new-session shortcut,
-	// so a quiet default is enough.
-	useQuery: () => ({ data: undefined, isLoading: false, isSuccess: false, isError: false }),
+	// TerminalCacheProvider owns reviewer queries in production. This shell-only
+	// harness has no routed terminal children and intentionally omits a provider.
+	useQueries: () => [],
 }));
 
 vi.mock("@tanstack/react-router", async (importOriginal) => ({
@@ -112,6 +111,10 @@ vi.mock("../lib/bridge", () => ({
 			setRecording: shellMocks.setKeybindingRecording,
 		},
 		window: {},
+		tray: {
+			setAttentionState: () => undefined,
+			onOpenSession: () => () => undefined,
+		},
 	},
 }));
 
@@ -121,6 +124,10 @@ vi.mock("../hooks/useWorkspaceQuery", () => ({
 	workspaceQueryOptions: {},
 }));
 
+vi.mock("../hooks/usePrimeSettingsQuery", () => ({
+	usePrimeEnabledQuery: () => ({ data: false }),
+}));
+
 vi.mock("../hooks/useDaemonStatus", () => ({
 	useDaemonStatus: () => shellMocks.state.daemonStatus,
 }));
@@ -128,6 +135,7 @@ vi.mock("../hooks/useDaemonStatus", () => ({
 // The shell layout opens standalone terminals; this suite only covers the
 // shortcut subscriptions, so the mutation is stubbed rather than driven.
 vi.mock("../hooks/useShellTerminals", () => ({
+	useShellTerminals: () => ({ data: [], isSuccess: true }),
 	useOpenShellTerminal: () => ({ mutate: shellMocks.openShellTerminal }),
 }));
 
@@ -135,6 +143,10 @@ vi.mock("../hooks/useAgentsQuery", () => ({
 	agentsQueryKey: ["agents"],
 	agentsQueryOptions: {},
 	refreshAgents: vi.fn(),
+	// The shell reports the install's agent inventory once per launch, so the
+	// mock has to answer this too. Undefined data means the hook reports nothing,
+	// which keeps these shortcut tests free of telemetry side effects.
+	useAgentsQuery: () => ({ data: undefined }),
 }));
 
 vi.mock("../components/NotificationCenter", () => ({ NotificationRuntime: () => null }));
@@ -159,6 +171,7 @@ vi.mock("../components/TitlebarNav", async () => {
 	};
 });
 vi.mock("../components/WindowTitlebar", () => ({ WindowTitlebar: () => null }));
+vi.mock("../components/SettingsDialog", () => ({ SettingsDialog: () => null }));
 vi.mock("../components/KeyboardShortcutsDialog", () => ({
 	KeyboardShortcutsDialog: ({ open }: { open: boolean }) => (open ? <div data-testid="keyboard-shortcuts" /> : null),
 }));
@@ -189,10 +202,23 @@ vi.mock("../components/GlobalNewTaskDialog", async () => {
 vi.mock("../components/Sidebar", async () => {
 	const { useUiStore: useStore } = await vi.importActual<typeof import("../stores/ui-store")>("../stores/ui-store");
 	return {
-		Sidebar: ({ isOverlay, onPreviewLeave }: { isOverlay?: boolean; onPreviewLeave?: () => void }) => {
+		Sidebar: ({
+			isOverlay,
+			onPreviewLeave,
+			topbarOffset,
+		}: {
+			isOverlay?: boolean;
+			onPreviewLeave?: () => void;
+			topbarOffset?: string;
+		}) => {
 			const nonce = useStore((state) => state.createProjectNonce);
 			return (
-				<div data-overlay={isOverlay ? "true" : "false"} data-testid="sidebar" onPointerLeave={onPreviewLeave}>
+				<div
+					data-overlay={isOverlay ? "true" : "false"}
+					data-testid="sidebar"
+					data-topbar-offset={topbarOffset}
+					onPointerLeave={onPreviewLeave}
+				>
 					{nonce > 0 ? <div data-testid="create-project-flow" /> : null}
 				</div>
 			);
@@ -202,14 +228,6 @@ vi.mock("../components/Sidebar", async () => {
 
 import { Route } from "../routes/_shell";
 const ShellRoute = Route.options.component as ComponentType;
-
-type TestShellTerminal = {
-	handleId: string;
-	title: string;
-	workingDir: string;
-	createdAt: string;
-	projectId?: string;
-};
 
 const workspaces = [
 	{
@@ -291,10 +309,27 @@ beforeEach(() => {
 		isSidebarOpen: true,
 		newTaskRequest: null,
 		newShellTerminalNonce: 0,
+		settingsModal: null,
 	});
 });
 
 describe("shell workspace startup", () => {
+	it("places the topbar host inside the center panel surface on session routes", async () => {
+		shellMocks.state.routeParams = { sessionId: "sess-1" };
+		await renderShell();
+
+		const host = screen.getByTestId("session-topbar-host");
+		const sidebar = screen.getByTestId("sidebar");
+		// Host now lives inside center-panel-surface (after the sidebar in DOM order).
+		expect(host.compareDocumentPosition(sidebar) & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy();
+		expect(host).toHaveClass("h-inspector-tabs");
+		// Sidebar uses the same topbar offset as non-session routes (no longer "session").
+		expect(sidebar).not.toHaveAttribute("data-topbar-offset", "session");
+		expect(document.querySelector(".center-panel-shell--session > .center-panel-surface")).toBeInTheDocument();
+		// Host must be a descendant of the session surface.
+		expect(document.querySelector(".center-panel-shell--session > .center-panel-surface")?.contains(host)).toBe(true);
+	});
+
 	it("forces a confirmed fetch and preserves a collapsed sidebar preference", async () => {
 		let resolveFetch: ((value: WorkspaceSummary[]) => void) | undefined;
 		useUiStore.setState({ isSidebarOpen: false });
@@ -489,24 +524,6 @@ describe("shell new-shell-terminal shortcut subscription", () => {
 		);
 	});
 
-	it("marks the opened shell active", async () => {
-		await renderShell();
-		const shell = {
-			handleId: "shell-new",
-			title: "agent-orchestrator",
-			workingDir: "/tmp/agent-orchestrator",
-			createdAt: "2026-07-25T00:00:00Z",
-		};
-
-		pressNewShellTerminal();
-		const options = shellMocks.openShellTerminal.mock.calls[0][1] as {
-			onSuccess?: (shell: TestShellTerminal) => void;
-		};
-		act(() => options.onSuccess?.(shell));
-
-		expect(useUiStore.getState().activeShellTerminalHandleId).toBe("shell-new");
-	});
-
 	it("re-fires on a repeat press so a second terminal can be opened", async () => {
 		await renderShell();
 
@@ -566,7 +583,8 @@ describe("shell application shortcut subscriptions", () => {
 
 		act(() => shellMocks.state.openSettingsListener?.());
 
-		expect(shellMocks.navigate).toHaveBeenCalledWith({ to: "/settings" });
+		expect(useUiStore.getState().settingsModal).toEqual({ scope: "global" });
+		expect(shellMocks.navigate).not.toHaveBeenCalled();
 	});
 
 	it("moves to the next active session in the current project", async () => {
@@ -593,15 +611,25 @@ describe("shell application shortcut subscriptions", () => {
 		});
 	});
 
-	it("focuses the mounted terminal", async () => {
-		const terminalInput = document.createElement("textarea");
-		terminalInput.className = "xterm-helper-textarea";
-		document.body.appendChild(terminalInput);
+	it("focuses the active terminal without targeting an earlier parked xterm", async () => {
+		const parked = document.createElement("div");
+		parked.dataset.terminalActivationPhase = "parked";
+		parked.inert = true;
+		const parkedInput = document.createElement("textarea");
+		parkedInput.className = "xterm-helper-textarea";
+		parked.appendChild(parkedInput);
+		const active = document.createElement("div");
+		active.dataset.terminalActivationPhase = "visible";
+		const activeInput = document.createElement("textarea");
+		activeInput.className = "xterm-helper-textarea";
+		active.appendChild(activeInput);
+		document.body.append(parked, active);
 		await renderShell();
 
 		act(() => shellMocks.state.focusTerminalListener?.());
 
-		expect(document.activeElement).toBe(terminalInput);
-		terminalInput.remove();
+		expect(document.activeElement).toBe(activeInput);
+		parked.remove();
+		active.remove();
 	});
 });

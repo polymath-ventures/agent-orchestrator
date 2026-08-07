@@ -27,6 +27,7 @@ type spawnOptions struct {
 	harness        string
 	model          string
 	kind           string
+	mode           string
 	branch         string
 	prompt         string
 	issue          string
@@ -43,6 +44,7 @@ type spawnRequest struct {
 	ProjectID   string `json:"projectId"`
 	IssueID     string `json:"issueId,omitempty"`
 	Kind        string `json:"kind,omitempty"`
+	Mode        string `json:"mode,omitempty"`
 	Harness     string `json:"harness,omitempty"`
 	Model       string `json:"model,omitempty"`
 	Branch      string `json:"branch,omitempty"`
@@ -87,6 +89,11 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 				return usageError{fmt.Errorf("--name must be %d characters or fewer", maxDisplayNameLen)}
 			}
 
+			// Rejected here rather than forwarded, so a typo exits 2 as a usage
+			// error instead of reaching the daemon as an unsupported mode.
+			if opts.mode != "" && opts.mode != "chat" && opts.mode != "tui" {
+				return usageError{fmt.Errorf(`--mode must be "chat" or "tui"`)}
+			}
 			if opts.kind != "" && opts.kind != "worker" && opts.kind != "orchestrator" {
 				return usageError{fmt.Errorf(`--kind must be "worker" or "orchestrator"`)}
 			}
@@ -142,6 +149,7 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 				Kind:        opts.kind,
 				Harness:     opts.harness,
 				Model:       opts.model,
+				Mode:        opts.mode,
 				Branch:      opts.branch,
 				Prompt:      opts.prompt,
 				DisplayName: name,
@@ -187,10 +195,11 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 		return pflag.NormalizedName(name)
 	})
 	f.StringVar(&opts.project, "project", "", "Project id to spawn the session in (default: AO_PROJECT_ID, current registered repo, or Scratch when it is the only project)")
-	f.StringVar(&opts.harness, "harness", "", "Agent harness / --agent: claude-code, codex, codex-fugu, aider, opencode, grok, droid, amp, agy, crush, cursor, qwen, copilot, goose, auggie, continue, devin, cline, kimi, kiro, kilocode, vibe, pi, autohand, fake (default: resolved by the daemon from the project's worker mix or worker.agent config)")
+	f.StringVar(&opts.harness, "harness", "", "Agent harness / --agent: claude-code, codex, codex-fugu, aider, opencode, grok, droid, amp, agy, crush, cursor, qwen, copilot, goose, auggie, continue, devin, cline, kimi, muse, kiro, kilocode, vibe, pi, autohand, fake (default: resolved by the daemon from the project's worker mix or worker.agent config)")
 	f.StringVar(&opts.model, "model", "", "Model for the session (default: resolved by the daemon from the worker mix or role/project config)")
 	f.StringVar(&opts.kind, "kind", "", "Session role: worker or orchestrator (default: worker)")
 	f.StringVar(&opts.branch, "branch", "", "Branch for git project sessions (default: ao/<namespace-key>/root; workspace projects: ao/<namespace-key>; unsupported for Scratch)")
+	f.StringVar(&opts.mode, "mode", "", "Initial session interface: chat (structured agent connection) or tui (the agent's native terminal). Omitted uses the daemon default; compatible sessions can switch later.")
 	f.StringVar(&opts.prompt, "prompt", "", "Initial prompt for the agent")
 	f.StringVar(&opts.issue, "issue", "", "Issue id to associate with the session")
 	f.StringVar(&opts.name, "name", "", "Override the daemon-computed session name (max 20 characters)")

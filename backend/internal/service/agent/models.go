@@ -260,7 +260,7 @@ func (s *Service) modelCandidates(ctx context.Context, item agentregistry.Harnes
 		verified bool
 	)
 
-	if catalog, ok := item.Agent.(ports.AgentModelCatalog); ok {
+	if catalog, ok := item.Agent.(ports.AgentAvailableModels); ok {
 		discovered, err := catalog.AvailableModels(ctx)
 		if err == nil {
 			discovered = normalizeCatalogEntries(discovered)
@@ -405,7 +405,7 @@ func (s *Service) validateClaudeAlias(ctx context.Context, item agentregistry.Ha
 		Status:  ports.ModelValidationProbeUnavailable,
 		Message: "model is not in the installed maintained Claude alias catalog; runtime remains the final validator",
 	}
-	catalog, ok := item.Agent.(ports.AgentModelCatalog)
+	catalog, ok := item.Agent.(ports.AgentAvailableModels)
 	if !ok {
 		result.Message = "Claude adapter exposes no local alias catalog; runtime remains the final validator"
 	} else if entries, err := catalog.AvailableModels(ctx); err != nil {
@@ -480,7 +480,7 @@ func (s *Service) validateSelectionEffort(ctx context.Context, harness domain.Ag
 		if item.Harness != harness {
 			continue
 		}
-		catalog, ok := item.Agent.(ports.AgentModelCatalog)
+		catalog, ok := item.Agent.(ports.AgentAvailableModels)
 		if !ok {
 			return ports.ModelValidationResult{
 				Status:  ports.ModelValidationProbeUnavailable,

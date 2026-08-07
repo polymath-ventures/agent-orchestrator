@@ -27,6 +27,7 @@ const GLYPH_TEST_PROVIDER_MAP = {
 	vibe: true,
 	pi: true,
 	autohand: true,
+	muse: true,
 	fake: true,
 } satisfies Record<AgentProvider, true>;
 

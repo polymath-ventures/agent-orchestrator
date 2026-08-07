@@ -91,6 +91,9 @@ type AgentConfig struct {
 	Model string `json:"model,omitempty"`
 	// Effort is the default reasoning-effort level.
 	Effort Effort `json:"effort,omitempty"`
+	// Mode selects an agent-owned operating mode when the adapter exposes modes
+	// instead of raw model ids (currently Amp: low|medium|high|ultra).
+	Mode string `json:"mode,omitempty"`
 	// Permissions sets the agent's starting permission mode. Empty is treated
 	// like the adapter's default mode.
 	Permissions PermissionMode `json:"permissions,omitempty"`
@@ -101,16 +104,32 @@ type AgentConfig struct {
 // IsZero reports whether the config carries no settings, so storage can persist
 // SQL NULL and resolution can skip an empty config.
 func (c AgentConfig) IsZero() bool {
-	return c.Model == "" && c.Effort == "" && c.Permissions == "" && len(c.ModelByHarness) == 0
+	return c.Model == "" && c.Effort == "" && c.Mode == "" && c.Permissions == "" && len(c.ModelByHarness) == 0
+}
+
+// Valid reports whether the mode is one AO knows. Empty counts as valid: it means
+// "the adapter's own baseline", which is a legitimate choice rather than a missing
+// one.
+func (m PermissionMode) Valid() bool {
+	switch m {
+	case "", PermissionModeDefault, PermissionModeAcceptEdits,
+		PermissionModeAuto, PermissionModeBypassPermissions:
+		return true
+	default:
+		return false
+	}
 }
 
 // Validate rejects values outside the typed vocabulary so a bad config is
 // refused when it is set (CLI/API) rather than silently dropped at spawn.
 func (c AgentConfig) Validate() error {
-	switch c.Permissions {
-	case "", PermissionModeDefault, PermissionModeAcceptEdits, PermissionModeAuto, PermissionModeBypassPermissions:
-	default:
+	if !c.Permissions.Valid() {
 		return fmt.Errorf("invalid permissions %q: want one of default, accept-edits, auto, bypass-permissions", c.Permissions)
+	}
+	switch c.Mode {
+	case "", "low", "medium", "high", "ultra":
+	default:
+		return fmt.Errorf("invalid mode %q: want one of low, medium, high, ultra", c.Mode)
 	}
 	if !c.Effort.Valid() {
 		return fmt.Errorf("invalid effort %q: want one of minimal, low, medium, high, xhigh, max", c.Effort)

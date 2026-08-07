@@ -20,7 +20,7 @@ func (catalogStub) AvailableModels(context.Context) ([]ModelCatalogEntry, error)
 }
 
 func TestAgentModelCatalogCarriesHarnessNativeMetadata(t *testing.T) {
-	var catalog AgentModelCatalog = catalogStub{}
+	var catalog AgentAvailableModels = catalogStub{}
 	models, err := catalog.AvailableModels(context.Background())
 	if err != nil {
 		t.Fatalf("AvailableModels: %v", err)

@@ -18,7 +18,7 @@ import (
 
 const catalogTimeout = 10 * time.Second
 
-var _ ports.AgentModelCatalog = (*Plugin)(nil)
+var _ ports.AgentAvailableModels = (*Plugin)(nil)
 
 // AvailableModels returns the model picker owned by the selected Codex-family
 // harness. Plain Codex asks its offline app-server; Fugu reads the installed

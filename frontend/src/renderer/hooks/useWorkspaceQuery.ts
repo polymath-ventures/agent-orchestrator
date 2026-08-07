@@ -7,8 +7,8 @@ import { captureRendererEvent } from "../lib/telemetry";
 import {
 	FLEET_WORKSPACE_ID,
 	type PauseState,
-	type PRState,
 	type ProjectKind,
+	type PRState,
 	type PullRequestFacts,
 	type SessionKind,
 	toAgentProvider,
@@ -41,7 +41,6 @@ function toPullRequestFacts(pr: components["schemas"]["SessionPRFacts"]): PullRe
 }
 
 export const workspaceQueryKey = ["workspaces"] as const;
-
 const reportedUnknownSessionFields = new Set<string>();
 
 function reportUnknownSessionField(field: "status" | "activity", value?: string): void {
@@ -68,11 +67,6 @@ async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
 		if (fake) return fake.snapshot();
 	}
 	if (!hasTrustedApiBaseUrl()) {
-		// Web-first fork: build:web sets VITE_NO_ELECTRON=1 for the PRODUCTION
-		// supervisor, which talks to a real daemon over same-origin (a trusted
-		// base URL). So real-daemon web mode reaches the fetch below. Only a
-		// genuinely daemon-less preview (no trusted base URL) falls back to the
-		// upstream mock workspaces; production web mode never serves mock data.
 		if (usesPreviewWorkspaceData) return mockWorkspaces;
 		throw new Error("AO daemon API is not ready");
 	}
@@ -83,29 +77,27 @@ async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
 	if (projectsError || sessionsError) throw projectsError ?? sessionsError;
 
 	const sessions = sessionsData?.sessions ?? [];
-	const workspaces: WorkspaceSummary[] = (projectsData?.projects ?? []).map((project) => ({
-		id: project.id,
-		name: project.name,
-		kind: toProjectKind(project.kind) ?? ("single_repo" satisfies ProjectKind),
-		path: project.path,
-		orchestratorAgent: project.orchestratorAgent ? toAgentProvider(project.orchestratorAgent) : undefined,
-		paused: project.paused,
-		pauseState: toPauseState(project.pauseState),
-		drainingWorkers: project.drainingWorkers,
-		sessions: sessions
-			.filter((session) => session.projectId === project.id)
-			.map((session) => toWorkspaceSession(session, project.id, project.name)),
-	}));
-	const projectlessPrimeSessions = sessions
+	const workspaces: WorkspaceSummary[] = (projectsData?.projects ?? []).map((project) => {
+		const kind = toProjectKind(project.kind) ?? ("single_repo" satisfies ProjectKind);
+		return {
+			id: project.id,
+			name: project.name,
+			kind,
+			path: project.path,
+			orchestratorAgent: project.orchestratorAgent ? toAgentProvider(project.orchestratorAgent) : undefined,
+			paused: project.paused,
+			pauseState: toPauseState(project.pauseState),
+			drainingWorkers: project.drainingWorkers,
+			sessions: sessions
+				.filter((session) => session.projectId === project.id)
+				.map((session) => toWorkspaceSession(session, project.id, project.name)),
+		};
+	});
+	const fleetSessions = sessions
 		.filter((session) => !session.projectId && toSessionKind(session.kind) === "prime")
 		.map((session) => toWorkspaceSession(session, FLEET_WORKSPACE_ID, "AO Fleet"));
-	if (projectlessPrimeSessions.length > 0) {
-		workspaces.push({
-			id: FLEET_WORKSPACE_ID,
-			name: "AO Fleet",
-			path: "",
-			sessions: projectlessPrimeSessions,
-		});
+	if (fleetSessions.length > 0) {
+		workspaces.push({ id: FLEET_WORKSPACE_ID, name: "AO Fleet", path: "", sessions: fleetSessions });
 	}
 	return workspaces;
 }
@@ -119,9 +111,10 @@ function toWorkspaceSession(
 	const scmStatus = session.scmStatus ? toSessionStatus(session.scmStatus) : undefined;
 	const activity = toSessionActivity(session.activity);
 	if (status === "unknown") reportUnknownSessionField("status", session.status);
-	if (!activity || activity.state === "unknown") {
-		reportUnknownSessionField("activity", session.activity?.state);
-	}
+	if (!activity || activity.state === "unknown") reportUnknownSessionField("activity", session.activity?.state);
+	const reviewerHarness = ["claude-code", "codex", "codex-fugu", "opencode"].includes(session.reviewerHarness ?? "")
+		? (session.reviewerHarness as WorkspaceSession["reviewerHarness"])
+		: undefined;
 	return {
 		id: session.id,
 		terminalHandleId: session.terminalHandleId,
@@ -130,7 +123,9 @@ function toWorkspaceSession(
 		title: session.displayName ?? session.issueId ?? session.id,
 		issueId: session.issueId,
 		provider: toAgentProvider(session.harness),
+		reviewerHarness,
 		kind: toSessionKind(session.kind),
+		mode: session.mode === "chat" ? "chat" : "tui",
 		branch: session.branch || undefined,
 		status,
 		scmStatus,
@@ -141,6 +136,8 @@ function toWorkspaceSession(
 		activity,
 		previewUrl: session.previewUrl,
 		previewRevision: session.previewRevision,
+		isPinned: session.isPinned ?? false,
+		pinnedAt: session.pinnedAt ?? undefined,
 		prs: (session.prs ?? []).map(toPullRequestFacts),
 	};
 }

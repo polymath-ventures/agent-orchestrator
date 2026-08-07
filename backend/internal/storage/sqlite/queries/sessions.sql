@@ -3,24 +3,53 @@ SELECT COALESCE(MAX(num), 0) + 1 AS next FROM sessions WHERE project_id = ?;
 
 -- name: InsertSession :exec
 INSERT INTO sessions (
-    id, project_id, num, issue_id, kind, harness, display_name,
+    id, project_id, num, issue_id, kind, harness, reviewer_harness, display_name,
     activity_state, activity_last_at, last_error, first_signal_at, is_terminated,
     branch, workspace_path, workspace_repo_path, diff_base_sha, diff_base_ref, runtime_handle_id,
     runtime_launch_id, agent_session_id, prompt,
     preview_url, preview_revision, model, effort, mix_selected, mix_bucket_model,
-    prompt_policy_hash, terminate_on_pr_merge, cleanup_generation, created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+    prompt_policy_hash, terminate_on_pr_merge, cleanup_generation,
+    session_mode, provider_conversation_id, controller_generation,
+    created_at, updated_at, is_pinned, pinned_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 -- name: UpdateSession :exec
 UPDATE sessions SET
-    issue_id = ?, kind = ?, harness = ?, display_name = ?,
+    issue_id = ?, kind = ?, harness = ?, reviewer_harness = ?, display_name = ?,
     activity_state = ?, activity_last_at = ?, last_error = ?, first_signal_at = ?, is_terminated = ?,
     branch = ?, workspace_path = ?, workspace_repo_path = ?, diff_base_sha = ?, diff_base_ref = ?, runtime_handle_id = ?,
     runtime_launch_id = ?, agent_session_id = ?, prompt = ?,
     preview_url = ?, preview_revision = ?, model = ?, effort = ?, mix_selected = ?,
     mix_bucket_model = ?, prompt_policy_hash = ?, terminate_on_pr_merge = ?,
-    cleanup_generation = ?, updated_at = ?
+    cleanup_generation = ?,
+    provider_conversation_id = ?, controller_generation = ?, updated_at = ?,
+    is_pinned = ?, pinned_at = ?
 WHERE id = ?;
+
+-- name: ClaimChatControllerGeneration :execrows
+-- A Chat controller claims ownership before its event goroutine starts. Provider
+-- projections compare against this value in the same transaction as their write,
+-- so an older controller cannot mutate a session after a replacement takes over.
+UPDATE sessions
+SET controller_generation = ?, updated_at = ?
+WHERE id = ? AND session_mode = 'chat';
+
+-- name: CommitSessionControllerEpoch :execrows
+-- Lifecycle Manager owns this controller-epoch fact. The source-mode CAS keeps
+-- a stale transition from replacing a newer controller, while clearing every
+-- process-specific handle prevents either interface from inheriting the
+-- other's writer identity.
+UPDATE sessions
+SET session_mode = ?,
+    runtime_handle_id = '',
+    runtime_launch_id = '',
+    agent_session_id = ?,
+    provider_conversation_id = ?,
+    controller_generation = '',
+    activity_state = 'idle',
+    activity_last_at = ?,
+    updated_at = ?
+WHERE id = ? AND session_mode = ? AND is_terminated = 0;
 
 -- name: GetSession :one
 SELECT id, COALESCE(project_id, '') AS project_id, num, issue_id, kind, harness,
@@ -29,7 +58,9 @@ SELECT id, COALESCE(project_id, '') AS project_id, num, issue_id, kind, harness,
        display_name, first_signal_at, preview_url, preview_revision, model,
        mix_selected, effort, prompt_policy_hash,
        mix_bucket_model, cleanup_generation, runtime_launch_id, workspace_repo_path,
-       terminate_on_pr_merge, diff_base_sha, diff_base_ref, last_error, namespace_key
+       terminate_on_pr_merge, diff_base_sha, diff_base_ref, last_error, namespace_key,
+       reviewer_harness, is_pinned, pinned_at,
+       session_mode, provider_conversation_id, controller_generation
 FROM sessions WHERE id = ?;
 
 -- name: ListSessionsByProject :many
@@ -39,7 +70,9 @@ SELECT id, COALESCE(project_id, '') AS project_id, num, issue_id, kind, harness,
        display_name, first_signal_at, preview_url, preview_revision, model,
        mix_selected, effort, prompt_policy_hash,
        mix_bucket_model, cleanup_generation, runtime_launch_id, workspace_repo_path,
-       terminate_on_pr_merge, diff_base_sha, diff_base_ref, last_error, namespace_key
+       terminate_on_pr_merge, diff_base_sha, diff_base_ref, last_error, namespace_key,
+       reviewer_harness, is_pinned, pinned_at,
+       session_mode, provider_conversation_id, controller_generation
 FROM sessions WHERE project_id = ? ORDER BY num;
 
 -- name: ListAllSessions :many
@@ -49,7 +82,9 @@ SELECT id, COALESCE(project_id, '') AS project_id, num, issue_id, kind, harness,
        display_name, first_signal_at, preview_url, preview_revision, model,
        mix_selected, effort, prompt_policy_hash,
        mix_bucket_model, cleanup_generation, runtime_launch_id, workspace_repo_path,
-       terminate_on_pr_merge, diff_base_sha, diff_base_ref, last_error, namespace_key
+       terminate_on_pr_merge, diff_base_sha, diff_base_ref, last_error, namespace_key,
+       reviewer_harness, is_pinned, pinned_at,
+       session_mode, provider_conversation_id, controller_generation
 FROM sessions ORDER BY COALESCE(project_id, ''), num;
 
 -- name: SetSessionNamespaceKey :execrows
@@ -70,6 +105,12 @@ UPDATE sessions SET preview_url = ?, preview_revision = preview_revision + 1, up
 
 -- name: SetSessionTerminateOnPRMerge :execrows
 UPDATE sessions SET terminate_on_pr_merge = ?, updated_at = ? WHERE id = ?;
+
+-- name: SetSessionPinned :execrows
+UPDATE sessions SET is_pinned = ?, pinned_at = ?, updated_at = ? WHERE id = ?;
+
+-- name: SetSessionReviewerHarness :execrows
+UPDATE sessions SET reviewer_harness = ?, updated_at = ? WHERE id = ?;
 
 -- name: SessionIsSeed :one
 -- SessionIsSeed reports whether the session id matches a row still in seed

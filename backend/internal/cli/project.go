@@ -83,6 +83,7 @@ type workspaceRepoDetails struct {
 type agentConfig struct {
 	Model          string                  `json:"model,omitempty"`
 	Effort         string                  `json:"effort,omitempty"`
+	Mode           string                  `json:"mode,omitempty"`
 	Permissions    string                  `json:"permissions,omitempty"`
 	ModelByHarness map[string]harnessModel `json:"modelByHarness,omitempty"`
 }
