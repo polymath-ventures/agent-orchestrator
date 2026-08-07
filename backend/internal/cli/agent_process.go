@@ -11,6 +11,8 @@ import (
 	"unicode/utf8"
 
 	"github.com/spf13/cobra"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
 const supervisedExitReportTimeout = 5 * time.Second
@@ -45,10 +47,10 @@ func newAgentProcessSuperviseCommand(ctx *commandContext) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			sessionID = strings.TrimSpace(sessionID)
 			launchID = strings.TrimSpace(launchID)
-			if !sessionIDPattern.MatchString(sessionID) {
+			if !domain.IsPathSafeSessionID(sessionID) {
 				return usageError{fmt.Errorf("invalid session id")}
 			}
-			if !sessionIDPattern.MatchString(launchID) {
+			if launchID = validLaunchID(launchID); launchID == "" {
 				return usageError{fmt.Errorf("invalid launch id")}
 			}
 			ctx.runSupervisedProcess(cmd.Context(), sessionID, launchID, args)

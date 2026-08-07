@@ -19,10 +19,11 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
-// sessionIDPattern bounds the AO_SESSION_ID we will place in a request path to
-// the id alphabet the daemon issues. Validating the externally-set env value
-// before it reaches the loopback URL keeps it from steering the request.
-var sessionIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
+// launchIDPattern bounds a supervised-process launch id. Launch ids are minted
+// as randomblob hex, so unlike a session id (which inherits a legacy project's
+// dotted name) they never legitimately contain a dot; keeping this strict
+// rejects a traversal segment placed where a launch id is expected.
+var launchIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 
 const (
 	// hooksLogName is the file under AO_DATA_DIR where hook delivery failures
@@ -144,7 +145,7 @@ func newHooksCommand(ctx *commandContext) *cobra.Command {
 
 func (c *commandContext) runHook(ctx context.Context, agent, event string) error {
 	sessionID := strings.TrimSpace(os.Getenv("AO_SESSION_ID"))
-	if !sessionIDPattern.MatchString(sessionID) {
+	if !domain.IsPathSafeSessionID(sessionID) {
 		// Not an AO-managed session (unset/empty), or an id we won't put in a
 		// request path. Return before reading stdin so a manual invocation
 		// without a piped payload can't block on EOF.
@@ -225,7 +226,7 @@ func currentWorkingDir() string {
 
 func validLaunchID(value string) string {
 	value = strings.TrimSpace(value)
-	if !sessionIDPattern.MatchString(value) {
+	if !launchIDPattern.MatchString(value) {
 		return ""
 	}
 	return value
@@ -249,7 +250,7 @@ func (c *commandContext) emitSessionStartContext(agent, event, sessionID string)
 		return
 	}
 	path := filepath.Join(dataDir, "prompts", sessionID, "system.md")
-	data, err := os.ReadFile(path) //nolint:gosec // sessionID is bounded by sessionIDPattern.
+	data, err := os.ReadFile(path) //nolint:gosec // sessionID is traversal-safe by IsPathSafeSessionID.
 	if err != nil {
 		c.reportHookFailure(agent, event, sessionID, fmt.Errorf("read system prompt: %w", err))
 		return

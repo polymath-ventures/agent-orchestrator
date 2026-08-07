@@ -1244,6 +1244,41 @@ func TestSpawn_WrapsSupervisedAgentAndPersistsGeneration(t *testing.T) {
 	}
 }
 
+// TestSpawn_DottedProjectSessionIDSurvivesSupervisorArgv guards the #266 root
+// cause: a legacy project whose name contains a dot composes a session id that
+// keeps the dot, and that id is placed verbatim in the `agent-process
+// supervise --session <id>` argv. The supervisor CLI validates that value, so
+// it must be path-safe or every launch dies with "invalid session id" before
+// the agent starts.
+func TestSpawn_DottedProjectSessionIDSurvivesSupervisorArgv(t *testing.T) {
+	st := newFakeStore()
+	st.projects["goodadbadad.net"] = domain.ProjectRecord{ID: "goodadbadad.net", Config: testRoleAgents()}
+	rt := &fakeRuntime{}
+	agent := supervisedLaunchAgent{launchArgvAgent{argv: []string{"codex", "--model", "gpt-5"}}}
+	m := New(Deps{
+		Runtime: rt, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st},
+		LookPath:    func(string) (string, error) { return "/bin/true", nil },
+		Executable:  func() (string, error) { return "/opt/ao", nil },
+		NewLaunchID: func() string { return "launch-7" },
+	})
+
+	rec, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "goodadbadad.net", Kind: domain.KindWorker, Harness: domain.HarnessCodex})
+	if err != nil {
+		t.Fatalf("spawn for a dotted-name project failed: %v", err)
+	}
+	if !strings.Contains(string(rec.ID), ".") {
+		t.Fatalf("expected the composed session id to keep the dot, got %q", rec.ID)
+	}
+	wantArgv := []string{"/opt/ao", "agent-process", "supervise", "--session", string(rec.ID), "--launch", "launch-7", "--", "codex", "--model", "gpt-5"}
+	if !reflect.DeepEqual(rt.lastCfg.Argv, wantArgv) {
+		t.Fatalf("runtime argv = %#v, want %#v", rt.lastCfg.Argv, wantArgv)
+	}
+	if !domain.IsPathSafeSessionID(string(rec.ID)) {
+		t.Fatalf("supervisor --session value %q is not path-safe; launch would fail with 'invalid session id'", rec.ID)
+	}
+}
+
 func TestRestore_RotatesSupervisedAgentGeneration(t *testing.T) {
 	st := newFakeStore()
 	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
