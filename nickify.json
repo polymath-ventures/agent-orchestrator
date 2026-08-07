@@ -3,9 +3,6 @@
 	"repo": "polymath-ventures/agent-orchestrator",
 	"clients": ["claude-code", "codex"],
 	"subsystems": {
-		"beads": {
-			"enabled": true
-		},
 		"openspec": {
 			"enabled": true
 		},
@@ -14,7 +11,7 @@
 		},
 		"agent_instructions": {
 			"enabled": true,
-			"standard_version": 2,
+			"standard_version": 3,
 			"opt_outs": {
 				"agent-instructions/agent-overrides/agy.md": {
 					"reason": "repo clients are claude-code and codex only"
