@@ -198,7 +198,13 @@ them as the starting point for a search, not as an exhaustive file list.
    their `ops/*.test.mjs` guards, of which `ops/ao-systemd-units.test.mjs` is the
    one that pins unit invariants; the pre-push gate is `scripts/ci/`; the Prettier
    CI is `.github/workflows/prettier.yml`; and the final-review status contract
-   helper is `ops/final-review-status.mjs`. The `aong` porcelain has its own
+   helper is `ops/final-review-status.mjs`. **Beads is retired (issue #262 →
+   #263) and must stay retired**: GitHub issues are the sole tracker, and the `.beads/`,
+   `.beads-credential-key`, and `.beads.gate.lock` entries in `.gitignore` must
+   survive any blend of that file. They look like dead weight for a removed
+   tool, but they are what keeps leftover local Beads state (a Dolt DB, jsonl
+   logs, a lock file) from marking a checkout dirty — and a dirty shared
+   checkout blocks orchestrator convergence. The `aong` porcelain has its own
    section below.
    Reference issues/PRs: headless standup #13 → #19; tmux socket #160 → #176;
    pre-push gate #105 → #108, #219 → #222, #227 → #228; build revision on the
