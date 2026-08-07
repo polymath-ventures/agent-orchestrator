@@ -8,8 +8,7 @@ Shared contract for what the client-specific identity bodies must define.
 Shared skills describe process; each agent identity supplies the concrete
 mechanics. The client-specific identity body appended after this module defines
 how that client invokes skills, spawns subagents, runs independent review,
-monitors review cycles, maps Beads assignees to GitHub logins, and invokes
-OpenSpec flows.
+monitors review cycles, identifies its GitHub login, and invokes OpenSpec flows.
 
 Subagents are selected by capability tier, not by a hardcoded model in shared
 skill text:

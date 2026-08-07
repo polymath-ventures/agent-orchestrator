@@ -7,7 +7,7 @@
 One skill, one entrypoint (`/nickify`), that brings the **Polymath agent
 standard** to either a **user account** or a **repo**. It detects where you run
 it and asks which you want. It's an *orchestrator* — it drives your existing
-tools (`sx`, `openspec`, `bd`, `git`, the agent-CLI installers, the
+tools (`sx`, `openspec`, `git`, GitHub, the agent-CLI installers, and the
 agent-instructions assembler) rather than reimplementing them.
 
 **How it behaves everywhere:**
@@ -33,16 +33,15 @@ Ensures the account you're in has the whole toolkit:
 1. **Agent CLIs** — installs any missing: `claude`, `codex`, `opencode`.
 2. **`sx`** — installs or upgrades to at least 2.2.7, configures it against the vault if needed, then runs
    `sx install` so **polypowers** and the other org assets land in `~/.claude/`.
-3. **Beads** — ensures the `bd` CLI is present.
-4. **Hooks + wiring** — ensures the global hooks and `settings.json` entries:
+3. **Hooks + wiring** — ensures the global hooks and `settings.json` entries:
    `tool-installer`, the instructions assembler (`polyscribe`), and the
    SessionStart `sx install`. Per-tool-use usage reporting is intentionally not
    installed or ensured; nickify records `bootstrapOptions.analytics_hook=false`
    and removes only exact sx-owned reporters (including exact legacy
    `skills`-binary equivalents) left by older configuration.
-5. **Baseline tools** — ensures `bd` and `gh`.
+4. **Baseline tools** — ensures `gh`.
 
-Result: a bare account becomes one where every agent CLI, sx, beads, the org
+Result: a bare account becomes one where every agent CLI, sx, the org
 skills, and the hooks are present and wired.
 
 ---
@@ -59,19 +58,20 @@ Brings the current repo to the standard:
    The org-scoped skills are live.
 3. **OpenSpec** — `openspec init` for the configured clients (if absent) and
    seeds `project.md`.
-4. **Beads** — **attaches** the repo to your system-wide beads (not an isolated
-   per-repo DB) when Beads are enabled in `nickify.json`.
-5. **agent-instructions + assembler** — scaffolds the modular
+4. **agent-instructions + assembler** — scaffolds the modular
    `agent-instructions/` source (tailored to the stack), **including the
    versioned generic standard set** (polypowers, operating principles, identity
    contract, and per-client identity bodies), then runs the assembler to emit
    `CLAUDE.md`/`AGENTS.md`/`GEMINI.md`. So the repo actually tells agents *how
    and when they must use polypowers* — not just makes the skills available.
-6. **tool request drift** — reports repo-level tool files and points new recipes to trusted vault sidecars.
+5. **tool request drift** — reports repo-level tool files and points new recipes to trusted vault sidecars.
+6. **GitHub contract** — installs trusted closing-issue and final-review status
+   checks, requires pull requests without bypass actors on the default branch,
+   and binds both status contexts after their workflows reach the default branch.
 7. **Finalize** — `.gitignore` hygiene for repo-local agent worktrees,
    generated local asset/runtime output (`.claude/skills/`,
    `.claude/commands/`, `.agents/skills/`, `.agents/commands/`,
-   `.playwright-cli/`), and beads secrets; the `.nickified.json` receipt;
+   `.playwright-cli/`); the `.nickified.json` receipt;
    optional initial commit; and a summary with next steps.
 
 ### `nickify.json`
@@ -88,12 +88,12 @@ The schema is nested by subsystem:
   "repo": "owner/name",
   "clients": ["claude-code", "codex"],
   "subsystems": {
-    "beads": { "enabled": false, "reason": "user-opt-out" },
     "openspec": { "enabled": true },
     "sx": { "enabled": true },
-    "agent_instructions": { "enabled": true, "standard_version": 2 },
+    "agent_instructions": { "enabled": true, "standard_version": 3 },
     "tools": { "enabled": true },
-    "hooks": { "enabled": true }
+    "hooks": { "enabled": true },
+    "github_contract": { "enabled": true }
   }
 }
 ```
@@ -103,19 +103,12 @@ existing array byte-for-byte unless the user edits `nickify.json`.
 Repo scope needs a structured JSON parser (`jq`, `python3`, or `node`) to read
 the desired-state file and stops with a clear message if none is available.
 
-Use `/nickify --nobeads` in repo scope to record the Beads opt-out. Later reruns
-honor the file: they do not re-prompt or create Beads just because `.beads/` is
-absent. If the file says a subsystem is disabled but files already exist,
-nickify reports the drift and leaves those files untouched.
-
-This version ships `--nobeads` as the only flag; reversing an opt-out is an
-explicit edit to `nickify.json` until a future affirmative flag is added.
-
-When `nickify.json` is first introduced to an existing repo, nickify migrates
-prior explicit opt-outs from the latest repo-scope `.nickified.json` receipt so
-an older `--nobeads` run does not get silently reversed. The `repo` field is
-derived once from the `origin` remote, omitted when no remote exists, and then
-preserved on rerun for byte-identical idempotency.
+Unknown retired subsystem keys in an older `nickify.json` are reported as
+legacy configuration and ignored without deleting their files. If the file says
+an active subsystem is disabled but files already exist, nickify reports the
+drift and leaves those files untouched. The `repo` field is derived once from
+the `origin` remote, omitted when no remote exists, and then preserved on rerun
+for byte-identical idempotency.
 
 `.nickified.json` remains the receipt of completed runs. It is not a desired
 state file and does not replace `nickify.json`.
@@ -167,9 +160,9 @@ the prose that governs it. It consists of:
   from repro to fix).
 - **Spec-driven change** — `openspec-explore` / `-propose` / `-apply-change` /
   `-archive-change` and the `opsx/*` commands (the OpenSpec workflow).
-- **Entry points & issues** — `address-issue` (router: reads a bead/issue and
+- **Entry points & issues** — `address-issue` (router: reads a GitHub issue and
   dispatches to the right skill), `capture` (turn notes/recordings into tracked
-  work), `issue-status`, `sync-issues-to-beads`.
+  work), and `issue-status`.
 - **Lifecycle** — `cleanup-merge`, `deploy-verify`, `stabilize`.
 - **The governing module** — the "constitution": the
   MUST-do rules (e.g. *don't self-review, don't self-merge*), the reviewer-roster

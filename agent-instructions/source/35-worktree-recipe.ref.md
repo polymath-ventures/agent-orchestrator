@@ -9,7 +9,7 @@ worktree. Read it then; you do not need it in context the rest of the time.
 
 # Worktree recipe
 
-Rule 2 states the invariant: every change you make — bead-tracked or ad-hoc,
+Rule 2 states the invariant: every change you make — issue-tracked or ad-hoc,
 code or docs or config — happens in a worktree YOU created under the repo-local
 agent worktree directory. This is how you create one:
 
@@ -79,7 +79,7 @@ test "$(git -C "$MAIN_REPO_ROOT" rev-parse --is-inside-work-tree)" = true || {
 DEFAULT_BRANCH_REF="$(git symbolic-ref --quiet refs/remotes/origin/HEAD 2>/dev/null || echo refs/remotes/origin/main)"
 DEFAULT_BRANCH="${DEFAULT_BRANCH_REF#refs/remotes/origin/}"
 TASK_WORKTREE="$MAIN_REPO_ROOT/.claude/worktrees/<slug>"
-WORK_ITEM_KEY=<bead-id-or-gh:#N>
+WORK_ITEM_KEY=gh:#N
 git -C "$MAIN_REPO_ROOT" fetch origin "$DEFAULT_BRANCH"
 TASK_WORKTREE="$(create_owned_worktree \
   "$MAIN_REPO_ROOT" "$TASK_WORKTREE" <branch> "origin/$DEFAULT_BRANCH" "$WORK_ITEM_KEY")" || exit 1
@@ -119,6 +119,6 @@ reuse. It is provenance only, and it is not what authorizes deletion: cleanup
 removes a merged task worktree whether or not it is marked, and retains an
 unmerged one whether or not it is marked. Cleanup will never backfill a missing
 marker, because provenance has to be recorded at creation to mean anything. Set
-`WORK_ITEM_KEY` to the canonical work-item key: the Beads id when the repo uses
-Beads, otherwise `gh:#N`. A plausible path, branch name, current checkout, or
-files already written there are never ownership proof.
+`WORK_ITEM_KEY` to the canonical work-item key `gh:#N`. A plausible path,
+branch name, current checkout, or files already written there are never
+ownership proof.

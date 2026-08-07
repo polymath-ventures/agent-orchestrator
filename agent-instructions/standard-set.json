@@ -1,14 +1,13 @@
 {
-  "version": 2,
+  "version": 3,
   "modules": [
-    {"source": "30-polypowers.md","path": "agent-instructions/source/30-polypowers.md","marker": "@sx-managed: polypowers-module","sha256": "92096985b61c5fd38c1a4f1b90ae95af72a6130dd5abc14037a6bf7e8d03c6dc"},
-    {"source": "35-worktree-recipe.ref.md","path": "agent-instructions/source/35-worktree-recipe.ref.md","marker": "@sx-managed: polypowers-worktree-recipe","sha256": "4bac2b381e56e42142ccdfc787fe96af4029ae20e12b9123844334580970f904"},
+    {"source": "30-polypowers.md","path": "agent-instructions/source/30-polypowers.md","marker": "@sx-managed: polypowers-module","sha256": "d0412959354ec6b4628a4d174032cb1a8dec6036fa6f809bf155cc1295c3da26"},
+    {"source": "35-worktree-recipe.ref.md","path": "agent-instructions/source/35-worktree-recipe.ref.md","marker": "@sx-managed: polypowers-worktree-recipe","sha256": "0b13dd95ad611999a7f02b470dcebf3ced9b04312b086ec585af07156c5238dc"},
     {"source": "40-operating-principles.md","path": "agent-instructions/source/40-operating-principles.md","marker": "@sx-managed: operating-principles","sha256": "46c3ffcb1a4613df5dee99e740d285a46957e39f70b807134f8572766fecc933"},
-    {"source": "65-agent-identity.md","path": "agent-instructions/source/65-agent-identity.md","marker": "@sx-managed: agent-identity-contract","sha256": "c9dd7642826073cf93d5ad194e28a792e22215eb6ea1d5921aae22b15eb4f051"},
-    {"source": "agent-overrides/claude.md","path": "agent-instructions/agent-overrides/claude.md","marker": "@sx-managed: claude-identity","sha256": "ede9fdd1f90c3d35fd9be0ba286c98a42aabce4ca80281504e88b1a0e8474a38"},
-    {"source": "agent-overrides/codex.md","path": "agent-instructions/agent-overrides/codex.md","marker": "@sx-managed: codex-identity","sha256": "d6532fbbdf1989f058f960ffb67b9fb2e494d5447d8520cf31b9fcaf64a0a717"},
-    {"source": "agent-overrides/agy.md","path": "agent-instructions/agent-overrides/agy.md","marker": "@sx-managed: agy-identity","sha256": "722718508109d6cac2082611c26bf600f4f2ff90c14c84e0fa4ed95285b65bbf"},
-    {"source": "README.md","path": "agent-instructions/README.md","marker": "@sx-managed: agent-instructions-readme","sha256": "f5e56b4e9f3ca110cffb8252373240141e37f1ca638c016202eab0db3954dec4"},
-    {"source": "scripts/polyscribe.sh","path": "scripts/polyscribe.sh","marker": "@sx-managed: polyscribe","sha256": "f1e3628b5f325cd81428580b0488ab2d9cac552b2fed77cdca707a542ef093cf"}
+    {"source": "65-agent-identity.md","path": "agent-instructions/source/65-agent-identity.md","marker": "@sx-managed: agent-identity-contract","sha256": "9b39ef859c41dc5a0df11424a64ad1d8abd32ae274316f59b11318f5c9107830"},
+    {"source": "agent-overrides/claude.md","path": "agent-instructions/agent-overrides/claude.md","marker": "@sx-managed: claude-identity","sha256": "0775da2609143ab08ca593502da5b38c26d49971f12c166b5c2a312a0f2d772d"},
+    {"source": "agent-overrides/codex.md","path": "agent-instructions/agent-overrides/codex.md","marker": "@sx-managed: codex-identity","sha256": "32ebbe649b27f8a614b4342fa577017de0f074cb7169d2e25e539628ae4aab84"},
+    {"source": "agent-overrides/agy.md","path": "agent-instructions/agent-overrides/agy.md","marker": "@sx-managed: agy-identity","sha256": "bfc62b52a0e1fa10822da2be06053d96710c595c5a3fa44bf032ba5c11c57f12"},
+    {"source": "README.md","path": "agent-instructions/README.md","marker": "@sx-managed: agent-instructions-readme","sha256": "7554f16b675ed32dc2a261b1234ead845ba0e6e1720c565acb18359c01b394b2"}
   ]
 }
