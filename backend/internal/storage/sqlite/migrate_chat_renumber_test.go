@@ -3,74 +3,58 @@ package sqlite
 import (
 	"database/sql"
 	"path/filepath"
-	"reflect"
+	"strings"
 	"testing"
 )
 
-func TestMigrateRecognizesPreRenumberedChatSchema(t *testing.T) {
+// A normal database at version 70 already has the fork's migrations 52-65 and
+// the first three Chat migrations. Those old version numbers must not be
+// mistaken for pre-renumbered Chat history: doing so marks 71-81 applied without
+// running them and leaves generated queries pointed at schema that does not
+// exist.
+func TestMigrateFromVersion70AppliesRemainingChatMigrations(t *testing.T) {
 	db, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "ao.db")+pragmas)
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
+	db.SetMaxOpenConns(1)
 	t.Cleanup(func() { _ = db.Close() })
-	upTo(t, db, 79)
+	upTo(t, db, 70)
 
-	// Reproduce a database opened by the feature branch when the exact same Chat
-	// migrations were numbered 0052-0065. Remove main's current 0052 schema so
-	// its burned version must be released and applied under its real meaning.
-	if _, err := db.Exec(`
-UPDATE app_settings SET default_session_mode = 'chat';
-DROP TRIGGER IF EXISTS usage_sources_cdc_update;
-DROP TRIGGER IF EXISTS usage_bindings_cdc_update;
-DROP TRIGGER IF EXISTS usage_bindings_cdc_insert;
-DROP VIEW IF EXISTS usage_session_integrity;
-DROP VIEW IF EXISTS usage_codex_pending_children;
-DROP VIEW IF EXISTS usage_codex_source_discovery;
-DROP TABLE IF EXISTS model_usage_events;
-DROP TABLE IF EXISTS usage_sources;
-DROP TABLE IF EXISTS usage_bindings;
-DELETE FROM goose_db_version WHERE version_id = 52 OR version_id BETWEEN 66 AND 79;
-`); err != nil {
-		t.Fatalf("seed pre-renumbered schema: %v", err)
+	if err := migrate(db); err != nil {
+		t.Fatalf("migrate version 70 database: %v", err)
 	}
-	for version := int64(52); version <= 65; version++ {
-		if _, err := db.Exec(
-			`INSERT INTO goose_db_version (version_id, is_applied) VALUES (?, 1)`, version,
-		); err != nil {
-			t.Fatalf("seed old Chat migration %d: %v", version, err)
+
+	for _, field := range []struct {
+		version int
+		table   string
+		column  string
+	}{
+		{71, "conversations", "compacted_at"},
+		{72, "conversation_activities", "command_output"},
+		{73, "conversations", "context_used"},
+		{74, "conversations", "provider_title"},
+		{75, "conversations", "model_reroute_json"},
+		{78, "conversation_messages", "delivery_content_json"},
+		{80, "session_interface_transitions", "phase"},
+		{81, "session_interface_transition_messages", "client_message_id"},
+	} {
+		if !tableHasColumn(t, db, field.table, field.column) {
+			t.Errorf("migration %04d schema is missing %s.%s", field.version, field.table, field.column)
 		}
 	}
 
-	if err := migrate(db); err != nil {
-		t.Fatalf("migrate pre-renumbered Chat database: %v", err)
-	}
-
-	var defaultMode string
-	if err := db.QueryRow(`SELECT default_session_mode FROM app_settings WHERE id = 1`).Scan(&defaultMode); err != nil {
-		t.Fatalf("read preserved app setting: %v", err)
-	}
-	if defaultMode != "chat" {
-		t.Fatalf("default mode = %q, want preserved chat", defaultMode)
-	}
-	for table, wantColumns := range expectedUsageTableColumns {
-		if got := tableColumns(t, db, table); !reflect.DeepEqual(got, wantColumns) {
-			t.Errorf("%s columns = %v, want %v", table, got, wantColumns)
+	activitySchema := tableSchema(t, db, "conversation_activities")
+	for _, effect := range []struct {
+		version int
+		value   string
+	}{
+		{76, "'mcp_tool'"},
+		{77, "'user_input'"},
+		{79, "'cancelled'"},
+	} {
+		if !strings.Contains(activitySchema, effect.value) {
+			t.Errorf("migration %04d schema is missing %s in conversation_activities:\n%s", effect.version, effect.value, activitySchema)
 		}
-	}
-
-	var mapped int
-	if err := db.QueryRow(`
-SELECT COUNT(DISTINCT version_id) FROM goose_db_version
-WHERE is_applied = 1 AND version_id BETWEEN 66 AND 79
-`).Scan(&mapped); err != nil {
-		t.Fatalf("read mapped Chat migrations: %v", err)
-	}
-	if mapped != 14 {
-		t.Fatalf("mapped Chat migrations = %d, want 14", mapped)
-	}
-
-	// A second startup must be a no-op, not another attempt to replay either set.
-	if err := migrate(db); err != nil {
-		t.Fatalf("second migration pass: %v", err)
 	}
 }
