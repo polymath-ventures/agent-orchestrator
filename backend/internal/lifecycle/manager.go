@@ -429,14 +429,33 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 	if errorChanged {
 		next.LastError = s.Error
 	}
-	if next.FirstSignalAt.IsZero() {
+	if next.FirstSignalAt.IsZero() && s.Event != "process-exited" {
+		// FirstSignalAt records the first AGENT hook callback (see the field's
+		// doc). The supervisor's own process-exit report is AO infrastructure,
+		// not an agent signal, so it must not stamp FirstSignalAt.
 		next.FirstSignalAt = timeOr(s.Timestamp, now)
 	}
+	// A FAILED LAUNCH: the supervisor reports the process exited with a launch
+	// diagnostic (reportSupervisedExit only sets Error when the child died inside
+	// its launch window) AND no agent hook ever arrived for this generation. Such
+	// a session never became a working agent — leaving it exited-but-live is what
+	// let a dotted project silently accept and strand tracker intake (#266). The
+	// launch-window error is what distinguishes it from a session that did real
+	// work and exited later (which reports no launch error), and from a
+	// broken-hook session (its later exit carries no launch-window error either).
+	// The State==Exited term keeps this predicate provably in step with
+	// errorChanged above (which also requires it), so the terminate and its
+	// last_error can never diverge on a malformed request body.
+	failedLaunch := s.State == domain.ActivityExited && s.Event == "process-exited" &&
+		strings.TrimSpace(s.Error) != "" && rec.FirstSignalAt.IsZero()
+	if failedLaunch {
+		next.IsTerminated = true
+	}
 	if s.State == domain.ActivityExited {
-		// The agent process can exit while the managed tmux session remains
-		// alive and inspectable. Do not infer session termination from this
-		// hook; a runtime observation or explicit lifecycle action owns that
-		// fact. No tool/permission correlation survives an agent process exit.
+		// The agent process can exit while the managed tmux session remains alive
+		// and inspectable. Outside the failed-launch case above, do not infer
+		// termination from this hook; a runtime observation or explicit lifecycle
+		// action owns that fact. No tool/permission correlation survives an exit.
 		delete(m.flights, id)
 	}
 	next.UpdatedAt = now
@@ -458,6 +477,27 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 	}
 	waitingEvents := m.waitingInputEvents(next, prevState, prevAt, now)
 	m.mu.Unlock()
+	if failedLaunch {
+		// The failed launch's pane is a live keep-alive shell and its worktree is
+		// unreclaimed. The row is already terminated (above) so it no longer
+		// strands intake, but a deterministic failure is respawned every intake
+		// tick, so the runtime + workspace must be reclaimed or they accumulate.
+		// Kill (the session manager) owns that teardown; it is late-bound, so this
+		// is best-effort when wired, mirroring the PR-merge completion path.
+		if term := m.completionTerminator; term != nil {
+			// Detach from the request context: destroying the pane cancels the
+			// supervisor's in-flight exit-report request as a side effect of this
+			// very teardown, and that cancellation must not abort the reclaim
+			// (notably the caller-context CleanupWorkspace hook) partway.
+			killCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+			_, killErr := term.Kill(killCtx, id)
+			cancel()
+			if killErr != nil {
+				slog.Default().Warn("lifecycle: failed to reclaim a failed launch's runtime/workspace",
+					"session", id, "err", killErr)
+			}
+		}
+	}
 	if err := m.persistQuotaSnapshots(ctx, quotas); err != nil {
 		return err
 	}

@@ -63,6 +63,75 @@ func TestPollSpawnsWorkerForEligibleIssue(t *testing.T) {
 	}
 }
 
+// A prior launch that FAILED (its session is terminated) must not suppress a
+// fresh attempt: seenIssueIDs skips terminated rows, so intake retries the
+// issue instead of leaving it stranded on a dead session. This is the
+// tracker-intake half of #266 — a silently failed launch used to leave a live
+// (non-terminated) session that marked the issue serviced forever.
+func TestPollRetriesIssueWhoseEarlierLaunchFailed(t *testing.T) {
+	store := &fakeStore{
+		projects: []domain.ProjectRecord{{
+			ID:            "demo",
+			RepoOriginURL: "https://github.com/acme/demo.git",
+			Config:        domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, Assignee: "alice"}},
+		}},
+		sessions: []domain.SessionRecord{{
+			ID:           "demo-1-gen",
+			ProjectID:    "demo",
+			IssueID:      "github:acme/demo#12",
+			IsTerminated: true,
+			LastError:    "agent exited before launch completed: invalid session id",
+		}},
+	}
+	tracker := &fakeTracker{issues: []domain.Issue{{
+		ID:        domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#12"},
+		Title:     "Fix login",
+		State:     domain.IssueOpen,
+		Assignees: []string{"alice"},
+	}}}
+	spawner := &fakeSpawner{}
+
+	if err := New(singleResolver(tracker), store, spawner, Config{Logger: discardLogger()}).Poll(context.Background()); err != nil {
+		t.Fatalf("Poll() error = %v", err)
+	}
+	if len(spawner.calls) != 1 {
+		t.Fatalf("spawn calls = %d, want 1 — a terminated failed-launch session must not strand the issue", len(spawner.calls))
+	}
+	if spawner.calls[0].IssueID != "github:acme/demo#12" {
+		t.Fatalf("retried issue = %q, want github:acme/demo#12", spawner.calls[0].IssueID)
+	}
+}
+
+// A live (non-terminated) session for an issue still suppresses a duplicate
+// spawn — the retry above must be scoped to failed launches, not every session.
+func TestPollDoesNotRespawnIssueWithLiveSession(t *testing.T) {
+	store := &fakeStore{
+		projects: []domain.ProjectRecord{{
+			ID:            "demo",
+			RepoOriginURL: "https://github.com/acme/demo.git",
+			Config:        domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, Assignee: "alice"}},
+		}},
+		sessions: []domain.SessionRecord{{
+			ID:        "demo-1-gen",
+			ProjectID: "demo",
+			IssueID:   "github:acme/demo#12",
+		}},
+	}
+	tracker := &fakeTracker{issues: []domain.Issue{{
+		ID:        domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#12"},
+		State:     domain.IssueOpen,
+		Assignees: []string{"alice"},
+	}}}
+	spawner := &fakeSpawner{}
+
+	if err := New(singleResolver(tracker), store, spawner, Config{Logger: discardLogger()}).Poll(context.Background()); err != nil {
+		t.Fatalf("Poll() error = %v", err)
+	}
+	if len(spawner.calls) != 0 {
+		t.Fatalf("spawn calls = %d, want 0 — a live session already services the issue", len(spawner.calls))
+	}
+}
+
 func TestPollConfiguredWorkerTaskPromptPrecedence(t *testing.T) {
 	store := &fakeStore{projects: []domain.ProjectRecord{{
 		ID:            "demo",

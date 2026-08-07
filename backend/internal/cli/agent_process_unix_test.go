@@ -82,6 +82,28 @@ func TestAgentProcessSuperviseSuccessfulExitOmitsError(t *testing.T) {
 	}
 }
 
+func TestAgentProcessSuperviseAcceptsLegacyDottedProjectSessionID(t *testing.T) {
+	cfg := setConfigEnv(t)
+	srv, capture := activityServer(t, http.StatusOK, `{"ok":true}`)
+	writeRunFileFor(t, cfg, srv)
+	t.Setenv("TMUX_PANE", "")
+
+	const sessionID = "goodadbadad.net-5-9ed4c657e7777c8c"
+	_, errOut, err := executeCLI(t, Deps{
+		In:           strings.NewReader(""),
+		ProcessAlive: func(int) bool { return true },
+	}, "agent-process", "supervise", "--session", sessionID, "--launch", "launch-3", "--", "true")
+	if err != nil {
+		t.Fatalf("dotted-project session id rejected: %v\nstderr=%s", err, errOut)
+	}
+	if capture.hits != 1 {
+		t.Fatalf("activity reports = %d, want 1", capture.hits)
+	}
+	if want := "/api/v1/sessions/" + sessionID + "/activity"; capture.path != want {
+		t.Fatalf("activity path = %q, want %q", capture.path, want)
+	}
+}
+
 func TestAgentProcessSuperviseDoesNotWaitForDescendantHoldingStderr(t *testing.T) {
 	cfg := setConfigEnv(t)
 	srv, _ := activityServer(t, http.StatusOK, `{"ok":true}`)

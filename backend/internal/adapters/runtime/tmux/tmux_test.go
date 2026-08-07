@@ -287,6 +287,33 @@ func TestNamespaceSessionNameKeepsCompleteReadableKeyAndGenerationIdentity(t *te
 	}
 }
 
+// A legacy project whose name contains a dot (e.g. "goodadbadad.net") is the one
+// project that exercises the rename-and-hash path: tmux forbids a dot in a
+// session name, so the derived runtime handle must be sanitized to the safe
+// charset while a stable digest preserves the identity. Regression for #266.
+func TestNamespaceSessionNameSanitizesDottedProjectKey(t *testing.T) {
+	const label = "gn-75"
+	key := label + "--goodadbadad.net-5-9ed4c657e7777c8c"
+	got := NamespaceSessionName(key)
+	if !sessionIDPattern.MatchString(got) {
+		t.Fatalf("derived handle %q is not a tmux-safe session name", got)
+	}
+	if strings.Contains(got, ".") {
+		t.Fatalf("derived handle %q still contains a dot tmux would rewrite", got)
+	}
+	if got == key {
+		t.Fatalf("dotted key was returned verbatim: %q", got)
+	}
+	if !strings.HasPrefix(got, "gn-75--goodadbadad-net-5-") {
+		t.Fatalf("derived handle = %q, want readable sanitized prefix", got)
+	}
+	// Derivation is deterministic: the same key always maps to the same handle,
+	// so restart/lookup/destroy address the live session.
+	if second := NamespaceSessionName(key); second != got {
+		t.Fatalf("derivation not deterministic: %q vs %q", got, second)
+	}
+}
+
 func TestRuntimeSessionNameUsesStoredKeyWithLegacyFallback(t *testing.T) {
 	id := domain.SessionID("proj-1-0123456789abcdef")
 	key := "ao-255-readable--" + string(id)

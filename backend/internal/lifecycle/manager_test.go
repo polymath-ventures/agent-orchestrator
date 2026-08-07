@@ -410,6 +410,11 @@ func TestActivity_ExitedPersistsErrorUntilNextSpawn(t *testing.T) {
 	m, st, _ := newManager()
 	rec := working("mer-1")
 	rec.Metadata.RuntimeLaunchID = "launch-1"
+	// This session became a working agent before its supervised process exited,
+	// so its exit keeps the session live (restorable) and updates last_error — a
+	// failed launch that never signalled is terminated instead (see the
+	// FailedLaunch tests below).
+	rec.FirstSignalAt = time.Now().Add(-time.Minute)
 	st.sessions[rec.ID] = rec
 
 	if err := m.ApplyActivitySignal(ctx, rec.ID, ports.ActivitySignal{
@@ -443,6 +448,87 @@ func TestActivity_ExitedPersistsErrorUntilNextSpawn(t *testing.T) {
 	}
 	if got := st.sessions[rec.ID]; got.LastError != "" || got.Activity.State != domain.ActivityIdle {
 		t.Fatalf("spawn did not clear previous error: %+v", got)
+	}
+}
+
+// A launch that dies inside its launch window (the supervisor reports
+// process-exited WITH a launch diagnostic) having never emitted an agent signal
+// never became a working agent. It must be terminated with the diagnostic so it
+// is visible from `ao status` and stops being counted as servicing its issue —
+// the #266 strand — rather than lingering exited-but-live.
+func TestActivity_FailedLaunchIsTerminatedWithDiagnostic(t *testing.T) {
+	m, st, _ := newManager()
+	rec := working("mer-1")
+	rec.Activity = domain.Activity{State: domain.ActivityIdle, LastActivityAt: time.Now()}
+	rec.Metadata.RuntimeLaunchID = "launch-1"
+	// FirstSignalAt zero: no agent hook ever arrived.
+	st.sessions[rec.ID] = rec
+
+	if err := m.ApplyActivitySignal(ctx, rec.ID, ports.ActivitySignal{
+		Valid: true, State: domain.ActivityExited, Event: "process-exited",
+		LaunchID: "launch-1", Error: "invalid session id",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got := st.sessions[rec.ID]
+	if !got.IsTerminated || got.Activity.State != domain.ActivityExited {
+		t.Fatalf("failed launch must be terminated/exited, got %+v", got)
+	}
+	if got.LastError != "invalid session id" {
+		t.Fatalf("last_error = %q, want the harness diagnostic", got.LastError)
+	}
+	// The supervisor's own exit report must not stamp FirstSignalAt (it is not an
+	// agent hook), or the failed launch would look like it had worked.
+	if !got.FirstSignalAt.IsZero() {
+		t.Fatalf("process-exited stamped FirstSignalAt: %+v", got.FirstSignalAt)
+	}
+}
+
+// A deterministic launch failure is respawned every intake tick, so each failure
+// must reclaim its runtime + workspace or panes/worktrees accumulate. The
+// lifecycle manager delegates that teardown to the wired session terminator.
+func TestActivity_FailedLaunchReclaimsRuntimeViaTerminator(t *testing.T) {
+	m, st, _ := newManager()
+	terminator := &fakeCompletionTerminator{}
+	m.SetCompletionTerminator(terminator)
+	rec := working("mer-1")
+	rec.Activity = domain.Activity{State: domain.ActivityIdle, LastActivityAt: time.Now()}
+	rec.Metadata.RuntimeLaunchID = "launch-1"
+	st.sessions[rec.ID] = rec
+
+	if err := m.ApplyActivitySignal(ctx, rec.ID, ports.ActivitySignal{
+		Valid: true, State: domain.ActivityExited, Event: "process-exited",
+		LaunchID: "launch-1", Error: "invalid session id",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !st.sessions[rec.ID].IsTerminated {
+		t.Fatalf("failed launch must be terminated, got %+v", st.sessions[rec.ID])
+	}
+	if terminator.calls != 1 {
+		t.Fatalf("terminator Kill calls = %d, want 1 (reclaim the failed launch)", terminator.calls)
+	}
+}
+
+// A supervised process that exits AFTER the launch window carries no launch
+// diagnostic (reportSupervisedExit only sets Error inside the window). Even with
+// no agent signal ever recorded — a broken hook pipeline — such a late exit is
+// NOT a failed launch and must keep the session live for inspection.
+func TestActivity_LateExitWithoutLaunchErrorIsNotAFailedLaunch(t *testing.T) {
+	m, st, _ := newManager()
+	rec := working("mer-1")
+	rec.Activity = domain.Activity{State: domain.ActivityIdle, LastActivityAt: time.Now()}
+	rec.Metadata.RuntimeLaunchID = "launch-1"
+	st.sessions[rec.ID] = rec // FirstSignalAt zero (broken hooks), but no launch error.
+
+	if err := m.ApplyActivitySignal(ctx, rec.ID, ports.ActivitySignal{
+		Valid: true, State: domain.ActivityExited, Event: "process-exited", LaunchID: "launch-1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got := st.sessions[rec.ID]
+	if got.IsTerminated {
+		t.Fatalf("a late exit with no launch error must not terminate, got %+v", got)
 	}
 }
 

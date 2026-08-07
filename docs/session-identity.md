@@ -40,9 +40,8 @@ Claude project slugs, and request paths tolerate all three.
 The intersection is `[A-Za-z0-9_-]`. It is enforced in one place —
 `domain.IsValidProjectID` — at the moment an id enters the system as **new**:
 project registration (`validateNewProjectID`) and legacy import both call it, so a
-dotted id can never be minted into an unlaunchable session id. `cli.sessionIDPattern`
-re-checks the same class on the composed session id where it is placed in a request
-path. Any new surface stricter than this belongs in this section and in
+dotted id can never be minted into an unlaunchable session id. Any new surface
+stricter than this belongs in this section and in
 `domain.IsValidProjectID`, not as a local sanitizer at the point of use — a surface
 that quietly rewrites its own copy of the id produces a second identity AO cannot
 map back.
@@ -54,6 +53,38 @@ a lone `.`. That is deliberate: a project registered before this rule tightened
 must stay retrievable and, above all, **removable**, which is how the operator
 cleans a dotted project up. Tightening the lookup path to the strict rule would
 strand exactly the projects the strict rule is meant to help retire.
+
+Consuming an **already-composed session id** follows the same discipline as
+consuming a stored project id, and for the same reason. A session id is composed
+as `{project}-{num}-{generation}`, so a project registered before the strict rule
+tightened yields sessions whose id keeps the dot — a real, non-recycling identity
+that must round-trip, not be rejected. The CLI surfaces that place a session id
+into a loopback request path (`ao agent-process supervise --session`, the `ao
+hooks` activity callbacks) or a per-session data-dir file therefore validate it
+with `domain.IsPathSafeSessionID`, the traversal-safe session-id analog of
+`validateProjectID`: it allows a dot _within_ the id (so an `example.net`-derived
+id passes) while still rejecting the path-unsafe forms `""`, `.`, `..` (including
+as a substring), a trailing `.`, and path separators. The earlier strict
+`cli.sessionIDPattern` rejected the dot outright and was the #266 root cause —
+the supervisor refused the id with "invalid session id" and the agent never
+launched. A minted launch id, by contrast, is random hex and never dotted, so it
+keeps the strict `launchIDPattern`.
+
+A launch that dies before it becomes a working agent must never masquerade as a
+healthy session. The supervisor (`ao agent-process supervise`) reports its
+managed process's exit to the daemon, and `reportSupervisedExit` populates the
+error only when the child died inside its launch window. So a `process-exited`
+report that carries a launch error, for a session that has never recorded an
+agent hook signal, is a FAILED LAUNCH: the lifecycle manager terminates it with
+that diagnostic (`ApplyActivitySignal`) and reclaims its runtime and workspace
+via the wired session terminator, rather than leaving it exited-but-live. The
+launch-window error is what distinguishes a failed launch from a session that
+did real work and exited later, and from a broken-hook session whose late exit
+carries no launch error; the generation fence (`RuntimeLaunchID`) drops stale
+reports; and the supervisor's own exit report never stamps `FirstSignalAt` (that
+field means the first AGENT hook). The path covers spawn and restore uniformly.
+A terminated failed launch is no longer counted by tracker intake's seen-issue
+set, so the issue is retried instead of stranded (#266).
 
 ## Database generations
 

@@ -92,7 +92,7 @@ func (e *usageExtractor) stopUsageDelta(agent string, payload []byte) (*usageAPI
 	}
 	// Without a data dir there is nowhere to persist the cursor, so a delta would
 	// double-count on the next turn. Emit nothing rather than mis-report.
-	if strings.TrimSpace(e.dataDir) == "" || !sessionIDPattern.MatchString(e.sessionID) {
+	if strings.TrimSpace(e.dataDir) == "" || !domain.IsPathSafeSessionID(e.sessionID) {
 		return nil, nil
 	}
 	stored := e.loadCursor()
