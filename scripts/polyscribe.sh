@@ -3,25 +3,22 @@
 # polyscribe.sh
 #
 # @sx-managed: polyscribe (vault) — do not edit; managed by the agent-vault hook
-# @sx-managed-version: 14
+# @sx-managed-version: 15
 #
-# Assemble modular markdown PRIMITIVES into the per-agent instruction files the
-# coding tools read, at TWO scopes:
+# Assemble modular markdown primitives for committed reconciliation, global
+# files, and SessionStart injection:
 #
 #   REPO scope (committed to repo root):
-#     AGENTS.md  (Codex)  = banner + source/*.md + agent-overrides/codex.md  ← full inline
-#     CLAUDE.md  (Claude) = banner + source/*.md + agent-overrides/claude.md ← full inline
-#     GEMINI.md  (agy)    = banner + source/*.md + agent-overrides/agy.md     ← full inline
+#     AGENTS.md / CLAUDE.md / GEMINI.md = minimal fail-open safety stubs
 #     AGENTS.shared.md    = banner + source/*.md (no identity)               ← reference artifact
 #
 #   SYSTEM scope (written into $HOME, applies in EVERY repo) — universal rules:
 #     ~/.codex/AGENTS.md  ~/.claude/CLAUDE.md  ~/.gemini/GEMINI.md = banner + system/*.md (full)
 #
-# Each tool natively reads its global file AND the repo file and merges them, so
-# universal rules reach every repo with no repo-side wiring. Every client file is a
-# full inline file (no @import) so the shared rule/workflow body is loaded at full
-# prominence for every agent — an @import wrapper demotes that body behind an
-# import for the importing client, so each client carries the body inline instead.
+#   SESSION scope (injected; never writes tracked files):
+#     current hook-bundled universal rules + repo-owned local fragments + the
+#     current client identity. The installed hook refreshes through sx before
+#     SessionStart and returns this assembly as additionalContext.
 #
 # A primitive named "<name>.ref.md" instead of "<name>.md" emits a one-line
 # pointer rather than inlining its body. When an earlier module names that
@@ -33,7 +30,7 @@
 #
 # HTML comments are AUTHORING-ONLY. Any <!-- ... --> block in a source primitive
 # or override (multi-line included) is stripped during assembly and never reaches
-# the generated CLAUDE.md/AGENTS.md/GEMINI.md. Use them for provenance, refresh
+# the generated AGENTS.shared.md or injected session context. Use them for provenance, refresh
 # markers (e.g. "@sx-managed: <module>", which only nickify reads off the SOURCE
 # file), and notes to whoever edits the fragment — none of that authoring metadata
 # is agent-facing, and inlining it verbatim is worse than useless to a reading LLM.
@@ -46,6 +43,7 @@
 #   bash "$HOME/.claude/hooks/polyscribe/polyscribe.sh"            # Claude install: build + write the REPO files
 #   bash "$HOME/.gemini/hooks/polyscribe/polyscribe.sh" --check    # Gemini install: build to temp, diff, exit 1 on drift
 #   bash "$HOME/.claude/hooks/polyscribe/polyscribe.sh" --system   # build + write SYSTEM files
+#   bash <installed>/polyscribe.sh --session <client> <record>     # hook-internal: JSON additionalContext
 #                                                                  #   honors AGENTS_SYSTEM_HOME to retarget for testing
 #   (Node repos MAY alias these as `npm run agents[:check|:system]` — optional convenience,
 #    added by nickify only when a package.json already exists. Not required.)
@@ -66,7 +64,9 @@ SYS_DIR="${AI_DIR}/system"
 STANDARD_SET_MANIFEST="${AI_DIR}/standard-set.json"
 ROLE_DIR="${AI_DIR}/roles"
 
-SCRIPT_PATH="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/$(basename -- "${BASH_SOURCE[0]}")"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+SCRIPT_PATH="${SCRIPT_DIR}/$(basename -- "${BASH_SOURCE[0]}")"
+SESSION_STANDARD_DIR="${SCRIPT_DIR}/standard"
 case "$SCRIPT_PATH" in
   "$HOME/.claude/hooks/polyscribe/polyscribe.sh")
     RECOVERY_COMMAND='bash "$HOME/.claude/hooks/polyscribe/polyscribe.sh"'
@@ -87,16 +87,14 @@ esac
 
 BANNER="<!-- GENERATED — DO NOT EDIT. Edit agent-instructions/{source,agent-overrides,system}/, then rebuild with polyscribe (system scope adds --system) -->"
 ROLE_BANNER="<!-- GENERATED — DO NOT EDIT. Edit agent-instructions/roles/<role>/, then rebuild with polyscribe -->"
+SESSION_BANNER="<!-- SESSION-INJECTED — current vault rules plus repo-local context; inspect the sibling *-ASSEMBLED.md record -->"
 CEILING=200
 
 # --- REPO scope (NEVER glob — order is explicit) -----------------------------
-# Every client file (AGENTS.md, CLAUDE.md, GEMINI.md) is a FULL inline file:
-# banner + the shared source/*.md body + that client's identity. None use @import.
-# An @import wrapper demotes the shared rule/workflow body behind an import and
-# agents under-weight it; every client is inlined instead (each carries ONLY its
-# own identity, so the Codex identity never bleeds into CLAUDE.md/GEMINI.md).
-# AGENTS.shared.md remains as an identity-free shared-body reference artifact
-# (no longer a load path).
+# Client files are deliberately small fail-open stubs. SessionStart owns the
+# current full assembly; the stubs preserve only irreversible safety constraints
+# and tell an agent where to read repo-local context if injection is unavailable.
+# AGENTS.shared.md remains a full identity-free authoring/reference artifact.
 # Module discovery (v5): if the repo carries ordered numbered fragments
 # (NN-*.md / NN-*.ref.md) under agent-instructions/source/, assemble those in
 # sorted order. Otherwise fall back to the legacy fixed module list, so
@@ -121,10 +119,10 @@ $_numbered
 EOF
 fi
 unset _numbered _mod
-REPO_CANONICAL="AGENTS.md"             # full: shared body + Codex identity (Codex reads it whole)
+REPO_CANONICAL="AGENTS.md"             # minimal fail-open stub for Codex
 REPO_CANONICAL_OVERRIDE="codex"
 REPO_SHARED="AGENTS.shared.md"         # shared body ONLY (no agent identity) — reference artifact
-REPO_CLIENTS=(CLAUDE.md GEMINI.md)     # full inline files: shared body + own identity (no @import)
+REPO_CLIENTS=(CLAUDE.md GEMINI.md)     # minimal fail-open stubs
 REPO_CLIENT_OVERRIDES=(claude agy)
 
 # Build only the client outputs whose identity overrides are configured. Nickify
@@ -561,6 +559,143 @@ check_stale_generated_output() {
   fi
 }
 
+# --- Session assembly --------------------------------------------------------
+# These modules are the universal rules shipped inside the hook asset. A stale
+# managed copy in a consumer repo is skipped during session assembly: sx
+# refreshes this bundle before SessionStart, making it the live source of truth
+# without rewriting tracked files.
+SESSION_SOURCE_MODULES=(30-polypowers 35-worktree-recipe 40-operating-principles 65-agent-identity)
+
+session_managed_source_module() {
+  local mod="$1" f marker=""
+  f="$(module_file "$SRC_DIR" "$mod")"
+  case "$mod" in
+    30-polypowers) marker='@sx-managed: polypowers-module' ;;
+    35-worktree-recipe) marker='@sx-managed: polypowers-worktree-recipe' ;;
+    40-operating-principles) marker='@sx-managed: operating-principles' ;;
+    65-agent-identity) marker='@sx-managed: agent-identity-contract' ;;
+    *) return 1 ;;
+  esac
+  grep -Fq "$marker" "$f" 2>/dev/null
+}
+
+session_managed_override() {
+  local f="$1" marker="$2"
+  [[ -f "$f" ]] && grep -Fq "$marker" "$f" 2>/dev/null
+}
+
+emit_session_local_modules() {
+  local discovered mod first=1
+  local modules=()
+  discovered="$(discover_numbered_modules "$SRC_DIR")"
+  if [[ -n "$discovered" ]]; then
+    while IFS= read -r mod; do
+      [[ -n "$mod" ]] || continue
+      session_managed_source_module "$mod" && continue
+      modules+=("$mod")
+    done <<EOF
+$discovered
+EOF
+  else
+    # Legacy repos use the fixed SOURCE_MODULES list rather than NN-* files.
+    # Those modules are repo-owned local context and must remain live.
+    for mod in "${SOURCE_MODULES[@]}"; do modules+=("$mod"); done
+  fi
+  [[ "${#modules[@]}" -gt 0 ]] || return 0
+  EMITTED_REF_MODULES="|"
+  prepare_ref_modules "$SRC_DIR" "${modules[@]}"
+  for mod in "${modules[@]}"; do
+    should_skip_module "$mod" && continue
+    [[ $first -eq 1 ]] || printf '\n'
+    emit_module "$SRC_DIR" "$mod"
+    first=0
+  done
+}
+
+json_string_file() {
+  # JSON-escape UTF-8 markdown with POSIX awk so SessionStart does not depend on
+  # jq, Python, Node, or a client-specific runtime.
+  awk '
+    BEGIN {
+      printf "\""
+      controls = ""
+      for (i = 1; i < 32; i++) controls = controls sprintf("%c", i)
+    }
+    {
+      for (i = 1; i <= length($0); i++) {
+        c = substr($0, i, 1)
+        code = index(controls, c)
+        if (c == "\\") printf "\\\\"
+        else if (c == "\"") printf "\\\""
+        else if (code == 8) printf "\\b"
+        else if (code == 9) printf "\\t"
+        else if (code == 12) printf "\\f"
+        else if (code == 13) printf "\\r"
+        else if (code > 0) printf "\\u%04x", code
+        else printf "%s", c
+      }
+      printf "\\n"
+    }
+    END { printf "\"" }
+  ' "$1"
+}
+
+render_session() {
+  local client="$1" standard_override local_override local_marker saved_banner local_context
+  case "$client" in
+    claude)
+      standard_override="${SESSION_STANDARD_DIR}/agent-overrides/claude.md"
+      local_override="${OVR_DIR}/claude.md"
+      local_marker='@sx-managed: claude-identity'
+      ;;
+    codex)
+      standard_override="${SESSION_STANDARD_DIR}/agent-overrides/codex.md"
+      local_override="${OVR_DIR}/codex.md"
+      local_marker='@sx-managed: codex-identity'
+      ;;
+    gemini)
+      standard_override="${SESSION_STANDARD_DIR}/agent-overrides/agy.md"
+      local_override="${OVR_DIR}/agy.md"
+      local_marker='@sx-managed: agy-identity'
+      ;;
+    *) die "unknown session client: $client (expected claude, codex, or gemini)" ;;
+  esac
+  [[ -d "${SESSION_STANDARD_DIR}/source" ]] || die "missing hook-bundled universal rules: ${SESSION_STANDARD_DIR}/source"
+  [[ -f "$standard_override" ]] || die "missing hook-bundled client identity: $standard_override"
+
+  saved_banner="$BANNER"
+  BANNER="$SESSION_BANNER"
+  emit_assembled "${SESSION_STANDARD_DIR}/source" "$standard_override" "${SESSION_SOURCE_MODULES[@]}"
+  BANNER="$saved_banner"
+
+  local_context="$(emit_session_local_modules)" || return $?
+  if [[ -n "$local_context" ]]; then
+    printf '\n\n<!-- REPO-LOCAL CONTEXT -->\n\n%s\n' "$local_context"
+  fi
+  if [[ -f "$local_override" ]] && ! session_managed_override "$local_override" "$local_marker"; then
+    printf '\n<!-- REPO-OWNED CLIENT OVERRIDE -->\n\n'
+    emit_trimmed "$local_override"
+  fi
+}
+
+run_session_mode() {
+  local client="$1" record="$2" record_dir tmp context_json
+  [[ -d "$AI_DIR" ]] || exit 0
+  [[ -n "$record" ]] || die "session mode requires an assembled-record path"
+  record_dir="$(dirname -- "$record")"
+  mkdir -p "$record_dir"
+  tmp="$(mktemp "${record}.XXXXXX")"
+  cleanup_session_tmp() { [[ ! -e "$tmp" ]] || rm -- "$tmp"; }
+  trap cleanup_session_tmp EXIT
+  render_session "$client" >"$tmp"
+  # Capture the envelope from this session's private temp before publishing the
+  # shared inspectable record. Another repo may replace that record immediately.
+  context_json="$(json_string_file "$tmp")"
+  mv -f "$tmp" "$record"
+  trap - EXIT
+  printf '{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":%s}}\n' "$context_json"
+}
+
 # --- Preflight ---------------------------------------------------------------
 preflight_repo() {
   [[ -d "$SRC_DIR" ]] || die "missing $SRC_DIR"
@@ -572,6 +707,12 @@ preflight_repo() {
     check_stale_generated_output "${REPO_CLIENTS[$i]}" "${REPO_CLIENT_OVERRIDES[$i]}"
   done
   [[ "${#REPO_OVERRIDE_MODULES[@]}" -gt 0 ]] || die "missing client identity overrides in $OVR_DIR"
+  # Client files are stubs now, but malformed local identities must still fail
+  # reconciliation before any output is moved. Session assembly consumes these
+  # files later and must not discover corruption in the live hook.
+  for m in "${REPO_OVERRIDE_MODULES[@]}"; do
+    emit_trimmed "${OVR_DIR}/${m}.md" >/dev/null
+  done
   if [[ "${#ROLE_NAMES[@]}" -gt 0 ]]; then
     for m in "${ROLE_NAMES[@]}"; do
       [[ -d "${ROLE_DIR}/${m}" ]] || die "missing role directory: ${ROLE_DIR}/${m}"
@@ -585,12 +726,25 @@ preflight_system() {
   for m in "${SYSTEM_MODULES[@]}"; do module_file "$SYS_DIR" "$m" >/dev/null; done
 }
 
+emit_failopen_stub() {
+  local client="$1" override="$2"
+  printf '%s\n\n' "$BANNER"
+  printf '# Agent instructions — fail-open baseline (%s)\n\n' "$client"
+  printf 'SessionStart normally injects the current vault rules plus this repository’s local context. If that context is absent, use this safety baseline only.\n\n'
+  printf 'Before acting, read the ordered Markdown fragments under `agent-instructions/source/` and `agent-instructions/agent-overrides/%s.md`.\n\n' "$override"
+  printf '1. GitHub Issues are the sole durable tracker.\n'
+  printf '2. Make every mutation in an agent-owned worktree, never the shared checkout.\n'
+  printf '3. For behavior changes, write a failing test first, then implement and verify the fix.\n'
+  printf '4. Verify the result with the repository’s real checks before claiming success.\n'
+  printf '5. Use an independent reviewer; do not self-review merge readiness.\n'
+  printf '6. Never merge without explicit authorization from the user or configured autonomous mode.\n'
+}
+
 # Render one REPO output filename to stdout.
 render_repo() {
   local out="$1" i
   if [[ "$out" == "$REPO_CANONICAL" ]]; then
-    # Canonical: shared body + Codex identity (Codex reads this whole; no import).
-    emit_assembled "$SRC_DIR" "${OVR_DIR}/${REPO_CANONICAL_OVERRIDE}.md" "${SOURCE_MODULES[@]}"
+    emit_failopen_stub "Codex" "$REPO_CANONICAL_OVERRIDE"
     return
   fi
   if [[ "$out" == "$REPO_SHARED" ]]; then
@@ -600,9 +754,11 @@ render_repo() {
   fi
   for i in "${!REPO_ACTIVE_CLIENTS[@]}"; do
     if [[ "${REPO_ACTIVE_CLIENTS[$i]}" == "$out" ]]; then
-      # Full inline file: shared body + this client's OWN identity (no @import, no
-      # Codex-identity bleed).
-      emit_assembled "$SRC_DIR" "${OVR_DIR}/${REPO_ACTIVE_CLIENT_OVERRIDES[$i]}.md" "${SOURCE_MODULES[@]}"; return
+      case "$out" in
+        CLAUDE.md) emit_failopen_stub "Claude" "${REPO_ACTIVE_CLIENT_OVERRIDES[$i]}" ;;
+        GEMINI.md) emit_failopen_stub "Gemini" "${REPO_ACTIVE_CLIENT_OVERRIDES[$i]}" ;;
+      esac
+      return
     fi
   done
   die "no builder for repo output: $out"
@@ -613,9 +769,15 @@ MODE="build"
 case "${1:-}" in
   --check) MODE="check" ;;
   --system) MODE="system" ;;
+  --session) MODE="session" ;;
   '') : ;;
-  *) die "unknown argument: $1 (use --check, --system, or no args)" ;;
+  *) die "unknown argument: $1 (use --check, --system, --session, or no args)" ;;
 esac
+
+if [[ "$MODE" == "session" ]]; then
+  run_session_mode "${2:-}" "${3:-}"
+  exit 0
+fi
 
 if [[ "$MODE" == "check" ]]; then
   preflight_repo
@@ -637,7 +799,7 @@ if [[ "$MODE" == "check" ]]; then
     done
   fi
   [[ $drift -ne 0 ]] && die "repo agent instruction files are stale. Run: ${RECOVERY_COMMAND}"
-  printf 'polyscribe: repo files (AGENTS.md + CLAUDE.md/GEMINI.md inline + AGENTS.shared.md) up to date.\n'
+  printf 'polyscribe: repo files (client fail-open stubs + AGENTS.shared.md reference) up to date.\n'
   exit 0
 fi
 

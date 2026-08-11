@@ -10,6 +10,12 @@ name: Agent instructions
 #
 # The banner states the rule; this makes it true. --check renders the sources to
 # temporary files and fails if the committed output differs from them.
+#
+# The client files are minimal fail-open stubs (#269): normal policy is injected
+# at SessionStart from the vault's current rules plus this repo's
+# agent-instructions/ fragments, so a committed full copy would only go stale.
+# The stubs are still generated and still carry the banner, so this check guards
+# them exactly as before — including that they stay stubs.
 
 on:
   pull_request:
