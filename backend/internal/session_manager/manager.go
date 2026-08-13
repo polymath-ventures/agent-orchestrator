@@ -4276,6 +4276,10 @@ func (m *Manager) buildSystemPrompt(ctx context.Context, kind domain.SessionKind
 		}
 		cfg.PrimeRules = rules
 	case domain.KindWorker:
+		intake := project.Config.TrackerIntake.WithDefaults()
+		if intake.Enabled && intake.Provider == domain.TrackerProviderGitHub {
+			cfg.TrackerIntakeAssignee = intake.Assignee
+		}
 		orchestratorID, ok, err := m.activeOrchestratorSessionID(ctx, projectID)
 		if err != nil {
 			return "", err
