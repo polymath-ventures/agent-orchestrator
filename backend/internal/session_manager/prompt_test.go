@@ -189,6 +189,27 @@ func TestBuildSystemPrompt_PrimeDefinesFleetSupervisorBoundary(t *testing.T) {
 	}
 }
 
+func TestBuildSystemPrompt_WorkerProtectsTrackerIntakeClaim(t *testing.T) {
+	got := buildSystemPromptText(systemPromptConfig{
+		Role:                  sessionPromptRoleWorker,
+		Project:               promptProject{ID: "mer", Name: "Mercury"},
+		TrackerIntakeAssignee: "polymath-orchestrator",
+	})
+	for _, want := range []string{
+		"## Tracker Intake Claim",
+		"`polymath-orchestrator`",
+		"queue-routing marker, not a competing worker claim",
+		"add the worker account without removing any existing assignee",
+		"operator-only credentials or actions",
+		"do not claim the issue or report work as in progress",
+		"explicit escalation comment naming what the operator must supply",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("worker system prompt missing %q:\n%s", want, got)
+		}
+	}
+}
+
 func TestBuildSystemPrompt_WorkerUsesSlimPolicyScaffold(t *testing.T) {
 	got := buildSystemPromptText(systemPromptConfig{
 		Role: sessionPromptRoleWorker,
