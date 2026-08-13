@@ -13,6 +13,7 @@ import { fileURLToPath } from "node:url";
 
 const scriptPath = fileURLToPath(new URL("../scripts/ci/format-check.sh", import.meta.url));
 const workflowPath = fileURLToPath(new URL("../.github/workflows/prettier.yml", import.meta.url));
+const prettierIgnorePath = fileURLToPath(new URL("../.prettierignore", import.meta.url));
 
 function git(cwd, ...args) {
 	const r = spawnSync("git", args, { cwd, encoding: "utf8" });
@@ -168,4 +169,9 @@ test("prettier CI delegates changed-file filtering to the parity script", () => 
 	const workflow = readFileSync(workflowPath, "utf8");
 	assert.match(workflow, /bash scripts\/ci\/format-check\.sh/);
 	assert.doesNotMatch(workflow, /xargs[^\n]*prettier/);
+});
+
+test("generated Cloud schema is excluded from source formatting", () => {
+	const ignore = readFileSync(prettierIgnorePath, "utf8");
+	assert.match(ignore, /^packages\/cloud-client\/src\/schema\.ts$/m);
 });

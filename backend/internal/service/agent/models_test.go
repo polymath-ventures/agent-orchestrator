@@ -227,9 +227,8 @@ func TestModelAvailabilityMarksReviewerCapabilityFromDomainVocabulary(t *testing
 	if !byID[string(domain.HarnessCodexFugu)].ReviewerCapable {
 		t.Fatalf("codex-fugu = %#v, want reviewer capable", byID[string(domain.HarnessCodexFugu)])
 	}
-	// Grok is not in the reviewer vocabulary, so it stays worker-only.
-	if byID[string(domain.HarnessGrok)].ReviewerCapable {
-		t.Fatalf("grok = %#v, want worker-only", byID[string(domain.HarnessGrok)])
+	if !byID[string(domain.HarnessGrok)].ReviewerCapable {
+		t.Fatalf("grok = %#v, want reviewer capable", byID[string(domain.HarnessGrok)])
 	}
 }
 

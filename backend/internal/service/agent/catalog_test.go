@@ -313,7 +313,7 @@ func TestInventoryDerivesReviewerCapabilityFromHarness(t *testing.T) {
 	}{
 		{id: string(domain.HarnessOpenCode), want: true},
 		{id: string(domain.HarnessCodexFugu), want: true},
-		{id: string(domain.HarnessGrok), want: false},
+		{id: string(domain.HarnessGrok), want: true},
 	} {
 		got, err := svc.Probe(context.Background(), tc.id)
 		if err != nil {
@@ -345,9 +345,8 @@ func assertReviewerCapabilities(t *testing.T, infos []Info) {
 	if !byID[string(domain.HarnessCodexFugu)].ReviewerCapable {
 		t.Fatalf("codex-fugu = %#v, want reviewer capable", byID[string(domain.HarnessCodexFugu)])
 	}
-	// Grok is not in the reviewer vocabulary, so it stays worker-only.
-	if byID[string(domain.HarnessGrok)].ReviewerCapable {
-		t.Fatalf("grok = %#v, want worker-only", byID[string(domain.HarnessGrok)])
+	if !byID[string(domain.HarnessGrok)].ReviewerCapable {
+		t.Fatalf("grok = %#v, want reviewer capable", byID[string(domain.HarnessGrok)])
 	}
 }
 

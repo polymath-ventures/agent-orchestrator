@@ -62,6 +62,7 @@ var AllReviewerHarnesses = []ReviewerHarness{
 	ReviewerMuse,
 	ReviewerAmp,
 	ReviewerAider,
+	ReviewerGrok,
 	ReviewerCrush,
 	ReviewerAuggie,
 	ReviewerCline,
@@ -124,6 +125,8 @@ func (h ReviewerHarness) AgentHarness() AgentHarness {
 		return HarnessAmp
 	case ReviewerAider:
 		return HarnessAider
+	case ReviewerGrok:
+		return HarnessGrok
 	case ReviewerCrush:
 		return HarnessCrush
 	case ReviewerAuggie:
