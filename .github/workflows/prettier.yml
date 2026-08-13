@@ -21,7 +21,6 @@ jobs:
           fetch-depth: 0
 
       - name: Check formatting of changed files with Prettier
-        run: |
-          git diff --name-only -z --diff-filter=d \
-            "origin/${{ github.base_ref }}...HEAD" \
-            | xargs -0 --no-run-if-empty npx --yes prettier@3 --check --ignore-unknown
+        env:
+          AO_FORMAT_BASE_REF: origin/${{ github.base_ref }}
+        run: bash scripts/ci/format-check.sh

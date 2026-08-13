@@ -133,7 +133,15 @@ export const ChatTimeline = memo(function ChatTimeline({
 				}}
 				ListFooterComponent={
 					snapshot.hasMoreBefore ? (
-						<Pressable accessibilityRole="button" disabled={loadingOlder} onPress={onLoadOlder} style={styles.older}>
+						<Pressable
+							accessibilityRole="button"
+							disabled={loadingOlder}
+							onPress={() => {
+								haptics.tap();
+								void onLoadOlder();
+							}}
+							style={styles.older}
+						>
 							{loadingOlder ? <ActivityIndicator size="small" /> : <Feather name="clock" size={13} />}
 							<Text style={styles.olderText}>{loadingOlder ? "Loading history…" : "Load earlier messages"}</Text>
 						</Pressable>
@@ -141,7 +149,6 @@ export const ChatTimeline = memo(function ChatTimeline({
 						<Text style={styles.beginning}>Beginning of conversation</Text>
 					) : null
 				}
-				ListEmptyComponent={<EmptyConversation harness={snapshot.harness} controller={snapshot.controller.state} />}
 				renderItem={({ item: group }) => (
 					<ConversationTurnGroup
 						group={group}
@@ -159,13 +166,14 @@ export const ChatTimeline = memo(function ChatTimeline({
 					accessibilityRole="button"
 					accessibilityLabel="Jump to latest message"
 					onPress={() => {
+						haptics.tap();
 						followsTail.current = true;
 						setShowJump(false);
-						listRef.current?.scrollToEnd({ animated: true });
+						listRef.current?.scrollToOffset({ offset: 0, animated: true });
 					}}
 					style={styles.jump}
 				>
-					<Feather name="arrow-down" size={14} />
+					<Feather name="arrow-down" size={14} color={jumpToLatestColors(t).foregroundColor} />
 					<Text style={styles.jumpText}>Latest</Text>
 				</Pressable>
 			) : null}
@@ -380,7 +388,10 @@ function OriginMessage({ message }: { message: Extract<ConversationItem, { kind:
 				<Pressable
 					accessibilityRole="button"
 					accessibilityState={{ expanded }}
-					onPress={() => setExpanded((value) => !value)}
+					onPress={() => {
+						haptics.tap();
+						setExpanded((value) => !value);
+					}}
 					style={styles.originMore}
 				>
 					<Feather name={expanded ? "chevron-up" : "chevron-right"} size={12} color={t.blue} />
@@ -517,7 +528,10 @@ function McpToolRow({ activity }: { activity: ConversationActivity }) {
 				disabled={!body}
 				accessibilityRole={body ? "button" : undefined}
 				accessibilityState={body ? { expanded: open } : undefined}
-				onPress={() => setOpen((value) => !value)}
+				onPress={() => {
+					haptics.tap();
+					setOpen((value) => !value);
+				}}
 				style={styles.activityRow}
 			>
 				<Feather name="tool" size={13} color={failed ? t.red : t.purple} />
@@ -589,7 +603,10 @@ function AutoReviewRow({ activity }: { activity: ConversationActivity }) {
 				disabled={!body}
 				accessibilityRole={body ? "button" : undefined}
 				accessibilityState={body ? { expanded: open } : undefined}
-				onPress={() => setOpen((value) => !value)}
+				onPress={() => {
+					haptics.tap();
+					setOpen((value) => !value);
+				}}
 				style={styles.activityRow}
 			>
 				<Feather name={denied ? "shield-off" : "shield"} size={13} color={denied ? t.red : t.green} />
@@ -666,7 +683,10 @@ function ExpandableFileList({
 				disabled={!expandable}
 				accessibilityRole={expandable ? "button" : undefined}
 				accessibilityState={expandable ? { expanded: open } : undefined}
-				onPress={() => setOpenOverride(!open)}
+				onPress={() => {
+					haptics.tap();
+					setOpenOverride(!open);
+				}}
 				style={styles.activityRow}
 			>
 				<Feather name="edit-3" size={13} color={t.blue} />
@@ -695,7 +715,14 @@ function FileChangeRow({ file, live }: { file: ReturnType<typeof fileChanges>[nu
 	const mark = file.status === "added" ? "A" : file.status === "deleted" ? "D" : file.status === "renamed" ? "R" : "M";
 	return (
 		<View>
-			<Pressable disabled={!hasPatch} onPress={() => setOpen((value) => !value)} style={styles.fileRow}>
+			<Pressable
+				disabled={!hasPatch}
+				onPress={() => {
+					haptics.tap();
+					setOpen((value) => !value);
+				}}
+				style={styles.fileRow}
+			>
 				<Text
 					style={[
 						styles.fileMark,
@@ -746,7 +773,13 @@ function PlanActivity({ activity }: { activity: ConversationActivity }) {
 	const steps = activity.detail?.steps ?? [];
 	return (
 		<View style={styles.planCard}>
-			<Pressable style={styles.planHeader} onPress={() => setOpen((value) => !value)}>
+			<Pressable
+				style={styles.planHeader}
+				onPress={() => {
+					haptics.tap();
+					setOpen((value) => !value);
+				}}
+			>
 				<Feather name="list" size={13} color={t.textTertiary} />
 				<Text style={styles.planTitle}>{activity.summary || "Plan updated"}</Text>
 				<Text style={styles.planCount}>
@@ -790,7 +823,10 @@ function ActivityRun({ activities }: { activities: ConversationActivity[] }) {
 			<Pressable
 				accessibilityRole="button"
 				accessibilityState={{ expanded: open }}
-				onPress={() => setOverride(!open)}
+				onPress={() => {
+					haptics.tap();
+					setOverride(!open);
+				}}
 				style={styles.runSummary}
 			>
 				<Text style={styles.runText}>{summarizeActivities(activities)}</Text>
@@ -832,7 +868,10 @@ function NestedAgentRun({ nodes }: { nodes: ActivityNode[] }) {
 				accessibilityRole="button"
 				accessibilityLabel={`${open ? "Hide" : "Show"} subagent work, ${count} ${count === 1 ? "step" : "steps"}`}
 				accessibilityState={{ expanded: open }}
-				onPress={() => setOpen((value) => !value)}
+				onPress={() => {
+					haptics.tap();
+					setOpen((value) => !value);
+				}}
 				style={styles.subagentHeader}
 			>
 				<Feather name="git-branch" size={12} color={t.textTertiary} />
@@ -1031,7 +1070,13 @@ function ChangedFiles({ turn }: { turn: ConversationTurn }) {
 	const files = turn.diff?.files ?? [];
 	return (
 		<View style={styles.planCard}>
-			<Pressable style={styles.planHeader} onPress={() => setOpen((value) => !value)}>
+			<Pressable
+				style={styles.planHeader}
+				onPress={() => {
+					haptics.tap();
+					setOpen((value) => !value);
+				}}
+			>
 				<Feather name="file-text" size={13} color={t.textTertiary} />
 				<Text style={styles.planTitle}>
 					{files.length} changed {files.length === 1 ? "file" : "files"}
@@ -1426,7 +1471,8 @@ function Action({
 			accessibilityState={{ disabled }}
 			disabled={disabled}
 			onPress={() => {
-				haptics.tap();
+				if (tone === "danger") haptics.warning();
+				else haptics.tap();
 				onPress();
 			}}
 			style={({ pressed }) => [
@@ -1579,6 +1625,7 @@ function formatTokens(value: number): string {
 const makeStyles = (t: Theme) =>
 	StyleSheet.create({
 		timelineWrap: { flex: 1, position: "relative", backgroundColor: t.bgBase },
+		emptySurface: { flex: 1, justifyContent: "center" },
 		list: { flex: 1, backgroundColor: t.bgBase },
 		content: { paddingHorizontal: 16, paddingTop: 8, paddingBottom: 28 },
 		older: {
@@ -1648,7 +1695,7 @@ const makeStyles = (t: Theme) =>
 			gap: 6,
 			paddingHorizontal: 12,
 			borderRadius: 18,
-			backgroundColor: t.bgElevated,
+			backgroundColor: jumpToLatestColors(t).backgroundColor,
 			borderWidth: 1,
 			borderColor: t.borderStrong,
 		},

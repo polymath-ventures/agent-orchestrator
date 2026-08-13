@@ -16,9 +16,10 @@ set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel)"
 
-# Derive the default branch from the remote HEAD — never assume "main".
+# CI supplies the pull request's actual base. Local runs derive the default
+# branch from the remote HEAD instead of assuming "main".
 default_ref="$(git symbolic-ref --quiet refs/remotes/origin/HEAD 2>/dev/null || echo refs/remotes/origin/main)"
-base="${default_ref#refs/remotes/}" # e.g. origin/main
+base="${AO_FORMAT_BASE_REF:-${default_ref#refs/remotes/}}" # e.g. origin/main
 
 changed_files() {
 	# Committed vs the merge-base with the default branch — the exact set CI
@@ -56,7 +57,7 @@ changed_files >"$tmp"
 files=()
 n=0
 while IFS= read -r -d '' f; do
-	# -L as well as -e: a dangling symlink is "nonexistent" to -e, but remote
+	# -L as well as -f: a dangling symlink is not a regular file, but remote
 	# Prettier still rejects it, and silently skipping it would break the CI
 	# parity this gate exists to provide.
 	[ -f "$f" ] || [ -L "$f" ] || continue

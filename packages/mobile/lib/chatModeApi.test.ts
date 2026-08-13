@@ -6,10 +6,14 @@ vi.mock("@react-native-async-storage/async-storage", () => ({
 vi.mock("expo-secure-store", () => ({ getItemAsync: vi.fn(), setItemAsync: vi.fn(), deleteItemAsync: vi.fn() }));
 vi.mock("expo/fetch", () => ({ fetch: vi.fn() }));
 
+import { fetch as expoFetch } from "expo/fetch";
 import {
 	ApiError,
 	apiRequest,
+	delegateTask,
+	getAgentModels,
 	getPreview,
+	getSessions,
 	getSettings,
 	launchOrchestrator,
 	mobileReachablePreviewURL,
@@ -17,7 +21,7 @@ import {
 	resumeSessionAgent,
 	spawnSession,
 } from "./api";
-import { getConversationPage, getWorkspacePaths } from "./chat/api";
+import * as chatApi from "./chat/api";
 import type { ServerConfig } from "./config";
 
 const { getConversationPage, getWorkspacePaths } = chatApi;

@@ -7,8 +7,10 @@ import {
 	conversationMarkers,
 	countActivityNodes,
 	groupConversationByTurn,
+	latestFirstConversationGroups,
 	readableConversationItems,
 } from "./timelineModel";
+import * as timelineModel from "./timelineModel";
 import type { ConversationActivity, ConversationSnapshot } from "./types";
 
 function snapshot(): ConversationSnapshot {

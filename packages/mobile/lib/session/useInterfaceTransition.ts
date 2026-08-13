@@ -8,23 +8,7 @@ import {
 } from "../chat/api";
 import { interfaceTransitionPollInterval, mobileInterfaceTransitionIsActive } from "./interfaceTransition";
 
-const activePhases = new Set<SessionInterfaceTransition["phase"]>([
-	"requested",
-	"preflighting",
-	"draining",
-	"source_stopping",
-	"source_stopped",
-	"target_starting",
-	"activating",
-]);
-
-export function mobileInterfaceTransitionIsActive(transition?: SessionInterfaceTransition): boolean {
-	return Boolean(transition && activePhases.has(transition.phase));
-}
-
-export function mobileInterfaceTransitionIsCancellable(transition?: SessionInterfaceTransition): boolean {
-	return Boolean(transition && ["requested", "preflighting", "draining"].includes(transition.phase));
-}
+export { mobileInterfaceTransitionIsActive, mobileInterfaceTransitionIsCancellable } from "./interfaceTransition";
 
 export function useInterfaceTransition(
 	cfg: ServerConfig | null,

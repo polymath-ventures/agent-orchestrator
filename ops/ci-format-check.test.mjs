@@ -12,6 +12,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const scriptPath = fileURLToPath(new URL("../scripts/ci/format-check.sh", import.meta.url));
+const workflowPath = fileURLToPath(new URL("../.github/workflows/prettier.yml", import.meta.url));
 
 function git(cwd, ...args) {
 	const r = spawnSync("git", args, { cwd, encoding: "utf8" });
@@ -161,4 +162,10 @@ test("format-check mirrors the prettier CI job command shape", () => {
 	assert.match(src, /--check/);
 	assert.match(src, /--ignore-unknown/);
 	assert.match(src, /--ignore-unknown -- "\$\{files\[@\]\}"/); // option terminator before the paths
+});
+
+test("prettier CI delegates changed-file filtering to the parity script", () => {
+	const workflow = readFileSync(workflowPath, "utf8");
+	assert.match(workflow, /bash scripts\/ci\/format-check\.sh/);
+	assert.doesNotMatch(workflow, /xargs[^\n]*prettier/);
 });

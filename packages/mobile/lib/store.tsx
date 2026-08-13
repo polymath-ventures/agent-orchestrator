@@ -286,14 +286,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
 	}, [activeProjectId, projects]);
 
 	const spawn = useCallback(
-		async ({ projectId, prompt, issueId, harness, mode }: SpawnOptions) => {
-			const c = cfgRef.current;
-			const proj = projectId ?? targetProject();
-			if (!c || !proj) throw new Error("Pick a project first");
-			const session = await spawnSession(c, { projectId: proj, prompt, issueId, harness, mode: mode ?? "chat" });
-			await fetchAll();
-			return session;
-		},
+		async ({ projectId, prompt, harness, model, mode }: SpawnOptions) =>
+			trackFeature("spawn", async () => {
+				const c = cfgRef.current;
+				const proj = projectId ?? targetProject();
+				if (!c || !proj) throw new Error("Pick a project first");
+				const session = await delegateTask(c, {
+					projectId: proj,
+					brief: prompt ?? "",
+					agent: harness,
+					model,
+					mode: mode ?? "chat",
+				});
+				await fetchAll();
+				return session;
+			}),
 		[targetProject, fetchAll],
 	);
 

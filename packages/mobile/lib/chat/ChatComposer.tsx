@@ -2,12 +2,12 @@ import { Feather } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as DocumentPicker from "expo-document-picker";
 import * as ImagePicker from "expo-image-picker";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useRouter } from "expo-router";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
 	ActivityIndicator,
 	Image,
 	Keyboard,
-	Modal,
 	Pressable,
 	ScrollView,
 	StyleSheet,
@@ -292,19 +292,11 @@ export function ChatComposer({
 			openingSuggestion.current = undefined;
 			return;
 		}
-		// Only auto-close a picker that came from a text trigger. A picker opened
-		// from the toolbar has no trigger and stays browsable.
-		if (trigger) {
-			setTrigger(undefined);
-			setPicker(undefined);
-			setQuery("");
-		}
-		// `trigger` is the result of this effect, not an input to it. Depending on it
-		// makes every detected token allocate a new trigger object, which recursively
-		// re-runs the effect until React reports "Maximum update depth exceeded". It
-		// also immediately reopens a picker the user just dismissed. Re-evaluate only
-		// when the composer text/caret or the available suggestion sources change.
-	}, [cursor, filePaths.length, skills.length, text]);
+		const key = composerSuggestionKey(suggestion);
+		if (openingSuggestion.current === key) return;
+		openingSuggestion.current = key;
+		void openPicker(suggestion.kind, suggestion);
+	}, [cursor, openPicker, pickerGate, text]);
 	return (
 		<View style={styles.dock}>
 			{voice.state === "starting" || voice.state === "recording" ? (
@@ -334,7 +326,10 @@ export function ChatComposer({
 							<Pressable
 								hitSlop={7}
 								accessibilityLabel={`Remove ${item.name}`}
-								onPress={() => setAttachments((old) => old.filter((candidate) => candidate.id !== item.id))}
+								onPress={() => {
+									haptics.tap();
+									setAttachments((old) => old.filter((candidate) => candidate.id !== item.id));
+								}}
 							>
 								<Feather name="x" size={13} color={t.textTertiary} />
 							</Pressable>
@@ -361,9 +356,7 @@ export function ChatComposer({
 								? steerEligible
 									? "Agent is working — this goes into its running turn"
 									: "Agent is working — this sends when it finishes"
-								: skills.length
-									? "Ask the agent…  / for skills, @ for files"
-									: "Ask the agent…  @ for files"
+								: "Ask the agent…  / for skills, @ for files"
 					}
 					placeholderTextColor={t.textFaint}
 					style={styles.input}
@@ -382,32 +375,29 @@ export function ChatComposer({
 					{canEmbedFiles ? (
 						<IconButton icon="file-plus" label="Attach text file" onPress={addFile} disabled={stopped} />
 					) : null}
-					{skills.length ? (
-						<IconButton
-							icon="command"
-							label="Skills"
-							onPress={() => {
-								setQuery("");
-								setPicker("skills");
-							}}
-							disabled={stopped}
-						/>
-					) : null}
-					{filePaths.length ? (
-						<IconButton
-							icon="at-sign"
-							label="Worktree files"
-							onPress={() => {
-								setQuery("");
-								setPicker("files");
-							}}
-							disabled={stopped}
-						/>
-					) : null}
+					<IconButton
+						icon="command"
+						label="Skills"
+						onPress={() => {
+							void openPicker("skills");
+						}}
+						disabled={stopped}
+					/>
+					<IconButton
+						icon="at-sign"
+						label="Worktree files"
+						onPress={() => {
+							void openPicker("files");
+						}}
+						disabled={stopped}
+					/>
 					<Pressable
 						accessibilityRole="button"
 						accessibilityLabel="Turn settings"
-						onPress={onOpenSettings}
+						onPress={() => {
+							haptics.tap();
+							onOpenSettings();
+						}}
 						style={styles.settingLabel}
 					>
 						<Feather name="cpu" size={13} color={t.textTertiary} />
@@ -421,7 +411,10 @@ export function ChatComposer({
 						<Pressable
 							accessibilityRole="button"
 							accessibilityLabel="Stop turn"
-							onPress={onInterrupt}
+							onPress={() => {
+								haptics.tap();
+								void onInterrupt();
+							}}
 							style={styles.stop}
 						>
 							<Feather name="square" size={14} color={t.textPrimary} />
@@ -432,7 +425,10 @@ export function ChatComposer({
 							accessibilityLabel={steerEligible ? "Steer turn" : active ? "Queue message" : "Send message"}
 							accessibilityState={{ disabled: stopped || pending || submitting }}
 							disabled={stopped || pending || submitting || (!text.trim() && attachments.length === 0)}
-							onPress={() => void submit()}
+							onPress={() => {
+								haptics.tap();
+								void submit();
+							}}
 							style={({ pressed }) => [
 								styles.send,
 								pressed && { opacity: 0.8 },
@@ -448,30 +444,6 @@ export function ChatComposer({
 					)}
 				</View>
 			</View>
-			<SuggestionModal
-				kind={picker}
-				query={query}
-				setQuery={setQuery}
-				skills={skills}
-				filePaths={filePaths}
-				filePathsTruncated={filePathsTruncated}
-				onClose={() => {
-					setPicker(undefined);
-					setTrigger(undefined);
-				}}
-				onPick={(value) => {
-					setText((old) => {
-						const next =
-							trigger && trigger.kind === picker
-								? replaceComposerSuggestion(old, trigger, value)
-								: `${old}${old && !/\s$/.test(old) ? " " : ""}${picker === "skills" ? `/${value}` : /\s/.test(value) ? `"${value}"` : value} `;
-						setCursor(next.length);
-						return next;
-					});
-					setPicker(undefined);
-					setTrigger(undefined);
-				}}
-			/>
 		</View>
 	);
 }
@@ -533,7 +505,10 @@ function DeliveryChoice({
 						accessibilityRole="radio"
 						accessibilityState={{ checked: selected, disabled }}
 						disabled={disabled}
-						onPress={() => onChange(option)}
+						onPress={() => {
+							haptics.select();
+							onChange(option);
+						}}
 						style={[styles.deliveryOption, selected && styles.deliveryOptionSelected, disabled && { opacity: 0.35 }]}
 					>
 						<Text style={[styles.deliveryOptionText, selected && { color: t.textPrimary }]}>
@@ -547,75 +522,6 @@ function DeliveryChoice({
 	);
 }
 
-function SuggestionModal({
-	kind,
-	query,
-	setQuery,
-	skills,
-	filePaths,
-	filePathsTruncated,
-	onClose,
-	onPick,
-}: {
-	kind?: "skills" | "files";
-	query: string;
-	setQuery(value: string): void;
-	skills: ChatSkill[];
-	filePaths: string[];
-	filePathsTruncated?: boolean;
-	onClose(): void;
-	onPick(value: string): void;
-}) {
-	const t = useTheme();
-	const styles = useThemedStyles(makeStyles);
-	const choices = useMemo(() => {
-		if (kind === "skills") return rankComposerSkills(skills, query);
-		return rankComposerFiles(filePaths, query);
-	}, [kind, query, skills, filePaths]);
-	return (
-		<Modal visible={Boolean(kind)} transparent animationType="slide" onRequestClose={onClose}>
-			<Pressable style={styles.scrim} onPress={onClose} />
-			<View style={styles.suggestionSheet}>
-				<View style={styles.suggestionHeader}>
-					<Text style={styles.suggestionTitle}>{kind === "skills" ? "Skills" : "Worktree files"}</Text>
-					<Pressable onPress={onClose} hitSlop={10}>
-						<Feather name="x" size={19} color={t.textSecondary} />
-					</Pressable>
-				</View>
-				<TextInput
-					autoFocus
-					value={query}
-					onChangeText={setQuery}
-					placeholder={kind === "skills" ? "Find a skill" : "Find a file"}
-					placeholderTextColor={t.textFaint}
-					style={styles.search}
-				/>
-				{kind === "files" && filePathsTruncated ? (
-					<Text style={styles.truncated}>
-						Showing the daemon's capped path list. Narrow your search or type a path directly.
-					</Text>
-				) : null}
-				<ScrollView keyboardShouldPersistTaps="handled">
-					{choices.map((choice) => (
-						<Pressable key={choice.value} onPress={() => onPick(choice.value)} style={styles.suggestionRow}>
-							<View style={{ flex: 1 }}>
-								<Text style={styles.suggestionLabel}>{choice.label}</Text>
-								{choice.detail ? (
-									<Text numberOfLines={2} style={styles.suggestionDetail}>
-										{choice.detail}
-									</Text>
-								) : null}
-							</View>
-							{choice.badge ? <Text style={styles.badge}>{choice.badge}</Text> : null}
-						</Pressable>
-					))}
-					{!choices.length ? <Text style={styles.none}>No matches</Text> : null}
-				</ScrollView>
-			</View>
-		</Modal>
-	);
-}
-
 const makeStyles = (t: Theme) =>
 	StyleSheet.create({
 		dock: {
@@ -626,15 +532,7 @@ const makeStyles = (t: Theme) =>
 			borderTopWidth: 1,
 			borderTopColor: t.borderSubtle,
 		},
-		composer: {
-			borderRadius: 16,
-			backgroundColor: t.bgElevated,
-			borderWidth: 1,
-			borderColor: t.borderDefault,
-			paddingHorizontal: 11,
-			paddingTop: 8,
-			paddingBottom: 8,
-		},
+		composer: composerSurfaceStyle(t),
 		input: {
 			minHeight: 44,
 			maxHeight: 150,
@@ -714,42 +612,4 @@ const makeStyles = (t: Theme) =>
 			marginBottom: 7,
 		},
 		voiceText: { flex: 1, color: t.textSecondary, fontSize: 11 },
-		scrim: { ...StyleSheet.absoluteFillObject, backgroundColor: t.scrim },
-		suggestionSheet: {
-			position: "absolute",
-			left: 0,
-			right: 0,
-			bottom: 0,
-			height: "72%",
-			borderTopLeftRadius: 22,
-			borderTopRightRadius: 22,
-			backgroundColor: t.bgSurface,
-			paddingBottom: 30,
-		},
-		suggestionHeader: { flexDirection: "row", alignItems: "center", padding: 16, paddingBottom: 10 },
-		suggestionTitle: { flex: 1, color: t.textPrimary, fontWeight: "700", fontSize: 17 },
-		search: {
-			marginHorizontal: 14,
-			marginBottom: 8,
-			minHeight: 42,
-			backgroundColor: t.bgElevated,
-			borderRadius: 10,
-			color: t.textPrimary,
-			paddingHorizontal: 12,
-		},
-		truncated: { color: t.amber, fontSize: 10, lineHeight: 14, paddingHorizontal: 16, paddingBottom: 7 },
-		suggestionRow: {
-			minHeight: 53,
-			flexDirection: "row",
-			alignItems: "center",
-			gap: 8,
-			paddingHorizontal: 16,
-			paddingVertical: 8,
-			borderBottomWidth: StyleSheet.hairlineWidth,
-			borderBottomColor: t.borderSubtle,
-		},
-		suggestionLabel: { color: t.textPrimary, fontSize: 13, fontWeight: "600" },
-		suggestionDetail: { color: t.textTertiary, fontSize: 11, lineHeight: 15, marginTop: 2 },
-		badge: { color: t.textFaint, fontSize: 9, textTransform: "uppercase" },
-		none: { color: t.textTertiary, fontSize: 13, textAlign: "center", paddingVertical: 30 },
 	});

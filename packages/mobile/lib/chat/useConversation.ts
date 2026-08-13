@@ -30,7 +30,7 @@ import type {
 	ConversationSnapshot,
 	TurnSettings,
 } from "./types";
-import { discardHistoricalPages } from "./snapshot";
+import { cachedConversationState, createMobileConversationPageCache, discardHistoricalPages } from "./snapshot";
 import { conversationActionError, conversationErrorCode } from "./conversationErrors";
 import { subscribeConversationEvents } from "./conversationEvents";
 import { createAsyncValueCache } from "./asyncValueCache";
@@ -96,8 +96,14 @@ export type MobileConversation = {
 };
 
 export function useMobileConversation(cfg: ServerConfig | null, sessionId: string): MobileConversation {
-	const [pages, setPages] = useState<ConversationPage[]>([]);
-	const [loading, setLoading] = useState(true);
+	const cacheKey = cfg ? conversationPageCacheKey(cfg, sessionId) : "";
+	const [initialState] = useState(() =>
+		cacheKey
+			? cachedConversationState(conversationPageCache, cacheKey)
+			: { pages: [] as ConversationPage[], loading: true },
+	);
+	const [pages, setPages] = useState<ConversationPage[]>(initialState.pages);
+	const [loading, setLoading] = useState(initialState.loading);
 	const [refreshing, setRefreshing] = useState(false);
 	const [loadingOlder, setLoadingOlder] = useState(false);
 	const [error, setError] = useState<string>();
@@ -180,41 +186,36 @@ export function useMobileConversation(cfg: ServerConfig | null, sessionId: strin
 		};
 	}, [cacheKey, refresh, refreshGate]);
 
-	// Provider catalogs are live session state. They fail independently so a
-	// missing optional facility never hides an otherwise healthy conversation.
-	useEffect(() => {
-		if (!cfg || unavailable || !hasConversation) return;
-		let cancelled = false;
-		const load = async () => {
-			const [modelResult, configResult, skillResult] = await Promise.allSettled([
-				hasProviderConfig ? Promise.resolve([]) : getConversationModels(cfg, sessionId),
-				hasProviderConfig ? getConversationConfigOptions(cfg, sessionId) : Promise.resolve([]),
-				getConversationSkills(cfg, sessionId),
-			]);
-			if (cancelled) return;
-			if (modelResult.status === "fulfilled") setModels(modelResult.value);
-			if (configResult.status === "fulfilled") setConfigOptions(configResult.value);
-			if (skillResult.status === "fulfilled") setSkills(skillResult.value);
-		};
-		void load();
-		const configPoll = hasProviderConfig
-			? setInterval(() => {
-					void getConversationConfigOptions(cfg, sessionId)
-						.then((value) => !cancelled && setConfigOptions(value))
-						.catch(() => {});
-				}, 5_000)
-			: undefined;
-		const skillPoll = setInterval(() => {
-			void getConversationSkills(cfg, sessionId)
-				.then((value) => !cancelled && setSkills(value))
-				.catch(() => {});
-		}, 60_000);
-		return () => {
-			cancelled = true;
-			if (configPoll) clearInterval(configPoll);
-			clearInterval(skillPoll);
-		};
-	}, [cfg, sessionId, unavailable, hasConversation, hasProviderConfig]);
+	const loadTurnOptions = useCallback(
+		async (options?: { refresh?: boolean }) => {
+			if (!cfg || unavailable || !hasConversation) return { models, configOptions };
+			if (options?.refresh) turnOptionsCache.delete(cacheKey);
+			const catalog = await turnOptionsCache.load(cacheKey, async () => {
+				return loadTurnOptionCatalog({
+					hasProviderConfig,
+					loadModels: () => getConversationModels(cfg, sessionId),
+					loadConfigOptions: () => getConversationConfigOptions(cfg, sessionId),
+				});
+			});
+			if (mounted.current) {
+				setModels(catalog.models);
+				setConfigOptions(catalog.configOptions);
+			}
+			return catalog;
+		},
+		[cacheKey, cfg, configOptions, hasConversation, hasProviderConfig, models, sessionId, unavailable],
+	);
+
+	const loadSkills = useCallback(async () => {
+		if (!cfg || unavailable || !hasConversation) return skills;
+		try {
+			const next = await skillsCache.load(cacheKey, () => getConversationSkills(cfg, sessionId));
+			if (mounted.current) setSkills(next);
+			return next;
+		} catch {
+			return skills;
+		}
+	}, [cacheKey, cfg, hasConversation, sessionId, skills, unavailable]);
 
 	useEffect(() => {
 		if (!cfg || unavailable) return;
@@ -376,26 +377,17 @@ export function useMobileConversation(cfg: ServerConfig | null, sessionId: strin
 		loadSkills,
 		send,
 		retrySend,
-		discardSend: (id) => setPendingSends((old) => old.filter((item) => item.id !== id)),
-		steer: (text) =>
-			runAction("steer", () => requireConfig(cfg, (c) => steerConversation(c, sessionId, text, clientMessageId()))),
-		interrupt: () => runAction("interrupt", () => requireConfig(cfg, (c) => interruptConversation(c, sessionId))),
-		resolveApproval: (requestId, decisionId) =>
-			runAction("approval", () => requireConfig(cfg, (c) => resolveApproval(c, sessionId, requestId, decisionId))),
-		resolveInput: (requestId, action, content) =>
-			runAction("input", () => requireConfig(cfg, (c) => resolveInput(c, sessionId, requestId, action, content))),
-		compact: () => runAction("compact", () => requireConfig(cfg, (c) => compactConversation(c, sessionId))),
-		rollback: (turnId) =>
-			runAction("rollback", () => requireConfig(cfg, (c) => rollbackConversation(c, sessionId, turnId)), true),
-		chooseSettings: (settings) =>
-			runAction("settings", () => requireConfig(cfg, (c) => setConversationSettings(c, sessionId, settings))),
-		setConfigOption: (optionId, value) =>
-			runAction("config", async () => {
-				const options = await requireConfig(cfg, (c) => setConversationConfigOption(c, sessionId, optionId, value));
-				setConfigOptions(options);
-			}),
-		reloadMcp: () => runAction("mcp", () => requireConfig(cfg, (c) => reloadMcpServers(c, sessionId))),
-		rename: (title) => runAction("rename", () => requireConfig(cfg, (c) => setConversationTitle(c, sessionId, title))),
+		discardSend,
+		steer,
+		interrupt,
+		resolveApproval: resolveApprovalAction,
+		resolveInput: resolveInputAction,
+		compact,
+		rollback,
+		chooseSettings,
+		setConfigOption,
+		reloadMcp,
+		rename,
 	};
 }
 

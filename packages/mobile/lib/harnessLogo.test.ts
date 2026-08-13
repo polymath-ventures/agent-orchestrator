@@ -29,6 +29,7 @@ const ALL_HARNESSES = [
 	"vibe",
 	"pi",
 	"autohand",
+	"kimchi",
 	"fake",
 ];
 

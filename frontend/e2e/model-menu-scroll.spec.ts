@@ -11,7 +11,7 @@ const models = Array.from({ length: 30 }, (_, index) => ({
 
 test("renderer: hidden model-menu scrollbar keeps wheel scrolling functional @T0", async ({ page }) => {
 	await installFakeAgent(page, { projectId, projectName: projectId });
-	await page.route("http://127.0.0.1:8080/api/v1/**", async (route) => {
+	await page.route("**/api/v1/**", async (route) => {
 		const request = route.request();
 		const pathname = new URL(request.url()).pathname;
 		if (pathname === "/api/v1/agents" || pathname === "/api/v1/agents/refresh") {
@@ -56,6 +56,8 @@ test("renderer: hidden model-menu scrollbar keeps wheel scrolling functional @T0
 	await page.getByRole("button", { name: "New task" }).first().click();
 	const dialog = page.getByRole("dialog", { name: "New task" });
 	await expect(dialog).toBeVisible();
+	await dialog.getByRole("combobox", { name: "Agent" }).click();
+	await page.getByRole("option", { name: "OpenCode" }).click();
 	await dialog.getByRole("button", { name: "Model" }).click();
 
 	const scroller = page.locator(".model-menu-scroll");
