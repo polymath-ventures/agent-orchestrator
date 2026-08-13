@@ -182,7 +182,14 @@ export async function installBrowserModeApiFixtures(page: Page) {
 						status: "ci_failed",
 						terminalHandleId: "term-demo-ci-failed",
 						autoInjectCI: false,
-						prs: [{ ...prFacts(43, "open"), ci: "failing", review: "none" }],
+						prs: [
+							{
+								...prFacts(43, "open"),
+								ci: "failing",
+								mergeability: "blocked",
+								review: "none",
+							},
+						],
 					}),
 				],
 			},
@@ -224,7 +231,7 @@ function session(input: {
 	displayName: string;
 	id: string;
 	kind: "orchestrator" | "worker";
-	prs?: unknown[];
+	prs?: components["schemas"]["SessionPRFacts"][];
 	status: string;
 	terminalHandleId: string;
 }) {
@@ -306,7 +313,7 @@ function handleSessionPRs(route: Route) {
 			.request()
 			.url()
 			.match(/\/sessions\/([^/]+)\/pr/)?.[1] ?? "";
-	const prs =
+	const prs: components["schemas"]["SessionPRSummary"][] =
 		sessionId === "stacked-auth"
 			? [
 					prSummary(41, "open", "Auth stack parent"),
