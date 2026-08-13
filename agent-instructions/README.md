@@ -30,7 +30,8 @@ agent-instructions assembler) rather than reimplementing them.
 
 Ensures the account you're in has the whole toolkit:
 
-1. **Agent CLIs** — installs any missing: `claude`, `codex`, `opencode`.
+1. **Agent CLIs** — installs any missing: `claude`, `codex`, `gemini`,
+   `opencode`, and enforces Gemini CLI 0.24.0 or newer.
 2. **`sx`** — installs or upgrades to at least 2.2.7, configures it against the vault if needed, then runs
    `sx install` so **polypowers** and the other org assets land in `~/.claude/`.
 3. **Hooks + wiring** — ensures the global hooks and `settings.json` entries:
@@ -62,8 +63,8 @@ Brings the current repo to the standard:
    `agent-instructions/` source (tailored to the stack), **including the
    versioned generic standard set** (polypowers, operating principles, identity
    contract, and per-client identity bodies), then runs the assembler to emit
-   `CLAUDE.md`/`AGENTS.md`/`GEMINI.md`. So the repo actually tells agents *how
-   and when they must use polypowers* — not just makes the skills available.
+   minimal fail-open `CLAUDE.md`/`AGENTS.md`/`GEMINI.md` stubs. SessionStart
+   injects the current full rules plus repo-local context.
 5. **tool request drift** — reports repo-level tool files and points new recipes to trusted vault sidecars.
 6. **GitHub contract** — installs trusted closing-issue and final-review status
    checks, requires pull requests without bypass actors on the default branch,
@@ -86,7 +87,7 @@ The schema is nested by subsystem:
 {
   "schema": 1,
   "repo": "owner/name",
-  "clients": ["claude-code", "codex"],
+  "clients": ["claude-code", "codex", "gemini"],
   "subsystems": {
     "openspec": { "enabled": true },
     "sx": { "enabled": true },
@@ -98,7 +99,7 @@ The schema is nested by subsystem:
 }
 ```
 
-New files default `clients` to `["claude-code", "codex"]`; reruns preserve an
+New files default `clients` to `["claude-code", "codex", "gemini"]`; reruns preserve an
 existing array byte-for-byte unless the user edits `nickify.json`.
 Repo scope needs a structured JSON parser (`jq`, `python3`, or `node`) to read
 the desired-state file and stops with a clear message if none is available.
@@ -181,17 +182,17 @@ giant `CLAUDE.md`, a repo keeps a modular `agent-instructions/` directory of
 small, ordered markdown fragments (identity, workflow, the polypowers governing
 module, tools, project overview, …). polyscribe:
 
-- concatenates those fragments in order and **emits the configured per-client
-  identity files** — for example `CLAUDE.md`, `AGENTS.md`, or `GEMINI.md` — so
-  each configured agent gets the same governance in its own expected file;
-- runs automatically at **session start** (as a global hook) in **check-only**
-  mode — it reports drift without rewriting tracked files;
+- emits minimal committed fail-open stubs for configured clients and keeps
+  `AGENTS.shared.md` as an identity-free authoring reference;
+- runs automatically at **session start** to inject the hook-bundled current
+  universal rules, repo-local fragments, and the selected client identity
+  without rewriting tracked files;
 - is a **no-op** in any repo that doesn't opt in (no `agent-instructions/` →
   nothing happens), and never clobbers a repo-owned assembler script.
 
-Net: one modular source of truth → consistent, multi-client agent instructions,
-checked automatically and rebuilt through tracked reconcile commits. (Shipped as
-the org-scoped `polyscribe` hook asset.)
+Net: current vault policy plus repo-local context → consistent multi-client
+session instructions, with small committed safety stubs when injection is
+unavailable. (Shipped as the org-scoped `polyscribe` hook asset.)
 
 ## Depends on
 
