@@ -121,3 +121,6 @@ pnpm-lock.yaml
 /.reviewcache/
 /.reviewtmp/
 /TASK-PLAN.md
+/CLAUDE-ASSEMBLED.md*
+/AGENTS-ASSEMBLED.md*
+/GEMINI-ASSEMBLED.md*
