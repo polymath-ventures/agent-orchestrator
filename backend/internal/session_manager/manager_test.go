@@ -4004,6 +4004,24 @@ func TestSpawnWorker_IncludesConfiguredTrackerIntakeAssignee(t *testing.T) {
 	}
 }
 
+func TestSpawnWorker_IncludesGitLabTrackerIntakeAssignee(t *testing.T) {
+	st := newFakeStore()
+	cfg := testRoleAgents()
+	cfg.TrackerIntake = domain.TrackerIntakeConfig{Enabled: true, Provider: domain.TrackerProviderGitLab, Assignee: "polymath-orchestrator"}
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: cfg}
+	agent := &recordingAgent{}
+	lookPath := func(string) (string, error) { return "/bin/true", nil }
+	m := New(Deps{Runtime: &fakeRuntime{}, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
+
+	if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, IssueID: "gitlab:acme/mer#277"}); err != nil {
+		t.Fatal(err)
+	}
+
+	if !strings.Contains(agent.lastLaunch.SystemPrompt, "## Tracker Intake Claim") {
+		t.Fatalf("GitLab worker system prompt omitted the configured intake claim:\n%s", agent.lastLaunch.SystemPrompt)
+	}
+}
+
 func TestSpawnWorker_IssueContextStaysInTaskPrompt(t *testing.T) {
 	st := newFakeStore()
 	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
