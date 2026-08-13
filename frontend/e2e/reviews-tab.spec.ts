@@ -50,9 +50,13 @@ test("reviewer terminal activation and back-to-agent activation focus the select
 	await expect(page).toHaveURL(/sessions\/stacked-auth/);
 
 	const terminalTabs = page.getByRole("tablist", { name: "Open terminals" });
-	await terminalTabs.getByRole("tab", { name: "Reviewer" }).click();
+	const reviewerTab = terminalTabs.getByRole("tab", { name: "Reviewer" });
+	const agentTab = terminalTabs.getByRole("tab", { name: /auth stack/ });
+	await reviewerTab.click();
+	await expect(reviewerTab).toHaveAttribute("aria-current", "true");
 	await expect.poll(() => activeElementClass(page)).toContain("xterm-helper-textarea");
 
-	await terminalTabs.getByRole("tab", { name: /auth stack/ }).click();
+	await agentTab.click();
+	await expect(agentTab).toHaveAttribute("aria-current", "true");
 	await expect.poll(() => activeElementClass(page)).toContain("xterm-helper-textarea");
 });

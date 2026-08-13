@@ -1,4 +1,5 @@
 import type { Page, Route } from "@playwright/test";
+import type { components } from "../src/api/schema";
 
 const now = "2026-07-20T18:00:00.000Z";
 
@@ -171,11 +172,7 @@ export async function installBrowserModeApiFixtures(page: Page) {
 						branch: "stacked/auth",
 						status: "review_pending",
 						terminalHandleId: "term-stacked-auth",
-						prs: [
-							prFacts(41, "open", "Auth stack parent"),
-							prFacts(42, "draft", "Auth stack child"),
-							prFacts(40, "merged", "Auth stack base"),
-						],
+						prs: [prFacts(41, "open"), prFacts(42, "draft"), prFacts(40, "merged")],
 					}),
 					session({
 						id: "demo-ci-failed",
@@ -185,7 +182,7 @@ export async function installBrowserModeApiFixtures(page: Page) {
 						status: "ci_failed",
 						terminalHandleId: "term-demo-ci-failed",
 						autoInjectCI: false,
-						prs: [{ ...prFacts(43, "open", "Fix flaky renderer smoke"), ci: "failing", review: "none" }],
+						prs: [{ ...prFacts(43, "open"), ci: "failing", review: "none" }],
 					}),
 				],
 			},
@@ -250,7 +247,7 @@ function session(input: {
 	};
 }
 
-function prFacts(number: number, state: "open" | "draft" | "merged", title: string) {
+function prFacts(number: number, state: "open" | "draft" | "merged"): components["schemas"]["SessionPRFacts"] {
 	return {
 		ci: state === "open" ? "passing" : "unknown",
 		mergeability: state === "open" ? "mergeable" : "unknown",
@@ -258,13 +255,16 @@ function prFacts(number: number, state: "open" | "draft" | "merged", title: stri
 		review: state === "open" ? "approved" : "none",
 		reviewComments: false,
 		state,
-		title,
 		updatedAt: now,
 		url: `https://github.com/me/api-gateway/pull/${number}`,
 	};
 }
 
-function prSummary(number: number, state: "open" | "draft" | "merged", title: string) {
+function prSummary(
+	number: number,
+	state: "open" | "draft" | "merged",
+	title: string,
+): components["schemas"]["SessionPRSummary"] {
 	return {
 		additions: number,
 		author: "agent",
@@ -278,10 +278,9 @@ function prSummary(number: number, state: "open" | "draft" | "merged", title: st
 		headSha: `sha-${number}`,
 		htmlUrl: `https://github.com/me/api-gateway/pull/${number}`,
 		mergeability: {
-			canMerge: state === "open",
-			conflicts: false,
 			prUrl: `https://github.com/me/api-gateway/pull/${number}`,
-			state: state === "open" ? "clean" : "unknown",
+			reasons: [],
+			state: state === "open" ? "mergeable" : "unknown",
 		},
 		number,
 		observedAt: now,
@@ -329,6 +328,16 @@ function handleSessionPRs(route: Route) {
 									},
 								],
 								state: "failing",
+							},
+							mergeability: {
+								prUrl: "https://github.com/me/api-gateway/pull/43",
+								reasons: ["required checks failing"],
+								state: "blocked",
+							},
+							review: {
+								decision: "none",
+								hasUnresolvedHumanComments: false,
+								unresolvedBy: [],
 							},
 						},
 					]
