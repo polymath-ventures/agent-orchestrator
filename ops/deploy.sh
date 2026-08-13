@@ -59,6 +59,10 @@ require_node() {
     || die "node $want+ required for $why (found $(node --version 2>/dev/null || echo none))"
 }
 
+# This script may be invoked from any checkout. It fetches origin, resolves the
+# requested ref (origin/main by default), then checks out that SHA into its own
+# fresh clone of this checkout and builds there, so the invoking working tree
+# cannot affect the deployed artifact.
 repo_root() { cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd; }
 
 restart_and_verify() {
