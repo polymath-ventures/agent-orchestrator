@@ -9,6 +9,6 @@
     {"source": "agent-overrides/codex.md","path": "agent-instructions/agent-overrides/codex.md","marker": "@sx-managed: codex-identity","sha256": "32ebbe649b27f8a614b4342fa577017de0f074cb7169d2e25e539628ae4aab84"},
     {"source": "agent-overrides/agy.md","path": "agent-instructions/agent-overrides/agy.md","marker": "@sx-managed: agy-identity","sha256": "bfc62b52a0e1fa10822da2be06053d96710c595c5a3fa44bf032ba5c11c57f12"},
     {"source": "README.md","path": "agent-instructions/README.md","marker": "@sx-managed: agent-instructions-readme","sha256": "a058cf0d389288981d10212369658b40103d5aee1d029730c05f770af979675d"},
-    {"source": "scripts/polyscribe.sh","path": "scripts/polyscribe.sh","marker": "@sx-managed: polyscribe","sha256": "04413d0b5a20db21967a011dd1a6aa22adaae40acec66cc31fad075d7e1b813a"}
+    {"source": "scripts/polyscribe.sh","path": "scripts/polyscribe.sh","marker": "@sx-managed: polyscribe","sha256": "4daa3ec228d71154abc8606c38060823cd39e281471136fbc33072ab4ab96125"}
   ]
 }

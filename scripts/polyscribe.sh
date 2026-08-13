@@ -3,7 +3,7 @@
 # polyscribe.sh
 #
 # @sx-managed: polyscribe (vault) — do not edit; managed by the agent-vault hook
-# @sx-managed-version: 15
+# @sx-managed-version: 17
 #
 # Assemble modular markdown primitives for committed reconciliation, global
 # files, and SessionStart injection:
@@ -87,7 +87,7 @@ esac
 
 BANNER="<!-- GENERATED — DO NOT EDIT. Edit agent-instructions/{source,agent-overrides,system}/, then rebuild with polyscribe (system scope adds --system) -->"
 ROLE_BANNER="<!-- GENERATED — DO NOT EDIT. Edit agent-instructions/roles/<role>/, then rebuild with polyscribe -->"
-SESSION_BANNER="<!-- SESSION-INJECTED — current vault rules plus repo-local context; inspect the sibling *-ASSEMBLED.md record -->"
+SESSION_BANNER="<!-- SESSION-INJECTED — current vault rules plus repo-local context; when present, inspect the repo-root *-ASSEMBLED.md record -->"
 CEILING=200
 
 # --- REPO scope (NEVER glob — order is explicit) -----------------------------
@@ -612,7 +612,7 @@ EOF
   done
 }
 
-json_string_file() {
+json_string_stream() {
   # JSON-escape UTF-8 markdown with POSIX awk so SessionStart does not depend on
   # jq, Python, Node, or a client-specific runtime.
   awk '
@@ -637,7 +637,11 @@ json_string_file() {
       printf "\\n"
     }
     END { printf "\"" }
-  ' "$1"
+  '
+}
+
+json_string_file() {
+  json_string_stream < "$1"
 }
 
 render_session() {
@@ -679,19 +683,51 @@ render_session() {
 }
 
 run_session_mode() {
-  local client="$1" record="$2" record_dir tmp context_json
+  local client="$1" record="$2" record_dir record_base tmp="" context_json publish_record=true
+  local session_context session_sentinel=$'\034'
   [[ -d "$AI_DIR" ]] || exit 0
   [[ -n "$record" ]] || die "session mode requires an assembled-record path"
   record_dir="$(dirname -- "$record")"
-  mkdir -p "$record_dir"
-  tmp="$(mktemp "${record}.XXXXXX")"
-  cleanup_session_tmp() { [[ ! -e "$tmp" ]] || rm -- "$tmp"; }
+  record_base="$(basename -- "$record")"
+  if [[ -d "$record_dir" ]]; then
+    record_dir="$(cd -- "$record_dir" && pwd -P)"
+    record="${record_dir}/${record_base}"
+  fi
+  cleanup_session_tmp() {
+    [[ -z "${tmp:-}" || ! -e "$tmp" ]] || rm -- "$tmp" 2>/dev/null || true
+  }
   trap cleanup_session_tmp EXIT
-  render_session "$client" >"$tmp"
-  # Capture the envelope from this session's private temp before publishing the
-  # shared inspectable record. Another repo may replace that record immediately.
-  context_json="$(json_string_file "$tmp")"
-  mv -f "$tmp" "$record"
+  case "$record" in
+    "${REPO_ROOT}/"*)
+      if ! git -C "$REPO_ROOT" check-ignore -q -- "$record" || \
+         ! git -C "$REPO_ROOT" check-ignore -q -- "${record}.tmp.probe"; then
+        printf 'polyscribe: assembled record path is not ignored; re-run nickify to enable %s\n' "$record" >&2
+        publish_record=false
+      fi
+      ;;
+  esac
+  session_context="$(
+    render_session "$client" || exit $?
+    printf '%s' "$session_sentinel"
+  )" || return $?
+  session_context="${session_context%"$session_sentinel"}"
+  context_json="$(printf '%s' "$session_context" | json_string_stream)"
+
+  # The SessionStart envelope is now fully captured in memory. Record staging
+  # is optional and fail-open; when enabled, the temp lives beside the final
+  # record so the rename is atomic.
+  if [[ "$publish_record" == true ]]; then
+    if ! mkdir -p "$record_dir" 2>/dev/null || ! tmp="$(mktemp "${record}.tmp.XXXXXX" 2>/dev/null)"; then
+      printf 'polyscribe: could not stage assembled record %s; continuing with injected context\n' "$record" >&2
+    elif ! printf '%s' "$session_context" >"$tmp" 2>/dev/null; then
+      printf 'polyscribe: could not stage assembled record %s; continuing with injected context\n' "$record" >&2
+    elif mv -f "$tmp" "$record" 2>/dev/null; then
+      tmp=""
+    else
+      printf 'polyscribe: could not publish assembled record %s; continuing with injected context\n' "$record" >&2
+    fi
+  fi
+  cleanup_session_tmp
   trap - EXIT
   printf '{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":%s}}\n' "$context_json"
 }
