@@ -177,6 +177,16 @@ export async function installBrowserModeApiFixtures(page: Page) {
 							prFacts(40, "merged", "Auth stack base"),
 						],
 					}),
+					session({
+						id: "demo-ci-failed",
+						kind: "worker",
+						displayName: "Fix flaky renderer smoke",
+						branch: "fix/renderer-smoke",
+						status: "ci_failed",
+						terminalHandleId: "term-demo-ci-failed",
+						autoInjectCI: false,
+						prs: [{ ...prFacts(43, "open", "Fix flaky renderer smoke"), ci: "failing", review: "none" }],
+					}),
 				],
 			},
 		});
@@ -212,6 +222,7 @@ export async function installBrowserModeApiFixtures(page: Page) {
 }
 
 function session(input: {
+	autoInjectCI?: boolean;
 	branch?: string;
 	displayName: string;
 	id: string;
@@ -222,6 +233,7 @@ function session(input: {
 }) {
 	return {
 		activity: { lastActivityAt: now, state: "active" },
+		autoInjectCI: input.autoInjectCI ?? true,
 		branch: input.branch ?? "main",
 		createdAt: now,
 		displayName: input.displayName,
@@ -244,7 +256,7 @@ function prFacts(number: number, state: "open" | "draft" | "merged", title: stri
 		mergeability: state === "open" ? "mergeable" : "unknown",
 		number,
 		review: state === "open" ? "approved" : "none",
-		reviewComments: 0,
+		reviewComments: false,
 		state,
 		title,
 		updatedAt: now,
@@ -257,7 +269,11 @@ function prSummary(number: number, state: "open" | "draft" | "merged", title: st
 		additions: number,
 		author: "agent",
 		changedFiles: 1,
-		ci: { conclusion: state === "open" ? "success" : "unknown", detailsUrl: "" },
+		ci: {
+			autoInjectCI: true,
+			failingChecks: [],
+			state: state === "open" ? "passing" : "unknown",
+		},
 		deletions: 2,
 		headSha: `sha-${number}`,
 		htmlUrl: `https://github.com/me/api-gateway/pull/${number}`,
@@ -298,7 +314,25 @@ function handleSessionPRs(route: Route) {
 					prSummary(42, "draft", "Auth stack child"),
 					prSummary(40, "merged", "Auth stack base"),
 				]
-			: [];
+			: sessionId === "demo-ci-failed"
+				? [
+						{
+							...prSummary(43, "open", "Fix flaky renderer smoke"),
+							ci: {
+								autoInjectCI: false,
+								failingChecks: [
+									{
+										conclusion: "failure",
+										name: "renderer smoke",
+										status: "failed",
+										url: "https://github.com/me/api-gateway/actions/runs/43/jobs/1",
+									},
+								],
+								state: "failing",
+							},
+						},
+					]
+				: [];
 	return route.fulfill({ json: { sessionId, prs } });
 }
 

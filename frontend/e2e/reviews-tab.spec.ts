@@ -49,13 +49,10 @@ test("reviewer terminal activation and back-to-agent activation focus the select
 	await page.getByRole("button", { name: "Open auth stack" }).click();
 	await expect(page).toHaveURL(/sessions\/stacked-auth/);
 
-	// Upstream's worker inspector rail defaults open, so it is already mounted.
-	const inspector = page.locator("#inspector");
-	await inspector.getByRole("button", { name: "Open terminal" }).click();
-
-	await expect(page.getByRole("button", { name: "Back to agent terminal" })).toBeVisible();
+	const terminalTabs = page.getByRole("tablist", { name: "Open terminals" });
+	await terminalTabs.getByRole("tab", { name: "Reviewer" }).click();
 	await expect.poll(() => activeElementClass(page)).toContain("xterm-helper-textarea");
 
-	await page.getByRole("button", { name: "Back to agent terminal" }).click();
+	await terminalTabs.getByRole("tab", { name: /auth stack/ }).click();
 	await expect.poll(() => activeElementClass(page)).toContain("xterm-helper-textarea");
 });
