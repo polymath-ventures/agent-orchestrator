@@ -43,16 +43,19 @@ const (
 // native payload when present. All four are optional: an old daemon decodes
 // the body leniently and simply ignores them.
 type setActivityAPIRequest struct {
-	State          string                 `json:"state,omitempty"`
-	Harness        string                 `json:"harness,omitempty"`
-	Event          string                 `json:"event,omitempty"`
-	ToolName       string                 `json:"toolName,omitempty"`
-	ToolUseID      string                 `json:"toolUseId,omitempty"`
-	AgentSessionID string                 `json:"agentSessionId,omitempty"`
-	LaunchID       string                 `json:"launchId,omitempty"`
-	Error          string                 `json:"error,omitempty"`
-	Usage          *usageAPIRequest       `json:"usage,omitempty"`
-	Quotas         []domain.QuotaSnapshot `json:"quotas,omitempty"`
+	State                 string                 `json:"state,omitempty"`
+	Harness               string                 `json:"harness,omitempty"`
+	Event                 string                 `json:"event,omitempty"`
+	ToolName              string                 `json:"toolName,omitempty"`
+	ToolUseID             string                 `json:"toolUseId,omitempty"`
+	AgentSessionID        string                 `json:"agentSessionId,omitempty"`
+	LatestUserPrompt      string                 `json:"latestUserPrompt,omitempty"`
+	LatestAssistantUpdate string                 `json:"latestAssistantUpdate,omitempty"`
+	TranscriptPath        string                 `json:"transcriptPath,omitempty"`
+	LaunchID              string                 `json:"launchId,omitempty"`
+	Error                 string                 `json:"error,omitempty"`
+	Usage                 *usageAPIRequest       `json:"usage,omitempty"`
+	Quotas                []domain.QuotaSnapshot `json:"quotas,omitempty"`
 }
 
 type usageAPIRequest struct {
@@ -67,11 +70,26 @@ type usageAPIRequest struct {
 	SubagentTranscriptPath string   `json:"subagentTranscriptPath,omitempty"`
 }
 
+// setReviewActivityAPIRequest mirrors POST /api/v1/reviews/{id}/activity.
+// Reviewer hooks only persist reviewer-owned restore metadata for now; they do
+// not feed worker lifecycle/tool-flight state.
+type setReviewActivityAPIRequest struct {
+	State          string `json:"state,omitempty"`
+	Event          string `json:"event,omitempty"`
+	AgentSessionID string `json:"agentSessionId,omitempty"`
+	LaunchID       string `json:"launchId,omitempty"`
+}
+
 // maxActivityMetaLen caps the correlation fields lifted from a native hook
 // payload before they go on the wire — they are ids/names, anything longer is
 // garbage and gets dropped rather than truncated (a truncated id would never
 // match its pre/post counterpart).
 const maxActivityMetaLen = 256
+
+const (
+	maxHookInteractionLen = 16 << 10
+	maxHookTranscriptPath = 4096
+)
 
 // activityMeta extracts the tool-use correlation facts from a native hook
 // payload. The field names are shared vocabulary across agent CLIs that emit
@@ -148,6 +166,73 @@ func hookUsageMetadata(agent string, payload []byte) *usageAPIRequest {
 	return meta
 }
 
+type hookConversationSnapshot struct {
+	LatestUserPrompt      string
+	LatestAssistantUpdate string
+	TranscriptPath        string
+}
+
+func hookConversationFacts(payload []byte) hookConversationSnapshot {
+	var p struct {
+		Prompt                    string `json:"prompt"`
+		UserPrompt                string `json:"user_prompt"`
+		UserPromptCamel           string `json:"userPrompt"`
+		LastAssistantMessage      string `json:"last_assistant_message"`
+		LastAssistantMessageCamel string `json:"lastAssistantMessage"`
+		AssistantMessage          string `json:"assistant_message"`
+		AssistantMessageCamel     string `json:"assistantMessage"`
+		TranscriptPath            string `json:"transcript_path"`
+		TranscriptPathCamel       string `json:"transcriptPath"`
+	}
+	_ = json.Unmarshal(payload, &p)
+	userPrompt := firstHookValue(p.Prompt, p.UserPrompt, p.UserPromptCamel)
+	assistant := firstHookValue(p.LastAssistantMessage, p.LastAssistantMessageCamel, p.AssistantMessage, p.AssistantMessageCamel)
+	// AO's own handoff request and continuation kickoff are coordination turns,
+	// not the latest real user instruction. They remain in provider history but
+	// must not overwrite deterministic user intent.
+	if strings.HasPrefix(strings.TrimSpace(userPrompt), "<ao-handoff-request") {
+		assistant = ""
+	}
+	if isAOCoordinationMessage(userPrompt) {
+		userPrompt = ""
+	}
+	return hookConversationSnapshot{
+		LatestUserPrompt:      capHookText(userPrompt, maxHookInteractionLen),
+		LatestAssistantUpdate: capHookText(assistant, maxHookInteractionLen),
+		TranscriptPath:        capHookText(firstHookValue(p.TranscriptPath, p.TranscriptPathCamel), maxHookTranscriptPath),
+	}
+}
+
+func firstHookValue(values ...string) string {
+	for _, value := range values {
+		if value = strings.TrimSpace(value); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func isAOCoordinationMessage(value string) bool {
+	value = strings.TrimSpace(value)
+	return strings.HasPrefix(value, "<ao-handoff-request") ||
+		strings.HasPrefix(value, "AO transferred the previous agent's context in hidden system instructions.")
+}
+
+func capHookText(value string, limit int) string {
+	value = domain.SanitizeControlChars(strings.TrimSpace(value))
+	if limit <= 0 || len(value) <= limit {
+		return value
+	}
+	const marker = "\n[... truncated by AO ...]\n"
+	budget := limit - len(marker)
+	if budget <= 0 {
+		return ""
+	}
+	head := budget / 2
+	tail := budget - head
+	return strings.ToValidUTF8(string([]byte(value)[:head])+marker+string([]byte(value)[len(value)-tail:]), "?")
+}
+
 type sessionStartHookOutput struct {
 	HookSpecificOutput struct {
 		HookEventName     string `json:"hookEventName"`
@@ -176,6 +261,13 @@ func newHooksCommand(ctx *commandContext) *cobra.Command {
 }
 
 func (c *commandContext) runHook(ctx context.Context, agent, event string) error {
+	reviewSessionID := strings.TrimSpace(os.Getenv("AO_REVIEW_SESSION_ID"))
+	if reviewSessionID != "" {
+		if !domain.IsPathSafeSessionID(reviewSessionID) {
+			return nil
+		}
+		return c.runReviewHook(ctx, agent, event, reviewSessionID)
+	}
 	sessionID := strings.TrimSpace(os.Getenv("AO_SESSION_ID"))
 	if !domain.IsPathSafeSessionID(sessionID) {
 		// Not an AO-managed session (unset/empty), or an id we won't put in a
@@ -207,14 +299,22 @@ func (c *commandContext) runHook(ctx context.Context, agent, event string) error
 	}
 
 	toolName, toolUseID := activityMeta(payload)
+	conversation := hookConversationSnapshot{}
+	switch domain.AgentHarness(agent) {
+	case domain.HarnessClaudeCode, domain.HarnessCodex:
+		conversation = hookConversationFacts(payload)
+	}
 	path := "sessions/" + url.PathEscape(sessionID) + "/activity"
 	req := setActivityAPIRequest{
-		Event:          event,
-		ToolName:       toolName,
-		ToolUseID:      toolUseID,
-		AgentSessionID: agentSessionID,
-		LaunchID:       validLaunchID(os.Getenv("AO_RUNTIME_LAUNCH_ID")),
-		Usage:          usage,
+		Event:                 event,
+		ToolName:              toolName,
+		ToolUseID:             toolUseID,
+		AgentSessionID:        agentSessionID,
+		LatestUserPrompt:      conversation.LatestUserPrompt,
+		LatestAssistantUpdate: conversation.LatestAssistantUpdate,
+		TranscriptPath:        conversation.TranscriptPath,
+		LaunchID:              validLaunchID(os.Getenv("AO_RUNTIME_LAUNCH_ID")),
+		Usage:                 usage,
 	}
 	if hasActivity {
 		req.State = string(state)
@@ -246,6 +346,34 @@ func (c *commandContext) runHook(ctx context.Context, agent, event string) error
 	}
 	if commitUsage != nil {
 		commitUsage()
+	}
+	return nil
+}
+
+func (c *commandContext) runReviewHook(ctx context.Context, agent, event, reviewSessionID string) error {
+	payload, err := io.ReadAll(c.deps.In)
+	if err != nil {
+		c.reportHookFailure(agent, event, reviewSessionID, fmt.Errorf("read stdin: %w", err))
+	}
+	state, hasActivity := activitydispatch.Derive(agent, event, payload)
+	agentSessionID := ""
+	if activitydispatch.SupportsHarness(domain.AgentHarness(agent)) {
+		agentSessionID = hookAgentSessionID(payload)
+	}
+	if !hasActivity && agentSessionID == "" {
+		return nil
+	}
+	path := "reviews/" + url.PathEscape(reviewSessionID) + "/activity"
+	req := setReviewActivityAPIRequest{
+		Event:          event,
+		AgentSessionID: agentSessionID,
+		LaunchID:       validLaunchID(os.Getenv("AO_RUNTIME_LAUNCH_ID")),
+	}
+	if hasActivity {
+		req.State = string(state)
+	}
+	if err := c.postJSON(ctx, path, req, nil); err != nil {
+		c.reportHookFailure(agent, event, reviewSessionID, err)
 	}
 	return nil
 }

@@ -123,7 +123,17 @@ them as the starting point for a search, not as an exhaustive file list.
    harness #12 → #21; fugu reviewer registration #229 → #231; selector
    unification #121 → #124, #125, #132 → #139, and #140 → #141; setup defaults
    #98 → #100 and #106 → #107; per-harness catalog degradation #234 → #235.
-5. **Fleet & Prime.** The projectless "AO Fleet" workspace (`FLEET_WORKSPACE_ID`,
+5. **Sidebar harness indicator.** Worker and Prime session rows show the
+   harness each session is running as a compact glyph beside the status dot,
+   including the codex-fugu pip variant. The visible chip is decorative
+   (`aria-hidden` + `title`), and the row control carries a hidden harness
+   description via `aria-describedby`. Sync anchors:
+   `frontend/src/renderer/components/Sidebar.tsx` (`SessionRow`, `PrimeItem`),
+   `frontend/src/renderer/components/HarnessGlyph.tsx`,
+   `frontend/src/renderer/lib/harness-glyphs.ts`, and
+   `openspec/specs/sidebar-harness-indicator/spec.md`. Reference issues/PRs:
+   #152 → #174.
+6. **Fleet & Prime.** The projectless "AO Fleet" workspace (`FLEET_WORKSPACE_ID`,
    projectless-prime sessions), worker-mix percentages, fleet pause, and the
    daemon-global Prime supervisor. Sync anchors: `FLEET_WORKSPACE_ID` and
    `isFleetWorkspace` in `frontend/src/renderer/types/workspace.ts`, projected
@@ -141,7 +151,7 @@ them as the starting point for a search, not as an exhaustive file list.
    Reference issues/PRs: Prime #7 → #45, #87; fleet-scoped Prime #92 → #95;
    Prime settings unification #99 → #103 and #167 → #184; Prime permission mode
    #163 → #189; pause/drain #5 → #33, #66; worker mix #3 → #17, #80.
-6. **Persisted per-session model/effort/mix.** The launched-with model, effort,
+7. **Persisted per-session model/effort/mix.** The launched-with model, effort,
    and mix-selection are stored on the session row rather than re-derived from
    project config, because `mixCensus` buckets live workers by
    `domain.BucketKey{Harness, Model, Effort}` — substituting `MixBucketModel` for
@@ -166,7 +176,7 @@ them as the starting point for a search, not as an exhaustive file list.
    Reference issues/PRs: worker mix #3 → #17, #80 — the session `model` and
    `mix_selected` columns landed in #17; session prefix #151 → #179; readable
    session namespace #257 → #259.
-7. **Bug fixes.** Any fork divergence that fixes a real bug beats re-absorbing
+8. **Bug fixes.** Any fork divergence that fixes a real bug beats re-absorbing
    the upstream behavior it fixed. The clusters most likely to be silently
    reverted by a blend, because they live in shared upstream files: compensating
    teardown must run on a detached context, not the caller's cancelled one
@@ -189,7 +199,7 @@ them as the starting point for a search, not as an exhaustive file list.
    `backend/internal/adapters/agent/claudecode/claudecode.go`,
    `backend/internal/session_manager/manager.go`, and
    `backend/internal/cli/agent_process.go`. Reference issue: #244.
-8. **Ops / SDLC infrastructure.** `ops/deploy.sh` + the web server + systemd /
+9. **Ops / SDLC infrastructure.** `ops/deploy.sh` + the web server + systemd /
    Tailscale wiring; the Prettier CI the fork keeps (upstream removed it); and
    the agent SDLC files (`CLAUDE.md`, the repo-carried `skills/`,
    OpenSpec, `agent-instructions/`). Sync anchors: the whole of `ops/` is
@@ -209,22 +219,22 @@ them as the starting point for a search, not as an exhaustive file list.
    pre-push gate #105 → #108, #219 → #222, #227 → #228; build revision on the
    health probe #196, #200, #201 → #198; agent-ci workdir #169 → #172; and #52
    (the deploy script itself, opened without a tracking issue).
-9. **Operator-overridable worker task prompts.** Project config
-   `workerTaskPrompt` overrides the daemon-wide `AO_WORKER_TASK_PROMPT`; either
-   one fully replaces AO's issue-driven worker message and renders literal
-   `{issue}` placeholders without appending prefetched issue content. With both
-   settings absent, the upstream-compatible manual-spawn and tracker-intake
-   prompts remain unchanged. Sync anchors: the typed config and global default
-   in `backend/internal/{domain/projectconfig.go,config/config.go}`; shared
-   rendering and precedence in
-   `backend/internal/session_manager/{prompt.go,manager.go}`; tracker-intake
-   parity in `backend/internal/observe/trackerintake/observer.go`; inspection in
-   `backend/internal/roleprompt/`; CLI/API surfaces in
-   `backend/internal/{cli,httpd/controllers}/`; generated contracts in
-   `backend/internal/httpd/apispec/openapi.yaml` and `frontend/src/api/schema.ts`;
-   and the supervisor setting in
-   `frontend/src/renderer/components/ProjectSettingsForm.tsx`. Reference issue:
-   #242.
+10. **Operator-overridable worker task prompts.** Project config
+    `workerTaskPrompt` overrides the daemon-wide `AO_WORKER_TASK_PROMPT`; either
+    one fully replaces AO's issue-driven worker message and renders literal
+    `{issue}` placeholders without appending prefetched issue content. With both
+    settings absent, the upstream-compatible manual-spawn and tracker-intake
+    prompts remain unchanged. Sync anchors: the typed config and global default
+    in `backend/internal/{domain/projectconfig.go,config/config.go}`; shared
+    rendering and precedence in
+    `backend/internal/session_manager/{prompt.go,manager.go}`; tracker-intake
+    parity in `backend/internal/observe/trackerintake/observer.go`; inspection in
+    `backend/internal/roleprompt/`; CLI/API surfaces in
+    `backend/internal/{cli,httpd/controllers}/`; generated contracts in
+    `backend/internal/httpd/apispec/openapi.yaml` and `frontend/src/api/schema.ts`;
+    and the supervisor setting in
+    `frontend/src/renderer/components/ProjectSettingsForm.tsx`. Reference issue:
+    #242.
 
 **Explicitly NOT fork-specific — absorb upstream freely** (do not spend a sync
 preserving these; they were merged toward upstream and re-preserving them

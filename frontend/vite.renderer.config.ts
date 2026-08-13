@@ -59,7 +59,7 @@ const CONTENT_SECURITY_POLICY = [
 	"default-src 'self'",
 	"script-src 'self'",
 	"style-src 'self' 'unsafe-inline'",
-	"img-src 'self' data:",
+	"img-src 'self' data: http://127.0.0.1:*",
 	"font-src 'self' data:",
 	["connect-src", ...CONNECT_SRC].join(" "),
 	"object-src 'none'",
@@ -78,6 +78,22 @@ const injectCspMeta: Plugin = {
 				injectTo: "head-prepend",
 			},
 		];
+	},
+};
+
+const productUiReactBoundary: Plugin = {
+	name: "product-ui-react-boundary",
+	enforce: "pre",
+	async resolveId(source, importer) {
+		if (
+			!importer?.includes("/packages/product-ui/") ||
+			!(source === "react" || source.startsWith("react/") || source === "react-dom" || source.startsWith("react-dom/"))
+		) {
+			return null;
+		}
+		return this.resolve(source, fileURLToPath(new URL("./src/renderer/main.tsx", import.meta.url)), {
+			skipSelf: true,
+		});
 	},
 };
 
@@ -115,6 +131,9 @@ export default defineConfig({
 	resolve: {
 		alias: {
 			"@": fileURLToPath(new URL("./src/renderer", import.meta.url)),
+			"@aoagents/product-ui": fileURLToPath(new URL("../packages/product-ui/src/index.ts", import.meta.url)),
+			clsx: fileURLToPath(new URL("./node_modules/clsx/dist/clsx.mjs", import.meta.url)),
+			"tailwind-merge": fileURLToPath(new URL("./node_modules/tailwind-merge/dist/bundle-mjs.mjs", import.meta.url)),
 		},
 	},
 	// Dev proxy for VITE_NO_ELECTRON=1 browser preview — forwards /api and /mux
@@ -148,6 +167,7 @@ export default defineConfig({
 			target: "react",
 			autoCodeSplitting: true,
 		}),
+		productUiReactBoundary,
 		react(),
 		tailwindcss(),
 		injectCspMeta,

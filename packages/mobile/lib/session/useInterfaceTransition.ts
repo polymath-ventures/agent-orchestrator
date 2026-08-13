@@ -4,9 +4,9 @@ import {
 	cancelSessionInterfaceTransition,
 	getSessionInterfaceTransition,
 	startSessionInterfaceTransition,
-	type SessionInterfaceTransition,
 	type SessionInterfaceTransitionStatus,
 } from "../chat/api";
+import { interfaceTransitionPollInterval, mobileInterfaceTransitionIsActive } from "./interfaceTransition";
 
 const activePhases = new Set<SessionInterfaceTransition["phase"]>([
 	"requested",
@@ -63,8 +63,8 @@ export function useInterfaceTransition(
 	}, [refresh]);
 
 	useEffect(() => {
-		if (!cfg || !sessionId) return;
-		const interval = mobileInterfaceTransitionIsActive(status?.transition) ? 300 : 10_000;
+		const interval = interfaceTransitionPollInterval(status?.transition);
+		if (!cfg || !sessionId || interval === undefined) return;
 		const timer = setInterval(() => void refresh(), interval);
 		return () => clearInterval(timer);
 	}, [cfg, refresh, sessionId, status?.transition?.phase]);

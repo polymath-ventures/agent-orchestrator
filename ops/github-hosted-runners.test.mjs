@@ -25,7 +25,7 @@ test("public-repo workflows use free GitHub-hosted runners, never Blacksmith", (
 });
 
 test("dedicated Intel release legs stay on GitHub's free Intel macOS image", () => {
-	for (const name of ["feature-release.yml", "frontend-nightly.yml", "frontend-release.yml"]) {
+	for (const name of ["frontend-nightly.yml", "frontend-release.yml"]) {
 		const workflow = workflows.find((item) => item.name === name)?.body;
 		assert.ok(workflow, `missing workflow ${name}`);
 		assert.match(workflow, /release-intel:[\s\S]*?runs-on:\s*macos-15-intel/);

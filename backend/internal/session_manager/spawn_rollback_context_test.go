@@ -35,6 +35,13 @@ func (r *ctxHonoringRuntime) Destroy(ctx context.Context, handle ports.RuntimeHa
 	return r.fakeRuntime.Destroy(ctx, handle)
 }
 
+func (r *ctxHonoringRuntime) IsAlive(ctx context.Context, handle ports.RuntimeHandle) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	return r.fakeRuntime.IsAlive(ctx, handle)
+}
+
 // ctxHonoringWorkspace fails Destroy on an already-cancelled context, recording
 // that the worktree was left on disk.
 type ctxHonoringWorkspace struct {

@@ -35,6 +35,15 @@ type SessionMetadata struct {
 	RuntimeLaunchID   string `json:"runtimeLaunchId,omitempty"`
 	AgentSessionID    string `json:"agentSessionId,omitempty"`
 	Prompt            string `json:"prompt,omitempty"`
+	// LatestUserPrompt is the latest real user-authored task direction observed
+	// for this AO session. Internal AO coordination messages must not replace it.
+	LatestUserPrompt string `json:"latestUserPrompt,omitempty"`
+	// LatestAssistantUpdate is the latest user-facing assistant update observed
+	// before any internal agent-switch coordination turn.
+	LatestAssistantUpdate string `json:"latestAssistantUpdate,omitempty"`
+	// NativeTranscriptPath is the read-only transcript path for the currently
+	// active native agent session when its provider exposes one.
+	NativeTranscriptPath string `json:"nativeTranscriptPath,omitempty"`
 	// PromptPolicyHash is the stable identity of the assembled system prompt
 	// policy the session received at spawn/restore time.
 	PromptPolicyHash string `json:"promptPolicyHash,omitempty"`
@@ -58,6 +67,12 @@ type SessionMetadata struct {
 	// even when PreviewURL is unchanged. The desktop browser panel keys
 	// navigation on it so a repeated `ao preview <same-url>` still refreshes.
 	PreviewRevision int64 `json:"previewRevision,omitempty"`
+	// BrowserCapabilityVerifier is a one-way verifier for the random browser
+	// capability held by this session's worker process. The bearer token itself
+	// is never persisted, so reading the database cannot grant access to another
+	// session. Keeping the verifier durable lets a surviving worker authenticate
+	// after the desktop app or daemon restarts.
+	BrowserCapabilityVerifier string `json:"-"`
 }
 
 // SessionRecord is the persistence shape. It intentionally stores only durable
@@ -114,6 +129,8 @@ type SessionRecord struct {
 	// TerminateOnPRMerge is a user-controlled lifecycle policy. When enabled,
 	// completing the session's PR set through a merge tears down the session.
 	TerminateOnPRMerge bool            `json:"terminateOnPrMerge"`
+	AutoInjectReview   bool            `json:"autoInjectReview"`
+	AutoInjectCI       bool            `json:"autoInjectCI"`
 	Metadata           SessionMetadata `json:"-"`
 	// CleanupGeneration is a monotonic counter bumped each time the session is
 	// un-terminated (spawn/restore). The terminal-resource reconciler stamps its

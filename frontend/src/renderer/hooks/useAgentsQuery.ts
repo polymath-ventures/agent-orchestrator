@@ -9,7 +9,7 @@ export const agentsQueryKey = ["agents"] as const;
 async function fetchAgents(): Promise<AgentCatalog> {
 	const { data, error } = await apiClient.GET("/api/v1/agents");
 	if (error) throw new Error(apiErrorMessage(error));
-	return data as AgentCatalog;
+	return (data ?? { supported: [], installed: [], authorized: [] }) as AgentCatalog;
 }
 
 export async function refreshAgents(): Promise<AgentCatalog> {

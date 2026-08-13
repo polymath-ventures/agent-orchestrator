@@ -35,6 +35,8 @@ jobs:
           cache-dependency-path: |
             frontend/package-lock.json
             frontend/src/landing/package-lock.json
+            packages/cloud-client/package-lock.json
+            packages/product-ui/package-lock.json
 
       - run: npm ci
 
@@ -52,6 +54,8 @@ jobs:
         run: npm run typecheck:e2e
 
       - name: Run vitest suite
+        env:
+          AO_AGENT_BROWSER_TEST_BINARY: ${{ github.workspace }}/frontend/agent-browser/agent-browser
         run: npx vitest run
 
       - name: Install Playwright browsers

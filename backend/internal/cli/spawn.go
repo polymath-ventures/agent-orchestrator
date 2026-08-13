@@ -23,34 +23,36 @@ import (
 const maxDisplayNameLen = domain.MaxSessionDisplayNameRunes
 
 type spawnOptions struct {
-	project        string
-	harness        string
-	model          string
-	kind           string
-	mode           string
-	branch         string
-	prompt         string
-	issue          string
-	name           string
-	claimPR        string
-	noTakeover     bool
-	skipAgentCheck bool
-	force          bool
+	project         string
+	harness         string
+	model           string
+	kind            string
+	mode            string
+	branch          string
+	prompt          string
+	issue           string
+	trackerProvider string
+	name            string
+	claimPR         string
+	noTakeover      bool
+	skipAgentCheck  bool
+	force           bool
 }
 
 // spawnRequest mirrors the daemon's SpawnSessionRequest body for
 // POST /api/v1/sessions. The CLI keeps its own copy so it need not import httpd.
 type spawnRequest struct {
-	ProjectID   string `json:"projectId"`
-	IssueID     string `json:"issueId,omitempty"`
-	Kind        string `json:"kind,omitempty"`
-	Mode        string `json:"mode,omitempty"`
-	Harness     string `json:"harness,omitempty"`
-	Model       string `json:"model,omitempty"`
-	Branch      string `json:"branch,omitempty"`
-	Prompt      string `json:"prompt,omitempty"`
-	DisplayName string `json:"displayName"`
-	Force       bool   `json:"force,omitempty"`
+	ProjectID       string `json:"projectId"`
+	IssueID         string `json:"issueId,omitempty"`
+	TrackerProvider string `json:"trackerProvider,omitempty"`
+	Kind            string `json:"kind,omitempty"`
+	Mode            string `json:"mode,omitempty"`
+	Harness         string `json:"harness,omitempty"`
+	Model           string `json:"model,omitempty"`
+	Branch          string `json:"branch,omitempty"`
+	Prompt          string `json:"prompt,omitempty"`
+	DisplayName     string `json:"displayName"`
+	Force           bool   `json:"force,omitempty"`
 }
 
 type spawnResult struct {
@@ -98,6 +100,15 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 				return usageError{fmt.Errorf(`--kind must be "worker" or "orchestrator"`)}
 			}
 
+			tp := strings.TrimSpace(opts.trackerProvider)
+			if tp == "" {
+				tp = "github"
+			}
+			if tp != "github" && tp != "gitlab" {
+				return usageError{fmt.Errorf(`--tracker-provider must be "github" or "gitlab"`)}
+			}
+			opts.trackerProvider = tp
+
 			project, err := ctx.resolveSpawnProject(cmd.Context(), opts.project)
 			if err != nil {
 				return err
@@ -144,16 +155,17 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 				}
 			}
 			req := spawnRequest{
-				ProjectID:   opts.project,
-				IssueID:     opts.issue,
-				Kind:        opts.kind,
-				Harness:     opts.harness,
-				Model:       opts.model,
-				Mode:        opts.mode,
-				Branch:      opts.branch,
-				Prompt:      opts.prompt,
-				DisplayName: name,
-				Force:       opts.force,
+				ProjectID:       opts.project,
+				IssueID:         opts.issue,
+				TrackerProvider: opts.trackerProvider,
+				Kind:            opts.kind,
+				Harness:         opts.harness,
+				Model:           opts.model,
+				Mode:            opts.mode,
+				Branch:          opts.branch,
+				Prompt:          opts.prompt,
+				DisplayName:     name,
+				Force:           opts.force,
 			}
 			var res spawnResult
 			if err := ctx.postJSON(cmd.Context(), "sessions", req, &res); err != nil {
@@ -195,13 +207,14 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 		return pflag.NormalizedName(name)
 	})
 	f.StringVar(&opts.project, "project", "", "Project id to spawn the session in (default: AO_PROJECT_ID, current registered repo, or Scratch when it is the only project)")
-	f.StringVar(&opts.harness, "harness", "", "Agent harness / --agent: claude-code, codex, codex-fugu, aider, opencode, grok, droid, amp, agy, crush, cursor, qwen, copilot, goose, auggie, continue, devin, cline, kimi, muse, kiro, kilocode, vibe, pi, autohand, fake (default: resolved by the daemon from the project's worker mix or worker.agent config)")
+	f.StringVar(&opts.harness, "harness", "", "Agent harness / --agent: claude-code, codex, codex-fugu, aider, opencode, grok, droid, amp, agy, crush, cursor, qwen, copilot, goose, auggie, continue, devin, cline, kimi, muse, kiro, kilocode, vibe, pi, kimchi, prime-agent, autohand, fake (default: resolved by the daemon from the project's worker mix or worker.agent config)")
 	f.StringVar(&opts.model, "model", "", "Model for the session (default: resolved by the daemon from the worker mix or role/project config)")
 	f.StringVar(&opts.kind, "kind", "", "Session role: worker or orchestrator (default: worker)")
 	f.StringVar(&opts.branch, "branch", "", "Branch for git project sessions (default: ao/<namespace-key>/root; workspace projects: ao/<namespace-key>; unsupported for Scratch)")
 	f.StringVar(&opts.mode, "mode", "", "Initial session interface: chat (structured agent connection) or tui (the agent's native terminal). Omitted uses the daemon default; compatible sessions can switch later.")
 	f.StringVar(&opts.prompt, "prompt", "", "Initial prompt for the agent")
 	f.StringVar(&opts.issue, "issue", "", "Issue id to associate with the session")
+	f.StringVar(&opts.trackerProvider, "tracker-provider", "github", "Issue tracker provider for bare issue ids: github or gitlab")
 	f.StringVar(&opts.name, "name", "", "Override the daemon-computed session name (max 20 characters)")
 	f.StringVar(&opts.claimPR, "claim-pr", "", "Immediately claim an existing PR for the spawned session")
 	f.BoolVar(&opts.noTakeover, "no-takeover", false, "Refuse if another active session owns the claimed PR (requires --claim-pr)")

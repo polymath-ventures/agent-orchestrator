@@ -75,6 +75,9 @@ type Deps struct {
 	// DoctorGitHubRESTBase lets tests point the doctor GitHub token probe at
 	// httptest without mutating package-global state.
 	DoctorGitHubRESTBase string
+	// DoctorGitLabRESTBase lets tests point the doctor GitLab token probe at
+	// httptest without mutating package-global state.
+	DoctorGitLabRESTBase string
 	// ProcRoot is the procfs mount doctor reads process metadata from (the
 	// daemon's cgroup, to derive its systemd unit). Tests point it at a temp
 	// dir; it is never written to.
@@ -97,6 +100,7 @@ func DefaultDeps() Deps {
 		CommandOutput:        commandOutput,
 		CommandOutputInDir:   commandOutputInDir,
 		DoctorGitHubRESTBase: defaultDoctorGitHubRESTBase,
+		DoctorGitLabRESTBase: defaultDoctorGitLabRESTBase,
 		ProcRoot:             defaultProcRoot,
 		Now:                  time.Now,
 		Sleep:                time.Sleep,
@@ -147,6 +151,9 @@ func (d Deps) withDefaults() Deps {
 	}
 	if d.DoctorGitHubRESTBase == "" {
 		d.DoctorGitHubRESTBase = def.DoctorGitHubRESTBase
+	}
+	if d.DoctorGitLabRESTBase == "" {
+		d.DoctorGitLabRESTBase = def.DoctorGitLabRESTBase
 	}
 	if d.ProcRoot == "" {
 		d.ProcRoot = def.ProcRoot

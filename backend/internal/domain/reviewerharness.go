@@ -13,7 +13,29 @@ const (
 	ReviewerClaudeCode ReviewerHarness = "claude-code"
 	ReviewerCodex      ReviewerHarness = "codex"
 	ReviewerCodexFugu  ReviewerHarness = "codex-fugu"
+	ReviewerCopilot    ReviewerHarness = "copilot"
+	ReviewerCursor     ReviewerHarness = "cursor"
+	ReviewerKiloCode   ReviewerHarness = "kilocode"
+	ReviewerKimchi     ReviewerHarness = "kimchi"
 	ReviewerOpenCode   ReviewerHarness = "opencode"
+	ReviewerKiro       ReviewerHarness = "kiro"
+	ReviewerPi         ReviewerHarness = "pi"
+	ReviewerQwen       ReviewerHarness = "qwen"
+	ReviewerAgy        ReviewerHarness = "agy"
+	ReviewerContinue   ReviewerHarness = "continue"
+	ReviewerGoose      ReviewerHarness = "goose"
+	ReviewerVibe       ReviewerHarness = "vibe"
+	ReviewerDevin      ReviewerHarness = "devin"
+	ReviewerDroid      ReviewerHarness = "droid"
+	ReviewerKimi       ReviewerHarness = "kimi"
+	ReviewerMuse       ReviewerHarness = "muse"
+	ReviewerAmp        ReviewerHarness = "amp"
+	ReviewerAider      ReviewerHarness = "aider"
+	ReviewerGrok       ReviewerHarness = "grok"
+	ReviewerCrush      ReviewerHarness = "crush"
+	ReviewerAuggie     ReviewerHarness = "auggie"
+	ReviewerCline      ReviewerHarness = "cline"
+	ReviewerAutohand   ReviewerHarness = "autohand"
 )
 
 // AllReviewerHarnesses is the canonical set used to validate a configured
@@ -22,7 +44,28 @@ var AllReviewerHarnesses = []ReviewerHarness{
 	ReviewerClaudeCode,
 	ReviewerCodex,
 	ReviewerCodexFugu,
+	ReviewerCopilot,
+	ReviewerCursor,
+	ReviewerKiloCode,
+	ReviewerKimchi,
 	ReviewerOpenCode,
+	ReviewerKiro,
+	ReviewerPi,
+	ReviewerQwen,
+	ReviewerAgy,
+	ReviewerContinue,
+	ReviewerGoose,
+	ReviewerVibe,
+	ReviewerDevin,
+	ReviewerDroid,
+	ReviewerKimi,
+	ReviewerMuse,
+	ReviewerAmp,
+	ReviewerAider,
+	ReviewerCrush,
+	ReviewerAuggie,
+	ReviewerCline,
+	ReviewerAutohand,
 }
 
 // IsKnown reports whether h is one of the supported reviewer harnesses.
@@ -47,6 +90,48 @@ func (h ReviewerHarness) AgentHarness() AgentHarness {
 		return HarnessCodexFugu
 	case ReviewerOpenCode:
 		return HarnessOpenCode
+	case ReviewerCopilot:
+		return HarnessCopilot
+	case ReviewerCursor:
+		return HarnessCursor
+	case ReviewerKiloCode:
+		return HarnessKilocode
+	case ReviewerKimchi:
+		return HarnessKimchi
+	case ReviewerKiro:
+		return HarnessKiro
+	case ReviewerPi:
+		return HarnessPi
+	case ReviewerQwen:
+		return HarnessQwen
+	case ReviewerAgy:
+		return HarnessAgy
+	case ReviewerContinue:
+		return HarnessContinue
+	case ReviewerGoose:
+		return HarnessGoose
+	case ReviewerVibe:
+		return HarnessVibe
+	case ReviewerDevin:
+		return HarnessDevin
+	case ReviewerDroid:
+		return HarnessDroid
+	case ReviewerKimi:
+		return HarnessKimi
+	case ReviewerMuse:
+		return HarnessMuse
+	case ReviewerAmp:
+		return HarnessAmp
+	case ReviewerAider:
+		return HarnessAider
+	case ReviewerCrush:
+		return HarnessCrush
+	case ReviewerAuggie:
+		return HarnessAuggie
+	case ReviewerCline:
+		return HarnessCline
+	case ReviewerAutohand:
+		return HarnessAutohand
 	default:
 		return ""
 	}

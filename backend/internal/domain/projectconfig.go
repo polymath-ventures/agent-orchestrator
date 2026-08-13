@@ -130,6 +130,12 @@ func (c ProjectConfig) ResolveReviewerHarness(worker AgentHarness) ReviewerHarne
 }
 
 func crossFamilyReviewer(worker AgentHarness) ReviewerHarness {
+	switch worker {
+	case HarnessMuse:
+		return ReviewerMuse
+	case HarnessKimchi:
+		return ReviewerKimchi
+	}
 	switch worker.Family() {
 	case AgentFamilyClaude:
 		return ReviewerCodex
@@ -140,6 +146,10 @@ func crossFamilyReviewer(worker AgentHarness) ReviewerHarness {
 	default:
 		return FallbackReviewerHarness
 	}
+}
+
+func configurableReviewerHarness(h ReviewerHarness) bool {
+	return h.IsKnown() || h == ReviewerGrok
 }
 
 // RoleOverride overrides the harness and/or agent config for a session role.
@@ -269,7 +279,7 @@ func (c ProjectConfig) Validate() error {
 		return fmt.Errorf("primeRulesFile %q: %w", c.PrimeRulesFile, err)
 	}
 	for i, rv := range c.Reviewers {
-		if !rv.Harness.IsKnown() {
+		if !configurableReviewerHarness(rv.Harness) {
 			return fmt.Errorf("reviewers[%d].harness: unknown harness %q", i, rv.Harness)
 		}
 		if err := rv.AgentConfig.Validate(); err != nil {

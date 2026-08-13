@@ -35,6 +35,8 @@ export const chatFixture: ConversationSnapshot = {
 	latestSequence: 14,
 	oldestSequence: 1,
 	hasMoreBefore: false,
+	activeBranchId: "branch-root",
+	branchPoints: [],
 	settings: { model: "gpt-5.6-terra", reasoningEffort: "high" },
 	// Healthy servers as the baseline, so the failed-server fixture is visibly the
 	// exception rather than the only time this field is populated.
@@ -141,6 +143,8 @@ export const chatFixture: ConversationSnapshot = {
 			role: "user",
 			origin: "human",
 			text: "Check the worktree state and tell me what changed since the base commit.",
+			content: [],
+			editAvailable: true,
 			streaming: false,
 			delivery: "accepted",
 			createdAt: t(31),
@@ -302,6 +306,8 @@ export const chatFixture: ConversationSnapshot = {
 			role: "user",
 			origin: "human",
 			text: "Run the backend tests, then spawn a worker to write the HTTP layer.",
+			content: [],
+			editAvailable: true,
 			streaming: false,
 			delivery: "accepted",
 			createdAt: t(38),

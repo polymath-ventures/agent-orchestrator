@@ -9,6 +9,7 @@ package codex
 import (
 	"context"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -19,9 +20,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/agentbase"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/binaryutil"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/terminalui"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
@@ -105,14 +109,14 @@ func (p *Plugin) hookToken() string {
 }
 
 // EmitsSubmitActivity signals Codex fires a user-prompt-submit hook under AO's
-// launch. See ports.ActivitySignaler.
+// launch. See ports.SubmitActivitySignaler.
 func (p *Plugin) EmitsSubmitActivity() bool { return true }
 
 // EmitsBlockedActivity is false: codex reports permission prompts as
 // waiting_input — it installs no post-tool-use hook, so a blocked state could
 // never be cleared mid-turn. confirmActive must not nudge it (an Enter could
 // answer a pending decision it cannot report as blocked). See
-// ports.ActivitySignaler.
+// ports.BlockedActivitySignaler.
 func (p *Plugin) EmitsBlockedActivity() bool { return false }
 
 // ExitDetectionMode opts Codex into AO's process supervisor. Codex hooks
@@ -177,7 +181,16 @@ var _ ports.AgentAuthChecker = (*Plugin)(nil)
 var _ ports.AgentModelValidator = (*Plugin)(nil)
 var _ ports.AgentQuotaProber = (*Plugin)(nil)
 var _ ports.AgentInterfaceHandoff = (*Plugin)(nil)
+var _ ports.AgentInterfaceHandoffHistoryProbe = (*Plugin)(nil)
 var _ ports.TerminalActivityDetector = (*Plugin)(nil)
+var _ ports.EmptyComposerDetector = (*Plugin)(nil)
+
+// ComposerIsEmpty recognizes Codex's blank composer or its dim placeholder.
+// Normal text after the prompt marker is treated as a human draft and causes
+// optional semantic handoff collection to fail closed.
+func (p *Plugin) ComposerIsEmpty(output string) bool {
+	return terminalui.LastPromptIsEmptyOrDimPlaceholder(output, "›")
+}
 
 // Manifest returns the adapter's static self-description.
 func (p *Plugin) Manifest() adapters.Manifest {
@@ -231,16 +244,14 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 	appendModelFlag(&cmd, cfg.Config.Model)
 	p.appendReasoningEffortFlag(&cmd, cfg.Config.Effort)
 
-	if cfg.SystemPrompt != "" {
-		cmd = append(cmd, "-c", "developer_instructions="+codexTOMLConfigString(cfg.SystemPrompt))
-	} else if cfg.SystemPromptFile != "" {
+	if cfg.SystemPromptFile != "" {
 		cmd = append(cmd, "-c", "model_instructions_file="+cfg.SystemPromptFile)
+	} else if cfg.SystemPrompt != "" {
+		cmd = append(cmd, "-c", "developer_instructions="+codexTOMLConfigString(cfg.SystemPrompt))
 	}
-
 	if cfg.Prompt != "" {
 		cmd = append(cmd, "--", cfg.Prompt)
 	}
-
 	return cmd, nil
 }
 
@@ -277,12 +288,15 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 	appendWorkspaceTrustFlag(&cmd, cfg.Session.WorkspacePath)
 	appendModelFlag(&cmd, cfg.Config.Model)
 	p.appendReasoningEffortFlag(&cmd, cfg.Config.Effort)
-	if cfg.SystemPrompt != "" {
-		cmd = append(cmd, "-c", "developer_instructions="+codexTOMLConfigString(cfg.SystemPrompt))
-	} else if cfg.SystemPromptFile != "" {
+	if cfg.SystemPromptFile != "" {
 		cmd = append(cmd, "-c", "model_instructions_file="+cfg.SystemPromptFile)
+	} else if cfg.SystemPrompt != "" {
+		cmd = append(cmd, "-c", "developer_instructions="+codexTOMLConfigString(cfg.SystemPrompt))
 	}
 	cmd = append(cmd, agentSessionID)
+	if cfg.Prompt != "" {
+		cmd = append(cmd, "--", cfg.Prompt)
+	}
 	return cmd, true, nil
 }
 
@@ -319,6 +333,87 @@ func (p *Plugin) NativeConversationID(
 	}
 	id := strings.TrimSpace(session.Metadata[ports.MetadataKeyAgentSessionID])
 	return id, id != "", nil
+}
+
+// NativeConversationExists distinguishes a Codex thread UUID from a thread
+// that app-server can actually resume. Codex returns the UUID from thread/start
+// before the first user message materializes a rollout; thread/resume rejects
+// that reserved-only UUID with "no rollout found for thread id".
+//
+// Active rollouts live below CODEX_HOME/sessions. Archived rollouts are
+// deliberately excluded because Codex also rejects them from thread/resume.
+// We only establish that a non-empty rollout exists; Codex remains responsible
+// for parsing its own provider state.
+func (p *Plugin) NativeConversationExists(
+	ctx context.Context,
+	_ ports.SessionRef,
+	nativeConversationID string,
+	env map[string]string,
+) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	id, valid := canonicalCodexThreadID(nativeConversationID)
+	if !valid {
+		return false, nil
+	}
+	codexHome := strings.TrimSpace(env["CODEX_HOME"])
+	if codexHome == "" {
+		codexHome = strings.TrimSpace(os.Getenv("CODEX_HOME"))
+	}
+	if codexHome == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return false, fmt.Errorf("codex: resolve rollout root: %w", err)
+		}
+		codexHome = filepath.Join(home, ".codex")
+	}
+
+	found := false
+	sessionsDir := filepath.Join(codexHome, "sessions")
+	err := filepath.WalkDir(sessionsDir, func(_ string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if entry.IsDir() || !codexRolloutNameMatches(entry.Name(), id) {
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		if info.Mode().IsRegular() && info.Size() > 0 {
+			found = true
+			return fs.SkipAll
+		}
+		return nil
+	})
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("codex: inspect rollout root %s: %w", sessionsDir, err)
+	}
+	return found, nil
+}
+
+func canonicalCodexThreadID(value string) (string, bool) {
+	parsed, err := uuid.Parse(strings.TrimSpace(value))
+	if err != nil {
+		return "", false
+	}
+	return parsed.String(), true
+}
+
+func codexRolloutNameMatches(name, nativeConversationID string) bool {
+	if !strings.HasPrefix(name, "rollout-") {
+		return false
+	}
+	suffix := "-" + nativeConversationID + ".jsonl"
+	return strings.HasSuffix(name, suffix) || strings.HasSuffix(name, suffix+".zst")
 }
 
 // AuthStatus checks Codex's local login state without making a model call.
@@ -515,6 +610,17 @@ func loginStatusForBinary(ctx context.Context, binary string, preArgs ...string)
 		return ports.AgentAuthStatusAuthorized, text, failed, nil
 	}
 	return ports.AgentAuthStatusUnknown, text, failed, nil
+}
+
+func codexAuthStatusFromOutput(out []byte) (ports.AgentAuthStatus, bool) {
+	text := strings.ToLower(string(out))
+	if strings.Contains(text, "not logged in") || strings.Contains(text, "logged out") {
+		return ports.AgentAuthStatusUnauthorized, true
+	}
+	if strings.Contains(text, "logged in") {
+		return ports.AgentAuthStatusAuthorized, true
+	}
+	return ports.AgentAuthStatusUnknown, false
 }
 
 // ResolveCodexBinary returns the path to the codex binary on this machine,

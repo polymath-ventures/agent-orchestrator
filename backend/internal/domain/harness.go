@@ -8,29 +8,31 @@ const (
 	HarnessClaudeCode AgentHarness = "claude-code"
 	HarnessCodex      AgentHarness = "codex"
 	// Fork-only: a Polymath-internal Codex wrapper; never ships upstream.
-	HarnessCodexFugu AgentHarness = "codex-fugu"
-	HarnessAider     AgentHarness = "aider"
-	HarnessOpenCode  AgentHarness = "opencode"
-	HarnessGrok      AgentHarness = "grok"
-	HarnessDroid     AgentHarness = "droid"
-	HarnessAmp       AgentHarness = "amp"
-	HarnessAgy       AgentHarness = "agy"
-	HarnessCrush     AgentHarness = "crush"
-	HarnessCursor    AgentHarness = "cursor"
-	HarnessQwen      AgentHarness = "qwen"
-	HarnessCopilot   AgentHarness = "copilot"
-	HarnessGoose     AgentHarness = "goose"
-	HarnessAuggie    AgentHarness = "auggie"
-	HarnessContinue  AgentHarness = "continue"
-	HarnessDevin     AgentHarness = "devin"
-	HarnessCline     AgentHarness = "cline"
-	HarnessKimi      AgentHarness = "kimi"
-	HarnessMuse      AgentHarness = "muse"
-	HarnessKiro      AgentHarness = "kiro"
-	HarnessKilocode  AgentHarness = "kilocode"
-	HarnessVibe      AgentHarness = "vibe"
-	HarnessPi        AgentHarness = "pi"
-	HarnessAutohand  AgentHarness = "autohand"
+	HarnessCodexFugu  AgentHarness = "codex-fugu"
+	HarnessAider      AgentHarness = "aider"
+	HarnessOpenCode   AgentHarness = "opencode"
+	HarnessGrok       AgentHarness = "grok"
+	HarnessDroid      AgentHarness = "droid"
+	HarnessAmp        AgentHarness = "amp"
+	HarnessAgy        AgentHarness = "agy"
+	HarnessCrush      AgentHarness = "crush"
+	HarnessCursor     AgentHarness = "cursor"
+	HarnessQwen       AgentHarness = "qwen"
+	HarnessCopilot    AgentHarness = "copilot"
+	HarnessGoose      AgentHarness = "goose"
+	HarnessAuggie     AgentHarness = "auggie"
+	HarnessContinue   AgentHarness = "continue"
+	HarnessDevin      AgentHarness = "devin"
+	HarnessCline      AgentHarness = "cline"
+	HarnessKimi       AgentHarness = "kimi"
+	HarnessMuse       AgentHarness = "muse"
+	HarnessKiro       AgentHarness = "kiro"
+	HarnessKilocode   AgentHarness = "kilocode"
+	HarnessVibe       AgentHarness = "vibe"
+	HarnessPi         AgentHarness = "pi"
+	HarnessKimchi     AgentHarness = "kimchi"
+	HarnessPrimeAgent AgentHarness = "prime-agent"
+	HarnessAutohand   AgentHarness = "autohand"
 	// HarnessFake is a deterministic, LLM-free harness used by e2e tests and is
 	// retained for existing fixtures and historical session rows.
 	HarnessFake AgentHarness = "fake"
@@ -43,7 +45,7 @@ var AllHarnesses = []AgentHarness{
 	HarnessDroid, HarnessAmp, HarnessAgy, HarnessCrush, HarnessCursor, HarnessQwen,
 	HarnessCopilot, HarnessGoose, HarnessAuggie, HarnessContinue, HarnessDevin,
 	HarnessCline, HarnessKimi, HarnessMuse, HarnessKiro, HarnessKilocode, HarnessVibe, HarnessPi,
-	HarnessAutohand, HarnessFake,
+	HarnessKimchi, HarnessPrimeAgent, HarnessAutohand, HarnessFake,
 }
 
 // IsKnown reports whether h is one of the supported harnesses.

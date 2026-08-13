@@ -75,6 +75,23 @@ export function agentSheetRoute(opts: {
 	};
 }
 
+export function modelSheetRoute(opts: {
+	agentId: string;
+	projectId: string;
+	selected: string;
+	onSelect: (id: string) => void;
+}) {
+	return {
+		pathname: "/sheets/model" as const,
+		params: {
+			resultKey: parkSheetResult(opts.onSelect),
+			agentId: opts.agentId,
+			projectId: opts.projectId,
+			selected: opts.selected,
+		},
+	};
+}
+
 export function connectSheetRoute(onConnected: () => void) {
 	return { pathname: "/sheets/connect" as const, params: { resultKey: parkSheetResult(onConnected) } };
 }

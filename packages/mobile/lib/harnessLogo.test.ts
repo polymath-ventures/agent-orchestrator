@@ -33,7 +33,8 @@ const ALL_HARNESSES = [
 ];
 
 // The fake harness exists only for tests and intentionally has no brand asset.
-const NO_ASSET = ["fake"];
+// prime-agent ships a mark on desktop but it has not been ported to mobile yet.
+const NO_ASSET = ["fake", "prime-agent"];
 
 describe("logo registry", () => {
 	it("has a mark for every harness that ships one", () => {

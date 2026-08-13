@@ -27,6 +27,8 @@ type Info struct {
 	Port int `json:"port"`
 	// StartedAt is when the daemon came up (RFC 3339).
 	StartedAt time.Time `json:"startedAt"`
+	// AppRunID identifies the desktop app run that launched this daemon.
+	AppRunID string `json:"appRunId,omitempty"`
 	// Owner records how this daemon was spawned, so the app can decide whether
 	// to hold a supervisor link on attach from the daemon's own durable record
 	// rather than the current process env. "app" = normal desktop-spawned daemon
@@ -45,7 +47,8 @@ type Info struct {
 	// regenerated for every daemon launch.
 	BrowserRuntimeToken string `json:"browserRuntimeToken,omitempty"`
 	// BrowserRuntimeAddress is the exact Unix socket or Windows named-pipe
-	// address selected by the backend for this daemon launch.
+	// address selected by the backend for this daemon launch. It is a locator,
+	// not an authentication secret; the runtime token stays out of this file.
 	BrowserRuntimeAddress string `json:"browserRuntimeAddress,omitempty"`
 }
 

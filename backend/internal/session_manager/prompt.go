@@ -161,8 +161,9 @@ func buildSystemPromptText(cfg systemPromptConfig) string {
 			sections = append(sections, "## Project-Specific Prime Rules\n"+rules)
 		}
 	case sessionPromptRoleWorker:
+		orchestratorID := strings.TrimSpace(cfg.OrchestratorSessionID)
 		sections = append(sections, workerSystemPrompt(cfg.Project))
-		if orchestratorID := strings.TrimSpace(cfg.OrchestratorSessionID); orchestratorID != "" {
+		if orchestratorID != "" {
 			sections = append(sections, workerOrchestratorPrompt(orchestratorID))
 		}
 		sections = append(sections, workerMultiPRPrompt(), workerContainerLabelPrompt())

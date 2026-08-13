@@ -22,12 +22,14 @@ import { MicKey } from "../voice/MicKey";
 import { useVoiceInput } from "../voice/useVoiceInput";
 import type { ChatConfigOption, ChatImage, ChatResource, ChatSkill, ConversationSnapshot } from "./types";
 import {
+	composerSuggestionKey,
 	findComposerSuggestion,
-	rankComposerFiles,
-	rankComposerSkills,
 	replaceComposerSuggestion,
 	type ComposerSuggestion,
 } from "./composerSuggestions";
+import { chatSheetRoute } from "./chatSheetRegistry";
+import { composerSurfaceStyle } from "./chatChrome";
+import { createRequestGate } from "./requestGate";
 
 type Attachment =
 	| { id: string; kind: "image"; name: string; bytes: number; image: ChatImage }
@@ -45,6 +47,8 @@ export function ChatComposer({
 	skills,
 	filePaths,
 	filePathsTruncated,
+	onLoadSkills,
+	onLoadFiles,
 	configOptions,
 	steerUnavailable,
 	pending,
@@ -59,6 +63,8 @@ export function ChatComposer({
 	skills: ChatSkill[];
 	filePaths: string[];
 	filePathsTruncated?: boolean;
+	onLoadSkills(): Promise<ChatSkill[]>;
+	onLoadFiles(): Promise<{ paths: string[]; truncated: boolean }>;
 	configOptions?: ChatConfigOption[];
 	steerUnavailable?: boolean;
 	pending?: boolean;
@@ -69,13 +75,11 @@ export function ChatComposer({
 	onOpenSettings(): void;
 }) {
 	const t = useTheme();
+	const router = useRouter();
 	const styles = useThemedStyles(makeStyles);
 	const [text, setText] = useState("");
 	const [cursor, setCursor] = useState(0);
 	const [attachments, setAttachments] = useState<Attachment[]>([]);
-	const [picker, setPicker] = useState<"skills" | "files" | undefined>();
-	const [query, setQuery] = useState("");
-	const [trigger, setTrigger] = useState<ComposerSuggestion>();
 	const [delivery, setDelivery] = useState<"steer" | "queue">("steer");
 	const [localError, setLocalError] = useState<string>();
 	const [submitting, setSubmitting] = useState(false);
@@ -85,6 +89,13 @@ export function ChatComposer({
 	const steerEligible = canSteer && delivery === "steer" && attachments.length === 0;
 	const stopped = snapshot.controller.state === "stopped";
 	const draftKey = `ao.chat.draft.${sessionId}`;
+	const openingSuggestion = useRef<string | undefined>(undefined);
+	const pickerGate = useRef(createRequestGate()).current;
+	const latestText = useRef(text);
+	const latestCursor = useRef(cursor);
+	latestText.current = text;
+	latestCursor.current = cursor;
+	useEffect(() => () => pickerGate.invalidate(), [pickerGate]);
 
 	useEffect(() => {
 		let mounted = true;
@@ -241,12 +252,44 @@ export function ChatComposer({
 				providerModel.currentValue)
 			: undefined;
 	const selectedModel = snapshot.modelReroute?.toModel || providerModelLabel || snapshot.settings.model;
+	const openPicker = useCallback(
+		async (kind: "skills" | "files", activeTrigger?: ComposerSuggestion) => {
+			const request = pickerGate.begin();
+			const loadedSkills = kind === "skills" ? await onLoadSkills() : skills;
+			const loadedFiles =
+				kind === "files" ? await onLoadFiles() : { paths: filePaths, truncated: Boolean(filePathsTruncated) };
+			if (!pickerGate.isCurrent(request)) return;
+			if (activeTrigger) {
+				const currentTrigger = findComposerSuggestion(latestText.current, latestCursor.current);
+				if (!currentTrigger || composerSuggestionKey(currentTrigger) !== composerSuggestionKey(activeTrigger)) return;
+			}
+			const pickerCatalog =
+				kind === "skills" ? ({ kind, skills: loadedSkills } as const) : ({ kind, paths: loadedFiles.paths } as const);
+			router.push(
+				chatSheetRoute({
+					kind: "composer-picker",
+					catalog: pickerCatalog,
+					initialQuery: activeTrigger?.query,
+					truncated: kind === "files" ? loadedFiles.truncated : undefined,
+					onSelect: (value) => {
+						setText((old) => {
+							const next = activeTrigger
+								? replaceComposerSuggestion(old, activeTrigger, value)
+								: `${old}${old && !/\s$/.test(old) ? " " : ""}${kind === "skills" ? `/${value}` : /\s/.test(value) ? `"${value}"` : value} `;
+							setCursor(next.length);
+							return next;
+						});
+					},
+				}),
+			);
+		},
+		[filePaths, filePathsTruncated, onLoadFiles, onLoadSkills, pickerGate, router, skills],
+	);
 	useEffect(() => {
 		const suggestion = findComposerSuggestion(text, cursor);
-		if (suggestion && (suggestion.kind === "skills" ? skills.length > 0 : filePaths.length > 0)) {
-			setTrigger(suggestion);
-			setPicker(suggestion.kind);
-			setQuery(suggestion.query);
+		if (!suggestion) {
+			pickerGate.invalidate();
+			openingSuggestion.current = undefined;
 			return;
 		}
 		// Only auto-close a picker that came from a text trigger. A picker opened

@@ -127,6 +127,49 @@ func (s *Store) UpdateSession(ctx context.Context, rec domain.SessionRecord) err
 	return s.qw.UpdateSession(ctx, recordToUpdate(rec))
 }
 
+// UpdateSessionFromActivitySignal applies a hook observation only while the
+// session is still owned by the observed harness/generation.
+func (s *Store) UpdateSessionFromActivitySignal(ctx context.Context, rec domain.SessionRecord) (bool, error) {
+	activity := normalActivity(rec.Activity, rec.UpdatedAt)
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	rows, err := s.qw.UpdateSessionFromActivitySignal(ctx, gen.UpdateSessionFromActivitySignalParams{
+		ActivityState:                activity.State,
+		ActivityLastAt:               activity.LastActivityAt,
+		FirstSignalAt:                timeToNullTime(rec.FirstSignalAt),
+		AgentSessionID:               rec.Metadata.AgentSessionID,
+		LatestUserPrompt:             rec.Metadata.LatestUserPrompt,
+		LatestAssistantUpdate:        rec.Metadata.LatestAssistantUpdate,
+		NativeTranscriptPath:         rec.Metadata.NativeTranscriptPath,
+		UpdatedAt:                    rec.UpdatedAt,
+		ID:                           rec.ID,
+		ExpectedHarness:              rec.Harness,
+		ExpectedSessionMode:          domain.NormalizeSessionMode(rec.Mode),
+		ExpectedRuntimeLaunchID:      rec.Metadata.RuntimeLaunchID,
+		ExpectedControllerGeneration: rec.Metadata.ControllerGeneration,
+	})
+	if err != nil {
+		return false, fmt.Errorf("update session %s from activity signal: %w", rec.ID, err)
+	}
+	return rows > 0, nil
+}
+
+// RecordSessionLatestUserPrompt is the narrow post-delivery write owned by
+// Send. It deliberately avoids rewriting stale owner/runtime facts.
+func (s *Store) RecordSessionLatestUserPrompt(ctx context.Context, id domain.SessionID, prompt string, updatedAt time.Time) (bool, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	rows, err := s.qw.RecordSessionLatestUserPrompt(ctx, gen.RecordSessionLatestUserPromptParams{
+		ID:               id,
+		LatestUserPrompt: prompt,
+		UpdatedAt:        updatedAt,
+	})
+	if err != nil {
+		return false, fmt.Errorf("record latest user prompt for session %s: %w", id, err)
+	}
+	return rows > 0, nil
+}
+
 // SetSessionNamespaceKey initializes a worker's external namespace key exactly
 // once. ok=false means the row is absent, is not a worker, or already has a key.
 func (s *Store) SetSessionNamespaceKey(ctx context.Context, id domain.SessionID, key string) (bool, error) {
@@ -238,6 +281,37 @@ func (s *Store) SetSessionTerminateOnPRMerge(ctx context.Context, id domain.Sess
 	return rows > 0, nil
 }
 
+// SetSessionAutoInjectReview persists a session's automatic review-injection policy.
+func (s *Store) SetSessionAutoInjectReview(ctx context.Context, id domain.SessionID, autoInject bool, updatedAt time.Time) (bool, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	rows, err := s.qw.SetSessionAutoInjectReview(ctx, gen.SetSessionAutoInjectReviewParams{
+		ID:               id,
+		AutoInjectReview: autoInject,
+		UpdatedAt:        updatedAt,
+	})
+	if err != nil {
+		return false, fmt.Errorf("set auto-inject review for session %s: %w", id, err)
+	}
+	return rows > 0, nil
+}
+
+// SetSessionAutoInjectCI persists the default CI-failure injection policy that
+// newly created PRs snapshot. Existing PR rows retain their original value.
+func (s *Store) SetSessionAutoInjectCI(ctx context.Context, id domain.SessionID, autoInject bool, updatedAt time.Time) (bool, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	rows, err := s.qw.SetSessionAutoInjectCI(ctx, gen.SetSessionAutoInjectCIParams{
+		ID:           id,
+		AutoInjectCI: autoInject,
+		UpdatedAt:    updatedAt,
+	})
+	if err != nil {
+		return false, fmt.Errorf("set auto-inject CI for session %s: %w", id, err)
+	}
+	return rows > 0, nil
+}
+
 // SetSessionReviewerHarness persists the reviewer preference for one session.
 func (s *Store) SetSessionReviewerHarness(ctx context.Context, id domain.SessionID, harness domain.ReviewerHarness, updatedAt time.Time) (bool, error) {
 	s.writeMu.Lock()
@@ -254,8 +328,8 @@ func (s *Store) SetSessionReviewerHarness(ctx context.Context, id domain.Session
 }
 
 // DeleteSession removes a session row, but only if it is still in seed state
-// (no workspace, no runtime handle, no agent session id, no prompt, and not
-// already terminated). Rows that have observable spawn output are immutable
+// (no workspace, no runtime handle, no agent session id, no prompt, no handoff
+// metadata, and not already terminated). Rows that have observable spawn output are immutable
 // to preserve the no-resurrection guarantee — for those, callers fall back to
 // MarkTerminated (lifecycle.Manager) instead.
 //
@@ -313,7 +387,10 @@ WHERE id = ?
   AND workspace_path = ''
   AND runtime_handle_id = ''
   AND agent_session_id = ''
-  AND prompt = ''`, id)
+  AND prompt = ''
+  AND latest_user_prompt = ''
+  AND latest_assistant_update = ''
+  AND native_transcript_path = ''`, id)
 	if err != nil {
 		return false, fmt.Errorf("delete seed session %s: %w", id, err)
 	}
@@ -336,7 +413,7 @@ func (s *Store) GetSession(ctx context.Context, id domain.SessionID) (domain.Ses
 	if err != nil {
 		return domain.SessionRecord{}, false, fmt.Errorf("get session %s: %w", id, err)
 	}
-	return rowToRecord(row), true, nil
+	return getSessionRowToRecord(row), true, nil
 }
 
 // ListSessions returns every session in a project, ordered by num.
@@ -345,7 +422,7 @@ func (s *Store) ListSessions(ctx context.Context, project domain.ProjectID) ([]d
 	if err != nil {
 		return nil, fmt.Errorf("list sessions for %s: %w", project, err)
 	}
-	return mapSessionRows(rows), nil
+	return mapListSessionsByProjectRows(rows), nil
 }
 
 // ListAllSessions returns every session across all projects.
@@ -354,18 +431,26 @@ func (s *Store) ListAllSessions(ctx context.Context) ([]domain.SessionRecord, er
 	if err != nil {
 		return nil, fmt.Errorf("list all sessions: %w", err)
 	}
-	return mapSessionRows(rows), nil
+	return mapListAllSessionsRows(rows), nil
 }
 
-func mapSessionRows(rows []gen.Session) []domain.SessionRecord {
+func mapListSessionsByProjectRows(rows []gen.ListSessionsByProjectRow) []domain.SessionRecord {
 	out := make([]domain.SessionRecord, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, rowToRecord(r))
+		out = append(out, listSessionsByProjectRowToRecord(r))
 	}
 	return out
 }
 
-func rowToRecord(row gen.Session) domain.SessionRecord {
+func mapListAllSessionsRows(rows []gen.ListAllSessionsRow) []domain.SessionRecord {
+	out := make([]domain.SessionRecord, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, listAllSessionsRowToRecord(r))
+	}
+	return out
+}
+
+func rowToRecord(row gen.GetSessionRow) domain.SessionRecord {
 	return domain.SessionRecord{
 		ID:              row.ID,
 		ProjectID:       domain.ProjectID(strings.TrimSpace(string(row.ProjectID))),
@@ -390,19 +475,25 @@ func rowToRecord(row gen.Session) domain.SessionRecord {
 		IsPinned:           row.IsPinned,
 		PinnedAt:           nullTimeToTimePtr(row.PinnedAt),
 		TerminateOnPRMerge: row.TerminateOnPRMerge,
+		AutoInjectReview:   row.AutoInjectReview,
+		AutoInjectCI:       row.AutoInjectCI,
 		Metadata: domain.SessionMetadata{
-			Branch:            row.Branch,
-			WorkspacePath:     row.WorkspacePath,
-			WorkspaceRepoPath: row.WorkspaceRepoPath,
-			DiffBaseSHA:       row.DiffBaseSha,
-			DiffBaseRef:       row.DiffBaseRef,
-			RuntimeHandleID:   row.RuntimeHandleID,
-			RuntimeLaunchID:   row.RuntimeLaunchID,
-			AgentSessionID:    row.AgentSessionID,
-			Prompt:            row.Prompt,
-			PromptPolicyHash:  row.PromptPolicyHash,
-			PreviewURL:        row.PreviewURL,
-			PreviewRevision:   row.PreviewRevision,
+			Branch:                    row.Branch,
+			WorkspacePath:             row.WorkspacePath,
+			WorkspaceRepoPath:         row.WorkspaceRepoPath,
+			DiffBaseSHA:               row.DiffBaseSha,
+			DiffBaseRef:               row.DiffBaseRef,
+			RuntimeHandleID:           row.RuntimeHandleID,
+			RuntimeLaunchID:           row.RuntimeLaunchID,
+			AgentSessionID:            row.AgentSessionID,
+			Prompt:                    row.Prompt,
+			LatestUserPrompt:          row.LatestUserPrompt,
+			LatestAssistantUpdate:     row.LatestAssistantUpdate,
+			NativeTranscriptPath:      row.NativeTranscriptPath,
+			PromptPolicyHash:          row.PromptPolicyHash,
+			PreviewURL:                row.PreviewURL,
+			PreviewRevision:           row.PreviewRevision,
+			BrowserCapabilityVerifier: row.BrowserCapabilityVerifier,
 
 			ProviderConversationID: row.ProviderConversationID,
 			ControllerGeneration:   row.ControllerGeneration,
@@ -413,42 +504,60 @@ func rowToRecord(row gen.Session) domain.SessionRecord {
 	}
 }
 
+func getSessionRowToRecord(row gen.GetSessionRow) domain.SessionRecord {
+	return rowToRecord(row)
+}
+
+func listSessionsByProjectRowToRecord(row gen.ListSessionsByProjectRow) domain.SessionRecord {
+	return rowToRecord(gen.GetSessionRow(row))
+}
+
+func listAllSessionsRowToRecord(row gen.ListAllSessionsRow) domain.SessionRecord {
+	return rowToRecord(gen.GetSessionRow(row))
+}
+
 func recordToInsert(rec domain.SessionRecord, num int64) gen.InsertSessionParams {
 	activity := normalActivity(rec.Activity, rec.CreatedAt)
 	return gen.InsertSessionParams{
-		ID:                 rec.ID,
-		ProjectID:          rec.ProjectID,
-		Num:                num,
-		IssueID:            rec.IssueID,
-		Kind:               rec.Kind,
-		Harness:            rec.Harness,
-		Model:              rec.Model,
-		Effort:             string(rec.Effort),
-		MixSelected:        rec.MixSelected,
-		MixBucketModel:     rec.MixBucketModel,
-		ReviewerHarness:    rec.ReviewerHarness,
-		DisplayName:        rec.DisplayName,
-		ActivityState:      activity.State,
-		ActivityLastAt:     activity.LastActivityAt,
-		LastError:          rec.LastError,
-		FirstSignalAt:      timeToNullTime(rec.FirstSignalAt),
-		IsTerminated:       rec.IsTerminated,
-		IsPinned:           rec.IsPinned,
-		PinnedAt:           timePtrToNullTime(rec.PinnedAt),
-		Branch:             rec.Metadata.Branch,
-		WorkspacePath:      rec.Metadata.WorkspacePath,
-		WorkspaceRepoPath:  rec.Metadata.WorkspaceRepoPath,
-		DiffBaseSha:        rec.Metadata.DiffBaseSHA,
-		DiffBaseRef:        rec.Metadata.DiffBaseRef,
-		RuntimeHandleID:    rec.Metadata.RuntimeHandleID,
-		RuntimeLaunchID:    rec.Metadata.RuntimeLaunchID,
-		AgentSessionID:     rec.Metadata.AgentSessionID,
-		Prompt:             rec.Metadata.Prompt,
-		PromptPolicyHash:   rec.Metadata.PromptPolicyHash,
-		PreviewURL:         rec.Metadata.PreviewURL,
-		PreviewRevision:    rec.Metadata.PreviewRevision,
-		TerminateOnPRMerge: rec.TerminateOnPRMerge,
-		CleanupGeneration:  rec.CleanupGeneration,
+		ID:                        rec.ID,
+		ProjectID:                 rec.ProjectID,
+		Num:                       num,
+		IssueID:                   rec.IssueID,
+		Kind:                      rec.Kind,
+		Harness:                   rec.Harness,
+		Model:                     rec.Model,
+		Effort:                    string(rec.Effort),
+		MixSelected:               rec.MixSelected,
+		MixBucketModel:            rec.MixBucketModel,
+		ReviewerHarness:           rec.ReviewerHarness,
+		DisplayName:               rec.DisplayName,
+		ActivityState:             activity.State,
+		ActivityLastAt:            activity.LastActivityAt,
+		LastError:                 rec.LastError,
+		FirstSignalAt:             timeToNullTime(rec.FirstSignalAt),
+		IsTerminated:              rec.IsTerminated,
+		IsPinned:                  rec.IsPinned,
+		PinnedAt:                  timePtrToNullTime(rec.PinnedAt),
+		Branch:                    rec.Metadata.Branch,
+		WorkspacePath:             rec.Metadata.WorkspacePath,
+		WorkspaceRepoPath:         rec.Metadata.WorkspaceRepoPath,
+		DiffBaseSha:               rec.Metadata.DiffBaseSHA,
+		DiffBaseRef:               rec.Metadata.DiffBaseRef,
+		RuntimeHandleID:           rec.Metadata.RuntimeHandleID,
+		RuntimeLaunchID:           rec.Metadata.RuntimeLaunchID,
+		AgentSessionID:            rec.Metadata.AgentSessionID,
+		Prompt:                    rec.Metadata.Prompt,
+		LatestUserPrompt:          rec.Metadata.LatestUserPrompt,
+		LatestAssistantUpdate:     rec.Metadata.LatestAssistantUpdate,
+		NativeTranscriptPath:      rec.Metadata.NativeTranscriptPath,
+		PromptPolicyHash:          rec.Metadata.PromptPolicyHash,
+		PreviewURL:                rec.Metadata.PreviewURL,
+		PreviewRevision:           rec.Metadata.PreviewRevision,
+		TerminateOnPRMerge:        rec.TerminateOnPRMerge,
+		CleanupGeneration:         rec.CleanupGeneration,
+		BrowserCapabilityVerifier: rec.Metadata.BrowserCapabilityVerifier,
+		AutoInjectReview:          rec.AutoInjectReview,
+		AutoInjectCI:              rec.AutoInjectCI,
 
 		SessionMode:            domain.NormalizeSessionMode(rec.Mode),
 		ProviderConversationID: rec.Metadata.ProviderConversationID,
@@ -462,37 +571,43 @@ func recordToInsert(rec domain.SessionRecord, num int64) gen.InsertSessionParams
 func recordToUpdate(rec domain.SessionRecord) gen.UpdateSessionParams {
 	activity := normalActivity(rec.Activity, rec.UpdatedAt)
 	return gen.UpdateSessionParams{
-		ID:                 rec.ID,
-		IssueID:            rec.IssueID,
-		Kind:               rec.Kind,
-		Harness:            rec.Harness,
-		Model:              rec.Model,
-		Effort:             string(rec.Effort),
-		MixSelected:        rec.MixSelected,
-		MixBucketModel:     rec.MixBucketModel,
-		ReviewerHarness:    rec.ReviewerHarness,
-		DisplayName:        rec.DisplayName,
-		ActivityState:      activity.State,
-		ActivityLastAt:     activity.LastActivityAt,
-		LastError:          rec.LastError,
-		FirstSignalAt:      timeToNullTime(rec.FirstSignalAt),
-		IsTerminated:       rec.IsTerminated,
-		IsPinned:           rec.IsPinned,
-		PinnedAt:           timePtrToNullTime(rec.PinnedAt),
-		Branch:             rec.Metadata.Branch,
-		WorkspacePath:      rec.Metadata.WorkspacePath,
-		WorkspaceRepoPath:  rec.Metadata.WorkspaceRepoPath,
-		DiffBaseSha:        rec.Metadata.DiffBaseSHA,
-		DiffBaseRef:        rec.Metadata.DiffBaseRef,
-		RuntimeHandleID:    rec.Metadata.RuntimeHandleID,
-		RuntimeLaunchID:    rec.Metadata.RuntimeLaunchID,
-		AgentSessionID:     rec.Metadata.AgentSessionID,
-		Prompt:             rec.Metadata.Prompt,
-		PromptPolicyHash:   rec.Metadata.PromptPolicyHash,
-		PreviewURL:         rec.Metadata.PreviewURL,
-		PreviewRevision:    rec.Metadata.PreviewRevision,
-		TerminateOnPRMerge: rec.TerminateOnPRMerge,
-		CleanupGeneration:  rec.CleanupGeneration,
+		ID:                        rec.ID,
+		IssueID:                   rec.IssueID,
+		Kind:                      rec.Kind,
+		Harness:                   rec.Harness,
+		Model:                     rec.Model,
+		Effort:                    string(rec.Effort),
+		MixSelected:               rec.MixSelected,
+		MixBucketModel:            rec.MixBucketModel,
+		ReviewerHarness:           rec.ReviewerHarness,
+		DisplayName:               rec.DisplayName,
+		ActivityState:             activity.State,
+		ActivityLastAt:            activity.LastActivityAt,
+		LastError:                 rec.LastError,
+		FirstSignalAt:             timeToNullTime(rec.FirstSignalAt),
+		IsTerminated:              rec.IsTerminated,
+		IsPinned:                  rec.IsPinned,
+		PinnedAt:                  timePtrToNullTime(rec.PinnedAt),
+		Branch:                    rec.Metadata.Branch,
+		WorkspacePath:             rec.Metadata.WorkspacePath,
+		WorkspaceRepoPath:         rec.Metadata.WorkspaceRepoPath,
+		DiffBaseSha:               rec.Metadata.DiffBaseSHA,
+		DiffBaseRef:               rec.Metadata.DiffBaseRef,
+		RuntimeHandleID:           rec.Metadata.RuntimeHandleID,
+		RuntimeLaunchID:           rec.Metadata.RuntimeLaunchID,
+		AgentSessionID:            rec.Metadata.AgentSessionID,
+		Prompt:                    rec.Metadata.Prompt,
+		LatestUserPrompt:          rec.Metadata.LatestUserPrompt,
+		LatestAssistantUpdate:     rec.Metadata.LatestAssistantUpdate,
+		NativeTranscriptPath:      rec.Metadata.NativeTranscriptPath,
+		PromptPolicyHash:          rec.Metadata.PromptPolicyHash,
+		PreviewURL:                rec.Metadata.PreviewURL,
+		PreviewRevision:           rec.Metadata.PreviewRevision,
+		TerminateOnPRMerge:        rec.TerminateOnPRMerge,
+		CleanupGeneration:         rec.CleanupGeneration,
+		BrowserCapabilityVerifier: rec.Metadata.BrowserCapabilityVerifier,
+		AutoInjectReview:          rec.AutoInjectReview,
+		AutoInjectCI:              rec.AutoInjectCI,
 
 		ProviderConversationID: rec.Metadata.ProviderConversationID,
 		ControllerGeneration:   rec.Metadata.ControllerGeneration,

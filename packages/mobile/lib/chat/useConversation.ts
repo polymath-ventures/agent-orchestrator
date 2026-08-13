@@ -1,4 +1,3 @@
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AppState } from "react-native";
 import type { ServerConfig } from "../config";
@@ -19,7 +18,6 @@ import {
 	setConversationTitle,
 	stageConversationAttachments,
 	steerConversation,
-	streamConversationEvents,
 	interruptConversation,
 	type ConversationPage,
 } from "./api";
@@ -34,10 +32,18 @@ import type {
 } from "./types";
 import { discardHistoricalPages } from "./snapshot";
 import { conversationActionError, conversationErrorCode } from "./conversationErrors";
+import { subscribeConversationEvents } from "./conversationEvents";
+import { createAsyncValueCache } from "./asyncValueCache";
+import { createRequestGate } from "./requestGate";
+import { loadTurnOptionCatalog } from "./turnOptionsCatalog";
 
 const REFRESH_DEBOUNCE_MS = 120;
-const RECONNECT_MIN_MS = 1_000;
-const RECONNECT_MAX_MS = 15_000;
+const conversationPageCache = createMobileConversationPageCache();
+const turnOptionsCache = createAsyncValueCache<string, { models: ChatModel[]; configOptions: ChatConfigOption[] }>(
+	16,
+	30_000,
+);
+const skillsCache = createAsyncValueCache<string, ChatSkill[]>(16, 30_000);
 
 export type PendingSend = {
 	id: string;
@@ -68,6 +74,8 @@ export type MobileConversation = {
 	actionCodes: Partial<Record<ConversationAction, string>>;
 	refresh(): Promise<void>;
 	loadOlder(): Promise<void>;
+	loadTurnOptions(options?: { refresh?: boolean }): Promise<{ models: ChatModel[]; configOptions: ChatConfigOption[] }>;
+	loadSkills(): Promise<ChatSkill[]>;
 	send(text: string, attachments?: ChatImage[], resources?: ChatResource[]): Promise<void>;
 	retrySend(id: string): Promise<void>;
 	discardSend(id: string): void;
@@ -82,7 +90,7 @@ export type MobileConversation = {
 	compact(): Promise<void>;
 	rollback(turnId: string): Promise<number>;
 	chooseSettings(settings: TurnSettings): Promise<void>;
-	setConfigOption(optionId: string, value: { value: string } | { enabled: boolean }): Promise<void>;
+	setConfigOption(optionId: string, value: { value: string } | { enabled: boolean }): Promise<ChatConfigOption[]>;
 	reloadMcp(): Promise<void>;
 	rename(title: string): Promise<void>;
 };
@@ -104,6 +112,7 @@ export function useMobileConversation(cfg: ServerConfig | null, sessionId: strin
 	const [actionCodes, setActionCodes] = useState<Partial<Record<ConversationAction, string>>>({});
 	const mounted = useRef(true);
 	const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const refreshGate = useRef(createRequestGate()).current;
 
 	const snapshot = useMemo(() => mergeConversationPages(pages), [pages]);
 	const hasConversation = Boolean(snapshot);
@@ -111,28 +120,31 @@ export function useMobileConversation(cfg: ServerConfig | null, sessionId: strin
 
 	const refresh = useCallback(async () => {
 		if (!cfg) return;
+		const request = refreshGate.begin();
 		setRefreshing(true);
 		try {
 			const live = await getConversationPage(cfg, sessionId);
-			if (!mounted.current) return;
+			if (!mounted.current || !refreshGate.isCurrent(request)) return;
 			setPages((old) => {
-				if (old[0]?.conversationId && old[0].conversationId !== live.conversationId) return [live];
-				return [live, ...old.slice(1)];
+				const next =
+					old[0]?.conversationId && old[0].conversationId !== live.conversationId ? [live] : [live, ...old.slice(1)];
+				conversationPageCache.set(cacheKey, next);
+				return next;
 			});
 			setUnavailable(undefined);
 			setError(undefined);
 		} catch (cause) {
-			if (!mounted.current) return;
+			if (!mounted.current || !refreshGate.isCurrent(request)) return;
 			const classified = classifyConversationError(cause);
 			if (classified.permanent) setUnavailable({ code: classified.code, message: classified.message });
 			else setError(classified.message);
 		} finally {
-			if (mounted.current) {
+			if (mounted.current && refreshGate.isCurrent(request)) {
 				setLoading(false);
 				setRefreshing(false);
 			}
 		}
-	}, [cfg, sessionId]);
+	}, [cacheKey, cfg, refreshGate, sessionId]);
 
 	const scheduleRefresh = useCallback(() => {
 		if (refreshTimer.current) clearTimeout(refreshTimer.current);
@@ -154,15 +166,19 @@ export function useMobileConversation(cfg: ServerConfig | null, sessionId: strin
 
 	useEffect(() => {
 		mounted.current = true;
-		setPages([]);
-		setLoading(true);
+		const cached = cacheKey
+			? cachedConversationState(conversationPageCache, cacheKey)
+			: { pages: [] as ConversationPage[], loading: true };
+		setPages(cached.pages);
+		setLoading(cached.loading);
 		setUnavailable(undefined);
 		void refresh();
 		return () => {
 			mounted.current = false;
+			refreshGate.invalidate();
 			if (refreshTimer.current) clearTimeout(refreshTimer.current);
 		};
-	}, [refresh]);
+	}, [cacheKey, refresh, refreshGate]);
 
 	// Provider catalogs are live session state. They fail independently so a
 	// missing optional facility never hides an otherwise healthy conversation.
@@ -200,37 +216,11 @@ export function useMobileConversation(cfg: ServerConfig | null, sessionId: strin
 		};
 	}, [cfg, sessionId, unavailable, hasConversation, hasProviderConfig]);
 
-	// The daemon owns durable replay. Persist only the cursor; after backgrounding
-	// the phone reconnects from that point and then reloads the authoritative page.
 	useEffect(() => {
 		if (!cfg || unavailable) return;
-		let stopped = false;
-		let controller: AbortController | undefined;
-		const cursorKey = eventCursorKey(cfg, sessionId);
-		const run = async () => {
-			let cursor = Number(await AsyncStorage.getItem(cursorKey)) || 0;
-			let delay = RECONNECT_MIN_MS;
-			while (!stopped) {
-				controller = new AbortController();
-				try {
-					cursor = await streamConversationEvents(cfg, sessionId, cursor, controller.signal, (event) => {
-						cursor = Math.max(cursor, event.seq);
-						void AsyncStorage.setItem(cursorKey, String(cursor));
-						if (event.payload?.conversationId) scheduleRefresh();
-					});
-					delay = RECONNECT_MIN_MS;
-				} catch {
-					if (stopped || controller.signal.aborted) return;
-				}
-				await wait(delay);
-				delay = Math.min(RECONNECT_MAX_MS, delay * 2);
-			}
-		};
-		void run();
-		return () => {
-			stopped = true;
-			controller?.abort();
-		};
+		return subscribeConversationEvents(sessionId, (event) => {
+			if (event.payload?.conversationId) scheduleRefresh();
+		});
 	}, [cfg, sessionId, scheduleRefresh, unavailable]);
 
 	useEffect(() => {
@@ -309,6 +299,62 @@ export function useMobileConversation(cfg: ServerConfig | null, sessionId: strin
 		[pendingSends, deliver],
 	);
 
+	const discardSend = useCallback((id: string) => {
+		setPendingSends((old) => old.filter((item) => item.id !== id));
+	}, []);
+	const steer = useCallback(
+		(text: string) =>
+			runAction("steer", () => requireConfig(cfg, (c) => steerConversation(c, sessionId, text, clientMessageId()))),
+		[cfg, runAction, sessionId],
+	);
+	const interrupt = useCallback(
+		() => runAction("interrupt", () => requireConfig(cfg, (c) => interruptConversation(c, sessionId))),
+		[cfg, runAction, sessionId],
+	);
+	const resolveApprovalAction = useCallback(
+		(requestId: string, decisionId: string) =>
+			runAction("approval", () => requireConfig(cfg, (c) => resolveApproval(c, sessionId, requestId, decisionId))),
+		[cfg, runAction, sessionId],
+	);
+	const resolveInputAction = useCallback(
+		(requestId: string, action: "accept" | "decline" | "cancel", content?: Record<string, unknown>) =>
+			runAction("input", () => requireConfig(cfg, (c) => resolveInput(c, sessionId, requestId, action, content))),
+		[cfg, runAction, sessionId],
+	);
+	const compact = useCallback(
+		() => runAction("compact", () => requireConfig(cfg, (c) => compactConversation(c, sessionId))),
+		[cfg, runAction, sessionId],
+	);
+	const rollback = useCallback(
+		(turnId: string) =>
+			runAction("rollback", () => requireConfig(cfg, (c) => rollbackConversation(c, sessionId, turnId)), true),
+		[cfg, runAction, sessionId],
+	);
+	const chooseSettings = useCallback(
+		(settings: TurnSettings) =>
+			runAction("settings", () => requireConfig(cfg, (c) => setConversationSettings(c, sessionId, settings))),
+		[cfg, runAction, sessionId],
+	);
+	const setConfigOption = useCallback(
+		(optionId: string, value: { value: string } | { enabled: boolean }) =>
+			runAction("config", async () => {
+				const options = await requireConfig(cfg, (c) => setConversationConfigOption(c, sessionId, optionId, value));
+				setConfigOptions(options);
+				turnOptionsCache.set(cacheKey, { models, configOptions: options });
+				return options;
+			}),
+		[cacheKey, cfg, models, runAction, sessionId],
+	);
+	const reloadMcp = useCallback(async () => {
+		await runAction("mcp", () => requireConfig(cfg, (c) => reloadMcpServers(c, sessionId)));
+		skillsCache.delete(cacheKey);
+		setSkills([]);
+	}, [cacheKey, cfg, runAction, sessionId]);
+	const rename = useCallback(
+		(title: string) => runAction("rename", () => requireConfig(cfg, (c) => setConversationTitle(c, sessionId, title))),
+		[cfg, runAction, sessionId],
+	);
+
 	return {
 		snapshot,
 		loading,
@@ -326,6 +372,8 @@ export function useMobileConversation(cfg: ServerConfig | null, sessionId: strin
 		actionCodes,
 		refresh,
 		loadOlder,
+		loadTurnOptions,
+		loadSkills,
 		send,
 		retrySend,
 		discardSend: (id) => setPendingSends((old) => old.filter((item) => item.id !== id)),
@@ -385,12 +433,8 @@ function classifyConversationError(error: unknown): { permanent: boolean; code?:
 	};
 }
 
-function eventCursorKey(cfg: ServerConfig, sessionId: string): string {
-	return `ao.chat.events.${cfg.host}.${cfg.httpPort}.${sessionId}`;
-}
-
-function wait(ms: number): Promise<void> {
-	return new Promise((resolve) => setTimeout(resolve, ms));
+function conversationPageCacheKey(cfg: ServerConfig, sessionId: string): string {
+	return `${cfg.secure ? "https" : "http"}://${cfg.host}:${cfg.httpPort}/${cfg.password}/${sessionId}`;
 }
 
 function withAttachmentReferences(text: string, paths: string[]): string {

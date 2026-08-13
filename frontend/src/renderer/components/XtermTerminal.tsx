@@ -32,11 +32,11 @@ import type { AttachableTerminal, TerminalUserInputSource } from "../hooks/useTe
 import { aoBridge } from "../lib/bridge";
 import { TERMINAL_FONT_SIZE_DEFAULT } from "../lib/design-tokens";
 import { OPEN_DIALOG_OR_MENU_SELECTOR } from "../lib/dom-selectors";
+import { isWebLink } from "../lib/detect-urls";
 import { openLinkInSystemBrowser } from "../lib/external-link-policy";
-import { applyDocumentTheme } from "../lib/theme";
 import { buildTerminalThemes } from "../lib/terminal-themes";
 import { matchesTerminalExitFocusShortcut } from "../../shared/shortcuts";
-import type { Theme } from "../stores/ui-store";
+import { useUiStore, type Theme } from "../stores/ui-store";
 import {
 	DropdownMenu,
 	DropdownMenuContent,
@@ -71,6 +71,8 @@ export type XtermTerminalProps = {
 	onVisibleSize?: (cols: number, rows: number) => void;
 	/** Hidden retained terminals keep parsing output but expose no UI overlays. */
 	isVisible?: boolean;
+	/** Move keyboard focus into xterm when a controller needs human input. */
+	focusRequested?: boolean;
 	/**
 	 * The terminal is open in the DOM and ready to be attached to a PTY. The
 	 * handle stays valid until unmount; cols/rows are live getters.
@@ -225,15 +227,6 @@ type TerminalContextMenuState = {
 	link: string | null;
 };
 
-function isWebLink(uri: string): boolean {
-	try {
-		const { protocol } = new URL(uri);
-		return protocol === "http:" || protocol === "https:";
-	} catch {
-		return false;
-	}
-}
-
 type TerminalContextMenuAction = "copy" | "paste" | "selectAll" | "clear";
 
 type TerminalContextMenuActions = Record<TerminalContextMenuAction, () => void>;
@@ -278,6 +271,7 @@ function removeHiddenScrollbarReservation(term: Terminal): void {
 
 export function XtermTerminal(props: XtermTerminalProps) {
 	const { t } = useTranslation();
+	const themeStyle = useUiStore((state) => state.themeStyle);
 	const hostRef = useRef<HTMLDivElement | null>(null);
 	const termRef = useRef<Terminal | null>(null);
 	const fitRef = useRef<(() => void) | null>(null);
@@ -333,14 +327,9 @@ export function XtermTerminal(props: XtermTerminalProps) {
 	useEffect(() => {
 		const term = termRef.current;
 		if (!term) return;
-		// buildTerminalThemes() reads live CSS vars from :root. Parent shell
-		// applies data-theme in its own effect, and child effects run first, so
-		// sync the document here before reading — otherwise the palette stays on
-		// the previous theme until remount.
-		applyDocumentTheme(props.theme);
 		const { dark, light } = buildTerminalThemes();
 		term.options.theme = props.theme === "dark" ? dark : light;
-	}, [props.theme]);
+	}, [props.theme, themeStyle]);
 
 	useEffect(() => {
 		const term = termRef.current;
@@ -971,6 +960,16 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			}
 		};
 	}, []);
+
+	useEffect(() => {
+		if (!props.focusRequested || props.isVisible === false) return undefined;
+		try {
+			termRef.current?.focus();
+		} catch {
+			// The retained terminal may have been parked during this effect.
+		}
+		return undefined;
+	}, [props.focusRequested, props.isVisible]);
 
 	useLayoutEffect(() => {
 		if (props.isVisible === false) setContextMenuOpen(false);

@@ -54,7 +54,11 @@ export function useSessionInterfaceTransition(sessionId: string | undefined) {
 			if (error) throw error;
 			return data as SessionInterfaceTransitionStatus;
 		},
-		refetchInterval: (state) => (interfaceTransitionIsActive(state.state.data?.transition) ? 250 : false),
+		refetchInterval: (state) =>
+			interfaceTransitionIsActive(state.state.data?.transition) ||
+			state.state.data?.reasonCode === "NATIVE_SESSION_MISSING"
+				? 250
+				: false,
 		retry: 1,
 	});
 

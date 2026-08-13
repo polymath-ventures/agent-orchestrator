@@ -28,7 +28,7 @@ test("the Summary tab renders the reviewer panel for a session that owns PRs", a
 	await expect(reviewsSection.getByText("Approved", { exact: true })).toBeVisible();
 	await expect(inspector.getByRole("button", { name: "Select reviewer agent" })).toContainText("codex");
 	await expect(inspector.getByRole("button", { name: "Re-run review" })).toBeVisible();
-	await expect(inspector.getByRole("button", { name: "Open terminal" })).toBeVisible();
+	await expect(inspector.getByRole("button", { name: "Open terminal" })).toHaveCount(0);
 });
 
 test("the Summary tab shows the empty state for a session with no PRs", async ({ page }) => {

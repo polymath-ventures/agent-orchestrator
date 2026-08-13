@@ -167,6 +167,10 @@ func (c *commandContext) doJSONPath(ctx context.Context, method, path string, bo
 }
 
 func (c *commandContext) doJSONPathHeaders(ctx context.Context, method, path string, headers map[string]string, body, out any) error {
+	return c.doJSONPathWithHeadersAndTimeout(ctx, method, path, body, out, headers, commandTimeout)
+}
+
+func (c *commandContext) doJSONPathWithHeadersAndTimeout(ctx context.Context, method, path string, body, out any, headers map[string]string, timeout time.Duration) error {
 	url, err := c.daemonURL(path)
 	if err != nil {
 		return err
@@ -196,7 +200,7 @@ func (c *commandContext) doJSONPathHeaders(ctx context.Context, method, path str
 	// Reuse the injected client's transport (keeps it stubbable in tests) but
 	// give daemon API calls far more headroom than the 2s status-probe timeout.
 	client := *c.deps.HTTPClient
-	client.Timeout = commandTimeout
+	client.Timeout = timeout
 	resp, err := client.Do(req) // #nosec G704 -- request target is the fixed loopback daemon URL above.
 	if err != nil {
 		return fmt.Errorf("call daemon: %w", err)

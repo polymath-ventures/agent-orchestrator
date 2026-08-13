@@ -1,8 +1,9 @@
 import { Feather } from "@expo/vector-icons";
-import { Modal, Pressable, ScrollView, StyleSheet, Switch, Text, View } from "react-native";
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Switch, Text, View } from "react-native";
 import { haptics } from "../haptics";
 import type { Theme } from "../theme";
 import { useTheme, useThemedStyles } from "../ThemeProvider";
+import { SheetHeader } from "../ui";
 import type { ChatConfigOption, ChatModel, ConversationSnapshot, TurnSettings } from "./types";
 import { can } from "./types";
 
@@ -13,24 +14,24 @@ const APPROVALS = [
 	{ id: "bypass-permissions", label: "Never ask", hint: "No approvals or sandbox prompts" },
 ] as const;
 
-export function ChatSettingsModal({
-	visible,
-	onClose,
+export function ChatSettingsSheet({
 	snapshot,
 	models,
 	options,
 	disabled,
+	refreshing,
 	error,
+	onRefresh,
 	onSettings,
 	onOption,
 }: {
-	visible: boolean;
-	onClose(): void;
 	snapshot: ConversationSnapshot;
 	models: ChatModel[];
 	options: ChatConfigOption[];
 	disabled?: boolean;
+	refreshing?: boolean;
 	error?: string;
+	onRefresh(): void;
 	onSettings(settings: TurnSettings): void;
 	onOption(id: string, value: { value: string } | { enabled: boolean }): void;
 }) {
@@ -40,6 +41,10 @@ export function ChatSettingsModal({
 		models.find((model) => model.id === snapshot.settings.model) ?? models.find((model) => model.default);
 	const efforts = selected?.efforts ?? [];
 	const usesProviderOptions = can(snapshot, "config_options");
+	const hasProviderModel = options.some(
+		(option) => option.category === "model" || option.id === "model" || option.id === "agent",
+	);
+	const hasProviderMode = options.some((option) => option.category === "mode" || option.id === "mode");
 	return (
 		<Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
 			<Pressable accessibilityLabel="Close turn settings" style={styles.scrim} onPress={onClose} />

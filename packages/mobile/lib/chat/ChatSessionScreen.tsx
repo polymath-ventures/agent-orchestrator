@@ -1,11 +1,13 @@
 import { Feather } from "@expo/vector-icons";
 import { useNavigation, useRouter } from "expo-router";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
 	ActivityIndicator,
 	Alert,
-	FlatList,
+	InteractionManager,
+	Keyboard,
 	KeyboardAvoidingView,
+	LayoutAnimation,
 	Modal,
 	Platform,
 	Pressable,
@@ -17,21 +19,25 @@ import {
 } from "react-native";
 import { restoreSession, resumeSessionAgent, type DashboardSession, type OrchestratorLink } from "../api";
 import { haptics } from "../haptics";
+import { headerActionStyle } from "../headerAction";
+import { deferRouteContent, resetHeaderRightForSwap } from "../headerRightSwap";
 import { useApp } from "../store";
 import {
 	mobileInterfaceTransitionIsActive,
 	mobileInterfaceTransitionIsCancellable,
 	useInterfaceTransition,
 } from "../session/useInterfaceTransition";
+import { screenKeyboardAvoidance } from "../session/keyboardInset";
 import type { Theme } from "../theme";
 import { useTheme, useThemedStyles } from "../ThemeProvider";
 import { getWorkspacePaths, openSessionShell } from "./api";
 import { ChatComposer } from "./ChatComposer";
-import { ChatSettingsModal } from "./ChatSettingsModal";
 import { ChatTimeline } from "./ChatTimeline";
-import { contextReadout, elapsedLabel, mcpServerFailureLabel, quotaWarning, resetLabel } from "./conversationChrome";
-import { conversationActionUnsupported } from "./conversationErrors";
-import { conversationMarkers, type ConversationMarker } from "./timelineModel";
+import { chatSheetRoute } from "./chatSheetRegistry";
+import { centeredConversationMenu } from "./chatLayout";
+import { elapsedLabel, mcpServerFailureLabel, quotaWarning, resetLabel } from "./conversationChrome";
+import { conversationActionError, conversationActionUnsupported } from "./conversationErrors";
+import { conversationMarkers } from "./timelineModel";
 import { brokenMcpServers, can } from "./types";
 import { useMobileConversation } from "./useConversation";
 
@@ -42,17 +48,39 @@ export function ChatSessionScreen({ session }: { session: MobileChatSession }) {
 	const styles = useThemedStyles(makeStyles);
 	const navigation = useNavigation();
 	const router = useRouter();
+	const [headerRightReady, setHeaderRightReady] = useState(false);
+	const [contentReadySessionId, setContentReadySessionId] = useState<string>();
+	useLayoutEffect(
+		() =>
+			resetHeaderRightForSwap(
+				() => navigation.setOptions({ headerRight: undefined }),
+				() => setHeaderRightReady(true),
+			),
+		[navigation],
+	);
+	useEffect(
+		() =>
+			deferRouteContent(
+				() => setContentReadySessionId(session.id),
+				(callback) => {
+					const task = InteractionManager.runAfterInteractions(callback);
+					return () => task.cancel();
+				},
+			),
+		[session.id],
+	);
 	const { config, refresh: refreshBoard, setActiveProject } = useApp();
 	const conversation = useMobileConversation(config, session.id);
 	const interfaceSwitch = useInterfaceTransition(config, session.id, refreshBoard);
-	const [settingsOpen, setSettingsOpen] = useState(false);
 	const [menuOpen, setMenuOpen] = useState(false);
-	const [mapOpen, setMapOpen] = useState(false);
 	const [jumpToSequence, setJumpToSequence] = useState<number>();
+	const clearJumpToSequence = useCallback(() => setJumpToSequence(undefined), []);
 	const [filePaths, setFilePaths] = useState<string[]>([]);
 	const [filePathsTruncated, setFilePathsTruncated] = useState(false);
+	const filePathsRequest = useRef<Promise<{ paths: string[]; truncated: boolean }> | null>(null);
 	const [openingShell, setOpeningShell] = useState(false);
 	const [resuming, setResuming] = useState(false);
+	const [keyboardHeight, setKeyboardHeight] = useState(0);
 	const terminated = "projectName" in session ? Boolean(session.isTerminal) : Boolean(session.isTerminated);
 	const interfaceTransitionActive = mobileInterfaceTransitionIsActive(interfaceSwitch.transition);
 	const turnActive = Boolean(
@@ -67,8 +95,34 @@ export function ChatSessionScreen({ session }: { session: MobileChatSession }) {
 		),
 	);
 
+	useEffect(() => {
+		if (Platform.OS !== "android") return;
+		const avoidance = screenKeyboardAvoidance("android", 0);
+		const animate = (duration?: number) =>
+			LayoutAnimation.configureNext({
+				duration: duration || 250,
+				update: { type: LayoutAnimation.Types.keyboard },
+			});
+		const show = Keyboard.addListener(avoidance.showEvent, (event) => {
+			animate(event.duration);
+			setKeyboardHeight(event.endCoordinates.height);
+		});
+		const hide = Keyboard.addListener(avoidance.hideEvent, (event) => {
+			animate(event?.duration);
+			setKeyboardHeight(0);
+		});
+		return () => {
+			show.remove();
+			hide.remove();
+		};
+	}, []);
+
 	const title = conversation.snapshot?.title || sessionTitle(session);
 	useLayoutEffect(() => {
+		if (!headerRightReady) {
+			navigation.setOptions({ headerRight: undefined });
+			return;
+		}
 		navigation.setOptions({
 			title: title.length > 24 ? `${title.slice(0, 22)}…` : title,
 			headerRight: () => (
@@ -83,7 +137,7 @@ export function ChatSessionScreen({ session }: { session: MobileChatSession }) {
 				</Pressable>
 			),
 		});
-	}, [navigation, title, styles, t]);
+	}, [headerRightReady, navigation, title, styles, t]);
 
 	useEffect(() => {
 		if (!config || !conversation.snapshot) return;
@@ -221,7 +275,6 @@ export function ChatSessionScreen({ session }: { session: MobileChatSession }) {
 			<ChatMetaBar
 				snapshot={snapshot}
 				refreshing={conversation.refreshing}
-				compacting={conversation.pendingActions.includes("compact")}
 				onRefresh={() => void conversation.refresh()}
 				onCompact={compactSupported ? () => void conversation.compact().catch(() => {}) : undefined}
 				compactDisabled={
@@ -311,14 +364,14 @@ export function ChatSessionScreen({ session }: { session: MobileChatSession }) {
 			<ChatTimeline
 				snapshot={snapshot}
 				loadingOlder={conversation.loadingOlder}
-				onLoadOlder={() => void conversation.loadOlder()}
+				onLoadOlder={conversation.loadOlder}
 				approvalPending={conversation.pendingActions.includes("approval")}
 				inputPending={conversation.pendingActions.includes("input")}
 				onDecide={conversation.resolveApproval}
 				onResolveInput={conversation.resolveInput}
 				onRollback={conversation.rollback}
 				jumpToSequence={jumpToSequence}
-				onJumpHandled={() => setJumpToSequence(undefined)}
+				onJumpHandled={clearJumpToSequence}
 			/>
 			{activeTurn ? (
 				<LiveTurnBar
@@ -334,6 +387,8 @@ export function ChatSessionScreen({ session }: { session: MobileChatSession }) {
 				skills={conversation.skills}
 				filePaths={filePaths}
 				filePathsTruncated={filePathsTruncated}
+				onLoadSkills={conversation.loadSkills}
+				onLoadFiles={loadWorkspaceFiles}
 				configOptions={conversation.configOptions}
 				steerUnavailable={steerUnsupported}
 				pending={interfaceTransitionActive || conversation.pendingSends.some((item) => item.state === "sending")}
@@ -440,7 +495,6 @@ function ChatMetaBar({
 	const t = useTheme();
 	const styles = useThemedStyles(makeStyles);
 	const state = snapshot.controller.state;
-	const context = contextReadout(snapshot.usage);
 	const stateColor = state === "busy" ? t.orange : state === "ready" ? t.green : state === "stopped" ? t.red : t.amber;
 	const contextColor = context?.severity === "critical" ? t.red : context?.severity === "warn" ? t.amber : t.blue;
 	const contextFillWidth =

@@ -5,6 +5,8 @@ import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-nati
 import { WebView } from "react-native-webview";
 import { getPreview } from "../../lib/api";
 import { authHeaders } from "../../lib/config";
+import { headerActionStyle, headerGlyphStyle } from "../../lib/headerAction";
+import { haptics } from "../../lib/haptics";
 import { useApp } from "../../lib/store";
 import type { Theme } from "../../lib/theme";
 import { useTheme, useThemedStyles } from "../../lib/ThemeProvider";

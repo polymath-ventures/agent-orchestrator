@@ -5,6 +5,8 @@ import {
 	ChevronRight,
 	Folder,
 	FolderOpen,
+	LogIn,
+	LogOut,
 	MoreVertical,
 	Pencil,
 	Pin,
@@ -14,6 +16,7 @@ import {
 	Search,
 	Settings,
 	Trash2,
+	User,
 } from "lucide-react";
 import {
 	useEffect,
@@ -44,6 +47,7 @@ import { useTerminateSession } from "../hooks/useTerminateSession";
 import { useResizable } from "../hooks/useResizable";
 import { useShellMaybe } from "../lib/shell-context";
 import { useUpdateStatus } from "../hooks/useUpdateStatus";
+import { effectiveShortcutBindings, shortcutBindingKeys } from "../../shared/shortcuts";
 import {
 	ContextMenu,
 	ContextMenuContent,
@@ -78,10 +82,13 @@ import { OrchestratorIcon } from "./icons";
 import aoLogo from "../../../assets/ao-logo.svg";
 import { cn } from "../lib/utils";
 import { useUiStore } from "../stores/ui-store";
+import { useKeybindingsStore } from "../stores/keybindings-store";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { CreateProjectFlow, type CreateProjectInput } from "./CreateProjectFlow";
 import { ResizeHandle } from "./ResizeHandle";
 import { isMacPlatform } from "../lib/platform";
+import { useCloudSession } from "../lib/cloud-session";
+import { HarnessGlyph } from "./HarnessGlyph";
 
 // macOS paints framed chrome: the fixed TitlebarNav cluster carries the
 // sidebar toggle + history arrows above this surface. Windows hangs the sidebar
@@ -101,7 +108,9 @@ const NAV_ROW_CLASS =
 
 // Search + Pinned/Projects section chrome: same type, icon, and row size.
 const SECTION_ROW_CLASS =
-	"flex h-8 w-full min-w-0 items-center gap-2 rounded-md px-2.5 text-sm font-medium text-passive transition-colors hover:bg-interactive-hover hover:text-foreground [&_svg]:size-icon-md [&_svg]:shrink-0";
+	"flex h-8 w-full min-w-0 items-center gap-2 rounded-md px-2.5 text-sm font-medium text-passive [&_svg]:size-icon-md [&_svg]:shrink-0";
+// Hover fill only for collapsible section headers (Pinned). Projects is a static label.
+const SECTION_ROW_INTERACTIVE_CLASS = "transition-colors hover:bg-interactive-hover hover:text-foreground";
 
 // Mirrors the daemon's display-name cap (maxDisplayNameLen) and the spawn
 // `--name` flag, so inline edits never round-trip a value the API would reject.
@@ -154,26 +163,11 @@ function useSelection() {
 	};
 }
 
-// Activity controls motion; live PR context controls an active session's
-// color. Idle activity remains visible as a static gray dot.
-const ACTIVE_SCM_DOT: Partial<Record<WorkspaceSession["scmStatus"] & string, string>> = {
-	working: "bg-status-working",
-	ci_failed: "bg-status-needs-you",
-	changes_requested: "bg-status-needs-you",
-	draft: "bg-status-in-review",
-	review_pending: "bg-status-in-review",
-	pr_open: "bg-status-in-review",
-	approved: "bg-status-ready",
-	mergeable: "bg-status-ready",
-	merged: "bg-status-merged",
-};
-
+// Agent activity is the shared source for both color and motion. PR and CI
+// state is presented on cards and board lanes instead of repainting this dot.
 function SessionStatusDot({ session }: { session: WorkspaceSession }) {
 	const activity = getAgentActivityView(session.activity);
-	const dotClass =
-		activity.state === "active"
-			? `${ACTIVE_SCM_DOT[session.scmStatus ?? "working"] ?? "bg-status-working"} animate-status-pulse`
-			: activity.indicatorClassName;
+	const dotClass = activity.state === "active" ? "bg-status-working animate-status-pulse" : activity.indicatorClassName;
 	return <span aria-hidden="true" className={cn("size-2 shrink-0 rounded-full", dotClass)} data-session-status="" />;
 }
 
@@ -196,7 +190,6 @@ export function Sidebar({
 	onRemoveProject,
 }: SidebarProps) {
 	const { t } = useTranslation();
-	const prefersReducedMotion = useReducedMotion();
 	const selection = useSelection();
 	const { state, setOpen } = useSidebar();
 	const isCollapsed = state === "collapsed";
@@ -226,9 +219,8 @@ export function Sidebar({
 			next.has(id) ? next.delete(id) : next.add(id);
 			return next;
 		});
-	// Section disclosure: Pinned / Projects headers collapse their bodies.
+	// Section disclosure: Pinned header collapses its body. Projects stays open.
 	const [pinnedOpen, setPinnedOpen] = useState(true);
-	const [projectsOpen, setProjectsOpen] = useState(true);
 	// Fetch the running app version to derive the build channel. Channel is
 	// identity: derived from the version string, not the update-channel setting
 	// (the setting can be changed mid-session; the binary cannot).
@@ -278,6 +270,7 @@ export function Sidebar({
 			onPointerLeave={onPreviewLeave}
 			overlay={isOverlay}
 			className={cn(
+				"sidebar-focusless",
 				hideEdgeBorder ? "border-transparent" : "border-r-0 group-data-[side=left]:border-r-0",
 				isOverlay && "z-sidebar-preview shadow-2xl",
 				isOverlay || !underTopbar
@@ -369,7 +362,6 @@ export function Sidebar({
 				{pinnedSessions.length > 0 && (
 					<div className="sidebar-expanded-chrome flex shrink-0 flex-col group-data-[collapsible=icon]:hidden">
 						<SectionDisclosure
-							icon={<Pin strokeWidth={1.75} aria-hidden="true" />}
 							label={t("shell.pinned")}
 							open={pinnedOpen}
 							onToggle={() => setPinnedOpen((v) => !v)}
@@ -394,19 +386,11 @@ export function Sidebar({
 					</div>
 				)}
 
-				{/* Projects — collapsible section; + sits inside the same hover pill. */}
+				{/* Projects — always open; only the trailing "+" is interactive. */}
 				<div className="sidebar-expanded-chrome flex shrink-0 pb-1.5 group-data-[collapsible=icon]:hidden">
 					<SectionDisclosure
-						icon={
-							projectsOpen ? (
-								<FolderOpen strokeWidth={1.75} aria-hidden="true" />
-							) : (
-								<Folder strokeWidth={1.75} aria-hidden="true" />
-							)
-						}
 						label={t("shell.projects")}
-						open={projectsOpen}
-						onToggle={() => setProjectsOpen((v) => !v)}
+						collapsible={false}
 						trailing={
 							<CreateProjectButton
 								hideTrigger={workspaces.length === 0}
@@ -419,60 +403,39 @@ export function Sidebar({
 			</div>
 
 			<SidebarContent className="gap-0 px-2 group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:px-1.5">
-				{/* Expanded sidebar animates the project tree in/out when toggled.
-				    isCollapsed is intentionally excluded — in offcanvas mode the panel
-				    slides off-screen entirely, so forcing height:"auto" on collapse
-				    would make the section expand before the panel hides. */}
-				<motion.div
-					animate={{ height: projectsOpen ? "auto" : 0, overflow: projectsOpen ? "visible" : "hidden" }}
-					initial={false}
-					transition={prefersReducedMotion ? { duration: 0 } : { duration: 0.14, ease: [0.25, 0.46, 0.45, 0.94] }}
-					className="w-full"
-				>
-					{/* Inner animator: slides up + fades out on collapse. */}
-					<motion.div
-						animate={{
-							y: projectsOpen ? 0 : -20,
-							opacity: projectsOpen ? 1 : 0,
-						}}
-						initial={false}
-						transition={prefersReducedMotion ? { duration: 0 } : { duration: 0.14, ease: [0.25, 0.46, 0.45, 0.94] }}
-					>
-						<SidebarGroup className="p-0">
-							{/* Tree (project-sidebar__tree) */}
-							<SidebarGroupContent>
-								{workspaceError ? (
-									<div className="sidebar-expanded-chrome px-2.5 py-3 group-data-[collapsible=icon]:hidden">
-										<p className="text-sm text-foreground">{t("shell.couldNotLoadProjects")}</p>
-										<p className="mt-1 text-caption text-passive">{workspaceError}</p>
-									</div>
-								) : workspaces.length === 0 ? null : (
-									<SidebarMenu className="gap-0.5 rounded-lg overflow-hidden group-data-[collapsible=icon]:gap-1 group-data-[collapsible=icon]:rounded-none group-data-[collapsible=icon]:overflow-visible">
-										{workspaces.map((workspace) => (
-											<ProjectItem
-												key={workspace.id}
-												workspace={workspace}
-												expanded={!collapsedIds.has(workspace.id)}
-												selection={selection}
-												onToggle={() => toggleCollapsed(workspace.id)}
-												onRemoveProject={onRemoveProject}
-											/>
-										))}
-										{isCollapsed && <CreateProjectListItem />}
-									</SidebarMenu>
-								)}
-							</SidebarGroupContent>
-						</SidebarGroup>
-					</motion.div>
-				</motion.div>
+				<SidebarGroup className="p-0">
+					{/* Tree (project-sidebar__tree) */}
+					<SidebarGroupContent>
+						{workspaceError ? (
+							<div className="sidebar-expanded-chrome px-2.5 py-3 group-data-[collapsible=icon]:hidden">
+								<p className="text-sm text-foreground">{t("shell.couldNotLoadProjects")}</p>
+								<p className="mt-1 text-caption text-passive">{workspaceError}</p>
+							</div>
+						) : workspaces.length === 0 ? null : (
+							<SidebarMenu className="gap-0.5 rounded-lg overflow-hidden group-data-[collapsible=icon]:gap-1 group-data-[collapsible=icon]:rounded-none group-data-[collapsible=icon]:overflow-visible">
+								{workspaces.map((workspace) => (
+									<ProjectItem
+										key={workspace.id}
+										workspace={workspace}
+										expanded={!collapsedIds.has(workspace.id)}
+										selection={selection}
+										onToggle={() => toggleCollapsed(workspace.id)}
+										onRemoveProject={onRemoveProject}
+									/>
+								))}
+								{isCollapsed && <CreateProjectListItem />}
+							</SidebarMenu>
+						)}
+					</SidebarGroupContent>
+				</SidebarGroup>
 			</SidebarContent>
 
 			{/* Footer — Settings opens the global settings page directly.
-			    Row height matches Archive (`h-row-md`). On macOS the sidebar is
-			    already height-clamped beside the inset center surface. */}
+			    Its hairline and row height match the board Archive bar. On macOS
+			    the sidebar is already height-clamped beside the inset center surface. */}
 			<SidebarFooter
 				className={cn(
-					"relative mt-auto gap-0 overflow-hidden px-2 !pt-1 !pb-2 transition-[padding] duration-200 ease-linear group-data-[collapsible=icon]:min-h-16 group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:border-t-0 group-data-[collapsible=icon]:px-1.5 group-data-[collapsible=icon]:!pb-0 group-data-[collapsible=icon]:!pt-1.5",
+					"relative mt-auto gap-0 overflow-hidden border-t border-border-strong px-2 !py-2 transition-[padding] duration-200 ease-linear group-data-[collapsible=icon]:min-h-16 group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:border-t-0 group-data-[collapsible=icon]:px-1.5 group-data-[collapsible=icon]:!pb-0 group-data-[collapsible=icon]:!pt-1.5",
 					isMac ? "mb-px" : "mb-[calc(var(--size-center-panel-bottom-inset)+1px)]",
 				)}
 			>
@@ -488,11 +451,12 @@ export function Sidebar({
 					className="sidebar-expanded-chrome relative flex w-full min-w-46.5 flex-col gap-0.5 transition-[opacity,transform] duration-150 ease-out group-data-[collapsible=icon]:pointer-events-none group-data-[collapsible=icon]:-translate-x-2 group-data-[collapsible=icon]:opacity-0"
 				>
 					<RestartToUpdateRow status={updateStatus} tabIndex={isCollapsed ? -1 : 0} />
+					<CloudAccountRow tabIndex={isCollapsed ? -1 : 0} />
 					<button
 						aria-label={t("shell.settings")}
 						className={cn(
 							NAV_ROW_CLASS,
-							"flex h-9 w-full items-center text-left [&_svg]:size-icon-md [&_svg]:shrink-0",
+							"flex h-[42px] w-full items-center text-left [&_svg]:size-icon-md [&_svg]:shrink-0",
 						)}
 						onClick={() => selection.goGlobalSettings()}
 						tabIndex={isCollapsed ? -1 : 0}
@@ -507,6 +471,7 @@ export function Sidebar({
 					className="pointer-events-none absolute inset-x-1.5 bottom-0 top-auto flex min-h-row-md flex-col items-center justify-end gap-1 opacity-0 transition-opacity duration-150 ease-out group-data-[collapsible=icon]:pointer-events-auto group-data-[collapsible=icon]:opacity-100"
 				>
 					<RestartToUpdateRailButton status={updateStatus} tabIndex={isCollapsed ? 0 : -1} />
+					<CloudAccountRailButton tabIndex={isCollapsed ? 0 : -1} />
 					<Tooltip>
 						<TooltipTrigger asChild>
 							<button
@@ -544,10 +509,12 @@ export function Sidebar({
 type Selection = ReturnType<typeof useSelection>;
 
 function PrimeItem({ session, active, onOpen }: { session: WorkspaceSession; active: boolean; onOpen: () => void }) {
+	const harnessLabelId = `sidebar-harness-${session.id}`;
 	return (
 		<SidebarMenuItem>
 			<SidebarMenuButton
 				aria-current={active ? "page" : undefined}
+				aria-describedby={harnessLabelId}
 				aria-label={`Open ${session.title}`}
 				className={NAV_ROW_CLASS}
 				isActive={active}
@@ -559,7 +526,13 @@ function PrimeItem({ session, active, onOpen }: { session: WorkspaceSession; act
 					{session.title}
 				</span>
 				<span className="sidebar-expanded-chrome group-data-[collapsible=icon]:hidden">
-					<SessionStatusDot session={session} />
+					<span className="flex items-center gap-1.5">
+						<SessionStatusDot session={session} />
+						<HarnessGlyph harness={session.provider} />
+					</span>
+				</span>
+				<span id={harnessLabelId} className="sr-only">
+					{session.provider}
 				</span>
 			</SidebarMenuButton>
 		</SidebarMenuItem>
@@ -613,6 +586,7 @@ function ProjectItem({
 	const [isRemoving, setIsRemoving] = useState(false);
 	const [confirmOpen, setConfirmOpen] = useState(false);
 	const [isSpawning, setIsSpawning] = useState(false);
+	const [projectPressed, setProjectPressed] = useState(false);
 	const [rowHovered, setRowHovered] = useState(false);
 	// Skip enter animation on first mount — sessions arrive async and we don't
 	// want them to slide in on every sidebar load. Only animate on subsequent
@@ -635,8 +609,11 @@ function ProjectItem({
 
 	// Mirrors ShellTopbar's launcher: attach to the running orchestrator, or
 	// spawn one via the daemon and follow it once the workspace refetches.
+	// Expand a collapsed project so opening the orchestrator also reveals its
+	// session list — otherwise the tree stays shut while you're inside it.
 	const openOrchestrator = async () => {
 		if (isProjectRestarting) return;
+		if (!expanded) onToggle();
 		if (orchestrator) {
 			selection.goSession(workspace.id, orchestrator.id);
 			return;
@@ -657,11 +634,15 @@ function ProjectItem({
 		}
 	};
 
+	// Expanded + already on the project board → collapse. Expanded + on a
+	// session (orchestrator or worker) → board. Collapsed → expand + board.
+	// Do not treat orchestratorActive like the board: the project row is the
+	// one-click path back from the orchestrator button.
 	const onProjectClick = () => {
 		if (!expanded) {
 			onToggle();
 			selection.goProject(workspace.id);
-		} else if (projectActive) {
+		} else if (dashboardActive) {
 			onToggle();
 		} else {
 			selection.goProject(workspace.id);
@@ -713,7 +694,13 @@ function ProjectItem({
 					onMouseLeave={() => setRowHovered(false)}
 				>
 					{/* Outer relative context for action cluster absolute positioning */}
-					<div className="relative">
+					<div
+						className={cn(
+							"relative transition-[transform] duration-[100ms] ease-out",
+							projectPressed && "scale-[0.98]",
+						)}
+						data-project-press=""
+					>
 						{/* Scale wrapper — main button only; action cluster sits outside so clicking it doesn't trigger scale */}
 						<div className="transition-[transform] duration-[100ms] ease-out active:scale-[0.98]">
 							{/* project-sidebar__proj-row */}
@@ -724,6 +711,10 @@ function ProjectItem({
 								tooltip={workspace.name}
 								onClick={onProjectClick}
 								onKeyDown={onProjectKeyDown}
+								onPointerCancel={() => setProjectPressed(false)}
+								onPointerDown={() => setProjectPressed(true)}
+								onPointerLeave={() => setProjectPressed(false)}
+								onPointerUp={() => setProjectPressed(false)}
 								className={cn(
 									NAV_ROW_CLASS,
 									"pr-sidebar-project-actions [&_svg]:size-icon-md",
@@ -733,7 +724,8 @@ function ProjectItem({
 								{/* Expanded sidebar: visual folder/chevron icon (decorative — toggle button is a sibling) */}
 								<span
 									aria-hidden="true"
-									className="relative shrink-0 group-data-[collapsible=icon]:hidden inline-flex size-[18px] items-center justify-center text-muted-foreground"
+									className="relative shrink-0 group-data-[collapsible=icon]:hidden inline-flex size-[18px] translate-y-px items-center justify-center text-muted-foreground"
+									data-project-folder-visual=""
 								>
 									{rowHovered ? (
 										<motion.span
@@ -767,7 +759,10 @@ function ProjectItem({
 										<Folder className="size-5" strokeWidth={1.75} />
 									)}
 								</span>
-								<span className="sidebar-expanded-chrome min-w-0 flex-1 truncate group-data-[collapsible=icon]:hidden">
+								<span
+									className="sidebar-expanded-chrome min-w-0 flex-1 translate-y-px truncate group-data-[collapsible=icon]:hidden"
+									data-project-label=""
+								>
 									{workspace.name}
 								</span>
 							</SidebarMenuButton>
@@ -955,6 +950,7 @@ function SessionRow({
 	onOpen: () => void;
 }) {
 	const { t } = useTranslation();
+	const harnessLabelId = `sidebar-harness-${session.id}`;
 	const [isEditing, setIsEditing] = useState(false);
 	const [draft, setDraft] = useState(session.title);
 	// Escape must not be swallowed by the blur-to-save path: the keydown handler
@@ -1032,12 +1028,14 @@ function SessionRow({
 				<div className="flex min-w-0 flex-1 transition-[transform] duration-[100ms] ease-out active:scale-[0.97]">
 					<button
 						aria-current={active ? "page" : undefined}
+						aria-describedby={harnessLabelId}
 						aria-label={t("shell.openSession", { title: session.title })}
 						className="flex h-8 min-w-0 flex-1 items-center gap-1.5 rounded-lg px-2.5 py-0 text-left text-sm outline-hidden focus-visible:ring-2 focus-visible:ring-sidebar-ring"
 						onClick={onOpen}
 						type="button"
 					>
 						<SessionStatusDot session={session} />
+						<HarnessGlyph harness={session.provider} />
 						<span className="min-w-0 flex-1">
 							<span
 								className={cn(
@@ -1047,6 +1045,9 @@ function SessionRow({
 							>
 								{session.title}
 							</span>
+						</span>
+						<span id={harnessLabelId} className="sr-only">
+							{session.provider}
 						</span>
 					</button>
 				</div>
@@ -1104,6 +1105,110 @@ function SessionRow({
 				</button>
 			</div>
 		</SidebarMenuSubItem>
+	);
+}
+
+// CloudAccountRow: shown above the Settings button. When unauthenticated it
+// starts the native WorkOS PKCE flow. When authenticated it shows the user's
+// email with a sign-out action in a dropdown.
+function CloudAccountRow({ tabIndex }: { tabIndex: number }) {
+	const { t } = useTranslation();
+	const { configured, session, status, signIn, signOut } = useCloudSession();
+	if (!configured || status === "loading") return null;
+
+	if (status === "unauthenticated") {
+		return (
+			<Tooltip>
+				<TooltipTrigger asChild>
+					<button
+						aria-label={t("shell.signInToAOCloud")}
+						className={cn(
+							NAV_ROW_CLASS,
+							"flex h-9 w-full items-center text-left [&_svg]:size-icon-md [&_svg]:shrink-0",
+						)}
+						onClick={() => signIn()}
+						tabIndex={tabIndex}
+						type="button"
+					>
+						<User aria-hidden="true" />
+						<span className="tracking-tight">{t("shell.signIn")}</span>
+					</button>
+				</TooltipTrigger>
+				<TooltipContent side="right" hidden={tabIndex !== -1}>
+					{t("shell.signInToAOCloud")}
+				</TooltipContent>
+			</Tooltip>
+		);
+	}
+
+	return (
+		<DropdownMenu>
+			<DropdownMenuTrigger asChild>
+				<button
+					aria-label={t("shell.signedInAs", { email: session?.user.email ?? "AO Cloud" })}
+					className={cn(NAV_ROW_CLASS, "flex h-9 w-full items-center text-left [&_svg]:size-icon-md [&_svg]:shrink-0")}
+					tabIndex={tabIndex}
+					type="button"
+				>
+					<User aria-hidden="true" />
+					<span className="min-w-0 flex-1 truncate tracking-tight">{session?.user.email ?? "AO Cloud"}</span>
+				</button>
+			</DropdownMenuTrigger>
+			<DropdownMenuContent side="top" align="start" className="min-w-44">
+				<DropdownMenuItem
+					className="text-destructive focus:text-destructive [&_svg]:text-destructive"
+					onSelect={() => void signOut()}
+				>
+					<LogOut aria-hidden="true" />
+					{t("shell.signOut")}
+				</DropdownMenuItem>
+			</DropdownMenuContent>
+		</DropdownMenu>
+	);
+}
+
+// Icon-rail variant for collapsed sidebar.
+function CloudAccountRailButton({ tabIndex }: { tabIndex: number }) {
+	const { t } = useTranslation();
+	const { configured, session, status, signIn, signOut } = useCloudSession();
+	if (!configured || status === "loading") return null;
+
+	if (status === "unauthenticated") {
+		return (
+			<Tooltip>
+				<TooltipTrigger asChild>
+					<button
+						aria-label={t("shell.signInToAOCloud")}
+						className="grid size-control-board place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground [&_svg]:size-icon-base"
+						onClick={() => signIn()}
+						tabIndex={tabIndex}
+						type="button"
+					>
+						<LogIn aria-hidden="true" />
+					</button>
+				</TooltipTrigger>
+				<TooltipContent side="right">{t("shell.signInToAOCloud")}</TooltipContent>
+			</Tooltip>
+		);
+	}
+
+	return (
+		<Tooltip>
+			<TooltipTrigger asChild>
+				<button
+					aria-label={t("shell.signedInAs", { email: session?.user.email ?? "AO Cloud" })}
+					className="grid size-control-board place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground [&_svg]:size-icon-base"
+					onClick={() => void signOut()}
+					tabIndex={tabIndex}
+					type="button"
+				>
+					<User aria-hidden="true" />
+				</button>
+			</TooltipTrigger>
+			<TooltipContent side="right">
+				{t("shell.signOutWithEmail", { email: session?.user.email ?? "AO Cloud" })}
+			</TooltipContent>
+		</Tooltip>
 	);
 }
 
@@ -1189,34 +1294,48 @@ function RestartToUpdateRailButton({ status, tabIndex }: { status: UpdateStatus;
 function SectionDisclosure({
 	icon,
 	label,
-	open,
+	open = true,
 	onToggle,
 	className,
 	trailing,
+	collapsible = true,
 }: {
-	icon: ReactNode;
+	icon?: ReactNode;
 	label: string;
-	open: boolean;
-	onToggle: () => void;
+	open?: boolean;
+	onToggle?: () => void;
 	className?: string;
-	/** Optional trailing control (e.g. Projects "+") — stays inside the hover pill. */
+	/** Optional trailing control (e.g. Projects "+") — its own button, not the row. */
 	trailing?: ReactNode;
+	/** When false, render a static label row with no chevron, toggle, or hover fill. */
+	collapsible?: boolean;
 }) {
 	const labelRow = (
 		<>
 			{icon}
 			<span className="truncate">{label}</span>
-			<ChevronRight
-				aria-hidden="true"
-				className={cn("size-3.5! shrink-0 transition-transform duration-150", open && "rotate-90")}
-				strokeWidth={2}
-			/>
+			{collapsible ? (
+				<ChevronRight
+					aria-hidden="true"
+					className={cn("size-3.5! shrink-0 transition-transform duration-150", open && "rotate-90")}
+					strokeWidth={2}
+				/>
+			) : null}
 		</>
 	);
 
+	if (!collapsible) {
+		return (
+			<div className={cn(SECTION_ROW_CLASS, trailing && "pr-1", className)}>
+				<div className="flex min-w-0 flex-1 items-center gap-2">{labelRow}</div>
+				{trailing}
+			</div>
+		);
+	}
+
 	if (trailing) {
 		return (
-			<div className={cn(SECTION_ROW_CLASS, "pr-1", className)}>
+			<div className={cn(SECTION_ROW_CLASS, SECTION_ROW_INTERACTIVE_CLASS, "pr-1", className)}>
 				<button
 					aria-expanded={open}
 					aria-label={label}
@@ -1235,7 +1354,7 @@ function SectionDisclosure({
 		<button
 			aria-expanded={open}
 			aria-label={label}
-			className={cn(SECTION_ROW_CLASS, "text-left", className)}
+			className={cn(SECTION_ROW_CLASS, SECTION_ROW_INTERACTIVE_CLASS, "text-left", className)}
 			onClick={onToggle}
 			type="button"
 		>
@@ -1248,6 +1367,11 @@ function SidebarSearchButton({ onOpen }: { onOpen: () => void }) {
 	const { t } = useTranslation();
 	const { state } = useSidebar();
 	const isCollapsed = state === "collapsed";
+	const overrides = useKeybindingsStore((store) => store.overrides);
+	const paletteBinding = effectiveShortcutBindings("command-palette", isMac, overrides)[0];
+	const commandPaletteShortcutLabel = paletteBinding
+		? shortcutBindingKeys(paletteBinding, isMac).join(isMac ? " " : "+")
+		: "Unassigned";
 	return (
 		<SidebarMenuItem className="group-data-[collapsible=icon]:mb-0">
 			<SidebarMenuButton
@@ -1263,7 +1387,7 @@ function SidebarSearchButton({ onOpen }: { onOpen: () => void }) {
 				className={cn(
 					// Filled search trigger (Cursor-style): icon + label.
 					"h-8 gap-2 rounded-lg bg-muted px-2.5 text-sm font-normal text-muted-foreground",
-					"hover:bg-interactive-hover! hover:text-foreground active:bg-interactive-hover! [&_svg]:size-icon-sm!",
+					"transition-[background-color,color] duration-150 ease-out hover:bg-interactive-hover! hover:text-foreground active:bg-interactive-hover! [&_svg]:size-icon-sm!",
 					"group-data-[collapsible=icon]:size-control-form! group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:rounded-lg group-data-[collapsible=icon]:bg-transparent group-data-[collapsible=icon]:p-0! group-data-[collapsible=icon]:hover:bg-interactive-hover!",
 				)}
 			>
@@ -1271,6 +1395,9 @@ function SidebarSearchButton({ onOpen }: { onOpen: () => void }) {
 				<span className="sidebar-expanded-chrome min-w-0 flex-1 truncate text-left leading-none group-data-[collapsible=icon]:hidden">
 					{t("shell.search")}
 				</span>
+				<kbd className="sidebar-expanded-chrome ml-auto shrink-0 rounded-sm border border-border-strong/60 bg-surface/50 px-1.5 py-0.5 font-mono text-caption leading-none text-muted-foreground/80 group-data-[collapsible=icon]:hidden">
+					{commandPaletteShortcutLabel}
+				</kbd>
 			</SidebarMenuButton>
 		</SidebarMenuItem>
 	);
@@ -1300,8 +1427,7 @@ function CreateProjectButton({
 						<button
 							aria-label={t("shell.newProject")}
 							className={cn(
-								// No own hover fill — lives inside the Projects section hover pill.
-								"grid size-icon-xl shrink-0 place-items-center rounded-sm text-passive transition-colors hover:text-foreground",
+								"grid size-icon-xl shrink-0 place-items-center rounded-sm text-passive transition-colors hover:bg-interactive-hover hover:text-foreground",
 								hideTrigger && "hidden",
 							)}
 							disabled={disabled}

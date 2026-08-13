@@ -192,7 +192,10 @@ function inline(text: string, styles: ReturnType<typeof makeStyles>): ReactNode[
 					key={`${match.index}-link`}
 					accessibilityRole="link"
 					style={styles.link}
-					onPress={() => void Linking.openURL(url).catch(() => haptics.error())}
+					onPress={() => {
+						haptics.tap();
+						void Linking.openURL(url).catch(() => haptics.error());
+					}}
 				>
 					{label}
 				</Text>,

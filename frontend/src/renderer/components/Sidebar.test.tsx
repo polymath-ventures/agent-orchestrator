@@ -121,6 +121,8 @@ function renderSidebar({
 	seedAgents = true,
 	workspaces = [workspace],
 	initialOpen = true,
+	primeSession,
+	primeVisible,
 }: {
 	onCreateProject?: CreateProjectHandler;
 	onInitializeProject?: InitializeProjectHandler;
@@ -128,6 +130,8 @@ function renderSidebar({
 	seedAgents?: boolean;
 	workspaces?: WorkspaceSummary[];
 	initialOpen?: boolean;
+	primeSession?: WorkspaceSession;
+	primeVisible?: boolean;
 } = {}) {
 	const queryClient = new QueryClient({
 		defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
@@ -155,6 +159,8 @@ function renderSidebar({
 					onCreateProject={onCreateProject}
 					onInitializeProject={onInitializeProject}
 					onRemoveProject={onRemoveProject}
+					primeSession={primeSession}
+					primeVisible={primeVisible}
 					workspaces={workspaces}
 				/>
 			</SidebarProvider>
@@ -244,6 +250,21 @@ afterEach(() => {
 });
 
 describe("Sidebar", () => {
+	it("suppresses focus chrome without removing keyboard focusability", () => {
+		renderSidebar();
+
+		expect(document.querySelector('[data-slot="sidebar-container"]')).toHaveClass("sidebar-focusless");
+		expect(screen.getAllByRole("button", { name: "Settings" })[0]).toHaveAttribute("tabindex", "0");
+	});
+
+	it("aligns the Settings footer hairline and row height with the board Archive bar", () => {
+		renderSidebar();
+
+		const footer = document.querySelector('[data-sidebar="footer"]');
+		expect(footer).toHaveClass("border-t", "border-border-strong", "!py-2");
+		expect(screen.getAllByRole("button", { name: "Settings" })[0]).toHaveClass("h-[42px]");
+	});
+
 	it("keeps only the expanded Settings control keyboard-accessible while expanded", () => {
 		renderSidebar();
 
@@ -432,6 +453,40 @@ describe("Sidebar", () => {
 		expect(navigateMock).not.toHaveBeenCalled();
 	});
 
+	it("renders the worker harness glyph beside the session status dot", () => {
+		renderSidebar({
+			workspaces: [
+				{
+					...workspace,
+					sessions: [{ ...session, provider: "codex-fugu" }],
+				},
+			],
+		});
+
+		const row = screen.getByRole("button", { name: "Open fix login" });
+		expect(row).toHaveAttribute("aria-describedby", "sidebar-harness-proj-1-1");
+		expect(document.getElementById("sidebar-harness-proj-1-1")).toHaveTextContent("codex-fugu");
+		expect(row.querySelector("[data-harness-glyph]")).toHaveAttribute("title", "Codex Fugu");
+		expect(row.querySelector("[data-harness-pip]")).toBeInTheDocument();
+	});
+
+	it("renders the Prime harness glyph beside the status dot", () => {
+		const prime: WorkspaceSession = {
+			...session,
+			id: "prime-1",
+			title: "Prime",
+			workspaceId: "fleet",
+			workspaceName: "AO Fleet",
+			provider: "codex",
+			kind: "orchestrator",
+		};
+		renderSidebar({ primeSession: prime, primeVisible: true });
+
+		const row = screen.getByRole("button", { name: "Open Prime" });
+		expect(row).toHaveAttribute("aria-describedby", "sidebar-harness-prime-1");
+		expect(row.querySelector("[data-harness-glyph]")).toHaveAttribute("title", "Codex");
+	});
+
 	it("navigates to the project board when the project row button is clicked", async () => {
 		const user = userEvent.setup();
 		renderSidebar();
@@ -440,6 +495,72 @@ describe("Sidebar", () => {
 		await user.click(screen.getByText("Project One"));
 
 		expect(navigateMock).toHaveBeenCalledWith({ to: "/projects/$projectId", params: { projectId: "proj-1" } });
+	});
+
+	it("returns to the project board from an orchestrator session without collapsing", async () => {
+		const user = userEvent.setup();
+		const orchestrator: WorkspaceSession = {
+			...session,
+			id: "proj-1-orc",
+			title: "Orchestrator",
+			kind: "orchestrator",
+		};
+		mockParams.projectId = "proj-1";
+		mockParams.sessionId = "proj-1-orc";
+		renderSidebar({
+			workspaces: [{ ...workspace, sessions: [orchestrator, session] }],
+		});
+
+		expect(screen.getByLabelText("Open fix login")).toBeInTheDocument();
+
+		await user.click(screen.getByText("Project One"));
+
+		expect(navigateMock).toHaveBeenCalledWith({ to: "/projects/$projectId", params: { projectId: "proj-1" } });
+		expect(screen.getByLabelText("Open fix login")).toBeInTheDocument();
+		expect(screen.getByText("Project One").closest("button")).toHaveAttribute("aria-expanded", "true");
+	});
+
+	it("collapses an expanded project when its board is already active", async () => {
+		const user = userEvent.setup();
+		mockParams.projectId = "proj-1";
+		mockParams.sessionId = undefined;
+		renderSidebar({
+			workspaces: [{ ...workspace, sessions: [session] }],
+		});
+
+		expect(screen.getByLabelText("Open fix login")).toBeInTheDocument();
+
+		await user.click(screen.getByText("Project One"));
+
+		expect(navigateMock).not.toHaveBeenCalled();
+		expect(screen.queryByLabelText("Open fix login")).not.toBeInTheDocument();
+		expect(screen.getByText("Project One").closest("button")).toHaveAttribute("aria-expanded", "false");
+	});
+
+	it("expands a collapsed project when opening its orchestrator", async () => {
+		const user = userEvent.setup();
+		const orchestrator: WorkspaceSession = {
+			...session,
+			id: "proj-1-orc",
+			title: "Orchestrator",
+			kind: "orchestrator",
+		};
+		renderSidebar({
+			workspaces: [{ ...workspace, sessions: [orchestrator, session] }],
+		});
+
+		await user.click(screen.getByRole("button", { name: "Toggle Project One sessions" }));
+		expect(screen.queryByLabelText("Open fix login")).not.toBeInTheDocument();
+		expect(screen.getByText("Project One").closest("button")).toHaveAttribute("aria-expanded", "false");
+
+		await user.click(screen.getByRole("button", { name: "Open Project One orchestrator" }));
+
+		expect(navigateMock).toHaveBeenCalledWith({
+			to: "/projects/$projectId/sessions/$sessionId",
+			params: { projectId: "proj-1", sessionId: "proj-1-orc" },
+		});
+		expect(screen.getByLabelText("Open fix login")).toBeInTheDocument();
+		expect(screen.getByText("Project One").closest("button")).toHaveAttribute("aria-expanded", "true");
 	});
 
 	it("defaults worker and orchestrator agents when creating a project", async () => {
@@ -907,6 +1028,7 @@ describe("Sidebar", () => {
 		expect(useUiStore.getState().isCommandPaletteOpen).toBe(false);
 		await user.click(screen.getByRole("button", { name: /Search/ }));
 		expect(useUiStore.getState().isCommandPaletteOpen).toBe(true);
+		expect(screen.getByRole("button", { name: /Search/ })).toHaveTextContent(/(?:⌘ |Ctrl\+)K/);
 	});
 
 	it("defers opening the palette until the Search click has been dispatched", async () => {
@@ -978,10 +1100,41 @@ describe("Sidebar", () => {
 		renderSidebar();
 
 		const projectRow = screen.getByText("Project One").closest('button, [role="button"]');
+		const actionCluster = screen.getByLabelText("Project actions for Project One").parentElement;
 
 		if (!projectRow) throw new Error("Project row button not found");
-		// Padding is always reserved for the action cluster (not hover-gated)
 		expect(projectRow).toHaveClass("pr-sidebar-project-actions");
+		expect(actionCluster).toHaveAttribute("data-project-actions");
+		expect(actionCluster).toHaveClass("right-0.5", "gap-px");
+		expect(within(actionCluster as HTMLElement).getAllByRole("button")).toHaveLength(2);
+		expect(screen.getByLabelText("Project actions for Project One")).not.toHaveClass("opacity-0");
+	});
+
+	it("scales project actions with the row without scaling for action-button presses", () => {
+		renderSidebar();
+
+		const projectRow = screen.getByText("Project One").closest('button, [role="button"]');
+		const pressSurface = projectRow?.closest<HTMLElement>("[data-project-press]");
+		const projectActions = screen.getByLabelText("Project actions for Project One");
+
+		if (!projectRow || !pressSurface) throw new Error("Project press surface not found");
+		expect(pressSurface).toContainElement(projectActions);
+
+		fireEvent.pointerDown(projectRow);
+		expect(pressSurface).toHaveClass("scale-[0.98]");
+		fireEvent.pointerUp(projectRow);
+		expect(pressSurface).not.toHaveClass("scale-[0.98]");
+
+		fireEvent.pointerDown(projectActions);
+		expect(pressSurface).not.toHaveClass("scale-[0.98]");
+	});
+
+	it("optically aligns the project folder and label with its action icons", () => {
+		renderSidebar();
+
+		const projectRow = screen.getByText("Project One").closest('button, [role="button"]');
+		expect(projectRow?.querySelector("[data-project-folder-visual]")).toHaveClass("translate-y-px");
+		expect(projectRow?.querySelector("[data-project-label]")).toHaveClass("translate-y-px");
 	});
 
 	it("clamps width at minimum when dragged past the resize floor (no auto-collapse)", async () => {
@@ -1031,7 +1184,7 @@ describe("Sidebar", () => {
 		}
 	});
 
-	it("animates active sidebar dots using their PR context color", async () => {
+	it("renders active activity as pulsing blue regardless of PR context", () => {
 		renderSidebar({
 			workspaces: [
 				{
@@ -1093,7 +1246,7 @@ describe("Sidebar", () => {
 		});
 
 		const sessionDot = (title: string) =>
-			screen.getByLabelText(`Open ${title}`).querySelector<HTMLElement>("span.rounded-full");
+			screen.getByLabelText(`Open ${title}`).querySelector<HTMLElement>("[data-session-status]");
 
 		expect(sessionDot("idle task")).toHaveClass("bg-status-idle");
 		expect(sessionDot("idle task")).not.toHaveClass("animate-status-pulse");
@@ -1103,12 +1256,12 @@ describe("Sidebar", () => {
 		expect(workingDot).toHaveClass("animate-status-pulse");
 
 		const ciFailedDot = sessionDot("ci failed task");
-		expect(ciFailedDot).toHaveClass("bg-status-needs-you");
+		expect(ciFailedDot).toHaveClass("bg-status-working");
 		expect(ciFailedDot).toHaveClass("animate-status-pulse");
 
-		expect(sessionDot("review task")).toHaveClass("bg-status-in-review", "animate-status-pulse");
-		expect(sessionDot("ready task")).toHaveClass("bg-status-ready", "animate-status-pulse");
-		expect(sessionDot("merged task")).toHaveClass("bg-status-merged", "animate-status-pulse");
+		expect(sessionDot("review task")).toHaveClass("bg-status-working", "animate-status-pulse");
+		expect(sessionDot("ready task")).toHaveClass("bg-status-working", "animate-status-pulse");
+		expect(sessionDot("merged task")).toHaveClass("bg-status-working", "animate-status-pulse");
 	});
 
 	it("renders a static gray dot for idle activity across session statuses", async () => {
