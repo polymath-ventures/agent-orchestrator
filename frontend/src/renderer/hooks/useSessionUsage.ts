@@ -13,6 +13,7 @@ export async function fetchSessionUsage(sessionId: string): Promise<SessionUsage
 		params: { path: { sessionId } },
 	});
 	if (error) throw error;
+	if (!data) throw new Error("Session usage response was empty");
 	return data;
 }
 

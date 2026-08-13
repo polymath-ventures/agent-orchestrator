@@ -30,6 +30,7 @@ export const LOGO_KEYS: ReadonlySet<string> = new Set([
 	"goose",
 	"grok",
 	"kilocode",
+	"kimchi",
 	"kimi",
 	"kiro",
 	"muse",

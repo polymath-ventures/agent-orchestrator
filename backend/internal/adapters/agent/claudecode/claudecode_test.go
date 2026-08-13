@@ -194,6 +194,38 @@ func TestNativeConversationIDUsesTheSameClaudeUUIDAcrossInterfaces(t *testing.T)
 	}
 }
 
+func TestWindowsNativeClaudeCandidatesForNPMShim(t *testing.T) {
+	shim := filepath.Join("prefix", "claude.cmd")
+	want := []string{
+		filepath.Join("prefix", "claude.exe"),
+		filepath.Join("prefix", "node_modules", "@anthropic-ai", "claude-code", "bin", "claude.exe"),
+	}
+	if got := windowsNativeClaudeCandidatesForShim(shim); !reflect.DeepEqual(got, want) {
+		t.Fatalf("candidates = %#v, want %#v", got, want)
+	}
+}
+
+func TestResolveNativeWindowsClaudeFindsNPMExecutable(t *testing.T) {
+	prefix := t.TempDir()
+	shim := filepath.Join(prefix, "claude.cmd")
+	if err := os.WriteFile(shim, []byte("@echo off\r\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(prefix, "node_modules", "@anthropic-ai", "claude-code", "bin", "claude.exe")
+	if err := os.MkdirAll(filepath.Dir(want), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(want, []byte("native claude"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := resolveNativeWindowsClaude(shim, "windows"); got != want {
+		t.Fatalf("resolved binary = %q, want %q", got, want)
+	}
+	if got := resolveNativeWindowsClaude(shim, "linux"); got != shim {
+		t.Fatalf("non-Windows resolution = %q, want unchanged shim %q", got, shim)
+	}
+}
+
 func TestNativeConversationExistsRequiresPersistedClaudeTranscript(t *testing.T) {
 	configDir := t.TempDir()
 	t.Setenv("CLAUDE_CONFIG_DIR", configDir)
@@ -305,7 +337,7 @@ func TestGetLaunchCommandAppendsSystemPromptFromFile(t *testing.T) {
 
 	want := []string{
 		"claude",
-		"--append-system-prompt", "You are an orchestrator.",
+		"--append-system-prompt-file", promptFile,
 		"--", "do the thing",
 	}
 	if !reflect.DeepEqual(cmd, want) {
@@ -313,9 +345,9 @@ func TestGetLaunchCommandAppendsSystemPromptFromFile(t *testing.T) {
 	}
 }
 
-func TestGetLaunchCommandInlineSystemPrompt(t *testing.T) {
+func TestGetLaunchCommandSystemPromptFileTakesPrecedenceOverInline(t *testing.T) {
 	promptFile := filepath.Join(t.TempDir(), "system.md")
-	if err := os.WriteFile(promptFile, []byte("file ignored\n"), 0600); err != nil {
+	if err := os.WriteFile(promptFile, []byte("file instructions\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -327,12 +359,28 @@ func TestGetLaunchCommandInlineSystemPrompt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !containsSubsequence(cmd, []string{"--append-system-prompt", "inline instructions"}) {
-		t.Fatalf("command %#v does not append inline system prompt", cmd)
+	if !containsSubsequence(cmd, []string{"--append-system-prompt-file", promptFile}) {
+		t.Fatalf("command %#v does not use the system prompt file", cmd)
+	}
+	if contains(cmd, "inline instructions") {
+		t.Fatalf("command %#v unexpectedly embeds the inline system prompt", cmd)
 	}
 }
 
-func TestGetLaunchCommandMissingSystemPromptFileErrors(t *testing.T) {
+func TestGetLaunchCommandInlineSystemPromptFallback(t *testing.T) {
+	p := &Plugin{resolvedBinary: "claude"}
+	cmd, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		SystemPrompt: "inline instructions",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsSubsequence(cmd, []string{"--append-system-prompt", "inline instructions"}) {
+		t.Fatalf("command %#v does not append the inline system prompt fallback", cmd)
+	}
+}
+
+func TestGetLaunchCommandRejectsMissingSystemPromptFile(t *testing.T) {
 	p := &Plugin{resolvedBinary: "claude"}
 	_, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
 		SystemPromptFile: filepath.Join(t.TempDir(), "does-not-exist.md"),
@@ -635,6 +683,7 @@ func matcherForCommand(groups []hooksjson.MatcherGroup, command string) *string 
 func TestGetRestoreCommandReadsAgentSessionID(t *testing.T) {
 	cmd, ok, err := (&Plugin{resolvedBinary: "claude"}).GetRestoreCommand(context.Background(), ports.RestoreConfig{
 		Permissions: ports.PermissionModeBypassPermissions,
+		Prompt:      "continue from AO",
 		Session: ports.SessionRef{
 			ID:       "sess-r",
 			Metadata: map[string]string{ports.MetadataKeyAgentSessionID: "claude-native-1"},
@@ -644,7 +693,7 @@ func TestGetRestoreCommandReadsAgentSessionID(t *testing.T) {
 		t.Fatalf("restore = (ok=%v, err=%v), want ok", ok, err)
 	}
 	// The hook-captured native id wins over the derived fallback.
-	want := []string{"claude", "--permission-mode", "bypassPermissions", "--resume", "claude-native-1"}
+	want := []string{"claude", "--permission-mode", "bypassPermissions", "--resume", "claude-native-1", "--", "continue from AO"}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("restore cmd\nwant: %#v\n got: %#v", want, cmd)
 	}
@@ -695,7 +744,8 @@ func TestGetRestoreCommandReappendsSystemPromptFromFile(t *testing.T) {
 
 	cmd, ok, err := (&Plugin{resolvedBinary: "claude"}).GetRestoreCommand(context.Background(), ports.RestoreConfig{
 		Permissions:      ports.PermissionModeBypassPermissions,
-		SystemPrompt:     "inline wins",
+		Prompt:           "continue from AO",
+		SystemPrompt:     "inline fallback",
 		SystemPromptFile: promptFile,
 		Session: ports.SessionRef{
 			ID:       "sess-r",
@@ -705,9 +755,26 @@ func TestGetRestoreCommandReappendsSystemPromptFromFile(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("restore = (ok=%v, err=%v), want ok", ok, err)
 	}
-	want := []string{"claude", "--permission-mode", "bypassPermissions", "--append-system-prompt", "inline wins", "--resume", "claude-native-1"}
+	want := []string{
+		"claude", "--permission-mode", "bypassPermissions",
+		"--append-system-prompt-file", promptFile,
+		"--resume", "claude-native-1",
+		"--", "continue from AO",
+	}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("restore cmd\nwant: %#v\n got: %#v", want, cmd)
+	}
+}
+
+func TestGetRestoreCommandRejectsNonRegularSystemPromptFile(t *testing.T) {
+	_, ok, err := (&Plugin{resolvedBinary: "claude"}).GetRestoreCommand(context.Background(), ports.RestoreConfig{
+		SystemPromptFile: t.TempDir(),
+		Session: ports.SessionRef{
+			Metadata: map[string]string{ports.MetadataKeyAgentSessionID: "claude-native-1"},
+		},
+	})
+	if err == nil || ok {
+		t.Fatalf("restore = (ok=%v, err=%v), want non-regular-file error", ok, err)
 	}
 }
 
@@ -883,6 +950,13 @@ func TestClaudeAuthStatusFromOutputUnauthorized(t *testing.T) {
 	status, ok := claudeAuthStatusFromOutput([]byte(`{"loggedIn":false}`))
 	if !ok || status != ports.AgentAuthStatusUnauthorized {
 		t.Fatalf("status = (%q, %v), want (%q, true)", status, ok, ports.AgentAuthStatusUnauthorized)
+	}
+}
+
+func TestClaudeAuthStatusFromOutputUnknownForUnrecognizedFailure(t *testing.T) {
+	status, ok := claudeAuthStatusFromOutput([]byte("unsupported subcommand on this version"))
+	if ok || status != ports.AgentAuthStatusUnknown {
+		t.Fatalf("status = (%q, %v), want (%q, false)", status, ok, ports.AgentAuthStatusUnknown)
 	}
 }
 

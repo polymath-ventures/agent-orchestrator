@@ -1,38 +1,10 @@
 import { attentionZone as presentationAttentionZone } from "../lib/session-presentation";
+import { AGENT_OPTIONS, SESSION_STATUSES, type AgentId } from "@aoagents/product-ui";
+import type { ReviewerHarnessId } from "../lib/reviewer-harnesses";
 
-export type SessionStatus =
-	| "working"
-	| "pr_open"
-	| "draft"
-	| "ci_failed"
-	| "review_pending"
-	| "changes_requested"
-	| "approved"
-	| "mergeable"
-	| "merged"
-	| "needs_input"
-	| "exited"
-	| "no_signal"
-	| "idle"
-	| "terminated"
-	| "unknown";
-
-const sessionStatuses = new Set<SessionStatus>([
-	"working",
-	"pr_open",
-	"draft",
-	"ci_failed",
-	"review_pending",
-	"changes_requested",
-	"approved",
-	"mergeable",
-	"merged",
-	"needs_input",
-	"exited",
-	"no_signal",
-	"idle",
-	"terminated",
-]);
+export type SessionStatus = (typeof SESSION_STATUSES)[number];
+const sessionStatuses = new Set<SessionStatus>(SESSION_STATUSES);
+const agentProviders = new Set<string>(AGENT_OPTIONS);
 
 export function toSessionStatus(status?: string, isTerminated = false): SessionStatus {
 	if (status && sessionStatuses.has(status as SessionStatus)) return status as SessionStatus;
@@ -61,33 +33,7 @@ export function toSessionActivity(
 	};
 }
 
-export type AgentProvider =
-	| "codex"
-	| "codex-fugu"
-	| "claude-code"
-	| "opencode"
-	| "aider"
-	| "grok"
-	| "droid"
-	| "amp"
-	| "agy"
-	| "crush"
-	| "cursor"
-	| "qwen"
-	| "copilot"
-	| "goose"
-	| "auggie"
-	| "continue"
-	| "devin"
-	| "cline"
-	| "kimi"
-	| "muse"
-	| "kiro"
-	| "kilocode"
-	| "vibe"
-	| "pi"
-	| "autohand"
-	| "fake";
+export type AgentProvider = AgentId | "codex-fugu" | "fake";
 
 /** A file changed in a worker workspace (drives the review rail). */
 export type ChangedFile = {
@@ -132,7 +78,7 @@ export type WorkspaceSession = {
 	issueId?: string;
 	provider: AgentProvider;
 	/** Reviewer selected for this session; absent means use the project default. */
-	reviewerHarness?: "claude-code" | "codex" | "codex-fugu" | "opencode";
+	reviewerHarness?: ReviewerHarnessId;
 	kind?: SessionKind;
 	/**
 	 * Which controller is currently committed for this session. The session
@@ -148,6 +94,10 @@ export type WorkspaceSession = {
 	isTerminated?: boolean;
 	/** User preference to tear down this session when its PR set completes through a merge. */
 	terminateOnPrMerge?: boolean;
+	/** Whether SCM review feedback is automatically injected into the worker. */
+	autoInjectReview?: boolean;
+	/** Default captured by newly created PRs for automatic CI-failure injection. */
+	autoInjectCI?: boolean;
 	/** ISO timestamp from the daemon — used for relative time in the inspector. */
 	createdAt?: string;
 	/** ISO timestamp from the daemon. */
@@ -398,34 +348,6 @@ export function orchestratorHealth(workspace: WorkspaceSummary, restarting = fal
 }
 
 export function toAgentProvider(provider?: string): AgentProvider {
-	switch (provider) {
-		case "codex-fugu":
-		case "claude-code":
-		case "opencode":
-		case "aider":
-		case "grok":
-		case "droid":
-		case "amp":
-		case "agy":
-		case "crush":
-		case "cursor":
-		case "qwen":
-		case "copilot":
-		case "goose":
-		case "auggie":
-		case "continue":
-		case "devin":
-		case "cline":
-		case "kimi":
-		case "muse":
-		case "kiro":
-		case "kilocode":
-		case "vibe":
-		case "pi":
-		case "autohand":
-		case "fake":
-			return provider;
-		default:
-			return "codex";
-	}
+	if (provider === "codex-fugu" || provider === "fake") return provider;
+	return agentProviders.has(provider ?? "") ? (provider as AgentId) : "codex";
 }

@@ -28,7 +28,7 @@ test("the Summary tab renders the reviewer panel for a session that owns PRs", a
 	await expect(reviewsSection.getByText("Approved", { exact: true })).toBeVisible();
 	await expect(inspector.getByRole("button", { name: "Select reviewer agent" })).toContainText("codex");
 	await expect(inspector.getByRole("button", { name: "Re-run review" })).toBeVisible();
-	await expect(inspector.getByRole("button", { name: "Open terminal" })).toBeVisible();
+	await expect(inspector.getByRole("button", { name: "Open terminal" })).toHaveCount(0);
 });
 
 test("the Summary tab shows the empty state for a session with no PRs", async ({ page }) => {
@@ -49,13 +49,14 @@ test("reviewer terminal activation and back-to-agent activation focus the select
 	await page.getByRole("button", { name: "Open auth stack" }).click();
 	await expect(page).toHaveURL(/sessions\/stacked-auth/);
 
-	// Upstream's worker inspector rail defaults open, so it is already mounted.
-	const inspector = page.locator("#inspector");
-	await inspector.getByRole("button", { name: "Open terminal" }).click();
-
-	await expect(page.getByRole("button", { name: "Back to agent terminal" })).toBeVisible();
+	const terminalTabs = page.getByRole("tablist", { name: "Open terminals" });
+	const reviewerTab = terminalTabs.getByRole("tab", { name: "Reviewer" });
+	const agentTab = terminalTabs.getByRole("tab", { name: /auth stack/ });
+	await reviewerTab.click();
+	await expect(reviewerTab).toHaveAttribute("aria-current", "true");
 	await expect.poll(() => activeElementClass(page)).toContain("xterm-helper-textarea");
 
-	await page.getByRole("button", { name: "Back to agent terminal" }).click();
+	await agentTab.click();
+	await expect(agentTab).toHaveAttribute("aria-current", "true");
 	await expect.poll(() => activeElementClass(page)).toContain("xterm-helper-textarea");
 });

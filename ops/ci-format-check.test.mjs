@@ -12,6 +12,8 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const scriptPath = fileURLToPath(new URL("../scripts/ci/format-check.sh", import.meta.url));
+const workflowPath = fileURLToPath(new URL("../.github/workflows/prettier.yml", import.meta.url));
+const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 
 function git(cwd, ...args) {
 	const r = spawnSync("git", args, { cwd, encoding: "utf8" });
@@ -161,4 +163,22 @@ test("format-check mirrors the prettier CI job command shape", () => {
 	assert.match(src, /--check/);
 	assert.match(src, /--ignore-unknown/);
 	assert.match(src, /--ignore-unknown -- "\$\{files\[@\]\}"/); // option terminator before the paths
+});
+
+test("prettier CI delegates changed-file filtering to the parity script", () => {
+	const workflow = readFileSync(workflowPath, "utf8");
+	assert.match(workflow, /bash scripts\/ci\/format-check\.sh/);
+	assert.doesNotMatch(workflow, /xargs[^\n]*prettier/);
+});
+
+test("generated Cloud schema is excluded from source formatting", () => {
+	const args = ["--yes", "prettier@3", "--check", "packages/cloud-client/src/schema.ts"];
+	const ignored = spawnSync("npx", args, { cwd: repoRoot, encoding: "utf8" });
+	assert.equal(ignored.status, 0, `generated schema was not ignored\n${ignored.stdout}\n${ignored.stderr}`);
+
+	const checked = spawnSync("npx", [...args, "--ignore-path", "/dev/null"], {
+		cwd: repoRoot,
+		encoding: "utf8",
+	});
+	assert.notEqual(checked.status, 0, "fixture unexpectedly conforms to the root Prettier style");
 });

@@ -25,13 +25,6 @@ export type SettingsModal =
 			projectId: string;
 	  };
 
-export type DevSettings = {
-	/** Number of fixture sessions to generate per attention zone (0 = off). */
-	fixtureCount: number;
-	/** Number of minutes of random activity to spread sessions across. */
-	randomSpreadMinutes: number;
-};
-
 /** Worker detail view toggles — Changes (Git rail) is the default. */
 export type WorkbenchTab = "changes" | "files" | "terminal";
 export type InspectorView = "summary" | "browser" | "files";
@@ -40,10 +33,15 @@ export type InspectorSessionState = {
 	isOpen: boolean;
 	view: InspectorView;
 	previewKey?: string;
-	// A preview target arrived (ao preview, or a clicked link) while the Browser
-	// tab was not the open/active view. We badge the Browser icon instead of
-	// stealing focus; cleared once the user opens the Browser tab.
+	/** The current non-empty browser content lifecycle has already been revealed. */
+	browserContentRevealed?: boolean;
+	/** Real browser activity occurred while Browser was not visible. */
 	browserUnseen?: boolean;
+};
+
+export type DevSettings = {
+	fixtureCount: number;
+	randomSpreadMinutes: number;
 };
 
 // Selection (which project/session is open) now lives in the URL — the router
@@ -57,6 +55,8 @@ type UiState = {
 	isQuotaWidgetVisible: boolean;
 	/** Whether the quota widget body is collapsed behind its header chevron. */
 	isQuotaWidgetCollapsed: boolean;
+	developerMode: boolean;
+	devSettings: DevSettings;
 	inspectorSessions: Record<string, InspectorSessionState>;
 	isCommandPaletteOpen: boolean;
 	settingsModal: SettingsModal | null;
@@ -65,8 +65,6 @@ type UiState = {
 	resolvedTheme: Theme;
 	/** Named color style theme (e.g. "catppuccin", "nord") — independent of light/dark mode. */
 	themeStyle: ThemeStyle;
-	/** When true, developer-only surfaces (e.g. Feature Releases) are revealed. Default off. */
-	developerMode: boolean;
 	restartingProjectIds: ReadonlySet<string>;
 	orchestratorReplacementErrors: Record<string, OrchestratorReplacementFailure>;
 	orchestratorStartupErrors: Record<string, string>;
@@ -94,16 +92,12 @@ type UiState = {
 	// session. Surfaces outside the session subtree (the notification runtime)
 	// need that distinction, and SessionView's own target is local state.
 	visibleTerminalKindBySession: Record<string, TerminalTarget["kind"]>;
-	/** Dev-only settings persisted to localStorage. */
-	devSettings: DevSettings;
 	setWorkbenchTab: (tab: WorkbenchTab) => void;
 	setThemePreference: (theme: ThemePreference) => void;
 	setThemeStyle: (style: ThemeStyle) => void;
 	openGlobalSettings: () => void;
 	openProjectSettings: (projectId: string) => void;
 	closeSettings: () => void;
-	setDevSettings: (devSettings: DevSettings) => void;
-	setDeveloperMode: (enabled: boolean) => void;
 	/** Refresh resolvedTheme from OS without writing light/dark to storage. */
 	syncSystemTheme: () => void;
 	toggleSidebar: () => void;
@@ -111,10 +105,13 @@ type UiState = {
 	toggleQuotaWidgetVisible: () => void;
 	setQuotaWidgetCollapsed: (collapsed: boolean) => void;
 	toggleQuotaWidgetCollapsed: () => void;
+	setDeveloperMode: (enabled: boolean) => void;
+	setDevSettings: (settings: DevSettings) => void;
 	setInspectorOpen: (sessionId: string, isOpen: boolean) => void;
 	toggleInspector: (sessionId: string) => void;
 	setInspectorView: (sessionId: string, view: InspectorView) => void;
 	markInspectorPreviewSeen: (sessionId: string, previewKey: string) => void;
+	setBrowserContentRevealed: (sessionId: string, revealed: boolean) => void;
 	setBrowserUnseen: (sessionId: string, unseen: boolean) => void;
 	setCommandPaletteOpen: (open: boolean) => void;
 	setProjectRestarting: (projectId: string, restarting: boolean) => void;
@@ -193,13 +190,14 @@ export const useUiStore = create<UiState>((set, get) => ({
 	isSidebarOpen: initialSidebarOpen(),
 	isQuotaWidgetVisible: initialQuotaWidgetVisible(),
 	isQuotaWidgetCollapsed: initialQuotaWidgetCollapsed(),
+	developerMode: initialDeveloperMode(),
+	devSettings: initialDevSettings(),
 	inspectorSessions: {},
 	isCommandPaletteOpen: false,
 	settingsModal: null,
 	themePreference: initialThemePreference,
 	resolvedTheme: resolveTheme(initialThemePreference),
 	themeStyle: initialThemeStyle,
-	developerMode: initialDeveloperMode(),
 	restartingProjectIds: new Set<string>(),
 	orchestratorReplacementErrors: {},
 	orchestratorStartupErrors: {},
@@ -208,7 +206,6 @@ export const useUiStore = create<UiState>((set, get) => ({
 	newShellTerminalNonce: 0,
 	activeShellTerminalHandleId: null,
 	visibleTerminalKindBySession: {},
-	devSettings: initialDevSettings(),
 	setWorkbenchTab: (workbenchTab) => set({ workbenchTab }),
 	setThemePreference: (themePreference) => {
 		if (get().themePreference === themePreference) return;
@@ -230,14 +227,6 @@ export const useUiStore = create<UiState>((set, get) => ({
 	openGlobalSettings: () => set({ settingsModal: { scope: "global" } }),
 	openProjectSettings: (projectId) => set({ settingsModal: { scope: "project", projectId } }),
 	closeSettings: () => set({ settingsModal: null }),
-	setDevSettings: (devSettings) => {
-		getLocalStorage()?.setItem(devSettingsStorageKey, JSON.stringify(devSettings));
-		set({ devSettings });
-	},
-	setDeveloperMode: (developerMode) => {
-		getLocalStorage()?.setItem(developerModeStorageKey, String(developerMode));
-		set({ developerMode });
-	},
 	syncSystemTheme: () => {
 		const { themePreference, resolvedTheme } = get();
 		if (themePreference !== "system") return;
@@ -274,6 +263,14 @@ export const useUiStore = create<UiState>((set, get) => ({
 			getLocalStorage()?.setItem(quotaCollapsedStorageKey, String(isQuotaWidgetCollapsed));
 			return { isQuotaWidgetCollapsed };
 		}),
+	setDeveloperMode: (developerMode) => {
+		getLocalStorage()?.setItem(developerModeStorageKey, String(developerMode));
+		set({ developerMode });
+	},
+	setDevSettings: (devSettings) => {
+		getLocalStorage()?.setItem(devSettingsStorageKey, JSON.stringify(devSettings));
+		set({ devSettings });
+	},
 	setInspectorOpen: (sessionId, isOpen) =>
 		set((state) => {
 			const current = inspectorState(state.inspectorSessions, sessionId);
@@ -297,7 +294,6 @@ export const useUiStore = create<UiState>((set, get) => ({
 	setInspectorView: (sessionId, view) =>
 		set((state) => {
 			const current = inspectorState(state.inspectorSessions, sessionId);
-			// Opening the Browser tab consumes any pending preview badge.
 			const browserUnseen = view === "browser" ? false : current.browserUnseen;
 			return {
 				inspectorSessions: {
@@ -313,6 +309,21 @@ export const useUiStore = create<UiState>((set, get) => ({
 				inspectorSessions: {
 					...state.inspectorSessions,
 					[sessionId]: { ...current, previewKey },
+				},
+			};
+		}),
+	setBrowserContentRevealed: (sessionId, browserContentRevealed) =>
+		set((state) => {
+			const current = inspectorState(state.inspectorSessions, sessionId);
+			if (Boolean(current.browserContentRevealed) === browserContentRevealed) return state;
+			return {
+				inspectorSessions: {
+					...state.inspectorSessions,
+					[sessionId]: {
+						...current,
+						browserContentRevealed,
+						browserUnseen: browserContentRevealed ? current.browserUnseen : false,
+					},
 				},
 			};
 		}),

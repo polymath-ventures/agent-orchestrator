@@ -1,6 +1,30 @@
 import type { SessionPRSummary } from "../hooks/useSessionScmSummary";
 import { sortedPRs, type PRState, type PullRequestFacts, type WorkspaceSession } from "../types/workspace";
 import { appI18n, type PluralMessageKey } from "../i18n";
+import type {
+	PRCardPresentation,
+	PRCardStatus,
+	PRDisplayTone,
+	PRNoun,
+	PRStatusRow,
+	PRSummaryLink,
+	PRSummaryPart,
+} from "@aoagents/product-ui";
+
+export type {
+	PRCardPresentation,
+	PRCardStatus,
+	PRDisplayTone,
+	PRNoun,
+	PRSummaryLink,
+	PRSummaryPart,
+	PRSummaryPartKey,
+} from "@aoagents/product-ui";
+
+function detectProviderFromUrl(url: string): "github" | "gitlab" {
+	if (url.includes("/-/merge_requests/")) return "gitlab";
+	return "github";
+}
 
 const prStateRank: Record<PRState, number> = { open: 0, draft: 1, merged: 2, closed: 3 };
 const ciStates = new Set<SessionPRSummary["ci"]["state"]>(["unknown", "pending", "passing", "failing"]);
@@ -18,18 +42,20 @@ const mergeabilityStates = new Set<SessionPRSummary["mergeability"]["state"]>([
 	"unstable",
 ]);
 
-export type PRDisplayTone = "neutral" | "passive" | "success" | "review" | "warning" | "error";
-
-export type PRStatusRow = {
-	key: "ci" | "review" | "merge";
-	label: string;
-	value: string;
-	detail?: string;
-	tone: PRDisplayTone;
-};
-
-export type PRSummaryPartKey = "ci" | "review" | "merge";
-export type PRNoun = "check" | "comment" | "file" | "line" | "reason" | "reviewer";
+function gitlabMRIdentity(rawURL: string, expectedNumber: number): string | undefined {
+	try {
+		const url = new URL(rawURL);
+		const host = url.hostname.toLowerCase();
+		if (host !== "gitlab.com" && !host.endsWith(".gitlab.com")) return undefined;
+		const parts = url.pathname.split("/").filter(Boolean);
+		const marker = parts.indexOf("-");
+		if (marker < 2 || parts[marker + 1] !== "merge_requests" || !parts[marker + 2]) return undefined;
+		if (Number(parts[marker + 2]) !== expectedNumber) return undefined;
+		return `gitlab:${host}/${parts.slice(0, marker).join("/").toLowerCase()}#${expectedNumber}`;
+	} catch {
+		return undefined;
+	}
+}
 
 export const prNounKeys: Record<PRNoun, PluralMessageKey> = {
 	check: "pr.noun.check",
@@ -38,39 +64,6 @@ export const prNounKeys: Record<PRNoun, PluralMessageKey> = {
 	line: "pr.noun.line",
 	reason: "pr.noun.reason",
 	reviewer: "pr.noun.reviewer",
-};
-
-export type PRSummaryLink = {
-	label: string;
-	href?: string;
-	title?: string;
-};
-
-export type PRSummaryPart = {
-	key: PRSummaryPartKey;
-	label: string;
-	status: string;
-	summary?: string;
-	links: PRSummaryLink[];
-	linkTotal?: number;
-	overflowLabel?: string;
-	overflowNoun?: PRNoun;
-	tone: PRDisplayTone;
-};
-
-export type PRCardStatus = {
-	key: "ci" | "merge" | "review" | "lifecycle";
-	label: string;
-	detail?: string;
-	href?: string;
-	breathe?: boolean;
-	links: PRSummaryLink[];
-	tone: PRDisplayTone;
-};
-
-export type PRCardPresentation = {
-	primary: PRCardStatus;
-	supporting: PRCardStatus[];
 };
 
 export function comparePRDisplaySummaries(a: SessionPRSummary, b: SessionPRSummary): number {
@@ -177,8 +170,10 @@ function prDisplayIdentity(
 	const url = "htmlUrl" in pr ? pr.htmlUrl || pr.url : pr.url;
 	const github = githubPRIdentity(url, pr.number);
 	if (github) return github;
+	const gitlab = gitlabMRIdentity(url, pr.number);
+	if (gitlab) return gitlab;
 	const repo = "repo" in pr ? pr.repo.trim().toLowerCase() : "";
-	if (repo) return `repo:${repo}#${pr.number}`;
+	if (repo) return `repo:${detectProviderFromUrl(url)}:${repo}#${pr.number}`;
 	return `number:${pr.number}`;
 }
 
@@ -245,7 +240,7 @@ function sessionPRFactToSummary(session: WorkspaceSession, pr: PullRequestFacts)
 		number: pr.number,
 		title: session.title,
 		state: pr.state,
-		provider: "github",
+		provider: detectProviderFromUrl(pr.url),
 		repo: session.workspaceName,
 		author: "",
 		sourceBranch: session.branch ?? "",
@@ -255,6 +250,7 @@ function sessionPRFactToSummary(session: WorkspaceSession, pr: PullRequestFacts)
 		deletions: 0,
 		changedFiles: 0,
 		ci: {
+			autoInjectCI: true,
 			state: toCIState(pr.ci),
 			failingChecks: [],
 		},
@@ -714,14 +710,23 @@ function prURL(pr: SessionPRSummary): string | undefined {
 	}
 	try {
 		const url = new URL(raw);
-		const match = url.pathname.match(/^(\/[^/]+\/[^/]+)\/(?:pull|issues)\/(\d+)(?:\/.*)?$/);
-		if (!match) {
-			return undefined;
+		// GitHub: /owner/repo/pull/N or /issues/N
+		const ghMatch = url.pathname.match(/^(\/[^/]+\/[^/]+)\/(?:pull|issues)\/(\d+)(?:\/.*)?$/);
+		if (ghMatch) {
+			url.pathname = `${ghMatch[1]}/pull/${ghMatch[2]}`;
+			url.search = "";
+			url.hash = "";
+			return url.toString();
 		}
-		url.pathname = `${match[1]}/pull/${match[2]}`;
-		url.search = "";
-		url.hash = "";
-		return url.toString();
+		// GitLab: /owner/repo/-/merge_requests/N
+		const glMatch = url.pathname.match(/^(\/[^/]+\/[^/]+)\/-\/merge_requests\/(\d+)(?:\/.*)?$/);
+		if (glMatch) {
+			url.pathname = `${glMatch[1]}/-/merge_requests/${glMatch[2]}`;
+			url.search = "";
+			url.hash = "";
+			return url.toString();
+		}
+		return undefined;
 	} catch {
 		return undefined;
 	}

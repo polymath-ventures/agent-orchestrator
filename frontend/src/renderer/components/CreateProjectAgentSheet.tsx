@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { canSubmitProjectSetup } from "@aoagents/product-ui";
 import { useTranslation } from "react-i18next";
 import * as Dialog from "@radix-ui/react-dialog";
 import { TriangleAlert, X, type LucideIcon } from "lucide-react";
@@ -155,7 +156,16 @@ export function CreateProjectAgentSheet({
 	const isBusy = isCreating || isInitializing;
 	const [intake, setIntake] = useState<IntakeForm>(EMPTY_INTAKE);
 	const intakeIncomplete = intakeNeedsRule(intake);
-	const canSubmit = workerAgent !== "" && orchestratorAgent !== "" && !intakeIncomplete && !isBusy && !isLoadingAgents;
+	const canSubmit =
+		canSubmitProjectSetup({
+			workerAgent,
+			orchestratorAgent,
+			intakeEnabled: intake.enabled,
+			intakeAssignee: intake.assignee,
+		}) &&
+		!intakeIncomplete &&
+		!isBusy &&
+		!isLoadingAgents;
 	const sheetError = error ? projectSheetError(error) : null;
 	const inventoryModelAvailability = modelAvailabilityFromAgentInventory(agents);
 	const effectiveModelAvailability = modelAvailabilityQuery.data ?? inventoryModelAvailability;

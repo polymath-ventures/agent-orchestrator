@@ -21,6 +21,7 @@ export type AppShortcutId =
 	| "new-shell-terminal"
 	| "close-shell-terminal"
 	| "keyboard-shortcuts"
+	| "toggle-browser-devtools"
 	| "toggle-sidebar"
 	| "open-project"
 	| "toggle-inspector"
@@ -77,6 +78,11 @@ export const APP_SHORTCUTS: readonly ShortcutDefinition[] = [
 	{
 		id: "keyboard-shortcuts",
 		label: "Show keyboard shortcuts",
+		category: "General",
+	},
+	{
+		id: "toggle-browser-devtools",
+		label: "Toggle browser DevTools",
 		category: "General",
 	},
 	{
@@ -160,6 +166,8 @@ export function defaultShortcutBindings(id: AppShortcutId, isMac: boolean): read
 			return [isMac ? binding("w", { meta: true }) : binding("w", { ctrl: true })];
 		case "keyboard-shortcuts":
 			return [isMac ? binding("/", { meta: true }) : binding("/", { ctrl: true })];
+		case "toggle-browser-devtools":
+			return [isMac ? binding("i", { meta: true, alt: true }) : binding("I", { ctrl: true, shift: true })];
 		case "toggle-sidebar":
 			return [isMac ? binding("b", { meta: true }) : binding("b", { ctrl: true })];
 		case "open-project":

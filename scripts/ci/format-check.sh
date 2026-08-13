@@ -16,9 +16,10 @@ set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel)"
 
-# Derive the default branch from the remote HEAD — never assume "main".
+# CI supplies the pull request's actual base. Local runs derive the default
+# branch from the remote HEAD instead of assuming "main".
 default_ref="$(git symbolic-ref --quiet refs/remotes/origin/HEAD 2>/dev/null || echo refs/remotes/origin/main)"
-base="${default_ref#refs/remotes/}" # e.g. origin/main
+base="${AO_FORMAT_BASE_REF:-${default_ref#refs/remotes/}}" # e.g. origin/main
 
 changed_files() {
 	# Committed vs the merge-base with the default branch — the exact set CI
@@ -46,19 +47,20 @@ tmp="$(mktemp)"
 trap 'rm -f "$tmp"' EXIT
 changed_files >"$tmp"
 
-# Skip paths that no longer exist in the working tree. The committed set
-# (base...HEAD) legitimately lists a file that a LATER uncommitted change
-# renamed or removed, and Prettier treats a missing path as an error rather
-# than a no-op — so without this the gate fails on any branch that renames a
-# file it also added. --diff-filter=d only excludes deletions within each diff,
-# which does not cover that cross-set case.
+# Skip paths that are not regular files or symlinks in the working tree. The
+# committed set (base...HEAD) legitimately lists a file that a LATER
+# uncommitted change renamed or removed, and Prettier treats a missing path as
+# an error rather than a no-op. Gitlinks/submodule paths are also existing
+# directories from Git's point of view, but an optional uninitialized submodule
+# can contain no supported Prettier files and should not make a changed-file
+# format check fail.
 files=()
 n=0
 while IFS= read -r -d '' f; do
-	# -L as well as -e: a dangling symlink is "nonexistent" to -e, but remote
+	# -L as well as -f: a dangling symlink is not a regular file, but remote
 	# Prettier still rejects it, and silently skipping it would break the CI
 	# parity this gate exists to provide.
-	[ -e "$f" ] || [ -L "$f" ] || continue
+	[ -f "$f" ] || [ -L "$f" ] || continue
 	files+=("$f")
 	n=$((n + 1))
 done <"$tmp"

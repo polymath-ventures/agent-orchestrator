@@ -72,6 +72,7 @@ export default function NotificationsScreen() {
 	// Optimistic: the row should stop looking unread the instant it's tapped, and
 	// a failed PATCH is not worth interrupting navigation over.
 	function open(n: NotificationRecord) {
+		haptics.tap();
 		setItems((prev) => prev.map((x) => (x.id === n.id ? { ...x, status: "read" } : x)));
 		if (n.status === "unread") setUnreadCount((count) => Math.max(0, count - 1));
 		if (config && n.status === "unread") {
@@ -98,7 +99,6 @@ export default function NotificationsScreen() {
 			<Stack.Screen
 				options={{
 					title: "Notifications",
-					headerBackTitle: "Settings",
 					headerRight: () =>
 						unreadCount > 0 ? (
 							<Pressable onPress={markAll} hitSlop={10}>
@@ -117,7 +117,10 @@ export default function NotificationsScreen() {
 					data={items}
 					keyExtractor={(n) => n.id}
 					refreshing={refreshing}
-					onRefresh={() => load("refresh")}
+					onRefresh={() => {
+						haptics.tap();
+						void load("refresh");
+					}}
 					onEndReached={() => load("more")}
 					onEndReachedThreshold={0.4}
 					contentContainerStyle={items.length === 0 ? { flexGrow: 1 } : { paddingVertical: 8 }}

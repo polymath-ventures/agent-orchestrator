@@ -13,6 +13,32 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
+const activateConversationBranchSession = `-- name: ActivateConversationBranchSession :execrows
+UPDATE sessions
+SET provider_conversation_id = ?, controller_generation = ?, updated_at = ?
+WHERE id = ? AND session_mode = 'chat' AND is_terminated = 0
+`
+
+type ActivateConversationBranchSessionParams struct {
+	ProviderConversationID string
+	ControllerGeneration   string
+	UpdatedAt              time.Time
+	ID                     domain.SessionID
+}
+
+func (q *Queries) ActivateConversationBranchSession(ctx context.Context, arg ActivateConversationBranchSessionParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, activateConversationBranchSession,
+		arg.ProviderConversationID,
+		arg.ControllerGeneration,
+		arg.UpdatedAt,
+		arg.ID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const claimChatControllerGeneration = `-- name: ClaimChatControllerGeneration :execrows
 UPDATE sessions
 SET controller_generation = ?, updated_at = ?
@@ -83,19 +109,68 @@ func (q *Queries) CommitSessionControllerEpoch(ctx context.Context, arg CommitSe
 const getSession = `-- name: GetSession :one
 SELECT id, COALESCE(project_id, '') AS project_id, num, issue_id, kind, harness,
        activity_state, activity_last_at, is_terminated, branch, workspace_path,
-       runtime_handle_id, agent_session_id, prompt, created_at, updated_at,
+       runtime_handle_id, agent_session_id, prompt, latest_user_prompt,
+       latest_assistant_update, native_transcript_path, created_at, updated_at,
        display_name, first_signal_at, preview_url, preview_revision, model,
        mix_selected, effort, prompt_policy_hash,
        mix_bucket_model, cleanup_generation, runtime_launch_id, workspace_repo_path,
-       terminate_on_pr_merge, diff_base_sha, diff_base_ref, last_error, namespace_key,
+       terminate_on_pr_merge, browser_capability_verifier, diff_base_sha, diff_base_ref, last_error, namespace_key,
        reviewer_harness, is_pinned, pinned_at,
-       session_mode, provider_conversation_id, controller_generation
+       session_mode, provider_conversation_id, controller_generation, auto_inject_review, auto_inject_ci
 FROM sessions WHERE id = ?
 `
 
-func (q *Queries) GetSession(ctx context.Context, id domain.SessionID) (Session, error) {
+type GetSessionRow struct {
+	ID                        domain.SessionID
+	ProjectID                 domain.ProjectID
+	Num                       int64
+	IssueID                   domain.IssueID
+	Kind                      domain.SessionKind
+	Harness                   domain.AgentHarness
+	ActivityState             domain.ActivityState
+	ActivityLastAt            time.Time
+	IsTerminated              bool
+	Branch                    string
+	WorkspacePath             string
+	RuntimeHandleID           string
+	AgentSessionID            string
+	Prompt                    string
+	LatestUserPrompt          string
+	LatestAssistantUpdate     string
+	NativeTranscriptPath      string
+	CreatedAt                 time.Time
+	UpdatedAt                 time.Time
+	DisplayName               string
+	FirstSignalAt             sql.NullTime
+	PreviewURL                string
+	PreviewRevision           int64
+	Model                     string
+	MixSelected               bool
+	Effort                    string
+	PromptPolicyHash          string
+	MixBucketModel            string
+	CleanupGeneration         int64
+	RuntimeLaunchID           string
+	WorkspaceRepoPath         string
+	TerminateOnPRMerge        bool
+	BrowserCapabilityVerifier string
+	DiffBaseSha               string
+	DiffBaseRef               string
+	LastError                 string
+	NamespaceKey              string
+	ReviewerHarness           domain.ReviewerHarness
+	IsPinned                  bool
+	PinnedAt                  sql.NullTime
+	SessionMode               domain.SessionMode
+	ProviderConversationID    string
+	ControllerGeneration      string
+	AutoInjectReview          bool
+	AutoInjectCI              bool
+}
+
+func (q *Queries) GetSession(ctx context.Context, id domain.SessionID) (GetSessionRow, error) {
 	row := q.db.QueryRowContext(ctx, getSession, id)
-	var i Session
+	var i GetSessionRow
 	err := row.Scan(
 		&i.ID,
 		&i.ProjectID,
@@ -111,6 +186,9 @@ func (q *Queries) GetSession(ctx context.Context, id domain.SessionID) (Session,
 		&i.RuntimeHandleID,
 		&i.AgentSessionID,
 		&i.Prompt,
+		&i.LatestUserPrompt,
+		&i.LatestAssistantUpdate,
+		&i.NativeTranscriptPath,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DisplayName,
@@ -126,6 +204,7 @@ func (q *Queries) GetSession(ctx context.Context, id domain.SessionID) (Session,
 		&i.RuntimeLaunchID,
 		&i.WorkspaceRepoPath,
 		&i.TerminateOnPRMerge,
+		&i.BrowserCapabilityVerifier,
 		&i.DiffBaseSha,
 		&i.DiffBaseRef,
 		&i.LastError,
@@ -136,6 +215,8 @@ func (q *Queries) GetSession(ctx context.Context, id domain.SessionID) (Session,
 		&i.SessionMode,
 		&i.ProviderConversationID,
 		&i.ControllerGeneration,
+		&i.AutoInjectReview,
+		&i.AutoInjectCI,
 	)
 	return i, err
 }
@@ -146,52 +227,60 @@ INSERT INTO sessions (
     activity_state, activity_last_at, last_error, first_signal_at, is_terminated,
     branch, workspace_path, workspace_repo_path, diff_base_sha, diff_base_ref, runtime_handle_id,
     runtime_launch_id, agent_session_id, prompt,
+    latest_user_prompt, latest_assistant_update, native_transcript_path,
     preview_url, preview_revision, model, effort, mix_selected, mix_bucket_model,
     prompt_policy_hash, terminate_on_pr_merge, cleanup_generation,
+    browser_capability_verifier,
     session_mode, provider_conversation_id, controller_generation,
-    created_at, updated_at, is_pinned, pinned_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    created_at, updated_at, is_pinned, pinned_at, auto_inject_review, auto_inject_ci
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type InsertSessionParams struct {
-	ID                     domain.SessionID
-	ProjectID              domain.ProjectID
-	Num                    int64
-	IssueID                domain.IssueID
-	Kind                   domain.SessionKind
-	Harness                domain.AgentHarness
-	ReviewerHarness        domain.ReviewerHarness
-	DisplayName            string
-	ActivityState          domain.ActivityState
-	ActivityLastAt         time.Time
-	LastError              string
-	FirstSignalAt          sql.NullTime
-	IsTerminated           bool
-	Branch                 string
-	WorkspacePath          string
-	WorkspaceRepoPath      string
-	DiffBaseSha            string
-	DiffBaseRef            string
-	RuntimeHandleID        string
-	RuntimeLaunchID        string
-	AgentSessionID         string
-	Prompt                 string
-	PreviewURL             string
-	PreviewRevision        int64
-	Model                  string
-	Effort                 string
-	MixSelected            bool
-	MixBucketModel         string
-	PromptPolicyHash       string
-	TerminateOnPRMerge     bool
-	CleanupGeneration      int64
-	SessionMode            domain.SessionMode
-	ProviderConversationID string
-	ControllerGeneration   string
-	CreatedAt              time.Time
-	UpdatedAt              time.Time
-	IsPinned               bool
-	PinnedAt               sql.NullTime
+	ID                        domain.SessionID
+	ProjectID                 domain.ProjectID
+	Num                       int64
+	IssueID                   domain.IssueID
+	Kind                      domain.SessionKind
+	Harness                   domain.AgentHarness
+	ReviewerHarness           domain.ReviewerHarness
+	DisplayName               string
+	ActivityState             domain.ActivityState
+	ActivityLastAt            time.Time
+	LastError                 string
+	FirstSignalAt             sql.NullTime
+	IsTerminated              bool
+	Branch                    string
+	WorkspacePath             string
+	WorkspaceRepoPath         string
+	DiffBaseSha               string
+	DiffBaseRef               string
+	RuntimeHandleID           string
+	RuntimeLaunchID           string
+	AgentSessionID            string
+	Prompt                    string
+	LatestUserPrompt          string
+	LatestAssistantUpdate     string
+	NativeTranscriptPath      string
+	PreviewURL                string
+	PreviewRevision           int64
+	Model                     string
+	Effort                    string
+	MixSelected               bool
+	MixBucketModel            string
+	PromptPolicyHash          string
+	TerminateOnPRMerge        bool
+	CleanupGeneration         int64
+	BrowserCapabilityVerifier string
+	SessionMode               domain.SessionMode
+	ProviderConversationID    string
+	ControllerGeneration      string
+	CreatedAt                 time.Time
+	UpdatedAt                 time.Time
+	IsPinned                  bool
+	PinnedAt                  sql.NullTime
+	AutoInjectReview          bool
+	AutoInjectCI              bool
 }
 
 func (q *Queries) InsertSession(ctx context.Context, arg InsertSessionParams) error {
@@ -218,6 +307,9 @@ func (q *Queries) InsertSession(ctx context.Context, arg InsertSessionParams) er
 		arg.RuntimeLaunchID,
 		arg.AgentSessionID,
 		arg.Prompt,
+		arg.LatestUserPrompt,
+		arg.LatestAssistantUpdate,
+		arg.NativeTranscriptPath,
 		arg.PreviewURL,
 		arg.PreviewRevision,
 		arg.Model,
@@ -227,6 +319,7 @@ func (q *Queries) InsertSession(ctx context.Context, arg InsertSessionParams) er
 		arg.PromptPolicyHash,
 		arg.TerminateOnPRMerge,
 		arg.CleanupGeneration,
+		arg.BrowserCapabilityVerifier,
 		arg.SessionMode,
 		arg.ProviderConversationID,
 		arg.ControllerGeneration,
@@ -234,6 +327,8 @@ func (q *Queries) InsertSession(ctx context.Context, arg InsertSessionParams) er
 		arg.UpdatedAt,
 		arg.IsPinned,
 		arg.PinnedAt,
+		arg.AutoInjectReview,
+		arg.AutoInjectCI,
 	)
 	return err
 }
@@ -241,25 +336,74 @@ func (q *Queries) InsertSession(ctx context.Context, arg InsertSessionParams) er
 const listAllSessions = `-- name: ListAllSessions :many
 SELECT id, COALESCE(project_id, '') AS project_id, num, issue_id, kind, harness,
        activity_state, activity_last_at, is_terminated, branch, workspace_path,
-       runtime_handle_id, agent_session_id, prompt, created_at, updated_at,
+       runtime_handle_id, agent_session_id, prompt, latest_user_prompt,
+       latest_assistant_update, native_transcript_path, created_at, updated_at,
        display_name, first_signal_at, preview_url, preview_revision, model,
        mix_selected, effort, prompt_policy_hash,
        mix_bucket_model, cleanup_generation, runtime_launch_id, workspace_repo_path,
-       terminate_on_pr_merge, diff_base_sha, diff_base_ref, last_error, namespace_key,
+       terminate_on_pr_merge, browser_capability_verifier, diff_base_sha, diff_base_ref, last_error, namespace_key,
        reviewer_harness, is_pinned, pinned_at,
-       session_mode, provider_conversation_id, controller_generation
+       session_mode, provider_conversation_id, controller_generation, auto_inject_review, auto_inject_ci
 FROM sessions ORDER BY COALESCE(project_id, ''), num
 `
 
-func (q *Queries) ListAllSessions(ctx context.Context) ([]Session, error) {
+type ListAllSessionsRow struct {
+	ID                        domain.SessionID
+	ProjectID                 domain.ProjectID
+	Num                       int64
+	IssueID                   domain.IssueID
+	Kind                      domain.SessionKind
+	Harness                   domain.AgentHarness
+	ActivityState             domain.ActivityState
+	ActivityLastAt            time.Time
+	IsTerminated              bool
+	Branch                    string
+	WorkspacePath             string
+	RuntimeHandleID           string
+	AgentSessionID            string
+	Prompt                    string
+	LatestUserPrompt          string
+	LatestAssistantUpdate     string
+	NativeTranscriptPath      string
+	CreatedAt                 time.Time
+	UpdatedAt                 time.Time
+	DisplayName               string
+	FirstSignalAt             sql.NullTime
+	PreviewURL                string
+	PreviewRevision           int64
+	Model                     string
+	MixSelected               bool
+	Effort                    string
+	PromptPolicyHash          string
+	MixBucketModel            string
+	CleanupGeneration         int64
+	RuntimeLaunchID           string
+	WorkspaceRepoPath         string
+	TerminateOnPRMerge        bool
+	BrowserCapabilityVerifier string
+	DiffBaseSha               string
+	DiffBaseRef               string
+	LastError                 string
+	NamespaceKey              string
+	ReviewerHarness           domain.ReviewerHarness
+	IsPinned                  bool
+	PinnedAt                  sql.NullTime
+	SessionMode               domain.SessionMode
+	ProviderConversationID    string
+	ControllerGeneration      string
+	AutoInjectReview          bool
+	AutoInjectCI              bool
+}
+
+func (q *Queries) ListAllSessions(ctx context.Context) ([]ListAllSessionsRow, error) {
 	rows, err := q.db.QueryContext(ctx, listAllSessions)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []Session{}
+	items := []ListAllSessionsRow{}
 	for rows.Next() {
-		var i Session
+		var i ListAllSessionsRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.ProjectID,
@@ -275,6 +419,9 @@ func (q *Queries) ListAllSessions(ctx context.Context) ([]Session, error) {
 			&i.RuntimeHandleID,
 			&i.AgentSessionID,
 			&i.Prompt,
+			&i.LatestUserPrompt,
+			&i.LatestAssistantUpdate,
+			&i.NativeTranscriptPath,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.DisplayName,
@@ -290,6 +437,7 @@ func (q *Queries) ListAllSessions(ctx context.Context) ([]Session, error) {
 			&i.RuntimeLaunchID,
 			&i.WorkspaceRepoPath,
 			&i.TerminateOnPRMerge,
+			&i.BrowserCapabilityVerifier,
 			&i.DiffBaseSha,
 			&i.DiffBaseRef,
 			&i.LastError,
@@ -300,6 +448,8 @@ func (q *Queries) ListAllSessions(ctx context.Context) ([]Session, error) {
 			&i.SessionMode,
 			&i.ProviderConversationID,
 			&i.ControllerGeneration,
+			&i.AutoInjectReview,
+			&i.AutoInjectCI,
 		); err != nil {
 			return nil, err
 		}
@@ -317,25 +467,74 @@ func (q *Queries) ListAllSessions(ctx context.Context) ([]Session, error) {
 const listSessionsByProject = `-- name: ListSessionsByProject :many
 SELECT id, COALESCE(project_id, '') AS project_id, num, issue_id, kind, harness,
        activity_state, activity_last_at, is_terminated, branch, workspace_path,
-       runtime_handle_id, agent_session_id, prompt, created_at, updated_at,
+       runtime_handle_id, agent_session_id, prompt, latest_user_prompt,
+       latest_assistant_update, native_transcript_path, created_at, updated_at,
        display_name, first_signal_at, preview_url, preview_revision, model,
        mix_selected, effort, prompt_policy_hash,
        mix_bucket_model, cleanup_generation, runtime_launch_id, workspace_repo_path,
-       terminate_on_pr_merge, diff_base_sha, diff_base_ref, last_error, namespace_key,
+       terminate_on_pr_merge, browser_capability_verifier, diff_base_sha, diff_base_ref, last_error, namespace_key,
        reviewer_harness, is_pinned, pinned_at,
-       session_mode, provider_conversation_id, controller_generation
+       session_mode, provider_conversation_id, controller_generation, auto_inject_review, auto_inject_ci
 FROM sessions WHERE project_id = ? ORDER BY num
 `
 
-func (q *Queries) ListSessionsByProject(ctx context.Context, projectID domain.ProjectID) ([]Session, error) {
+type ListSessionsByProjectRow struct {
+	ID                        domain.SessionID
+	ProjectID                 domain.ProjectID
+	Num                       int64
+	IssueID                   domain.IssueID
+	Kind                      domain.SessionKind
+	Harness                   domain.AgentHarness
+	ActivityState             domain.ActivityState
+	ActivityLastAt            time.Time
+	IsTerminated              bool
+	Branch                    string
+	WorkspacePath             string
+	RuntimeHandleID           string
+	AgentSessionID            string
+	Prompt                    string
+	LatestUserPrompt          string
+	LatestAssistantUpdate     string
+	NativeTranscriptPath      string
+	CreatedAt                 time.Time
+	UpdatedAt                 time.Time
+	DisplayName               string
+	FirstSignalAt             sql.NullTime
+	PreviewURL                string
+	PreviewRevision           int64
+	Model                     string
+	MixSelected               bool
+	Effort                    string
+	PromptPolicyHash          string
+	MixBucketModel            string
+	CleanupGeneration         int64
+	RuntimeLaunchID           string
+	WorkspaceRepoPath         string
+	TerminateOnPRMerge        bool
+	BrowserCapabilityVerifier string
+	DiffBaseSha               string
+	DiffBaseRef               string
+	LastError                 string
+	NamespaceKey              string
+	ReviewerHarness           domain.ReviewerHarness
+	IsPinned                  bool
+	PinnedAt                  sql.NullTime
+	SessionMode               domain.SessionMode
+	ProviderConversationID    string
+	ControllerGeneration      string
+	AutoInjectReview          bool
+	AutoInjectCI              bool
+}
+
+func (q *Queries) ListSessionsByProject(ctx context.Context, projectID domain.ProjectID) ([]ListSessionsByProjectRow, error) {
 	rows, err := q.db.QueryContext(ctx, listSessionsByProject, projectID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []Session{}
+	items := []ListSessionsByProjectRow{}
 	for rows.Next() {
-		var i Session
+		var i ListSessionsByProjectRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.ProjectID,
@@ -351,6 +550,9 @@ func (q *Queries) ListSessionsByProject(ctx context.Context, projectID domain.Pr
 			&i.RuntimeHandleID,
 			&i.AgentSessionID,
 			&i.Prompt,
+			&i.LatestUserPrompt,
+			&i.LatestAssistantUpdate,
+			&i.NativeTranscriptPath,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.DisplayName,
@@ -366,6 +568,7 @@ func (q *Queries) ListSessionsByProject(ctx context.Context, projectID domain.Pr
 			&i.RuntimeLaunchID,
 			&i.WorkspaceRepoPath,
 			&i.TerminateOnPRMerge,
+			&i.BrowserCapabilityVerifier,
 			&i.DiffBaseSha,
 			&i.DiffBaseRef,
 			&i.LastError,
@@ -376,6 +579,8 @@ func (q *Queries) ListSessionsByProject(ctx context.Context, projectID domain.Pr
 			&i.SessionMode,
 			&i.ProviderConversationID,
 			&i.ControllerGeneration,
+			&i.AutoInjectReview,
+			&i.AutoInjectCI,
 		); err != nil {
 			return nil, err
 		}
@@ -399,6 +604,29 @@ func (q *Queries) NextSessionNum(ctx context.Context, projectID domain.ProjectID
 	var next int64
 	err := row.Scan(&next)
 	return next, err
+}
+
+const recordSessionLatestUserPrompt = `-- name: RecordSessionLatestUserPrompt :execrows
+UPDATE sessions SET
+    latest_user_prompt = ?1,
+    updated_at = ?2
+WHERE id = ?3
+  AND is_terminated = 0
+  AND updated_at <= ?2
+`
+
+type RecordSessionLatestUserPromptParams struct {
+	LatestUserPrompt string
+	UpdatedAt        time.Time
+	ID               domain.SessionID
+}
+
+func (q *Queries) RecordSessionLatestUserPrompt(ctx context.Context, arg RecordSessionLatestUserPromptParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, recordSessionLatestUserPrompt, arg.LatestUserPrompt, arg.UpdatedAt, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const renameSession = `-- name: RenameSession :execrows
@@ -428,6 +656,9 @@ SELECT EXISTS(
       AND runtime_handle_id = ''
       AND agent_session_id = ''
       AND prompt = ''
+      AND latest_user_prompt = ''
+      AND latest_assistant_update = ''
+      AND native_transcript_path = ''
 ) AS is_seed
 `
 
@@ -441,6 +672,42 @@ func (q *Queries) SessionIsSeed(ctx context.Context, id domain.SessionID) (bool,
 	var is_seed bool
 	err := row.Scan(&is_seed)
 	return is_seed, err
+}
+
+const setSessionAutoInjectCI = `-- name: SetSessionAutoInjectCI :execrows
+UPDATE sessions SET auto_inject_ci = ?, updated_at = ? WHERE id = ?
+`
+
+type SetSessionAutoInjectCIParams struct {
+	AutoInjectCI bool
+	UpdatedAt    time.Time
+	ID           domain.SessionID
+}
+
+func (q *Queries) SetSessionAutoInjectCI(ctx context.Context, arg SetSessionAutoInjectCIParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, setSessionAutoInjectCI, arg.AutoInjectCI, arg.UpdatedAt, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const setSessionAutoInjectReview = `-- name: SetSessionAutoInjectReview :execrows
+UPDATE sessions SET auto_inject_review = ?, updated_at = ? WHERE id = ?
+`
+
+type SetSessionAutoInjectReviewParams struct {
+	AutoInjectReview bool
+	UpdatedAt        time.Time
+	ID               domain.SessionID
+}
+
+func (q *Queries) SetSessionAutoInjectReview(ctx context.Context, arg SetSessionAutoInjectReviewParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, setSessionAutoInjectReview, arg.AutoInjectReview, arg.UpdatedAt, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const setSessionNamespaceKey = `-- name: SetSessionNamespaceKey :execrows
@@ -550,49 +817,56 @@ UPDATE sessions SET
     activity_state = ?, activity_last_at = ?, last_error = ?, first_signal_at = ?, is_terminated = ?,
     branch = ?, workspace_path = ?, workspace_repo_path = ?, diff_base_sha = ?, diff_base_ref = ?, runtime_handle_id = ?,
     runtime_launch_id = ?, agent_session_id = ?, prompt = ?,
+    latest_user_prompt = ?, latest_assistant_update = ?, native_transcript_path = ?,
     preview_url = ?, preview_revision = ?, model = ?, effort = ?, mix_selected = ?,
     mix_bucket_model = ?, prompt_policy_hash = ?, terminate_on_pr_merge = ?,
-    cleanup_generation = ?,
+    cleanup_generation = ?, browser_capability_verifier = ?,
     provider_conversation_id = ?, controller_generation = ?, updated_at = ?,
-    is_pinned = ?, pinned_at = ?
+    is_pinned = ?, pinned_at = ?, auto_inject_review = ?, auto_inject_ci = ?
 WHERE id = ?
 `
 
 type UpdateSessionParams struct {
-	IssueID                domain.IssueID
-	Kind                   domain.SessionKind
-	Harness                domain.AgentHarness
-	ReviewerHarness        domain.ReviewerHarness
-	DisplayName            string
-	ActivityState          domain.ActivityState
-	ActivityLastAt         time.Time
-	LastError              string
-	FirstSignalAt          sql.NullTime
-	IsTerminated           bool
-	Branch                 string
-	WorkspacePath          string
-	WorkspaceRepoPath      string
-	DiffBaseSha            string
-	DiffBaseRef            string
-	RuntimeHandleID        string
-	RuntimeLaunchID        string
-	AgentSessionID         string
-	Prompt                 string
-	PreviewURL             string
-	PreviewRevision        int64
-	Model                  string
-	Effort                 string
-	MixSelected            bool
-	MixBucketModel         string
-	PromptPolicyHash       string
-	TerminateOnPRMerge     bool
-	CleanupGeneration      int64
-	ProviderConversationID string
-	ControllerGeneration   string
-	UpdatedAt              time.Time
-	IsPinned               bool
-	PinnedAt               sql.NullTime
-	ID                     domain.SessionID
+	IssueID                   domain.IssueID
+	Kind                      domain.SessionKind
+	Harness                   domain.AgentHarness
+	ReviewerHarness           domain.ReviewerHarness
+	DisplayName               string
+	ActivityState             domain.ActivityState
+	ActivityLastAt            time.Time
+	LastError                 string
+	FirstSignalAt             sql.NullTime
+	IsTerminated              bool
+	Branch                    string
+	WorkspacePath             string
+	WorkspaceRepoPath         string
+	DiffBaseSha               string
+	DiffBaseRef               string
+	RuntimeHandleID           string
+	RuntimeLaunchID           string
+	AgentSessionID            string
+	Prompt                    string
+	LatestUserPrompt          string
+	LatestAssistantUpdate     string
+	NativeTranscriptPath      string
+	PreviewURL                string
+	PreviewRevision           int64
+	Model                     string
+	Effort                    string
+	MixSelected               bool
+	MixBucketModel            string
+	PromptPolicyHash          string
+	TerminateOnPRMerge        bool
+	CleanupGeneration         int64
+	BrowserCapabilityVerifier string
+	ProviderConversationID    string
+	ControllerGeneration      string
+	UpdatedAt                 time.Time
+	IsPinned                  bool
+	PinnedAt                  sql.NullTime
+	AutoInjectReview          bool
+	AutoInjectCI              bool
+	ID                        domain.SessionID
 }
 
 func (q *Queries) UpdateSession(ctx context.Context, arg UpdateSessionParams) error {
@@ -616,6 +890,9 @@ func (q *Queries) UpdateSession(ctx context.Context, arg UpdateSessionParams) er
 		arg.RuntimeLaunchID,
 		arg.AgentSessionID,
 		arg.Prompt,
+		arg.LatestUserPrompt,
+		arg.LatestAssistantUpdate,
+		arg.NativeTranscriptPath,
 		arg.PreviewURL,
 		arg.PreviewRevision,
 		arg.Model,
@@ -625,11 +902,14 @@ func (q *Queries) UpdateSession(ctx context.Context, arg UpdateSessionParams) er
 		arg.PromptPolicyHash,
 		arg.TerminateOnPRMerge,
 		arg.CleanupGeneration,
+		arg.BrowserCapabilityVerifier,
 		arg.ProviderConversationID,
 		arg.ControllerGeneration,
 		arg.UpdatedAt,
 		arg.IsPinned,
 		arg.PinnedAt,
+		arg.AutoInjectReview,
+		arg.AutoInjectCI,
 		arg.ID,
 	)
 	return err

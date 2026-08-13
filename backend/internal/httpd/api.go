@@ -3,6 +3,7 @@ package httpd
 import (
 	"context"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -13,11 +14,18 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/controllers"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/envelope"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	"github.com/aoagents/agent-orchestrator/backend/internal/presence"
 	prsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/pr"
 	primesvc "github.com/aoagents/agent-orchestrator/backend/internal/service/prime"
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
 	reviewsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/review"
 )
+
+// The synchronous switch budget covers one 60s optional source handoff, a
+// separate 2m human permission-decision window, target process/readiness checks,
+// composer confirmation retries, and the final 150s generation acknowledgement,
+// with headroom for teardown and durable writes.
+const minimumSwitchAgentRequestTimeout = 6 * time.Minute
 
 // APIDeps bundles every service the API layer's controllers depend on.
 type APIDeps struct {
@@ -37,6 +45,9 @@ type APIDeps struct {
 	Metrics            controllers.MetricsProvider
 	QuotaProber        controllers.QuotaProber
 	Push               controllers.PushRegistry
+	Presence           *presence.Tracker
+	DeviceRoster       controllers.DeviceRoster
+	DeviceLive         controllers.LiveSet
 	Import             controllers.ImportService
 	ShellTerminals     controllers.ShellTerminalService
 	UsageHooks         controllers.UsageHookRecorder
@@ -62,6 +73,7 @@ type APIDeps struct {
 // router invokes to mount the /api/v1 surface.
 type API struct {
 	cfg           config.Config
+	deps          APIDeps
 	agents        *controllers.AgentsController
 	prime         *controllers.PrimeController
 	projects      *controllers.ProjectsController
@@ -87,7 +99,8 @@ type API struct {
 // environment.
 func NewAPI(cfg config.Config, deps APIDeps) *API {
 	return &API{
-		cfg: cfg,
+		cfg:  cfg,
+		deps: deps,
 		agents: &controllers.AgentsController{
 			Catalog:   deps.Agents,
 			Models:    deps.AgentModels,
@@ -134,6 +147,10 @@ func (a *API) Register(root chi.Router) {
 	if timeout <= 0 {
 		timeout = config.DefaultRequestTimeout
 	}
+	switchAgentTimeout := timeout
+	if switchAgentTimeout < minimumSwitchAgentRequestTimeout {
+		switchAgentTimeout = minimumSwitchAgentRequestTimeout
+	}
 
 	root.Route("/api/v1", func(r chi.Router) {
 		// Serve the OpenAPI document from the same origin as the routes it describes.
@@ -141,6 +158,7 @@ func (a *API) Register(root chi.Router) {
 
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.Timeout(timeout))
+			r.Use(presenceMiddleware(a.deps.Presence))
 			a.agents.Register(r)
 			a.prime.Register(r)
 			a.projects.Register(r)
@@ -159,6 +177,13 @@ func (a *API) Register(root chi.Router) {
 			a.dev.Register(r)
 			a.browser.Register(r)
 			// Sibling REST controllers plug in here.
+		})
+		// Agent switching synchronously collects a handoff, starts the target,
+		// waits for provider readiness, and confirms delivery. Give that bounded
+		// workflow enough time to complete without extending every REST route.
+		r.Group(func(r chi.Router) {
+			r.Use(middleware.Timeout(switchAgentTimeout))
+			a.sessions.RegisterSwitchAgent(r)
 		})
 		// Long-lived streams intentionally bypass the REST timeout middleware.
 		a.notifications.RegisterStream(r)

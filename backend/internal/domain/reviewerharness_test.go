@@ -16,3 +16,13 @@ func TestCodexFuguIsAKnownReviewer(t *testing.T) {
 		t.Fatalf("ReviewerHarness(codex-fugu).AgentHarness() = %q, want %q", got, HarnessCodexFugu)
 	}
 }
+
+func TestGrokIsAKnownReviewer(t *testing.T) {
+	harness := ReviewerGrok
+	if !harness.IsKnown() {
+		t.Fatalf("grok must be a known reviewer harness; AllReviewerHarnesses = %v", AllReviewerHarnesses)
+	}
+	if got := harness.AgentHarness(); got != HarnessGrok {
+		t.Errorf("ReviewerHarness(grok).AgentHarness() = %q, want %q", got, HarnessGrok)
+	}
+}

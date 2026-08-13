@@ -1,47 +1,73 @@
 ---
 title: Projects
-description: "Configure one AO project: agent, runtime, workspace, setup commands, rules, tracker, SCM, and per-role overrides."
+description: Configure a registered project, its worker and orchestrator agents, setup, rules, reviews, and intake.
 ---
 
-A project is one repository that AO can run agents against. The global registry remembers the project identity; the local `agent-orchestrator.yaml` controls how sessions behave inside that repo.
+A project is a repository, a multi-repository workspace, or an AO-managed Scratch directory. AO stores project identity and typed configuration in its database; there is no current `agent-orchestrator.yaml` lookup or global YAML registry.
 
-Most teams only need these fields:
+## Project kinds
 
-```yaml title="agent-orchestrator.yaml"
-agent: claude-code
-runtime: tmux
-workspace: worktree
+| Kind | Use it for |
+| --- | --- |
+| Single repository | Normal Git projects; each session receives an isolated worktree |
+| Workspace | A root repository plus direct child repositories managed as one project |
+| Scratch | Plain-directory work without branches, PRs, or Git-only settings |
 
-symlinks:
-  - .env
+Add and manage projects from the desktop sidebar. The equivalent CLI commands are:
 
-postCreate:
-  - pnpm install
-
-agentRules: |
-  Use pnpm.
-  Run pnpm test before pushing.
-  Keep PRs focused.
+```bash
+ao project add --path /absolute/path/to/repo
+ao project add --path /absolute/path/to/workspace --as-workspace
+ao project ls
+ao project get <project-id>
+ao project rm <project-id>
 ```
 
-## Choose The Agent
+## Current configuration fields
 
-`agent` selects the coding agent AO launches for worker sessions.
+Project settings expose the fields that AO consumes at spawn time:
 
-```yaml
-agent: claude-code
+| Field | Purpose |
+| --- | --- |
+| `defaultBranch` | Base branch for new Git worktrees; defaults to `main` |
+| `sessionPrefix` | Prefix used in generated session identifiers |
+| `env` | Extra environment variables forwarded to agent runtimes |
+| `symlinks` | Repo-relative paths linked into each session workspace |
+| `postCreate` | Shell commands run after workspace creation |
+| `agentConfig` | Default model and permission settings |
+| `worker` | Worker harness and agent-config override |
+| `orchestrator` | Orchestrator harness and agent-config override |
+| `agentRules` | Inline standing instructions for workers |
+| `agentRulesFile` | Repo-relative rules file appended to worker instructions |
+| `orchestratorRules` | Standing instructions for orchestrator sessions |
+| `reviewers` | Reviewer harnesses used for AO review runs |
+| `trackerIntake` | Opt-in, read-only issue intake that can spawn workers |
+| `containerReap` | Project-wide opt-out from AO's session-container cleanup |
+
+`symlinks` and `agentRulesFile` must remain inside the repository. AO rejects absolute paths and traversal. Scratch rejects Git-only fields such as `defaultBranch` and symlinks.
+
+## Worker and orchestrator roles
+
+Workers implement tasks and own code changes. Orchestrators supervise a project and coordinate workers. Configure their harnesses independently:
+
+```json
+{
+  "worker": {
+    "agent": "codex",
+    "agentConfig": { "model": "gpt-5.4", "permissions": "bypass-permissions" }
+  },
+  "orchestrator": {
+    "agent": "claude-code",
+    "agentConfig": { "model": "claude-opus-4" }
+  }
+}
 ```
 
-Built-in agents:
+The exact model names come from the installed provider. AO reuses the provider CLI and its existing authentication; it does not store provider tokens in project configuration.
 
-| Agent         | Use when                                               |
-| ------------- | ------------------------------------------------------ |
-| `claude-code` | You want the default, most tested path                 |
-| `codex`       | You want OpenAI Codex CLI sessions                     |
-| `aider`       | You already use Aider workflows                        |
-| `opencode`    | You want OpenCode session discovery and resume support |
+## Session interface
 
-Agent-specific settings go under `agentConfig`:
+The role selects what a session does; the interface selects how you interact with its agent.
 
 ```yaml
 agentConfig:
@@ -53,7 +79,7 @@ agentConfig:
       effort: high
 ```
 
-`permissions` accepts:
+## Update from the CLI
 
 | Value                | Behavior                                                       |
 | -------------------- | -------------------------------------------------------------- |
@@ -310,19 +336,6 @@ Make sure the corresponding CLI or token is authenticated for the plugin you use
 ## Next Steps
 
 <Cards>
-	<Card
-		title="Reactions"
-		href="/docs/configuration/reactions"
-		description="Configure what AO does when CI, reviews, or agent state changes need attention."
-	/>
-	<Card
-		title="Remote access"
-		href="/docs/configuration/remote-access"
-		description="Open the dashboard from another machine without exposing it publicly."
-	/>
-	<Card
-		title="Plugin docs"
-		href="/docs/plugins"
-		description="Agent, tracker, SCM, notifier, runtime, terminal, and workspace plugins."
-	/>
+	<Card title="Per-role agents" href="/docs/guides/per-role-agents" description="Choose worker and orchestrator harnesses." />
+	<Card title="Parallel work" href="/docs/guides/parallel-issues" description="Start isolated sessions across projects." />
 </Cards>

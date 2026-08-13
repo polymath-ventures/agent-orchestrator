@@ -139,14 +139,44 @@ type sessionLifecycle interface {
 	RoleSystemPrompt(ctx context.Context, kind domain.SessionKind, projectID domain.ProjectID) (string, error)
 	EffectiveWorkerTaskPrompt(ctx context.Context, projectID domain.ProjectID) (template, source string, err error)
 	Kill(ctx context.Context, id domain.SessionID) (bool, error)
-	Send(ctx context.Context, id domain.SessionID, message string) error
+	Send(ctx context.Context, id domain.SessionID, message string, attachment *ports.SpawnAttachment) error
 	// SetShellTerminalCloser late-binds Kill/Cleanup to close a session's
 	// scoped shell terminals before its worktree is torn down. shellterm.Service
 	// is built after Session Manager during boot (see startShellTerminals), so
 	// this cannot be a constructor argument.
 	SetShellTerminalCloser(closer sessionmanager.ShellTerminalCloser)
+	// AcquireSessionInput holds direct terminal writes across the actual pane
+	// write while ownership may move between provider processes.
+	AcquireSessionInput(id domain.SessionID) (release func(), ok bool)
+	// SessionMutationInProgress suppresses observation-driven termination while
+	// Session Manager deliberately replaces or relaunches a provider process.
+	SessionMutationInProgress(id domain.SessionID) bool
 	// SetTerminalInputGate prevents mux input from racing a TUI-to-Chat handoff.
 	SetTerminalInputGate(gate sessionmanager.TerminalInputGate)
+	// SetReviewerTerminator late-binds worker lifecycle teardown to the review
+	// service, which is built alongside the controller-facing service below.
+	SetReviewerTerminator(terminator sessionmanager.ReviewerTerminator)
+}
+
+// sessionLifecycleMessenger adapts sessionLifecycle to ports.AgentMessenger so
+// the fully-wired manager can replace the boot-time pane messenger once ready.
+// None of the daemon-internal sends this feeds (interface-transition drains,
+// lifecycle nudges) carry an attachment, so it is always nil here; the
+// attachment-aware send path only exists at the HTTP /send endpoint.
+type sessionLifecycleMessenger struct {
+	sessionLifecycle
+}
+
+func (m sessionLifecycleMessenger) Send(ctx context.Context, id domain.SessionID, message string) error {
+	return m.sessionLifecycle.Send(ctx, id, message, nil)
+}
+
+type primeSessionServiceAdapter struct {
+	*sessionsvc.Service
+}
+
+func (a primeSessionServiceAdapter) Send(ctx context.Context, id domain.SessionID, message string) error {
+	return a.Service.Send(ctx, id, message, nil)
 }
 
 // startSession builds the controller-facing session service: a session manager
@@ -204,22 +234,8 @@ func startSession(ctx context.Context, cfg config.Config, runtime runtimeselect.
 		ModelValidator:      modelValidator,
 		ProjectDefaults:     cfg.ProjectDefaults,
 	})
-	scmProvider, err := newGitHubSCMProvider(log)
-	if err != nil {
-		logSCMProviderDisabled(log, err)
-	}
-	// Build the GitHub tracker, but keep a true nil ports.Tracker interface on
-	// failure. newGitHubTracker returns (*github.Tracker)(nil) on ErrNoToken,
-	// which Go wraps as a non-nil typed-nil interface — that slips past the
-	// `s.tracker == nil` guard in withIssueDetails and dereferences nil on the
-	// first issue lookup (issue #2685). Assigning the concrete value only on
-	// success leaves tracker as a real interface-nil otherwise.
-	var tracker ports.Tracker
-	if t, err := newGitHubTracker(); err != nil {
-		logTrackerDisabled(log, err)
-	} else {
-		tracker = t
-	}
+	scmProvider := newMultiSCMProvider(cfg.GitLab, log)
+	tracker := newMultiTracker(cfg.GitLab, log)
 	sessionSvc := sessionsvc.NewWithDeps(sessionsvc.Deps{
 		Manager:           mgr,
 		Store:             store,
@@ -247,11 +263,14 @@ func startSession(ctx context.Context, cfg config.Config, runtime runtimeselect.
 		Sessions: store,
 		PRs:      store,
 		Projects: store,
-		Launcher: reviewcore.NewLauncher(reviewers, runtime, cfg.DataDir),
+		Launcher: reviewcore.NewLauncher(reviewers, runtime, cfg.DataDir,
+			reviewcore.WithRunFilePath(cfg.RunFilePath),
+			reviewcore.WithAgentAuth(reviewerAgentAuth{agents: agents})),
 	})
 	reviewSvc := reviewsvc.New(reviewEngine, store,
 		reviewsvc.WithLifecycleReducer(lcm),
 		reviewsvc.WithTelemetry(telemetry))
+	mgr.SetReviewerTerminator(reviewSvc)
 	return sessionSvc, reviewSvc, mgr, nil
 }
 
@@ -363,6 +382,26 @@ func (a agentRegistry) Agent(harness domain.AgentHarness) (ports.Agent, bool) {
 	return agent, ok
 }
 
+type reviewerAgentAuth struct {
+	agents ports.AgentResolver
+}
+
+func (r reviewerAgentAuth) AuthStatus(ctx context.Context, harness domain.ReviewerHarness) (ports.AgentAuthStatus, bool, error) {
+	if r.agents == nil {
+		return "", false, nil
+	}
+	agent, ok := r.agents.Agent(domain.AgentHarness(harness))
+	if !ok {
+		return "", false, nil
+	}
+	checker, ok := agent.(ports.AgentAuthChecker)
+	if !ok {
+		return "", false, nil
+	}
+	status, err := checker.AuthStatus(ctx)
+	return status, true, err
+}
+
 // buildAgentResolver constructs the per-session agent resolver the Session
 // Manager consumes (sessionmanager.Deps.Agents): a registry of the shipped
 // adapters. It still validates AO_AGENT at startup for compatibility with the
@@ -444,6 +483,15 @@ func (c chatLauncher) StartChat(ctx context.Context, cfg sessionmanager.ChatStar
 		SystemPrompt:           cfg.SystemPrompt,
 		AdditionalDirectories:  cfg.AdditionalDirectories,
 		ProviderConversationID: cfg.ProviderConversationID,
+		ControllerReady: func(out chatsvc.StartResult) error {
+			if cfg.ControllerReady == nil {
+				return nil
+			}
+			return cfg.ControllerReady(sessionmanager.ChatStarted{
+				ProviderConversationID: out.ProviderConversationID,
+				ControllerGeneration:   out.ControllerGeneration,
+			})
+		},
 	})
 	if err != nil {
 		return sessionmanager.ChatStarted{}, err
@@ -468,6 +516,10 @@ func (c chatLauncher) RelayChatTurnWithID(
 	text, clientMessageID string,
 ) (string, error) {
 	return c.svc.RelayChatTurnWithID(ctx, id, text, clientMessageID)
+}
+
+func (c chatLauncher) HasLiveChatController(id domain.SessionID) bool {
+	return c.svc.HasLiveChatController(id)
 }
 
 // PrepareChatHandoff closes Chat intake and waits for the controller to become

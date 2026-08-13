@@ -18,7 +18,8 @@ import { terminalTargetBelongsToSession, type TerminalTarget } from "../types/te
 import { sessionIsActive, type WorkspaceSession } from "../types/workspace";
 import { useUiStore, type Theme } from "../stores/ui-store";
 import { useTerminalSession, type AttachableTerminal, type TerminalSessionState } from "../hooks/useTerminalSession";
-import { apiClient, getApiBaseUrl } from "../lib/api-client";
+import { useSessionBrowserLink } from "../hooks/useSessionBrowserLink";
+import { getApiBaseUrl } from "../lib/api-client";
 import { createUrlWatcher, type UrlWatcher } from "../lib/detect-urls";
 import { usesPreviewWorkspaceData } from "../lib/preview-mode";
 import {
@@ -49,6 +50,8 @@ type TerminalPaneProps = {
 	onExitFocus?: () => void;
 	/** Refuse agent PTY input while a controller transition owns the source. */
 	inputDisabled?: boolean;
+	/** Focus the terminal when an in-flight controller asks for human input. */
+	focusRequested?: boolean;
 	/** Provider-owned shared transport lease factory. */
 	createMux?: () => TerminalMux;
 };
@@ -826,9 +829,10 @@ function reviewerPreviewLines(session: WorkspaceSession | undefined): string[] {
 // Agents whose full-screen TUI keeps its own transcript and scrolls it only by
 // keyboard, ignoring SGR wheel reports. The terminal routes the wheel to
 // PageUp/PageDown for these (see XtermTerminal's paneScrollsByKeyboard).
-// kilocode is a fork of opencode and shares its TUI surface; grok and Muse Code
-// also use full-screen keyboard-scroll TUIs, so they scroll the same way.
-const KEYBOARD_SCROLL_PROVIDERS = new Set(["opencode", "kilocode", "grok", "muse"]);
+// kilocode is a fork of opencode and shares its TUI surface; grok also uses a
+// full-screen keyboard-scroll TUI, so both scroll the same way. Muse Code uses
+// the normal terminal buffer instead and must keep the SGR -> tmux scroll path.
+const KEYBOARD_SCROLL_PROVIDERS = new Set(["opencode", "kilocode", "grok"]);
 
 // Whether the given provider's TUI is one of the keyboard-scroll agents above.
 export function providerScrollsByKeyboard(provider?: string): boolean {
@@ -849,6 +853,7 @@ function AttachedTerminal({
 	fontSize,
 	autoFocus,
 	focusRequest,
+	focusRequested,
 	inputDisabled,
 	onExitFocus,
 	createMux,
@@ -908,8 +913,8 @@ function AttachedTerminal({
 		daemonReady,
 		inputDisabled,
 		isVisible,
-		shellTerminalHandleId,
 		onOutput: watchLinks ? handleOutput : undefined,
+		shellTerminalHandleId,
 	});
 	// xterm's write callback means the replay has been parsed, not that the
 	// browser has painted its final viewport. Keep the first-load cover mounted
@@ -957,40 +962,7 @@ function AttachedTerminal({
 			return;
 		}
 	}, [initFailed, onFatal]);
-	const setInspectorViewForSession = useUiStore((state) => state.setInspectorView);
-	const setInspectorOpenForSession = useUiStore((state) => state.setInspectorOpen);
-	const handleLinkOpen = useCallback(
-		(uri: string) => {
-			if (!session?.id || session.kind !== "worker" || !isSessionActive) return;
-			try {
-				const url = new URL(uri);
-				if (url.protocol !== "http:" && url.protocol !== "https:") return;
-			} catch {
-				return;
-			}
-			const linkSessionId = session.id;
-			// A left-click is an explicit request to view the link, so open the
-			// Browser tab now (unlike a passive `ao preview`, which only badges it).
-			setInspectorViewForSession(linkSessionId, "browser");
-			setInspectorOpenForSession(linkSessionId, true);
-			void (async () => {
-				try {
-					const { error: previewError } = await apiClient.POST("/api/v1/sessions/{sessionId}/preview", {
-						params: { path: { sessionId: linkSessionId } },
-						body: { url: uri },
-					});
-					if (previewError) {
-						console.warn("Unable to open terminal link in Browser preview", previewError);
-						return;
-					}
-					await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
-				} catch (error) {
-					console.warn("Unable to open terminal link in Browser preview", error);
-				}
-			})();
-		},
-		[isSessionActive, queryClient, session?.id, session?.kind, setInspectorOpenForSession, setInspectorViewForSession],
-	);
+	const handleLinkOpen = useSessionBrowserLink(session);
 	const restoreSession = useCallback(async () => {
 		if (!session?.id || !canRestoreSession || isRestoring) return;
 		setIsRestoring(true);
@@ -1082,6 +1054,7 @@ function AttachedTerminal({
 					autoFocus={autoFocus}
 					focusRequest={showEmptyState ? undefined : focusRequest}
 					fontSize={fontSize}
+					focusRequested={focusRequested}
 					isVisible={isVisible}
 					onError={handleInitError}
 					onLinkOpen={handleLinkOpen}

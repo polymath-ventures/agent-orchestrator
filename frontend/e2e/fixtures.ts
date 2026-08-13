@@ -1,4 +1,5 @@
 import type { Page, Route } from "@playwright/test";
+import type { components } from "../src/api/schema";
 
 const now = "2026-07-20T18:00:00.000Z";
 
@@ -171,10 +172,23 @@ export async function installBrowserModeApiFixtures(page: Page) {
 						branch: "stacked/auth",
 						status: "review_pending",
 						terminalHandleId: "term-stacked-auth",
+						prs: [prFacts(41, "open"), prFacts(42, "draft"), prFacts(40, "merged")],
+					}),
+					session({
+						id: "demo-ci-failed",
+						kind: "worker",
+						displayName: "Fix flaky renderer smoke",
+						branch: "fix/renderer-smoke",
+						status: "ci_failed",
+						terminalHandleId: "term-demo-ci-failed",
+						autoInjectCI: false,
 						prs: [
-							prFacts(41, "open", "Auth stack parent"),
-							prFacts(42, "draft", "Auth stack child"),
-							prFacts(40, "merged", "Auth stack base"),
+							{
+								...prFacts(43, "open"),
+								ci: "failing",
+								mergeability: "blocked",
+								review: "none",
+							},
 						],
 					}),
 				],
@@ -212,16 +226,18 @@ export async function installBrowserModeApiFixtures(page: Page) {
 }
 
 function session(input: {
+	autoInjectCI?: boolean;
 	branch?: string;
 	displayName: string;
 	id: string;
 	kind: "orchestrator" | "worker";
-	prs?: unknown[];
+	prs?: components["schemas"]["SessionPRFacts"][];
 	status: string;
 	terminalHandleId: string;
 }) {
 	return {
 		activity: { lastActivityAt: now, state: "active" },
+		autoInjectCI: input.autoInjectCI ?? true,
 		branch: input.branch ?? "main",
 		createdAt: now,
 		displayName: input.displayName,
@@ -238,34 +254,40 @@ function session(input: {
 	};
 }
 
-function prFacts(number: number, state: "open" | "draft" | "merged", title: string) {
+function prFacts(number: number, state: "open" | "draft" | "merged"): components["schemas"]["SessionPRFacts"] {
 	return {
 		ci: state === "open" ? "passing" : "unknown",
 		mergeability: state === "open" ? "mergeable" : "unknown",
 		number,
 		review: state === "open" ? "approved" : "none",
-		reviewComments: 0,
+		reviewComments: false,
 		state,
-		title,
 		updatedAt: now,
 		url: `https://github.com/me/api-gateway/pull/${number}`,
 	};
 }
 
-function prSummary(number: number, state: "open" | "draft" | "merged", title: string) {
+function prSummary(
+	number: number,
+	state: "open" | "draft" | "merged",
+	title: string,
+): components["schemas"]["SessionPRSummary"] {
 	return {
 		additions: number,
 		author: "agent",
 		changedFiles: 1,
-		ci: { conclusion: state === "open" ? "success" : "unknown", detailsUrl: "" },
+		ci: {
+			autoInjectCI: true,
+			failingChecks: [],
+			state: state === "open" ? "passing" : "unknown",
+		},
 		deletions: 2,
 		headSha: `sha-${number}`,
 		htmlUrl: `https://github.com/me/api-gateway/pull/${number}`,
 		mergeability: {
-			canMerge: state === "open",
-			conflicts: false,
 			prUrl: `https://github.com/me/api-gateway/pull/${number}`,
-			state: state === "open" ? "clean" : "unknown",
+			reasons: [],
+			state: state === "open" ? "mergeable" : "unknown",
 		},
 		number,
 		observedAt: now,
@@ -291,14 +313,42 @@ function handleSessionPRs(route: Route) {
 			.request()
 			.url()
 			.match(/\/sessions\/([^/]+)\/pr/)?.[1] ?? "";
-	const prs =
+	const prs: components["schemas"]["SessionPRSummary"][] =
 		sessionId === "stacked-auth"
 			? [
 					prSummary(41, "open", "Auth stack parent"),
 					prSummary(42, "draft", "Auth stack child"),
 					prSummary(40, "merged", "Auth stack base"),
 				]
-			: [];
+			: sessionId === "demo-ci-failed"
+				? [
+						{
+							...prSummary(43, "open", "Fix flaky renderer smoke"),
+							ci: {
+								autoInjectCI: false,
+								failingChecks: [
+									{
+										conclusion: "failure",
+										name: "renderer smoke",
+										status: "failed",
+										url: "https://github.com/me/api-gateway/actions/runs/43/jobs/1",
+									},
+								],
+								state: "failing",
+							},
+							mergeability: {
+								prUrl: "https://github.com/me/api-gateway/pull/43",
+								reasons: ["required checks failing"],
+								state: "blocked",
+							},
+							review: {
+								decision: "none",
+								hasUnresolvedHumanComments: false,
+								unresolvedBy: [],
+							},
+						},
+					]
+				: [];
 	return route.fulfill({ json: { sessionId, prs } });
 }
 

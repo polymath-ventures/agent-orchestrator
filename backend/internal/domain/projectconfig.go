@@ -130,6 +130,12 @@ func (c ProjectConfig) ResolveReviewerHarness(worker AgentHarness) ReviewerHarne
 }
 
 func crossFamilyReviewer(worker AgentHarness) ReviewerHarness {
+	switch worker {
+	case HarnessMuse:
+		return ReviewerMuse
+	case HarnessKimchi:
+		return ReviewerKimchi
+	}
 	switch worker.Family() {
 	case AgentFamilyClaude:
 		return ReviewerCodex

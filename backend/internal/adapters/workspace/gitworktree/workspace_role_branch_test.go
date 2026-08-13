@@ -63,10 +63,10 @@ func TestWorkspaceIntegrationCanonicalRoleBranchIsReusableAfterRelease(t *testin
 		t.Fatalf("write residue: %v", err)
 	}
 
-	if out := gitOutput(t, git, stale.Path, "status", "--porcelain"); out != "" {
+	if out := gitOutputRoleBranch(t, git, stale.Path, "status", "--porcelain"); out != "" {
 		t.Fatalf("precondition failed: worktree is not clean to git: %q", out)
 	}
-	if out := gitOutput(t, git, stale.Path, "status", "--porcelain", "--ignored"); out == "" {
+	if out := gitOutputRoleBranch(t, git, stale.Path, "status", "--porcelain", "--ignored"); out == "" {
 		t.Fatalf("precondition failed: residue is not reported as ignored")
 	}
 
@@ -143,10 +143,10 @@ func TestWorkspaceIntegrationDestroySucceedsWithIgnoredResidue(t *testing.T) {
 	// Precondition: git must consider the worktree clean, and must see the
 	// residue only under --ignored. If this ever changes, the assertion below
 	// would be testing something else entirely.
-	if out := gitOutput(t, git, info.Path, "status", "--porcelain"); out != "" {
+	if out := gitOutputRoleBranch(t, git, info.Path, "status", "--porcelain"); out != "" {
 		t.Fatalf("precondition failed: worktree is not clean to git: %q", out)
 	}
-	if out := gitOutput(t, git, info.Path, "status", "--porcelain", "--ignored"); out == "" {
+	if out := gitOutputRoleBranch(t, git, info.Path, "status", "--porcelain", "--ignored"); out == "" {
 		t.Fatalf("precondition failed: residue is not reported as ignored")
 	}
 
@@ -160,7 +160,7 @@ func TestWorkspaceIntegrationDestroySucceedsWithIgnoredResidue(t *testing.T) {
 	}
 }
 
-func gitOutput(t *testing.T, git, dir string, args ...string) string {
+func gitOutputRoleBranch(t *testing.T, git, dir string, args ...string) string {
 	t.Helper()
 	cmd := exec.Command(git, append([]string{"-C", dir}, args...)...)
 	out, err := cmd.CombinedOutput()

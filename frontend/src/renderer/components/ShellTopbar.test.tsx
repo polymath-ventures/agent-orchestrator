@@ -244,12 +244,32 @@ describe("ShellTopbar orchestrator actions", () => {
 		if (!pulses) expect(indicator).not.toHaveClass("animate-status-pulse");
 	});
 
-	it("marks Kanban as the primary action on orchestrator sessions", () => {
+	it("shows a clear Kanban button on embedded orchestrator sessions", async () => {
+		renderTopbar(orchestrator, true);
+
+		const kanbanButton = screen.getByRole("button", { name: "Open Kanban" });
+		expect(kanbanButton).toHaveTextContent("Kanban");
+		expect(kanbanButton).toHaveClass("bg-accent-strong");
+		expect(screen.queryByText("my-app")).not.toBeInTheDocument();
+		await userEvent.click(kanbanButton);
+		expect(navigateMock).toHaveBeenCalledWith({
+			to: "/projects/$projectId",
+			params: { projectId: "proj-1" },
+		});
+	});
+
+	it("opens the board from the Kanban button on the full orchestrator topbar", async () => {
 		renderTopbar(orchestrator);
 
-		expect(screen.getByRole("button", { name: "Open Kanban" })).toHaveClass("bg-accent-strong");
+		const kanbanButton = screen.getByRole("button", { name: "Open Kanban" });
+		expect(kanbanButton).toHaveTextContent("Kanban");
+		expect(kanbanButton).toHaveClass("bg-accent-strong");
 		expect(screen.getByRole("button", { name: "New task" })).toHaveClass("bg-raised");
-		expect(screen.getByRole("button", { name: "New task" })).not.toHaveClass("bg-accent-strong");
+		await userEvent.click(kanbanButton);
+		expect(navigateMock).toHaveBeenCalledWith({
+			to: "/projects/$projectId",
+			params: { projectId: "proj-1" },
+		});
 	});
 
 	it("opens project settings instead of spawning when no orchestrator agent is configured", async () => {

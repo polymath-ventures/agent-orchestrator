@@ -423,6 +423,13 @@ type testConfig struct {
 	dataDir string
 }
 
+var inheritedAOTestEnv = map[string]string{
+	"AO_BROWSER_CAPABILITY": os.Getenv("AO_BROWSER_CAPABILITY"),
+	"AO_PROJECT_ID":         os.Getenv("AO_PROJECT_ID"),
+	"AO_RUNTIME_LAUNCH_ID":  os.Getenv("AO_RUNTIME_LAUNCH_ID"),
+	"AO_SESSION_ID":         os.Getenv("AO_SESSION_ID"),
+}
+
 func setConfigEnv(t *testing.T) testConfig {
 	t.Helper()
 	dir := t.TempDir()
@@ -445,6 +452,7 @@ func setConfigEnv(t *testing.T) testConfig {
 
 func executeCLI(t *testing.T, deps Deps, args ...string) (string, string, error) {
 	t.Helper()
+	isolateInheritedAOEnv(t)
 	var out, errOut bytes.Buffer
 	deps.Out = &out
 	deps.Err = &errOut
@@ -455,6 +463,15 @@ func executeCLI(t *testing.T, deps Deps, args ...string) (string, string, error)
 	cmd.SetArgs(args)
 	err := cmd.Execute()
 	return out.String(), errOut.String(), err
+}
+
+func isolateInheritedAOEnv(t *testing.T) {
+	t.Helper()
+	for name, inherited := range inheritedAOTestEnv {
+		if inherited != "" && os.Getenv(name) == inherited {
+			t.Setenv(name, "")
+		}
+	}
 }
 
 func serverPort(t *testing.T, raw string) int {

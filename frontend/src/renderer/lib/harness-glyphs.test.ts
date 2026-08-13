@@ -26,6 +26,8 @@ const GLYPH_TEST_PROVIDER_MAP = {
 	kilocode: true,
 	vibe: true,
 	pi: true,
+	kimchi: true,
+	"prime-agent": true,
 	autohand: true,
 	muse: true,
 	fake: true,

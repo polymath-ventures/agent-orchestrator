@@ -71,6 +71,9 @@ func (m *Manager) deliverNameAfterStart(ctx context.Context, agent ports.Agent, 
 	if err != nil {
 		return err
 	}
+	if !m.agentStillRunning(ctx, rec) {
+		return fmt.Errorf("deliver name %s: agent is not running", rec.ID)
+	}
 	return m.deliverName(ctx, rec, send)
 }
 
@@ -82,7 +85,7 @@ func (m *Manager) spawnNameSender(agent ports.Agent) nameSender {
 }
 
 func spawnNameMayUseWaitingInput(agent ports.Agent) bool {
-	s, ok := agent.(ports.ActivitySignaler)
+	s, ok := agent.(ports.BlockedActivitySignaler)
 	return ok && s.EmitsBlockedActivity()
 }
 

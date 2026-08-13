@@ -25,6 +25,14 @@ test("ci-local aggregator mirrors every CI parity job", () => {
 	assert.match(src, /test:ops/); // ops-units job (go.yml + frontend.yml)
 });
 
+test("frontend CI prepares the pinned browser runtime before vitest", () => {
+	const workflow = read("../.github/workflows/frontend.yml");
+	const prepareAt = workflow.indexOf("browser-runtime:prepare");
+	const vitestAt = workflow.indexOf("npx vitest run");
+	assert.ok(prepareAt > 0, "frontend CI should prepare the pinned browser runtime");
+	assert.ok(vitestAt > prepareAt, "runtime preparation should precede the vitest suite");
+});
+
 test("ci-local runs the ops unit tests, unconditionally", () => {
 	// go.yml's `ops-units` job and frontend.yml both run `npm run test:ops`; the
 	// gate claimed parity with every CI job while mirroring neither. It matters

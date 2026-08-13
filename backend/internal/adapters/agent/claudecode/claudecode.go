@@ -24,6 +24,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -33,9 +34,11 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/agentbase"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/binaryutil"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/terminalui"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	aoprocess "github.com/aoagents/agent-orchestrator/backend/internal/process"
+	"github.com/aoagents/agent-orchestrator/backend/pkg/agentruntime"
 )
 
 const (
@@ -43,11 +46,6 @@ const (
 	// `ao spawn --agent`.
 	adapterID = "claude-code"
 )
-
-// claudeSessionNamespace seeds the UUIDv5 derivation used only to restore
-// pre-existing sessions whose native Claude ID was not persisted. Fresh
-// sessions receive a random native ID from AllocateAgentSessionID instead.
-var claudeSessionNamespace = uuid.MustParse("a1f0c3d2-7b54-4e96-8a2b-0d9e1f2a3b4c")
 
 // Plugin is the Claude Code agent adapter. It is safe for concurrent use; the
 // binary path is resolved once and cached under binaryMu.
@@ -67,14 +65,14 @@ func New() *Plugin {
 
 // EmitsSubmitActivity signals that Claude Code fires a user-prompt-submit hook
 // under AO's launch, so Activity.State can flip to active after a prompt is
-// accepted. See ports.ActivitySignaler.
+// accepted. See ports.SubmitActivitySignaler.
 func (p *Plugin) EmitsSubmitActivity() bool { return true }
 
 // EmitsBlockedActivity signals that Claude Code fires both pre- and post-tool
 // hooks, so Activity.State can flip to blocked mid-turn on a permission dialog
 // and the guarded send loop can clear it once the tool completes. Only
 // claude-code (and its hook-delegators) carry this trio; see
-// ports.ActivitySignaler.
+// ports.BlockedActivitySignaler.
 func (p *Plugin) EmitsBlockedActivity() bool { return true }
 
 // ExitDetectionMode opts Claude Code into AO's process supervisor. Claude Code's
@@ -149,6 +147,15 @@ var _ ports.AgentQuotaProber = (*Plugin)(nil)
 var _ ports.AgentInterfaceHandoff = (*Plugin)(nil)
 var _ ports.AgentInterfaceHandoffHistoryProbe = (*Plugin)(nil)
 
+// ComposerIsEmpty recognizes Claude Code's blank composer or its dim
+// placeholder. Claude renders normal, non-dim status chrome below a bordered
+// composer, so inspect that bounded region before using the footer-free fallback.
+// A permission-menu selection and normal typed text are rejected.
+func (p *Plugin) ComposerIsEmpty(output string) bool {
+	return terminalui.LastBorderedPromptIsEmptyOrDimPlaceholder(output, "❯") ||
+		terminalui.LastPromptIsEmptyOrDimPlaceholder(output, "❯")
+}
+
 // Manifest returns the adapter's static self-description.
 func (p *Plugin) Manifest() adapters.Manifest {
 	return adapters.Manifest{
@@ -206,7 +213,7 @@ func (p *Plugin) GetConfigSpec(ctx context.Context) (ports.ConfigSpec, error) {
 //
 //	claude [--session-id <uuid>] \
 //	       [--permission-mode <mode>] \
-//	       [--append-system-prompt <system prompt>] \
+//	       [--append-system-prompt-file <path> | --append-system-prompt <text>] \
 //	       [-- <prompt>]
 //
 // --session-id pins Claude's native session UUID to the value Session Manager
@@ -260,15 +267,8 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 		cmd = append(cmd, "--effort", effort)
 	}
 
-	systemPrompt, err := resolveSystemPrompt(cfg)
-	if err != nil {
+	if err := appendLaunchSystemPromptFlags(&cmd, cfg); err != nil {
 		return nil, err
-	}
-	if systemPrompt != "" {
-		// Append rather than replace: Claude Code's default system prompt
-		// carries its tool-use and coding instructions, which we want to
-		// keep. The orchestrator prompt layers on top.
-		cmd = append(cmd, "--append-system-prompt", systemPrompt)
 	}
 
 	if cfg.Prompt != "" {
@@ -346,17 +346,13 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 	if effort != "" && p.supportsEffortFlag(ctx, binary) {
 		cmd = append(cmd, "--effort", effort)
 	}
-	systemPrompt, err := resolveRestoreSystemPrompt(cfg)
-	if err != nil {
+	if err := appendRestoreSystemPromptFlags(&cmd, cfg); err != nil {
 		return nil, false, err
 	}
-	if systemPrompt != "" {
-		// --resume rebuilds the system prompt from the current flags (it is
-		// not stored in the transcript), so standing instructions must be
-		// re-appended or a restored orchestrator loses its role.
-		cmd = append(cmd, "--append-system-prompt", systemPrompt)
-	}
 	cmd = append(cmd, "--resume", sessionID)
+	if cfg.Prompt != "" {
+		cmd = append(cmd, "--", cfg.Prompt)
+	}
 	return cmd, true, nil
 }
 
@@ -526,9 +522,10 @@ func (p *Plugin) AuthStatus(ctx context.Context) (ports.AgentAuthStatus, error) 
 	if status, ok := claudeAuthStatusFromOutput(out); ok {
 		return status, nil
 	}
-	if err != nil {
-		return ports.AgentAuthStatusUnauthorized, nil
-	}
+	// An unfamiliar non-zero result is not affirmative evidence of missing
+	// credentials. Keep this advisory probe unknown and let launch report the
+	// authoritative failure.
+	_ = err
 	return ports.AgentAuthStatusUnknown, nil
 }
 
@@ -781,55 +778,57 @@ func claudeConfigAuthStatus(path string) (ports.AgentAuthStatus, bool, error) {
 // UUID used by historical launches. It remains only as the restore fallback for
 // pre-existing rows without persisted native metadata.
 func claudeSessionUUID(aoSessionID string) string {
-	return uuid.NewSHA1(claudeSessionNamespace, []byte(aoSessionID)).String()
+	return agentruntime.ClaudeSessionID(aoSessionID)
 }
 
-// resolveSystemPrompt returns the system prompt text to append, preferring
-// inline instructions when AO has them.
-func resolveSystemPrompt(cfg ports.LaunchConfig) (string, error) {
-	if cfg.SystemPrompt != "" {
-		return cfg.SystemPrompt, nil
-	}
+// SessionUUID maps an AO session id onto the native Claude Code session UUID
+// used by --session-id and --resume.
+func SessionUUID(aoSessionID string) string {
+	return claudeSessionUUID(aoSessionID)
+}
+
+func appendLaunchSystemPromptFlags(cmd *[]string, cfg ports.LaunchConfig) error {
 	if cfg.SystemPromptFile != "" {
-		data, err := os.ReadFile(cfg.SystemPromptFile)
-		if err != nil {
-			return "", fmt.Errorf("claude-code: read system prompt file: %w", err)
+		if err := validateSystemPromptFile(cfg.SystemPromptFile); err != nil {
+			return err
 		}
-		return strings.TrimRight(string(data), "\n"), nil
+		*cmd = append(*cmd, "--append-system-prompt-file", cfg.SystemPromptFile)
+		return nil
 	}
-	return "", nil
-}
-
-func resolveRestoreSystemPrompt(cfg ports.RestoreConfig) (string, error) {
 	if cfg.SystemPrompt != "" {
-		return cfg.SystemPrompt, nil
+		*cmd = append(*cmd, "--append-system-prompt", cfg.SystemPrompt)
 	}
-	if cfg.SystemPromptFile != "" {
-		data, err := os.ReadFile(cfg.SystemPromptFile)
-		if err != nil {
-			return "", fmt.Errorf("claude-code: read system prompt file: %w", err)
-		}
-		return strings.TrimRight(string(data), "\n"), nil
-	}
-	return "", nil
+	return nil
 }
 
-// appendPermissionFlags maps AO's permission modes onto Claude Code's
-// --permission-mode values:
-//   - default            → no flag. Claude's TUI resolves the starting mode
-//     from ~/.claude/settings.json (defaultMode), exactly as a normal launch.
-//   - accept-edits       → --permission-mode acceptEdits (auto-accept edits +
-//     safe filesystem bash; still prompts for network/system bash, MCP, web)
-//   - auto               → --permission-mode auto (classifier-gated
-//     auto-approval; auto-runs what a safety model deems safe)
-//   - bypass-permissions → --permission-mode bypassPermissions (skip all
-//     checks; equivalent to --dangerously-skip-permissions)
-//
-// Empty/unrecognized normalizes to default, so no flag is emitted.
+func appendRestoreSystemPromptFlags(cmd *[]string, cfg ports.RestoreConfig) error {
+	if cfg.SystemPromptFile != "" {
+		if err := validateSystemPromptFile(cfg.SystemPromptFile); err != nil {
+			return err
+		}
+		*cmd = append(*cmd, "--append-system-prompt-file", cfg.SystemPromptFile)
+		return nil
+	}
+	if cfg.SystemPrompt != "" {
+		*cmd = append(*cmd, "--append-system-prompt", cfg.SystemPrompt)
+	}
+	return nil
+}
+
+func validateSystemPromptFile(path string) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("claude-code: stat system prompt file: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("claude-code: system prompt file %s is not a regular file", path)
+	}
+	return nil
+}
+
 func appendPermissionFlags(cmd *[]string, permissions ports.PermissionMode) {
 	switch ports.NormalizePermissionMode(permissions) {
 	case ports.PermissionModeDefault:
-		// No flag: defer to the user's settings.json defaultMode.
 	case ports.PermissionModeAcceptEdits:
 		*cmd = append(*cmd, "--permission-mode", "acceptEdits")
 	case ports.PermissionModeAuto:
@@ -839,11 +838,6 @@ func appendPermissionFlags(cmd *[]string, permissions ports.PermissionMode) {
 	}
 }
 
-// appendToolFlags emits --allowedTools / --disallowedTools for a tool-scoped
-// launch. Each list is joined with commas into one value so rules that contain
-// spaces (e.g. "Bash(git diff:*)") are not split into separate tool names.
-// Empty lists emit nothing, so an unrestricted launch is unchanged. These rules
-// only bite when the launch is off bypassPermissions, which ignores them.
 func appendToolFlags(cmd *[]string, allowed, disallowed []string) {
 	if len(allowed) > 0 {
 		*cmd = append(*cmd, "--allowedTools", strings.Join(allowed, ","))
@@ -905,20 +899,49 @@ func (p *Plugin) supportsEffortFlag(ctx context.Context, binary string) bool {
 var claudeBinarySpec = binaryutil.BinarySpec{
 	Label:         "claude",
 	Names:         []string{"claude"},
-	WinNames:      []string{"claude.cmd", "claude.exe", "claude"},
+	WinNames:      []string{"claude.exe", "claude.cmd", "claude"},
 	UnixPaths:     []string{"/usr/local/bin/claude", "/opt/homebrew/bin/claude"},
 	UnixHomePaths: binaryutil.NodeManagedUnixHomePaths("claude", []string{".claude", "local", "claude"}),
 	NodeManaged:   true,
 	WinPaths: []binaryutil.WinPath{
-		{Base: binaryutil.WinAppData, Parts: []string{"npm", "claude.cmd"}},
+		{Base: binaryutil.WinAppData, Parts: []string{"npm", "node_modules", "@anthropic-ai", "claude-code", "bin", "claude.exe"}},
 		{Base: binaryutil.WinAppData, Parts: []string{"npm", "claude.exe"}},
+		{Base: binaryutil.WinAppData, Parts: []string{"npm", "claude.cmd"}},
 	},
 }
 
 // ResolveClaudeBinary returns the path to the claude binary, or a wrapped
 // ports.ErrAgentBinaryNotFound when it is absent.
 func ResolveClaudeBinary(ctx context.Context) (string, error) {
-	return binaryutil.ResolveBinary(ctx, claudeBinarySpec)
+	binary, err := binaryutil.ResolveBinary(ctx, claudeBinarySpec)
+	if err != nil {
+		return "", err
+	}
+	return resolveNativeWindowsClaude(binary, runtime.GOOS), nil
+}
+
+// resolveNativeWindowsClaude unwraps the npm-generated command shim to the
+// native executable shipped by Claude Code. The ACP bridge passes this path to
+// Node child_process.spawn, which cannot execute .cmd files directly on current
+// Node releases.
+func resolveNativeWindowsClaude(path, goos string) string {
+	if goos != "windows" || !strings.EqualFold(filepath.Ext(path), ".cmd") {
+		return path
+	}
+	for _, candidate := range windowsNativeClaudeCandidatesForShim(path) {
+		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+			return candidate
+		}
+	}
+	return path
+}
+
+func windowsNativeClaudeCandidatesForShim(shim string) []string {
+	dir := filepath.Dir(shim)
+	return []string{
+		filepath.Join(dir, "claude.exe"),
+		filepath.Join(dir, "node_modules", "@anthropic-ai", "claude-code", "bin", "claude.exe"),
+	}
 }
 
 func (p *Plugin) claudeBinary(ctx context.Context) (string, error) {

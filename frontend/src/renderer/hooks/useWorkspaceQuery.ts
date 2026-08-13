@@ -3,6 +3,7 @@ import type { components } from "../../api/schema";
 import { apiClient, hasTrustedApiBaseUrl } from "../lib/api-client";
 import { mockWorkspaces } from "../lib/mock-data";
 import { usesPreviewWorkspaceData } from "../lib/preview-mode";
+import { toReviewerHarnessId } from "../lib/reviewer-harnesses";
 import { captureRendererEvent } from "../lib/telemetry";
 import {
 	FLEET_WORKSPACE_ID,
@@ -112,9 +113,7 @@ function toWorkspaceSession(
 	const activity = toSessionActivity(session.activity);
 	if (status === "unknown") reportUnknownSessionField("status", session.status);
 	if (!activity || activity.state === "unknown") reportUnknownSessionField("activity", session.activity?.state);
-	const reviewerHarness = ["claude-code", "codex", "codex-fugu", "opencode"].includes(session.reviewerHarness ?? "")
-		? (session.reviewerHarness as WorkspaceSession["reviewerHarness"])
-		: undefined;
+	const reviewerHarness = toReviewerHarnessId(session.reviewerHarness);
 	return {
 		id: session.id,
 		terminalHandleId: session.terminalHandleId,
@@ -131,6 +130,8 @@ function toWorkspaceSession(
 		scmStatus,
 		isTerminated: session.isTerminated,
 		terminateOnPrMerge: session.terminateOnPrMerge ?? false,
+		autoInjectReview: session.autoInjectReview ?? true,
+		autoInjectCI: session.autoInjectCI ?? true,
 		createdAt: session.createdAt,
 		updatedAt: session.updatedAt,
 		activity,

@@ -3,7 +3,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { backdropFor, harnessInitial, hasLogo, LOGO_KEYS } from "./harnessLogo";
 
-// The 24 harnesses the daemon accepts — backend/internal/domain/harness.go.
+// The harnesses the daemon accepts — backend/internal/domain/harness.go.
 const ALL_HARNESSES = [
 	"claude-code",
 	"codex",
@@ -29,11 +29,13 @@ const ALL_HARNESSES = [
 	"vibe",
 	"pi",
 	"autohand",
+	"kimchi",
 	"fake",
 ];
 
 // The fake harness exists only for tests and intentionally has no brand asset.
-const NO_ASSET = ["fake"];
+// prime-agent ships a mark on desktop but it has not been ported to mobile yet.
+const NO_ASSET = ["fake", "prime-agent"];
 
 describe("logo registry", () => {
 	it("has a mark for every harness that ships one", () => {
