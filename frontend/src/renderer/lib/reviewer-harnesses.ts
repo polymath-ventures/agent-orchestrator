@@ -10,6 +10,7 @@ const REVIEWER_HARNESS_IDS = [
 	"autohand",
 	"claude-code",
 	"codex",
+	"codex-fugu",
 	"cline",
 	"continue",
 	"copilot",

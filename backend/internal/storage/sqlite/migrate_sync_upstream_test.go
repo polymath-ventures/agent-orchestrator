@@ -107,6 +107,18 @@ INSERT INTO sessions (
 		t.Fatalf("seed shipped version 60 schema: %v", err)
 	}
 
+	gooseMu.Lock()
+	if err := goose.UpTo(db, "migrations", 83); err != nil {
+		gooseMu.Unlock()
+		t.Fatalf("apply incoming harness migrations: %v", err)
+	}
+	gooseMu.Unlock()
+	for _, harness := range []string{"'codex-fugu'", "'kimchi'", "'prime-agent'"} {
+		if schema := tableSchema(t, db, "sessions"); !strings.Contains(schema, harness) {
+			t.Fatalf("incoming harness migrations silently omitted %s:\n%s", harness, schema)
+		}
+	}
+
 	beforeLedger := appliedLedgerAtOrBelow(t, db, 60)
 	if err := migrate(db); err != nil {
 		t.Fatalf("upgrade version 60 database: %v", err)
@@ -136,7 +148,7 @@ WHERE is_applied = 1 AND version_id BETWEEN 61 AND 91
 	}
 
 	schema := tableSchema(t, db, "sessions")
-	for _, harness := range []string{"'codex-fugu'", "'muse'"} {
+	for _, harness := range []string{"'codex-fugu'", "'muse'", "'kimchi'", "'prime-agent'"} {
 		if !strings.Contains(schema, harness) {
 			t.Errorf("sessions harness CHECK is missing %s:\n%s", harness, schema)
 		}
@@ -146,6 +158,14 @@ INSERT INTO sessions (id, project_id, num, harness, activity_last_at, created_at
 VALUES ('sync-project-2', 'sync-project', 2, 'muse', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 `); err != nil {
 		t.Fatalf("insert Muse session after upgrade: %v", err)
+	}
+	for number, harness := range []string{"kimchi", "prime-agent"} {
+		if _, err := db.Exec(`
+INSERT INTO sessions (id, project_id, num, harness, activity_last_at, created_at, updated_at)
+VALUES (?, 'sync-project', ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+`, fmt.Sprintf("sync-project-%d", number+3), number+3, harness); err != nil {
+			t.Fatalf("insert %s session after upgrade: %v", harness, err)
+		}
 	}
 
 	for _, field := range []struct {

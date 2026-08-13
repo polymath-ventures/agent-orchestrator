@@ -25,7 +25,10 @@ describe("parsePairingPayload", () => {
 		expect(
 			parsePairingPayload(JSON.stringify({ v: 1, host: "tailnet.example", port: 443, secure: true }))?.secure,
 		).toBe(true);
-		expect(parsePairingPayload(JSON.stringify({ v: 1, host: "100.64.1.2", port: "3011" }))?.secure).toBe(false);
+		expect(parsePairingPayload(JSON.stringify({ v: 1, host: "100.64.1.2", port: "3011" }))).toMatchObject({
+			password: "",
+			secure: false,
+		});
 	});
 
 	it("rejects non-pairing payloads", () => {

@@ -1,8 +1,8 @@
 import type { ServerConfig } from "./config";
 
 // Parses the JSON payload encoded in the desktop's pairing QR code. Pure and
-// dependency-free (no React/RN imports) so it typechecks trivially and needs
-// no test runner in this package. The password is included so a single scan
+// dependency-free (no React/RN imports) so it remains directly unit-testable.
+// The password is included so a single scan
 // autofills everything; it is optional for back-compat with older QR codes
 // (host+port only), in which case the user types the password by hand.
 export type ParsedPairing = { host: string; port: string; password: string; secure: boolean };

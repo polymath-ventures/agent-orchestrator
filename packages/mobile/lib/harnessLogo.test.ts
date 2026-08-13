@@ -3,7 +3,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { backdropFor, harnessInitial, hasLogo, LOGO_KEYS } from "./harnessLogo";
 
-// The 24 harnesses the daemon accepts — backend/internal/domain/harness.go.
+// The harnesses the daemon accepts — backend/internal/domain/harness.go.
 const ALL_HARNESSES = [
 	"claude-code",
 	"codex",
