@@ -271,6 +271,7 @@ func TestInventoryDerivesReviewerCapabilityFromHarness(t *testing.T) {
 		harnessAuthAgent(string(domain.HarnessOpenCode), "OpenCode", ports.AgentAuthStatusAuthorized, nil),
 		harnessAuthAgent(string(domain.HarnessCodexFugu), "Codex Fugu", ports.AgentAuthStatusAuthorized, nil),
 		harnessAuthAgent(string(domain.HarnessGrok), "Grok", ports.AgentAuthStatusAuthorized, nil),
+		harnessAuthAgent(string(domain.HarnessPrimeAgent), "Prime Agent", ports.AgentAuthStatusAuthorized, nil),
 	})
 
 	initial, err := svc.List(context.Background())
@@ -314,6 +315,7 @@ func TestInventoryDerivesReviewerCapabilityFromHarness(t *testing.T) {
 		{id: string(domain.HarnessOpenCode), want: true},
 		{id: string(domain.HarnessCodexFugu), want: true},
 		{id: string(domain.HarnessGrok), want: true},
+		{id: string(domain.HarnessPrimeAgent), want: false},
 	} {
 		got, err := svc.Probe(context.Background(), tc.id)
 		if err != nil {
@@ -347,6 +349,9 @@ func assertReviewerCapabilities(t *testing.T, infos []Info) {
 	}
 	if !byID[string(domain.HarnessGrok)].ReviewerCapable {
 		t.Fatalf("grok = %#v, want reviewer capable", byID[string(domain.HarnessGrok)])
+	}
+	if byID[string(domain.HarnessPrimeAgent)].ReviewerCapable {
+		t.Fatalf("prime-agent = %#v, want worker-only", byID[string(domain.HarnessPrimeAgent)])
 	}
 }
 

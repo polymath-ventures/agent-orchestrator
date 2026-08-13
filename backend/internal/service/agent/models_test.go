@@ -209,6 +209,9 @@ func TestModelAvailabilityMarksReviewerCapabilityFromDomainVocabulary(t *testing
 		harnessCatalogAgent(domain.HarnessGrok, "Grok", &catalogProbeAgent{
 			catalog: []ports.ModelCatalogEntry{{ID: "grok", Label: "Grok"}},
 		}),
+		harnessCatalogAgent(domain.HarnessPrimeAgent, "Prime Agent", &catalogProbeAgent{
+			catalog: []ports.ModelCatalogEntry{{ID: "prime", Label: "Prime"}},
+		}),
 	})
 
 	got, err := svc.ModelAvailability(context.Background(), ModelAvailabilityRequest{Force: true})
@@ -229,6 +232,9 @@ func TestModelAvailabilityMarksReviewerCapabilityFromDomainVocabulary(t *testing
 	}
 	if !byID[string(domain.HarnessGrok)].ReviewerCapable {
 		t.Fatalf("grok = %#v, want reviewer capable", byID[string(domain.HarnessGrok)])
+	}
+	if byID[string(domain.HarnessPrimeAgent)].ReviewerCapable {
+		t.Fatalf("prime-agent = %#v, want worker-only", byID[string(domain.HarnessPrimeAgent)])
 	}
 }
 

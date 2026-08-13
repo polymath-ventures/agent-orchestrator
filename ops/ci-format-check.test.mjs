@@ -13,7 +13,7 @@ import { fileURLToPath } from "node:url";
 
 const scriptPath = fileURLToPath(new URL("../scripts/ci/format-check.sh", import.meta.url));
 const workflowPath = fileURLToPath(new URL("../.github/workflows/prettier.yml", import.meta.url));
-const prettierIgnorePath = fileURLToPath(new URL("../.prettierignore", import.meta.url));
+const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 
 function git(cwd, ...args) {
 	const r = spawnSync("git", args, { cwd, encoding: "utf8" });
@@ -172,6 +172,13 @@ test("prettier CI delegates changed-file filtering to the parity script", () => 
 });
 
 test("generated Cloud schema is excluded from source formatting", () => {
-	const ignore = readFileSync(prettierIgnorePath, "utf8");
-	assert.match(ignore, /^packages\/cloud-client\/src\/schema\.ts$/m);
+	const args = ["--yes", "prettier@3", "--check", "packages/cloud-client/src/schema.ts"];
+	const ignored = spawnSync("npx", args, { cwd: repoRoot, encoding: "utf8" });
+	assert.equal(ignored.status, 0, `generated schema was not ignored\n${ignored.stdout}\n${ignored.stderr}`);
+
+	const checked = spawnSync("npx", [...args, "--ignore-path", "/dev/null"], {
+		cwd: repoRoot,
+		encoding: "utf8",
+	});
+	assert.notEqual(checked.status, 0, "fixture unexpectedly conforms to the root Prettier style");
 });

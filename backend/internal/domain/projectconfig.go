@@ -148,10 +148,6 @@ func crossFamilyReviewer(worker AgentHarness) ReviewerHarness {
 	}
 }
 
-func configurableReviewerHarness(h ReviewerHarness) bool {
-	return h.IsKnown() || h == ReviewerGrok
-}
-
 // RoleOverride overrides the harness and/or agent config for a session role.
 type RoleOverride struct {
 	Harness     AgentHarness `json:"agent,omitempty"`
@@ -279,7 +275,7 @@ func (c ProjectConfig) Validate() error {
 		return fmt.Errorf("primeRulesFile %q: %w", c.PrimeRulesFile, err)
 	}
 	for i, rv := range c.Reviewers {
-		if !configurableReviewerHarness(rv.Harness) {
+		if !rv.Harness.IsKnown() {
 			return fmt.Errorf("reviewers[%d].harness: unknown harness %q", i, rv.Harness)
 		}
 		if err := rv.AgentConfig.Validate(); err != nil {
