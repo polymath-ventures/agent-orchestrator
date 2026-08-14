@@ -141,11 +141,10 @@ func (p *Poller) Poll(ctx context.Context) error {
 			if workspaceOwned {
 				if !restoringCleared {
 					if _, err := p.setter.SetPreview(ctx, sess.ID, ""); err != nil {
-						if isExpectedShutdownCancellation(ctx, err) {
-							return nil
+						if !isExpectedShutdownCancellation(ctx, err) {
+							p.logger.Error("preview poller: failed to clear stale preview",
+								"session", sess.ID, "err", err)
 						}
-						p.logger.Error("preview poller: failed to clear stale preview",
-							"session", sess.ID, "err", err)
 					}
 				}
 				p.seen[sess.ID] = entryState{path: storedEntry, cleared: true}
