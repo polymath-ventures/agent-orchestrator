@@ -2,6 +2,7 @@ package preview
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -92,8 +93,15 @@ func (p *Poller) Start(ctx context.Context) <-chan struct{} {
 
 func (p *Poller) pollAndLog(ctx context.Context) {
 	if err := p.Poll(ctx); err != nil {
+		if isExpectedShutdownCancellation(ctx, err) {
+			return
+		}
 		p.logger.Error("preview poller: poll failed", "err", err)
 	}
+}
+
+func isExpectedShutdownCancellation(ctx context.Context, err error) bool {
+	return errors.Is(ctx.Err(), context.Canceled) && errors.Is(err, context.Canceled)
 }
 
 // Poll performs one deterministic scan of active worker sessions.
@@ -133,8 +141,10 @@ func (p *Poller) Poll(ctx context.Context) error {
 			if workspaceOwned {
 				if !restoringCleared {
 					if _, err := p.setter.SetPreview(ctx, sess.ID, ""); err != nil {
-						p.logger.Error("preview poller: failed to clear stale preview",
-							"session", sess.ID, "err", err)
+						if !isExpectedShutdownCancellation(ctx, err) {
+							p.logger.Error("preview poller: failed to clear stale preview",
+								"session", sess.ID, "err", err)
+						}
 					}
 				}
 				p.seen[sess.ID] = entryState{path: storedEntry, cleared: true}
