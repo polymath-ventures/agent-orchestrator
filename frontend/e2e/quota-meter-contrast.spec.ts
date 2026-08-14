@@ -2,34 +2,28 @@
  * The quota meter's usage bar must stay legible in every theme.
  *
  * This guard exists because a class-name assertion would not have caught the bug
- * it guards (agent-orchestrator#289). Two separate things broke, both silently:
- * the 2026-08-07 upstream sync deleted the fork-only `--color-quota-track` token
- * the groove was painted with, and the same sync's named-theme system redefined
- * `--accent` — the normal-severity fill — as a subtle hover surface
- * (`oklch(0.967 …)` in light). The markup never changed; only the resolved
- * colours did.
+ * it guards (agent-orchestrator#289). Two things broke silently: the 2026-08-07
+ * upstream sync deleted the fork-only `--color-quota-track` token the groove was
+ * painted with, and the same sync's named-theme system redefined `--accent` —
+ * the normal-severity fill — as a subtle hover surface (`oklch(0.967 …)` in
+ * light). The markup never changed; only the resolved colours did.
  *
- * So this reads the colours the browser actually computes, for every theme scope
- * `tokens.css` defines, and asserts real contrast. A deleted token resolves to
- * transparent and fails; a token redefined too close to its neighbour fails on
- * ratio. Do not rewrite this as a `toHaveClass` check — that is precisely the
- * test that stayed green throughout the bug.
+ * So this measures **rendered pixels**, not declared styles. It screenshots the
+ * chip and samples three points: inside the fill, inside the empty track, and the
+ * chip background beside the bar. Reading the pixels rather than the tokens is
+ * what makes it honest — an earlier version of this file read
+ * `getComputedStyle().backgroundColor` and passed happily with `opacity: 0` on
+ * the fill, because a declared colour says nothing about what reached the screen.
+ * It also means opacity, filters, ancestor compositing and translucency need no
+ * special handling here: the browser has already resolved them.
+ *
+ * Do not rewrite this as a `toHaveClass` check, and do not go back to reading
+ * computed styles. Both are exactly the tests that stayed green through this bug.
  */
 import { expect, test } from "@playwright/test";
+import { PNG } from "pngjs";
+import { THEME_STYLES } from "../src/renderer/lib/theme";
 import { installBrowserModeApiFixtures } from "./fixtures";
-
-/** Mirrors ThemeStyle in src/renderer/lib/theme.ts. */
-const THEME_STYLES = [
-	"orchestrate",
-	"github",
-	"catppuccin",
-	"dracula",
-	"tokyo-night",
-	"rose-pine",
-	"nord",
-	"gruvbox",
-	"solarized",
-] as const;
 
 const APPEARANCES = ["light", "dark"] as const;
 
@@ -40,6 +34,14 @@ const APPEARANCES = ["light", "dark"] as const;
  */
 const MIN_RATIO = 3;
 
+/**
+ * The groove is meant to be subtle, so it is checked for *existence* rather than
+ * contrast: it must be painted at all. An 8%-alpha track over a light card lands
+ * around 20 levels away; anything under this is indistinguishable from an
+ * unpainted groove, which is what a deleted token produces.
+ */
+const MIN_TRACK_DELTA = 4;
+
 /** A normal-severity reading — the only severity that was broken. */
 const metrics = {
 	history: [],
@@ -49,25 +51,15 @@ const metrics = {
 			state: "ok",
 			hasData: true,
 			probedAt: new Date(Date.now() - 4 * 60_000).toISOString(),
-			snapshots: [{ windowName: "primary", used: 20, windowEnd: new Date(Date.now() + 36 * 3600_000).toISOString() }],
+			snapshots: [{ windowName: "primary", used: 40, windowEnd: new Date(Date.now() + 36 * 3600_000).toISOString() }],
 		},
 	],
 	latest: { quotas: [] },
 };
 
-type Rgba = { r: number; g: number; b: number; a: number };
+type Rgb = { r: number; g: number; b: number };
 
-/** Flatten a translucent colour onto what sits behind it. */
-function over(fg: Rgba, bg: Rgba): Rgba {
-	return {
-		r: fg.r * fg.a + bg.r * (1 - fg.a),
-		g: fg.g * fg.a + bg.g * (1 - fg.a),
-		b: fg.b * fg.a + bg.b * (1 - fg.a),
-		a: 1,
-	};
-}
-
-function luminance({ r, g, b }: Rgba): number {
+function luminance({ r, g, b }: Rgb): number {
 	const channel = (raw: number) => {
 		const c = raw / 255;
 		return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
@@ -75,9 +67,17 @@ function luminance({ r, g, b }: Rgba): number {
 	return 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b);
 }
 
-function contrast(a: Rgba, b: Rgba): number {
+function contrast(a: Rgb, b: Rgb): number {
 	const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
 	return (hi + 0.05) / (lo + 0.05);
+}
+
+function channelDelta(a: Rgb, b: Rgb): number {
+	return Math.max(Math.abs(a.r - b.r), Math.abs(a.g - b.g), Math.abs(a.b - b.b));
+}
+
+function describe({ r, g, b }: Rgb): string {
+	return `rgb(${r}, ${g}, ${b})`;
 }
 
 test("the usage bar stays legible against its track in every theme", async ({ page }) => {
@@ -88,12 +88,18 @@ test("the usage bar stays legible against its track in every theme", async ({ pa
 	await page.goto("/");
 	const bar = page.getByRole("progressbar", { name: /quota usage$/ }).first();
 	await expect(bar).toBeVisible();
+	// The chip is the nearest ancestor painting an opaque background, so its
+	// screenshot contains the bar plus the surface the bar sits on.
+	const chip = bar.locator("xpath=ancestor::*[contains(@class,'bg-background')][1]");
+	await expect(chip).toBeVisible();
 
 	const failures: string[] = [];
 
 	for (const style of THEME_STYLES) {
 		for (const appearance of APPEARANCES) {
-			// Exactly what applyDocumentTheme / applyDocumentThemeStyle do.
+			// Exactly what applyDocumentTheme / applyDocumentThemeStyle do. Applied
+			// after mount on purpose: the renderer re-applies its stored theme during
+			// hydration and would overwrite anything set before that.
 			await page.evaluate(
 				([styleName, mode]) => {
 					const root = document.documentElement;
@@ -105,70 +111,47 @@ test("the usage bar stays legible against its track in every theme", async ({ pa
 				[style, appearance] as const,
 			);
 
-			const sample = await bar.evaluate((track) => {
-				const fillEl = track.firstElementChild;
-				if (!fillEl) throw new Error("the bar has no fill element");
-
-				// Let the browser parse the colour rather than regexing it here:
-				// getComputedStyle hands back whatever function the token was authored
-				// in (`oklch(0.945 0.003 286.32)`, `#58a6ff`, `rgb(…)`), and a canvas
-				// resolves every one of those to sRGB bytes.
-				const canvas = document.createElement("canvas");
-				canvas.width = canvas.height = 1;
-				const ctx = canvas.getContext("2d", { willReadFrequently: true });
-				if (!ctx) throw new Error("no 2d context");
-				const toRgba = (value: string) => {
-					ctx.clearRect(0, 0, 1, 1);
-					ctx.fillStyle = value;
-					ctx.fillRect(0, 0, 1, 1);
-					const [r, g, b, a] = ctx.getImageData(0, 0, 1, 1).data;
-					return { r, g, b, a: a / 255, css: value };
-				};
-
-				// Nearest ancestor painting an opaque background, so a translucent track
-				// composites onto what the user actually sees behind it.
-				let behind: Element | null = track.parentElement;
-				let backdrop = "rgb(255, 255, 255)";
-				while (behind) {
-					const bg = getComputedStyle(behind).backgroundColor;
-					if (toRgba(bg).a > 0) {
-						backdrop = bg;
-						break;
-					}
-					behind = behind.parentElement;
-				}
-
-				return {
-					track: toRgba(getComputedStyle(track).backgroundColor),
-					fill: toRgba(getComputedStyle(fillEl).backgroundColor),
-					backdrop: toRgba(backdrop),
-				};
-			});
-
 			const scope = `${style}/${appearance}`;
-			const track = over(sample.track, sample.backdrop);
-
-			// Checked separately from contrast, because contrast cannot see this: a
-			// transparent track simply falls through to the card behind it, so the fill
-			// still contrasts and the ratio still passes while the groove has silently
-			// stopped being painted. That is exactly how the deletion of
-			// --color-quota-track went unnoticed.
-			if (sample.track.a === 0) {
-				failures.push(`${scope}: track resolves to nothing (${sample.track.css}) — its token is undefined`);
-			}
-
-			// A deleted token resolves to rgba(0, 0, 0, 0). Reported separately from a
-			// ratio failure because the fix is different: restore the token, not recolour.
-			if (sample.fill.a === 0) {
-				failures.push(`${scope}: fill resolves to nothing (${sample.fill.css}) — its token is undefined`);
+			const chipBox = await chip.boundingBox();
+			const barBox = await bar.boundingBox();
+			if (!chipBox || !barBox) {
+				failures.push(`${scope}: the bar or its chip has no layout box`);
 				continue;
 			}
 
-			const fill = over(sample.fill, track);
+			const png = PNG.sync.read(await chip.screenshot());
+			const scale = png.width / chipBox.width;
+			const at = (cssX: number, cssY: number): Rgb => {
+				const x = Math.min(png.width - 1, Math.max(0, Math.round((cssX - chipBox.x) * scale)));
+				const y = Math.min(png.height - 1, Math.max(0, Math.round((cssY - chipBox.y) * scale)));
+				const i = (png.width * y + x) << 2;
+				return { r: png.data[i], g: png.data[i + 1], b: png.data[i + 2] };
+			};
+
+			const midY = barBox.y + barBox.height / 2;
+			// 40% used: sample well inside the fill and well inside the remainder, away
+			// from the rounded caps and their antialiasing.
+			const fill = at(barBox.x + barBox.width * 0.15, midY);
+			const track = at(barBox.x + barBox.width * 0.85, midY);
+			// The chip's own padding, level with the bar: background only, no glyphs.
+			const backdrop = at(chipBox.x + 3, midY);
+
 			const ratio = contrast(fill, track);
 			if (ratio < MIN_RATIO) {
 				failures.push(
-					`${scope}: fill ${sample.fill.css} on track ${sample.track.css} is ${ratio.toFixed(2)}:1, below ${MIN_RATIO}:1`,
+					`${scope}: fill ${describe(fill)} on track ${describe(track)} is ${ratio.toFixed(2)}:1, below ${MIN_RATIO}:1`,
+				);
+			}
+
+			// Checked separately, because contrast cannot see it: an unpainted track
+			// simply shows the card behind it, so the fill still contrasts and the ratio
+			// still passes while the groove has silently stopped being drawn. That is
+			// precisely how the deletion of --color-quota-track went unnoticed.
+			const trackDelta = channelDelta(track, backdrop);
+			if (trackDelta < MIN_TRACK_DELTA) {
+				failures.push(
+					`${scope}: track ${describe(track)} is indistinguishable from the card ${describe(backdrop)} ` +
+						`(${trackDelta} levels) — the groove is not being painted`,
 				);
 			}
 		}
