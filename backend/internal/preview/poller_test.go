@@ -346,6 +346,19 @@ func TestPollerLogsOperationalPollFailure(t *testing.T) {
 	}
 }
 
+func TestPollerLogsLiveCancellationAsOperationalFailure(t *testing.T) {
+	svc := &fakePreviewSessions{listErr: context.Canceled}
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logs, nil))
+	poller := NewPoller(svc, svc, "http://127.0.0.1:3001", PollerConfig{Logger: logger})
+
+	poller.pollAndLog(context.Background())
+
+	if !strings.Contains(logs.String(), "preview poller: poll failed") {
+		t.Fatalf("logs = %q, want live context cancellation to remain visible", logs.String())
+	}
+}
+
 func TestPollerDoesNotAbandonStalePreviewBookkeepingOnClearCancellation(t *testing.T) {
 	workspace := t.TempDir()
 	svc := &fakePreviewSessions{
@@ -367,6 +380,25 @@ func TestPollerDoesNotAbandonStalePreviewBookkeepingOnClearCancellation(t *testi
 	}
 	if got := poller.seen["ao-1"]; !got.cleared || got.path != "index.html" {
 		t.Fatalf("seen[ao-1] = %#v, want cleared stale entry bookkeeping", got)
+	}
+}
+
+func TestPollerLogsOperationalStalePreviewClearFailure(t *testing.T) {
+	workspace := t.TempDir()
+	svc := &fakePreviewSessions{
+		sessions: []domain.SessionRecord{workerSession("ao-1", workspace, "index.html")},
+		setErr:   errors.New("database unavailable"),
+	}
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logs, nil))
+	poller := NewPoller(svc, svc, "http://127.0.0.1:3001", PollerConfig{Logger: logger})
+
+	if err := poller.Poll(context.Background()); err != nil {
+		t.Fatalf("Poll: %v", err)
+	}
+
+	if !strings.Contains(logs.String(), "preview poller: failed to clear stale preview") {
+		t.Fatalf("logs = %q, want stale preview clear failure to remain visible", logs.String())
 	}
 }
 
