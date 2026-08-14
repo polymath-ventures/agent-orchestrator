@@ -16,7 +16,11 @@ test("retired Beads residue cannot dirty an orchestrator checkout", async (t) =>
 	execFileSync("git", ["config", "user.name", "Test"], { cwd: root });
 	await writeFile(path.join(root, ".gitignore"), await readFile(repoIgnorePath));
 	execFileSync("git", ["add", ".gitignore"], { cwd: root });
-	execFileSync("git", ["commit", "--quiet", "-m", "fixture"], { cwd: root });
+	execFileSync(
+		"git",
+		["-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", "commit", "--quiet", "-m", "fixture"],
+		{ cwd: root },
+	);
 
 	await mkdir(path.join(root, ".beads"));
 	await writeFile(path.join(root, ".beads", "state.jsonl"), "local state\n");

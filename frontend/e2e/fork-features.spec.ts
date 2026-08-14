@@ -103,13 +103,13 @@ test("fork UI features stay mounted from the application shell", async ({ page }
 
 	await page.goto("/#/settings");
 	const globalSettings = page.getByRole("dialog");
-	const fleetCard = globalSettings.getByText("Fleet", { exact: true }).locator("../..");
-	const primeCard = globalSettings.getByText("Prime", { exact: true }).locator("../..");
-	await expect(fleetCard).toBeVisible();
-	await expect(primeCard).toBeVisible();
+	const fleetTitle = globalSettings.getByText("Fleet", { exact: true });
+	const primeTitle = globalSettings.getByText("Prime", { exact: true });
+	await expect(fleetTitle).toBeVisible();
+	await expect(primeTitle).toBeVisible();
 	if (captureEvidence) {
-		await fleetCard.screenshot({ path: `${evidenceDir}/fleet-controls.png` });
-		await primeCard.getByText("Prime", { exact: true }).evaluate((title) => title.scrollIntoView({ block: "start" }));
+		await fleetTitle.locator("../..").screenshot({ path: `${evidenceDir}/fleet-controls.png` });
+		await primeTitle.evaluate((title) => title.scrollIntoView({ block: "start" }));
 		await globalSettings.screenshot({ path: `${evidenceDir}/prime-controls.png` });
 	}
 

@@ -134,7 +134,7 @@ The commands in step 4 are the blocking sync gate. All green before PR.
 
 Open PR `chore(sync): upstream <short-sha-range>` with the conflict table in the body. Run the repo's standard final-review loop (independent reviewer, different family from the executor); post the SHA-pinned `final-review`/`review-passed` statuses only on a clean verdict; merge through the status gate. Then `cleanup-merge`.
 
-**Merge authorization**: the operator granted standing authorization (2026-07-22, recorded here and reviewed into the repo) for landing **clean, fully-gated** sync merges when this skill runs — scheduled or interactive. That grant covers ONLY the clean path: any STOP condition, unresolved finding, or gate failure parks (step 7); the standing grant never extends to merging past an ambiguous gate.
+**Merge authorization**: the operator granted standing authorization (2026-07-22, recorded here and reviewed into the repo) for landing **clean, fully-gated** sync merges when this skill runs — scheduled or interactive. That grant covers ONLY the clean path: any STOP condition, unresolved finding, or gate failure parks (step 8); the standing grant never extends to merging past an ambiguous gate.
 
 ### 8. Park (instead of landing)
 
