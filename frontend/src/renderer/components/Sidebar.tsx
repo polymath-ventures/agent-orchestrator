@@ -192,19 +192,24 @@ export function Sidebar({
 }: SidebarProps) {
 	const { t } = useTranslation();
 	const selection = useSelection();
-	const { state, setOpen } = useSidebar();
+	const { state, setOpen, isMobile, openMobile } = useSidebar();
 	const isCollapsed = state === "collapsed";
 	const [expandedChromeVisible, setExpandedChromeVisible] = useState(!isCollapsed);
 	// One IPC subscription for both footer variants of the restart-to-update prompt.
 	const updateStatus = useUpdateStatus();
 	// The sidebar-footer quota widget is hidden entirely by the Settings toggle.
-	// The expanded-chrome cluster only *visually* drops out on the icon rail, so
-	// the mount is gated on isCollapsed too: QuotaPanel polls /api/v1/metrics on a
-	// 30s interval, and an invisible widget must not keep that poll alive.
-	// Remounting on expand is safe — the widget derives probe-in-flight state from
-	// the global mutation key precisely so it survives one.
+	// It is also gated on the sidebar actually being on screen, because the
+	// expanded-chrome cluster only *visually* drops out on the icon rail while
+	// QuotaPanel keeps polling /api/v1/metrics every 30s behind it. Remounting when
+	// the sidebar reopens is safe: the widget derives probe-in-flight state from the
+	// global mutation key precisely so it survives one.
+	//
+	// Which "on screen" applies depends on the variant. `state` tracks the DESKTOP
+	// open flag, so it says nothing about the mobile sheet — reusing it there would
+	// blank the widget inside an open sheet whenever the desktop sidebar happened to
+	// be collapsed.
 	const isQuotaWidgetVisible = useUiStore((state) => state.isQuotaWidgetVisible);
-	const showQuotaWidget = isQuotaWidgetVisible && !isCollapsed;
+	const showQuotaWidget = isQuotaWidgetVisible && (isMobile ? openMobile : !isCollapsed);
 	// Daemon status for the smoke suite's sr-only mirror in the footer. Null when
 	// rendered outside the shell (unit tests) — the mirror simply doesn't render.
 	const daemonStatus = useShellMaybe()?.daemonStatus ?? null;
