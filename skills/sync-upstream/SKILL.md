@@ -97,7 +97,8 @@ existence alone is never sufficient.
 Run every named behavioral guard, including the browser-mode guards that are not
 part of the local CI-parity gate: `frontend/e2e/browser-mode.spec.ts`,
 `frontend/e2e/mobile-sidebar-toggle.spec.ts`, and
-`frontend/e2e/terminal-focus.spec.ts`.
+`frontend/e2e/terminal-focus.spec.ts`, plus the fork UI mount guard in
+`frontend/e2e/fork-features.spec.ts`.
 
 ```bash
 set -euo pipefail
@@ -105,10 +106,11 @@ npm run ci-local
 npm run agents:check
 (
 	cd frontend
-	npm run test:e2e -- \
+	AO_E2E_PORT="${AO_E2E_PORT:-5174}" npm run test:e2e -- \
 		e2e/browser-mode.spec.ts \
 		e2e/mobile-sidebar-toggle.spec.ts \
-		e2e/terminal-focus.spec.ts
+		e2e/terminal-focus.spec.ts \
+		e2e/fork-features.spec.ts
 )
 ```
 

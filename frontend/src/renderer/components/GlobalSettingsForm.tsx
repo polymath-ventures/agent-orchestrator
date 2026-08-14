@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Mail } from "lucide-react";
+import { FleetSection } from "./FleetSection";
+import { PrimeSection } from "./PrimeSection";
 import { GeneralSettingsSection } from "./settings/GeneralSettingsSection";
 import { ReportProblemDialog } from "./settings/ReportProblemDialog";
 import { SettingsLinkRow } from "./settings/SettingsRow";
@@ -35,6 +37,8 @@ export function GlobalSettingsForm({
 				{(section === "all" || section === "general") && (
 					<>
 						<GeneralSettingsSection onConnectMobile={() => onOpenConnectMobile?.()} titleHidden={leadingTitleHidden} />
+						<FleetSection />
+						<PrimeSection />
 						<SettingsSection title={t("settings.preferences")}>
 							<SettingsLinkRow label={t("settings.keyboardShortcuts")} onClick={() => onOpenKeyboardShortcuts?.()} />
 						</SettingsSection>

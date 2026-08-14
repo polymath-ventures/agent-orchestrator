@@ -41,5 +41,7 @@ test("sync-upstream inspects merge commits and runs behavioral guards", async ()
 	assert.match(skill, /frontend\/e2e\/browser-mode\.spec\.ts/);
 	assert.match(skill, /frontend\/e2e\/mobile-sidebar-toggle\.spec\.ts/);
 	assert.match(skill, /frontend\/e2e\/terminal-focus\.spec\.ts/);
+	assert.match(skill, /frontend\/e2e\/fork-features\.spec\.ts/);
+	assert.match(skill, /AO_E2E_PORT/);
 	assert.match(skill, /failure.*STOP condition|STOP condition.*failure/is);
 });
