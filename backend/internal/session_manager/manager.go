@@ -973,6 +973,10 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	prompt := plan.prompt
 	systemPrompt := plan.systemPrompt
 	mode := domain.NormalizeSessionMode(cfg.RequestedMode)
+	agentConfig = applySpawnAgentConfig(agentConfig, cfg.AgentConfig)
+	if requestedModel != "" || target.mixSelected {
+		agentConfig.Model = launchModelForBucket(cfg.Harness, cfg.Model, target.mixSelected)
+	}
 	promptBytes := len(prompt)
 	systemPromptBytes := len(systemPrompt)
 
@@ -1059,6 +1063,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 			record:           rec,
 			workspace:        ws,
 			workspaceProject: workspaceProject,
+			agentConfig:      agentConfig,
 			prompt:           prompt,
 			systemPrompt:     systemPrompt,
 		})
@@ -1084,8 +1089,6 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 			return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: allocated empty native session id", id)
 		}
 	}
-	agentConfig = applySpawnAgentConfig(agentConfig, cfg.AgentConfig)
-	agentConfig.Model = launchModelForBucket(cfg.Harness, cfg.Model, target.mixSelected)
 	env := m.runtimeEnv(id, cfg.ProjectID, cfg.IssueID, project.Config.Env)
 	m.augmentAgentRuntimeEnv(agent, env)
 	if err := m.prepareWorkspace(ctx, agent, id, ws.Path, systemPrompt, systemPromptFile, agentConfig, env); err != nil {
