@@ -12,7 +12,7 @@ type ShellTerminalFixture = {
 	createdAt: string;
 };
 
-export async function installBrowserModeApiFixtures(page: Page) {
+export async function installBrowserModeApiFixtures(page: Page, options: { includePrimeSession?: boolean } = {}) {
 	const state = {
 		muxConnections: 0,
 		shellSeq: 1,
@@ -142,6 +142,17 @@ export async function installBrowserModeApiFixtures(page: Page) {
 		return route.fulfill({
 			json: {
 				sessions: [
+					...(options.includePrimeSession
+						? [
+								session({
+									id: "fleet-prime",
+									kind: "prime",
+									displayName: "AO Prime",
+									status: "working",
+									terminalHandleId: "term-prime",
+								}),
+							]
+						: []),
 					session({
 						id: "orch-api-gateway",
 						kind: "orchestrator",
@@ -230,7 +241,7 @@ function session(input: {
 	branch?: string;
 	displayName: string;
 	id: string;
-	kind: "orchestrator" | "worker";
+	kind: "orchestrator" | "prime" | "worker";
 	prs?: components["schemas"]["SessionPRFacts"][];
 	status: string;
 	terminalHandleId: string;
@@ -246,7 +257,7 @@ function session(input: {
 		isTerminated: false,
 		issueId: input.kind === "worker" ? "#2" : undefined,
 		kind: input.kind,
-		projectId: "api-gateway",
+		projectId: input.kind === "prime" ? undefined : "api-gateway",
 		prs: input.prs ?? [],
 		status: input.status,
 		terminalHandleId: input.terminalHandleId,
