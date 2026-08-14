@@ -2558,6 +2558,63 @@ func TestReconcileRejectsTargetGenerationWithoutProviderNativeIdentity(t *testin
 	}
 }
 
+func TestReconcileStartingTargetRecoveryPersistsTargetModelAndClearsStaleMixIdentity(t *testing.T) {
+	runtime := &fakeRestartRuntime{fakeRuntime: &fakeRuntime{}}
+	manager, store, _ := newSwitchTestManager(t, runtime)
+	runtime.aliveByHandle["proj-1"] = false
+	runtime.aliveByHandle["target-handle"] = true
+
+	project := store.projects["proj"]
+	project.Config = domain.ProjectConfig{
+		AgentConfig: domain.AgentConfig{Model: "gpt-5-codex", Effort: domain.EffortHigh},
+	}
+	store.projects["proj"] = project
+
+	rec := store.sessions["proj-1"]
+	rec.Model = "claude-opus-4-5"
+	rec.Effort = domain.EffortLow
+	rec.MixSelected = true
+	rec.MixBucketModel = "claude-bucket"
+	store.sessions[rec.ID] = rec
+
+	now := time.Now().UTC()
+	targetNative := domain.AgentNativeSession{
+		ID: "native-target", AOSessionID: "proj-1", Harness: domain.HarnessCodex,
+		NativeSessionID:  "codex-target",
+		LastGenerationID: "target-generation", CreatedAt: now, LastUsedAt: now,
+	}
+	store.native[targetNative.ID] = targetNative
+	targetRef := targetNative.ID
+	store.switches["switch-recovery-model"] = domain.AgentSwitch{
+		ID: "switch-recovery-model", SessionID: "proj-1", IdempotencyKey: "recovery-model",
+		RequestFingerprint: domain.ComputeAgentSwitchRequestFingerprint("proj-1", domain.HarnessCodex, ""),
+		FromHarness:        domain.HarnessClaudeCode, TargetHarness: domain.HarnessCodex,
+		TargetNativeSessionRef: &targetRef, TargetStartMode: domain.AgentSwitchTargetStartFresh,
+		State:                 domain.AgentSwitchStartingTarget,
+		AgentHandoffStatus:    domain.AgentHandoffUnavailable,
+		SourceGenerationID:    "source-generation",
+		TargetGenerationID:    "target-generation",
+		TargetRuntimeHandleID: "target-handle",
+		RequestedAt:           now,
+		UpdatedAt:             now,
+	}
+
+	if err := manager.ReconcileAgentSwitches(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	got := store.sessions["proj-1"]
+	if got.Harness != domain.HarnessCodex {
+		t.Fatalf("reconciled owner = %q, want codex", got.Harness)
+	}
+	if got.Model != "gpt-5-codex" || got.Effort != domain.EffortHigh {
+		t.Fatalf("reconciled target config = model %q effort %q, want gpt-5-codex/high", got.Model, got.Effort)
+	}
+	if got.MixSelected || got.MixBucketModel != "" {
+		t.Fatalf("reconciled mix identity = selected %v bucket %q, want cleared target ownership", got.MixSelected, got.MixBucketModel)
+	}
+}
+
 func TestSubmitAgentHandoffRejectsLateGeneration(t *testing.T) {
 	manager, store, _ := newSwitchTestManager(t, &fakeRestartRuntime{fakeRuntime: &fakeRuntime{}})
 	now := time.Now().UTC()

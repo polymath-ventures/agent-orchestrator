@@ -3956,6 +3956,62 @@ func TestRestore_UsesPersistedModel(t *testing.T) {
 	}
 }
 
+func TestRestoreWithMode_StaleCrossProviderModelUsesRestoreOperationLabel(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer"}
+	seedTerminal(st, "mer-1", domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "ao/mer-1", AgentSessionID: "agent-x"})
+	rec := st.sessions["mer-1"]
+	rec.Kind = domain.KindWorker
+	rec.Harness = domain.HarnessCodex
+	rec.Model = "claude-opus-4-5"
+	st.sessions[rec.ID] = rec
+
+	agent := &recordingAgent{}
+	m := modelManager(st, agent)
+
+	_, err := m.RestoreWithMode(ctx, "mer-1")
+	if !errors.Is(err, ErrModelHarnessMismatch) {
+		t.Fatalf("RestoreWithMode err = %v, want ErrModelHarnessMismatch", err)
+	}
+	if !strings.Contains(err.Error(), "restore mer-1:") {
+		t.Fatalf("RestoreWithMode err = %v, want restore operation label", err)
+	}
+	if agent.restoreCalls != 0 {
+		t.Fatalf("restore calls = %d, want stale cross-provider model rejected before adapter restore", agent.restoreCalls)
+	}
+}
+
+func TestRelaunchSession_StaleCrossProviderModelUsesPassedOperationLabel(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer"}
+	rec := domain.SessionRecord{
+		ID:        "mer-1",
+		ProjectID: "mer",
+		Kind:      domain.KindWorker,
+		Harness:   domain.HarnessCodex,
+		Model:     "claude-opus-4-5",
+		Metadata:  domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "ao/mer-1", AgentSessionID: "agent-x"},
+	}
+	agent := &recordingAgent{}
+	m := modelManager(st, agent)
+
+	_, err := m.relaunchSession(ctx, "switch interface", rec, st.projects["mer"], ports.WorkspaceInfo{
+		Path: "/ws/mer-1", Branch: "ao/mer-1", SessionID: "mer-1", ProjectID: "mer",
+	}, nil)
+	if !errors.Is(err, ErrModelHarnessMismatch) {
+		t.Fatalf("relaunchSession err = %v, want ErrModelHarnessMismatch", err)
+	}
+	if !strings.Contains(err.Error(), "switch interface mer-1:") {
+		t.Fatalf("relaunchSession err = %v, want passed operation label", err)
+	}
+	if strings.Contains(err.Error(), "restore mer-1:") {
+		t.Fatalf("relaunchSession err = %v, want no hardcoded restore label", err)
+	}
+	if agent.restoreCalls != 0 {
+		t.Fatalf("restore calls = %d, want stale cross-provider model rejected before adapter restore", agent.restoreCalls)
+	}
+}
+
 func TestRestore_UsesPersistedEffort(t *testing.T) {
 	st := newFakeStore()
 	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{
