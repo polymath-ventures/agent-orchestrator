@@ -126,7 +126,7 @@ them as the starting point for a search, not as an exhaustive file list.
    This is mechanism-independent — re-layer it onto whatever signal path upstream
    uses.
    Reference issues/PRs: #8 → #16, #88; #97 → #102; #112 → #113; #116 → #117;
-   #280 → #282; #289 → #290.
+   #280 → #282; #289 → #293.
 4. **Harness/agent setup & selection.** The agent-selection catalog, the per-role
    model+effort tuples, and the worker-mix UI, plus the fork-only **codex-fugu**
    harness — as both a worker and a **reviewer**, so the Settings "Default
