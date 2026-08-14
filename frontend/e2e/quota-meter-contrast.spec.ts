@@ -12,8 +12,9 @@
  * assertion on `bg-accent` passed throughout. Only the resolved colour catches
  * this, and the only thing that resolves CSS correctly is a browser: the
  * cascade, `@theme inline`, `var()` chains, `oklch()`, and alpha compositing all
- * have to agree with what ships. So this runs against the real built bundle and
- * reads `getComputedStyle` — no second implementation of CSS to drift from it.
+ * have to agree with what ships. So this runs against the real built bundle,
+ * reads `getComputedStyle`, and flattens the layers on a canvas — no second
+ * implementation of CSS to drift from the one that ships.
  *
  * `QUOTA_METER_COLORS` is imported from the component, so a class swap there is
  * measured here rather than silently going unchecked; `QuotaPanel.test.tsx`
@@ -65,42 +66,50 @@ test("@T0 the quota meter's usage bar stays legible against its track in every t
 
 	const measurements = await page.evaluate(
 		({ scopes, colors }) => {
-			// The meter nests its fill inside the track, so the fill composites
-			// over the track and the track over the page. Let the browser do that:
-			// paint each utility on a real element in that nesting and read back
-			// the pixels, rather than modelling `background-color` blending here.
+			// One probe stack in the nesting the meter actually uses: the fill sits
+			// inside the track, which sits on the chip's `bg-background` surface.
 			const host = document.createElement("div");
+			host.className = "bg-background";
 			host.style.cssText = "position:fixed;left:-9999px;top:0;width:40px";
-			const utilities = [colors.track, ...Object.values(colors.fill)];
-			for (const utility of utilities) {
-				const track = document.createElement("div");
-				track.className = utility === colors.track ? utility : colors.track;
-				track.style.cssText = "width:40px;height:20px";
-				const fill = document.createElement("div");
-				fill.className = utility;
-				fill.style.cssText = "width:40px;height:20px";
-				track.appendChild(fill);
-				host.appendChild(track);
-			}
+			const track = document.createElement("div");
+			track.className = colors.track;
+			track.style.cssText = "width:40px;height:20px";
+			const fill = document.createElement("div");
+			fill.style.cssText = "width:40px;height:20px";
+			track.appendChild(fill);
+			host.appendChild(track);
 			document.body.appendChild(host);
-			const layers = [...host.children].map((track) => ({
-				track: track as HTMLElement,
-				fill: track.firstElementChild as HTMLElement,
-			}));
 
 			const canvas = document.createElement("canvas");
 			canvas.width = canvas.height = 1;
 			const ctx = canvas.getContext("2d", { willReadFrequently: true });
 			if (!ctx) throw new Error("no 2d context");
-			// Computed background-color comes back in whatever syntax the author
-			// used — Chromium preserves oklch(). A canvas normalises all of it.
-			const toRgb = (value: string): [number, number, number] | null => {
+			// Painting the layers onto a canvas in order is how the alpha gets
+			// handled: `fillRect` composites source-over exactly as CSS backgrounds
+			// do, so a translucent token blends with what is under it instead of
+			// being read as if it were opaque. Computed values arrive in whatever
+			// syntax the author wrote — Chromium preserves `oklch()` — and the
+			// canvas normalises all of them. The white base only matters if the
+			// page surface itself is translucent.
+			const flatten = (...layers: string[]): [number, number, number] => {
+				ctx.clearRect(0, 0, 1, 1);
+				for (const layer of ["#ffffff", ...layers]) {
+					ctx.fillStyle = "#000000";
+					ctx.fillStyle = layer;
+					ctx.fillRect(0, 0, 1, 1);
+				}
+				const [r, g, b] = ctx.getImageData(0, 0, 1, 1).data;
+				return [r, g, b];
+			};
+			// A utility whose custom property is defined nowhere makes the
+			// declaration invalid, and the computed value falls back to fully
+			// transparent. That is what a deleted token looks like from here.
+			const paintsNothing = (value: string) => {
 				ctx.clearRect(0, 0, 1, 1);
 				ctx.fillStyle = "#000000";
 				ctx.fillStyle = value;
 				ctx.fillRect(0, 0, 1, 1);
-				const [r, g, b, a] = ctx.getImageData(0, 0, 1, 1).data;
-				return a === 0 ? null : [r, g, b];
+				return ctx.getImageData(0, 0, 1, 1).data[3] === 0;
 			};
 
 			const saved = {
@@ -114,11 +123,17 @@ test("@T0 the quota meter's usage bar stays legible against its track in every t
 				for (const [attribute, value] of Object.entries(scope.attributes)) {
 					document.documentElement.setAttribute(attribute, value);
 				}
-				const measured: Record<string, [number, number, number] | null> = {};
-				utilities.forEach((utility, index) => {
-					const element = utility === colors.track ? layers[index].track : layers[index].fill;
-					measured[utility] = toRgb(getComputedStyle(element).backgroundColor);
-				});
+				const surface = getComputedStyle(host).backgroundColor;
+				const trackCss = getComputedStyle(track).backgroundColor;
+				const measured: Record<string, [number, number, number] | null> = {
+					[colors.track]: paintsNothing(trackCss) ? null : flatten(surface, trackCss),
+				};
+				for (const utility of Object.values(colors.fill)) {
+					fill.className = utility;
+					const fillCss = getComputedStyle(fill).backgroundColor;
+					measured[utility] = paintsNothing(fillCss) ? null : flatten(surface, trackCss, fillCss);
+				}
+				fill.className = "";
 				results.push({ scope: scope.name, colors: measured });
 			}
 			document.documentElement.removeAttribute("data-theme");
@@ -147,8 +162,6 @@ test("@T0 the quota meter's usage bar stays legible against its track in every t
 	const failures: string[] = [];
 	for (const { scope, colors } of measurements) {
 		const track = colors[QUOTA_METER_COLORS.track];
-		// A utility whose custom property is defined nowhere paints nothing. That
-		// is what a deleted token looks like from here, and it is half of #289.
 		if (!track) {
 			failures.push(
 				`${scope}: track \`${QUOTA_METER_COLORS.track}\` paints nothing — its custom property is undefined`,
