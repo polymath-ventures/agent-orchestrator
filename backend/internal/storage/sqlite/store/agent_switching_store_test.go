@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -764,9 +765,19 @@ func TestAgentSwitchSourceStopAndTargetActivationAreAtomicAndNarrow(t *testing.T
 	rec.Metadata.LatestUserPrompt = "latest user direction"
 	rec.Metadata.LatestAssistantUpdate = "latest assistant update"
 	rec.Metadata.PreviewURL = "http://localhost:3000"
+	rec.Model = "claude-opus-4-5"
+	rec.Effort = domain.EffortLow
+	rec.MixSelected = true
+	rec.MixBucketModel = "configured-claude-model"
 	session, err := s.CreateSession(ctx, rec)
 	if err != nil {
 		t.Fatalf("create AO session: %v", err)
+	}
+	if _, ok := reflect.TypeOf(domain.AgentSwitchTargetActivation{}).FieldByName("TargetModel"); !ok {
+		t.Fatal("AgentSwitchTargetActivation is missing TargetModel, so target activation cannot atomically persist the switched model")
+	}
+	if _, ok := reflect.TypeOf(domain.AgentSwitchTargetActivation{}).FieldByName("TargetEffort"); !ok {
+		t.Fatal("AgentSwitchTargetActivation is missing TargetEffort, so target activation cannot atomically persist the switched effort")
 	}
 	target := domain.AgentNativeSession{
 		ID: "activation-target", AOSessionID: session.ID, Harness: domain.HarnessCodex,
@@ -905,6 +916,9 @@ func TestAgentSwitchSourceStopAndTargetActivationAreAtomicAndNarrow(t *testing.T
 		activated.Metadata.RuntimeHandleID != "target-handle" || activated.Metadata.RuntimeLaunchID != "target-generation" ||
 		activated.Metadata.AgentSessionID != target.NativeSessionID || activated.Metadata.NativeTranscriptPath != target.TranscriptPath {
 		t.Fatalf("target owner projection = %+v", activated)
+	}
+	if activated.MixSelected || activated.MixBucketModel != "" {
+		t.Fatalf("target activation retained stale mix identity: selected=%v bucket=%q", activated.MixSelected, activated.MixBucketModel)
 	}
 	if !activated.FirstSignalAt.IsZero() {
 		t.Fatalf("target activation retained old hook receipt: %v", activated.FirstSignalAt)

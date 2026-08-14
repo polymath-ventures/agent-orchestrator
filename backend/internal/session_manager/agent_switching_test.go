@@ -358,6 +358,8 @@ type switchTestAgent struct {
 	launchPrompt        string
 	launchNativeID      string
 	restorePrompt       string
+	launchConfig        ports.AgentConfig
+	restoreConfig       ports.AgentConfig
 	launchSystemPrompt  string
 	restoreSystemPrompt string
 	launchSystemFile    string
@@ -468,6 +470,7 @@ func (a *switchTestAgent) LocateTranscript(_ context.Context, ref ports.NativeSe
 func (a *switchTestAgent) GetLaunchCommand(_ context.Context, cfg ports.LaunchConfig) ([]string, error) {
 	a.launchPrompt = cfg.Prompt
 	a.launchNativeID = cfg.NativeSessionID
+	a.launchConfig = cfg.Config
 	a.launchSystemPrompt = cfg.SystemPrompt
 	a.launchSystemFile = cfg.SystemPromptFile
 	return []string{"agent", "fresh", cfg.Prompt}, nil
@@ -479,6 +482,7 @@ func (a *switchTestAgent) GetRestoreCommand(_ context.Context, cfg ports.Restore
 		return nil, false, nil
 	}
 	a.restorePrompt = cfg.Prompt
+	a.restoreConfig = cfg.Config
 	a.restoreSystemPrompt = cfg.SystemPrompt
 	a.restoreSystemFile = cfg.SystemPromptFile
 	return []string{"agent", "resume", id, cfg.Prompt}, true, nil
@@ -1399,6 +1403,49 @@ func TestSwitchAgentUnknownResumeEvidenceStartsFresh(t *testing.T) {
 	}
 	if sw.TargetStartMode != domain.AgentSwitchTargetStartFresh || !strings.Contains(strings.Join(runtime.lastCfg.Argv, " "), "-- agent fresh ") || !strings.Contains(target.launchSystemPrompt, "<ao-continuation") || target.launchPrompt != aoTargetActivationPrompt {
 		t.Fatalf("unknown evidence should start fresh: mode=%q argv=%q", sw.TargetStartMode, strings.Join(runtime.lastCfg.Argv, " "))
+	}
+}
+
+func TestSwitchAgentUsesTargetHarnessResolvedModelAndClearsMixIdentityOnActivation(t *testing.T) {
+	runtime := &fakeRestartRuntime{fakeRuntime: &fakeRuntime{}}
+	manager, store, _ := newSwitchTestManager(t, runtime)
+	project := store.projects["proj"]
+	project.Config = domain.ProjectConfig{
+		AgentConfig: domain.AgentConfig{
+			Model: "claude-opus-4-5",
+			ModelByHarness: map[domain.AgentHarness]domain.HarnessModel{
+				domain.HarnessCodex: {Model: "gpt-5-codex", Effort: domain.EffortHigh},
+			},
+		},
+	}
+	store.projects["proj"] = project
+	source := store.sessions["proj-1"]
+	source.Model = "claude-opus-4-5"
+	source.Effort = domain.EffortLow
+	source.MixSelected = true
+	source.MixBucketModel = "configured-claude-model"
+	store.sessions["proj-1"] = source
+	target := manager.agents.(switchTestAgents)[domain.HarnessCodex].(*switchTestAgent)
+
+	sw, err := manager.SwitchAgent(context.Background(), "proj-1", SwitchAgentConfig{
+		TargetHarness:  domain.HarnessCodex,
+		IdempotencyKey: "target-model-resolution",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sw.State != domain.AgentSwitchCompleted {
+		t.Fatalf("switch state = %q, want completed", sw.State)
+	}
+	if target.launchConfig.Model != "gpt-5-codex" || target.launchConfig.Effort != domain.EffortHigh {
+		t.Fatalf("target launch config = %#v, want target-harness codex model+effort", target.launchConfig)
+	}
+	got := store.sessions["proj-1"]
+	if got.Model != "gpt-5-codex" || got.Effort != domain.EffortHigh {
+		t.Fatalf("persisted session identity = (model=%q effort=%q), want (gpt-5-codex, high)", got.Model, got.Effort)
+	}
+	if got.MixSelected || got.MixBucketModel != "" {
+		t.Fatalf("persisted mix identity = (selected=%v bucket=%q), want cleared", got.MixSelected, got.MixBucketModel)
 	}
 }
 

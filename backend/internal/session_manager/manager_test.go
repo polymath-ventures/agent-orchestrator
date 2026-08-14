@@ -19,6 +19,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/claudecode"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/codex"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/workspace/scratch"
+	"github.com/aoagents/agent-orchestrator/backend/internal/agentconfig"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
@@ -3501,6 +3502,86 @@ func TestSpawn_ExplicitModelWinsOverConfigAndIsPersisted(t *testing.T) {
 	}
 	if agent.lastConfig.Model != "explicit-model" {
 		t.Fatalf("launch model = %q, want explicit-model over role config", agent.lastConfig.Model)
+	}
+}
+
+func TestSpawn_RequestAgentConfigModelCrossProviderRejectedBeforeAnyState(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{
+		Worker: domain.RoleOverride{Harness: domain.HarnessCodex},
+	}}
+	runtime := &fakeRuntime{}
+	workspace := &fakeWorkspace{}
+	agent := &recordingAgent{}
+	m := New(Deps{
+		Runtime: runtime, Agents: singleAgent{agent: agent}, Workspace: workspace, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st},
+		LookPath: func(string) (string, error) { return "/bin/true", nil },
+	})
+
+	_, _, _, err := m.Spawn(ctx, ports.SpawnConfig{
+		ProjectID: "mer",
+		Kind:      domain.KindWorker,
+		AgentConfig: ports.AgentConfig{
+			Model: "claude-opus-4-5",
+		},
+	})
+	if !errors.Is(err, agentconfig.ErrModelHarnessMismatch) {
+		t.Fatalf("Spawn err = %v, want ErrModelHarnessMismatch", err)
+	}
+	if st.num != 0 || len(st.sessions) != 0 {
+		t.Fatalf("session state created before rejection: num=%d rows=%#v", st.num, st.sessions)
+	}
+	if runtime.created != 0 {
+		t.Fatalf("runtime created = %d, want 0", runtime.created)
+	}
+	if workspace.lastCfg.SessionID != "" || workspace.lastProjectCfg.SessionID != "" {
+		t.Fatalf("workspace created before rejection: single=%#v project=%#v", workspace.lastCfg, workspace.lastProjectCfg)
+	}
+	if agent.launchCalls != 0 {
+		t.Fatalf("launchCalls = %d, want 0", agent.launchCalls)
+	}
+}
+
+func TestSpawn_RequestAgentConfigModelUsesCanonicalValidatedPath(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{
+		Worker: domain.RoleOverride{Harness: domain.HarnessCodex},
+	}}
+	agent := &recordingAgent{}
+	validator := &fakeSpawnSelectionValidator{result: ports.ModelValidationResult{
+		Status: ports.ModelValidationReachable,
+	}}
+	m := New(Deps{
+		Runtime: &fakeRuntime{}, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, ModelValidator: validator,
+		LookPath: func(string) (string, error) { return "/bin/true", nil },
+	})
+
+	rec, _, _, err := m.Spawn(ctx, ports.SpawnConfig{
+		ProjectID: "mer",
+		Kind:      domain.KindWorker,
+		AgentConfig: ports.AgentConfig{
+			Model: "gpt-5-codex",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(validator.calls) != 1 {
+		t.Fatalf("validator calls = %#v, want exactly one call", validator.calls)
+	}
+	if got := validator.calls[0].model; got != "gpt-5-codex" {
+		t.Fatalf("validated model = %q, want request agent-config model", got)
+	}
+	if rec.Model != "gpt-5-codex" {
+		t.Fatalf("record model = %q, want request agent-config model", rec.Model)
+	}
+	if got := st.sessions[rec.ID].Model; got != "gpt-5-codex" {
+		t.Fatalf("persisted model = %q, want request agent-config model", got)
+	}
+	if agent.lastConfig.Model != "gpt-5-codex" {
+		t.Fatalf("launch model = %q, want request agent-config model", agent.lastConfig.Model)
 	}
 }
 
