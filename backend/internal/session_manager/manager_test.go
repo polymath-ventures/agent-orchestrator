@@ -4702,6 +4702,28 @@ func TestDefaultSessionBranch_ProjectlessPrimeUsesFleetBranch(t *testing.T) {
 	}
 }
 
+func TestSpawn_ProjectlessPrimeFiltersCrossProviderScalarModel(t *testing.T) {
+	st := newFakeStore()
+	st.prime = domain.PrimeSettings{
+		Enabled: true, Harness: domain.HarnessCodex,
+		AgentConfig: domain.AgentConfig{Model: "claude-opus-4-5"},
+	}
+	agent := &recordingAgent{}
+	m := New(Deps{
+		Runtime: &fakeRuntime{}, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, DataDir: t.TempDir(),
+		LookPath: func(string) (string, error) { return "/bin/true", nil },
+	})
+
+	rec, _, _, err := m.Spawn(ctx, ports.SpawnConfig{Kind: domain.KindPrime})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Model != "" || agent.lastConfig.Model != "" {
+		t.Fatalf("projectless prime model = persisted %q launched %q, want codex default without claude scalar", rec.Model, agent.lastConfig.Model)
+	}
+}
+
 func TestSpawn_ProjectlessPrimeUsesFleetWorkspaceAndSettings(t *testing.T) {
 	st := newFakeStore()
 	st.prime = domain.PrimeSettings{
