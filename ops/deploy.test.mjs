@@ -1,8 +1,10 @@
-import { readFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readFile, readdir, readlink, symlink, writeFile } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import test from "node:test";
 import assert from "node:assert/strict";
+import { tmpdir } from "node:os";
+import path from "node:path";
 
 const run = promisify(execFile);
 const script = new URL("./deploy.sh", import.meta.url).pathname;
@@ -15,6 +17,11 @@ test("deploy.sh --help prints usage without touching the system", async () => {
 	const { stdout } = await run("bash", [script, "--help"]);
 	assert.match(stdout, /Usage:/);
 	assert.match(stdout, /--rollback/);
+});
+
+test("deploy.sh can be sourced without running deploy for behavioral tests", async () => {
+	const text = await readFile(script, "utf8");
+	assert.match(text, /if \[ "\$\{BASH_SOURCE\[0\]\}" = "\$0" \]; then[\s\S]*case "\$\{1:-\}" in/);
 });
 
 test("deploy.sh keeps its load-bearing invariants", async () => {
@@ -70,4 +77,138 @@ test("deploy.sh keeps its load-bearing invariants", async () => {
 	// never delete an installed binary it did not place there.
 	assert.match(text, /install -m 755 "\$prev\/bin\/aong"/);
 	assert.doesNotMatch(text, /rm -f "\$AONG_BIN_TARGET"/);
+	// Headless installs must package the same locked ACP runtime as Electron and
+	// expose it at the install-prefix path the backend already probes. The build
+	// and both required-file checks must finish before the active release flips.
+	assert.match(text, /ACP_RUNTIME_TARGET="\$HOME\/\.local\/acp-runtime"/);
+	assert.match(text, /npm --prefix frontend run build:acp-runtime --silent/);
+	assert.match(text, /mv "\$rel\/source\/frontend\/resources\/acp-runtime" "\$rel\/acp-runtime"/);
+	assert.match(text, /"\$rel\/acp-runtime\/node\/bin\/node"/);
+	assert.match(text, /"\$rel\/acp-runtime\/node_modules\/@agentclientprotocol\/claude-agent-acp\/dist\/index\.js"/);
+	assert.match(text, /ln -sfn "\$CURRENT\/acp-runtime" "\$ACP_RUNTIME_TARGET"/);
+	assert.match(text, /WARN: active release has no ACP runtime; Claude Code chat is unavailable/);
+	assert.match(text, /is_ao_managed_acp_runtime_link/);
+	assert.ok(
+		text.indexOf("npm --prefix frontend run build:acp-runtime --silent") < text.indexOf('ln -sfn "$rel" "$CURRENT"'),
+		"ACP runtime must be built before the active release flips",
+	);
+	const dispatchGuardIndex = text.indexOf('\nif [ "${BASH_SOURCE[0]}" = "$0" ]; then');
+	assert.ok(dispatchGuardIndex >= 0, "deploy dispatch guard must exist");
+	const deployBody = text.slice(text.indexOf("deploy() {"), dispatchGuardIndex);
+	assert.ok(
+		deployBody.indexOf('ln -sfn "$rel" "$CURRENT"') < deployBody.indexOf("\n  sync_acp_runtime_link\n"),
+		"runtime link must be installed after the newly active release flips",
+	);
+	const rollback = text.slice(text.indexOf("rollback() {"), text.indexOf("\ndeploy() {"));
+	assert.match(
+		rollback,
+		/ln -sfn "\$prev" "\$CURRENT"[\s\S]*sync_acp_runtime_link/,
+		"rollback must refresh or remove the runtime link for its own release",
+	);
+});
+
+test("sync_acp_runtime_link preserves an operator-managed symlink on rollback", async () => {
+	const root = await mkdtemp(path.join(tmpdir(), "deploy-acp-"));
+	const deployRoot = path.join(root, "deploy");
+	const current = path.join(deployRoot, "current");
+	const release = path.join(deployRoot, "releases", "release-1");
+	const localHome = path.join(root, "home");
+	const operatorRuntime = path.join(root, "shared-acp-runtime");
+	const acpRuntimeTarget = path.join(localHome, ".local", "acp-runtime");
+	const logFile = path.join(root, "deploy.log");
+
+	await mkdir(path.join(localHome, ".local"), { recursive: true });
+	await mkdir(release, { recursive: true });
+	await mkdir(operatorRuntime, { recursive: true });
+	await writeFile(logFile, "");
+	await symlink(release, current);
+	await symlink(operatorRuntime, acpRuntimeTarget);
+
+	const harness = `
+		set -euo pipefail
+		source "${script}"
+		DEPLOY_ROOT="${deployRoot}"
+		CURRENT="${current}"
+		ACP_RUNTIME_TARGET="${acpRuntimeTarget}"
+		LOG_FILE="${logFile}"
+		log() { printf '%s\\n' "$*" >>"$LOG_FILE"; }
+		sync_acp_runtime_link
+	`;
+	await run("bash", ["-lc", harness], { encoding: "utf8" });
+
+	const link = await readlink(acpRuntimeTarget);
+	assert.equal(link, operatorRuntime);
+	const stat = await lstat(acpRuntimeTarget);
+	assert.ok(stat.isSymbolicLink());
+	assert.match(await readFile(logFile, "utf8"), /left the existing operator-managed ACP runtime symlink/);
+});
+
+test("sync_acp_runtime_link preserves an operator runtime directory before linking a packaged runtime", async () => {
+	const root = await mkdtemp(path.join(tmpdir(), "deploy-acp-"));
+	const deployRoot = path.join(root, "deploy");
+	const current = path.join(deployRoot, "current");
+	const release = path.join(deployRoot, "releases", "release-1");
+	const localDir = path.join(root, "home", ".local");
+	const acpRuntimeTarget = path.join(localDir, "acp-runtime");
+	const logFile = path.join(root, "deploy.log");
+
+	await mkdir(path.join(release, "acp-runtime"), { recursive: true });
+	await mkdir(acpRuntimeTarget, { recursive: true });
+	await writeFile(path.join(acpRuntimeTarget, "operator-sentinel"), "preserve me");
+	await writeFile(logFile, "");
+	await symlink(release, current);
+
+	const harness = `
+		set -euo pipefail
+		source "${script}"
+		DEPLOY_ROOT="${deployRoot}"
+		CURRENT="${current}"
+		ACP_RUNTIME_TARGET="${acpRuntimeTarget}"
+		LOG_FILE="${logFile}"
+		log() { printf '%s\\n' "$*" >>"$LOG_FILE"; }
+		sync_acp_runtime_link
+	`;
+	await run("bash", ["-lc", harness], { encoding: "utf8" });
+
+	assert.equal(await readlink(acpRuntimeTarget), path.join(current, "acp-runtime"));
+	const backups = (await readdir(localDir)).filter((name) => name.startsWith("acp-runtime.pre-ao-"));
+	assert.equal(backups.length, 1);
+	assert.equal(await readFile(path.join(localDir, backups[0], "operator-sentinel"), "utf8"), "preserve me");
+	assert.match(await readFile(logFile, "utf8"), /Preserved existing ACP runtime at/);
+});
+
+test("sync_acp_runtime_link removes only AO-managed symlinks when runtime disappears", async () => {
+	const root = await mkdtemp(path.join(tmpdir(), "deploy-acp-"));
+	const deployRoot = path.join(root, "deploy");
+	const current = path.join(deployRoot, "current");
+	const release = path.join(deployRoot, "releases", "release-1");
+	const localHome = path.join(root, "home");
+	const acpRuntimeTarget = path.join(localHome, ".local", "acp-runtime");
+	const logFile = path.join(root, "deploy.log");
+
+	await mkdir(path.join(localHome, ".local"), { recursive: true });
+	await mkdir(release, { recursive: true });
+	await writeFile(logFile, "");
+	await symlink(release, current);
+	await symlink(path.join(current, "acp-runtime"), acpRuntimeTarget);
+
+	const harness = `
+		set -euo pipefail
+		source "${script}"
+		DEPLOY_ROOT="${deployRoot}"
+		CURRENT="${current}"
+		ACP_RUNTIME_TARGET="${acpRuntimeTarget}"
+		LOG_FILE="${logFile}"
+		log() { printf '%s\\n' "$*" >>"$LOG_FILE"; }
+		sync_acp_runtime_link
+		if [ -L "$ACP_RUNTIME_TARGET" ]; then
+			echo present
+		else
+			echo missing
+		fi
+	`;
+	const { stdout } = await run("bash", ["-lc", harness], { encoding: "utf8" });
+	assert.match(stdout, /missing/);
+	const log = await readFile(logFile, "utf8");
+	assert.match(log, /Claude Code chat is unavailable/);
 });

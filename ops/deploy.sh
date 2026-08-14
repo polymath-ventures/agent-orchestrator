@@ -28,6 +28,7 @@ BIN_TARGET="$HOME/.local/bin/ao"
 # aong must land beside ao: it resolves its sibling before PATH so the pair that
 # was built together stays together.
 AONG_BIN_TARGET="$HOME/.local/bin/aong"
+ACP_RUNTIME_TARGET="$HOME/.local/acp-runtime"
 UNIT_DIR="${AO_UNIT_DIR:-$HOME/.config/systemd/user}"
 SERVICES=(ao-web.service ao.service)
 
@@ -154,6 +155,49 @@ sync_units() {
   done
 }
 
+is_ao_managed_acp_runtime_link() {
+  local target=""
+  [ -L "$ACP_RUNTIME_TARGET" ] || return 1
+  target="$(readlink "$ACP_RUNTIME_TARGET" 2>/dev/null || true)"
+  [ -n "$target" ] || return 1
+  case "$target" in
+    "$DEPLOY_ROOT"/releases/*/acp-runtime|"$DEPLOY_ROOT"/current/acp-runtime) return 0 ;;
+  esac
+  target="$(readlink -f "$ACP_RUNTIME_TARGET" 2>/dev/null || true)"
+  [ -n "$target" ] || return 1
+  case "$target" in
+    "$DEPLOY_ROOT"/releases/*/acp-runtime|"$DEPLOY_ROOT"/current/acp-runtime) return 0 ;;
+  esac
+  return 1
+}
+
+sync_acp_runtime_link() {
+  local backup
+  if [ ! -d "$CURRENT/acp-runtime" ]; then
+    if is_ao_managed_acp_runtime_link; then
+      rm -f "$ACP_RUNTIME_TARGET"
+      log "WARN: active release has no ACP runtime; Claude Code chat is unavailable until a forward deploy or AO_ACP_RUNTIME_DIR override."
+    elif [ -L "$ACP_RUNTIME_TARGET" ]; then
+      log "WARN: active release has no packaged ACP runtime; left the existing operator-managed ACP runtime symlink at $ACP_RUNTIME_TARGET."
+    elif [ -e "$ACP_RUNTIME_TARGET" ]; then
+      log "WARN: active release has no packaged ACP runtime; left the existing operator-managed runtime at $ACP_RUNTIME_TARGET."
+    else
+      log "WARN: active release has no ACP runtime; Claude Code chat is unavailable until a forward deploy or AO_ACP_RUNTIME_DIR override."
+    fi
+    return
+  fi
+  # Preserve an operator-created workaround instead of deleting it. Replacing
+  # it makes the committed lockfile authoritative again; the timestamped copy
+  # remains available if the operator needs to inspect or restore it.
+  if [ -e "$ACP_RUNTIME_TARGET" ] && [ ! -L "$ACP_RUNTIME_TARGET" ]; then
+    backup="$ACP_RUNTIME_TARGET.pre-ao-$(date -u +%Y%m%d%H%M%S)-$$"
+    mv "$ACP_RUNTIME_TARGET" "$backup"
+    log "Preserved existing ACP runtime at $backup."
+  fi
+  ln -sfn "$CURRENT/acp-runtime" "$ACP_RUNTIME_TARGET"
+  log "ACP runtime linked: $ACP_RUNTIME_TARGET -> $CURRENT/acp-runtime"
+}
+
 rollback() {
   local prev
   prev="$(cat "$PREVIOUS_FILE" 2>/dev/null || true)"
@@ -162,6 +206,7 @@ rollback() {
   fi
   log "Rolling back to $prev"
   ln -sfn "$prev" "$CURRENT"
+  sync_acp_runtime_link
   install -m 755 "$prev/bin/ao" "$BIN_TARGET"
   # aong resolves ao as its sibling, so the pair rolls back together when the
   # outgoing release has one. A release predating aong has nothing to restore;
@@ -210,6 +255,13 @@ deploy() {
   log "Building backend."
   (cd "$rel/source/backend" && go build -trimpath -o "$rel/bin/ao" ./cmd/ao)
   (cd "$rel/source/backend" && go build -trimpath -o "$rel/bin/aong" ./cmd/aong)
+  log "Building Claude ACP runtime."
+  (cd "$rel/source" && npm --prefix frontend run build:acp-runtime --silent) >/dev/null
+  mv "$rel/source/frontend/resources/acp-runtime" "$rel/acp-runtime"
+  [ -x "$rel/acp-runtime/node/bin/node" ] \
+    || die "ACP runtime missing packaged Node at $rel/acp-runtime/node/bin/node"
+  [ -f "$rel/acp-runtime/node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js" ] \
+    || die "ACP runtime missing claude-agent-acp entrypoint"
   log "Building web bundle."
   (cd "$rel/source" && npm --prefix frontend ci --silent && npm --prefix frontend run build:web --silent) >/dev/null
   [ -f "$rel/source/frontend/dist/index.html" ] || die "web bundle missing after build"
@@ -220,6 +272,10 @@ deploy() {
     echo "$prev_target" > "$PREVIOUS_FILE"
   fi
   ln -sfn "$rel" "$CURRENT"
+  # Like binary installation below, this is inside the script's existing
+  # post-flip consistency window. A failure is recoverable through the previous
+  # release recorded above; it never activates an incompletely built runtime.
+  sync_acp_runtime_link
   echo "$sha" > "$LAST_FILE"
   install -m 755 "$rel/bin/ao" "$BIN_TARGET"
   install -m 755 "$rel/bin/aong" "$AONG_BIN_TARGET"
@@ -230,8 +286,10 @@ deploy() {
   log "Deploy complete: $sha"
 }
 
-case "${1:-}" in
-  --rollback) preflight; rollback ;;
-  --help|-h) sed -n '2,18p' "${BASH_SOURCE[0]}"; exit 0 ;;
-  *) preflight; deploy "${1:-origin/main}" ;;
-esac
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+  case "${1:-}" in
+    --rollback) preflight; rollback ;;
+    --help|-h) sed -n '2,18p' "${BASH_SOURCE[0]}"; exit 0 ;;
+    *) preflight; deploy "${1:-origin/main}" ;;
+  esac
+fi

@@ -3,7 +3,9 @@ package claudeacp
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -84,5 +86,45 @@ func TestRuntimeCommandOverride(t *testing.T) {
 	}
 	if launch.command != executable || len(launch.args) != 0 {
 		t.Fatalf("runtime = %#v", launch)
+	}
+}
+
+func TestRuntimeDirectoryBesideFindsNonElectronInstallPrefix(t *testing.T) {
+	root := t.TempDir()
+	runtimeDir := filepath.Join(root, "acp-runtime")
+	if err := os.MkdirAll(runtimeDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	got := runtimeDirectoryBeside(filepath.Join(root, "bin", "ao"))
+	if got != runtimeDir {
+		t.Fatalf("runtimeDirectoryBeside = %q, want %q", got, runtimeDir)
+	}
+}
+
+func TestCheckRuntimeIncludesActionableRemediation(t *testing.T) {
+	t.Setenv("AO_CLAUDE_ACP_COMMAND", "ao-definitely-missing-acp-runtime-command")
+	err := CheckRuntime(context.Background())
+	if err == nil {
+		t.Fatal("CheckRuntime succeeded, want missing-command error")
+	}
+	for _, want := range []string{"rerun ops/deploy.sh", "AO_ACP_RUNTIME_DIR", "AO_CLAUDE_ACP_COMMAND"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("CheckRuntime error = %q, want remediation %q", err, want)
+		}
+	}
+}
+
+func TestRequireNodeVersionReportsMinimumAndDetectedVersion(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell fixture is Unix-only")
+	}
+	node := filepath.Join(t.TempDir(), "node")
+	if err := os.WriteFile(node, []byte("#!/bin/sh\necho v21.9.0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	err := requireNodeVersion(context.Background(), node)
+	if err == nil || !strings.Contains(err.Error(), "Node 22+") || !strings.Contains(err.Error(), "v21.9.0") {
+		t.Fatalf("requireNodeVersion error = %v, want minimum and detected version", err)
 	}
 }

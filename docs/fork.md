@@ -64,10 +64,20 @@ them as the starting point for a search, not as an exhaustive file list.
    `ops/ao-web.service` and `ops/ao-web-server.test.mjs` cover the server itself.
    The `frontend/e2e/*.spec.ts` **browser-mode** suite is the guard — keep it
    green and meaningful, especially `frontend/e2e/browser-mode.spec.ts` and
-   `frontend/e2e/mobile-sidebar-toggle.spec.ts`. UX shape may follow upstream;
-   browser functionality may not regress.
+   `frontend/e2e/mobile-sidebar-toggle.spec.ts`. Claude Code chat is part of the
+   same parity contract: non-Electron installs must package the ACP runtime so
+   chat spawn and TUI→chat handoff do not depend on Electron resources. Sync
+   anchors: the shared dependency pin and packager are
+   `frontend/acp-runtime/{package.json,package-lock.json}` and
+   `frontend/scripts/build-acp-runtime.mjs`; headless provisioning and rollback
+   behavior live in `ops/deploy.sh` with `ops/deploy.test.mjs`; runtime discovery
+   and its non-bundle guard live in
+   `backend/internal/adapters/chatdriver/claudeacp/{driver.go,driver_test.go}`;
+   and preflight diagnosis lives in
+   `backend/internal/cli/{doctor.go,doctor_test.go}`. UX shape may follow
+   upstream; browser functionality may not regress.
    Reference issues/PRs: #2 → #18; #46 → #55; #54 → #62; #182 → #191; and #109
-   (web project import daemon readiness).
+   (web project import daemon readiness); #281.
 2. **Terminal auto-focus.** A terminal pane takes keyboard focus when it appears
    or is selected, so the user types without clicking (`focusRequest`/`autoFocus`,
    `data-terminal-tab` + `focusActiveTerminalTab`, plus the Ctrl+F6

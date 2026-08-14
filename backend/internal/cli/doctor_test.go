@@ -163,6 +163,35 @@ func TestDoctorChecksHarnessVersions(t *testing.T) {
 	}
 }
 
+func TestDoctorWarnsWhenClaudeChatRuntimeUnavailable(t *testing.T) {
+	setConfigEnv(t)
+	t.Setenv("AO_CLAUDE_ACP_COMMAND", "ao-definitely-missing-acp-runtime-command")
+	c := doctorContext(t, map[string]string{"git": "/bin/git"}, func(context.Context, string, ...string) ([]byte, error) {
+		return []byte("git version 2.43.0\n"), nil
+	})
+	check := findDoctorCheck(t, c.runDoctor(context.Background()), "claude-chat-runtime")
+	if check.Level != doctorWarn || check.Section != doctorSectionAgents || check.Name != "claude-chat-runtime" {
+		t.Fatalf("claude chat runtime check = %+v, want agent-harness warning", check)
+	}
+	for _, want := range []string{"rerun ops/deploy.sh", "AO_ACP_RUNTIME_DIR", "AO_CLAUDE_ACP_COMMAND"} {
+		if !strings.Contains(check.Message, want) {
+			t.Fatalf("claude chat runtime message = %q, want remediation %q", check.Message, want)
+		}
+	}
+}
+
+func TestDoctorPassesWhenClaudeChatRuntimeAvailable(t *testing.T) {
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AO_CLAUDE_ACP_COMMAND", executable)
+	check := (&commandContext{}).checkClaudeChatRuntime(context.Background())
+	if check.Level != doctorPass || check.Section != doctorSectionAgents || check.Name != "claude-chat-runtime" {
+		t.Fatalf("claude chat runtime check = %+v, want agent-harness pass", check)
+	}
+}
+
 func TestDoctorRejectsUnrelatedMuseBinary(t *testing.T) {
 	setConfigEnv(t)
 	c := doctorContext(t, map[string]string{"git": "/bin/git", "muse": "/bin/muse"}, func(_ context.Context, name string, _ ...string) ([]byte, error) {

@@ -25,6 +25,8 @@ import (
 
 const minimumNodeMajor = 22
 
+const runtimeRemediation = "reinstall AO (headless: rerun ops/deploy.sh), or set AO_ACP_RUNTIME_DIR / AO_CLAUDE_ACP_COMMAND"
+
 type claudePlugin interface {
 	ResolveBinary(context.Context) (string, error)
 	AuthStatus(context.Context) (ports.AgentAuthStatus, error)
@@ -192,11 +194,25 @@ func resolveRuntime(ctx context.Context) (runtimeLaunch, error) {
 	return runtimeLaunch{command: node, args: []string{entry}}, nil
 }
 
+// CheckRuntime validates the exact runtime path used by Claude chat while
+// adding install remediation suitable for preflight diagnostics.
+func CheckRuntime(ctx context.Context) error {
+	_, err := resolveRuntime(ctx)
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf("%w; %s", err, runtimeRemediation)
+}
+
 func runtimeDirectoryBesideExecutable() string {
 	executable, err := os.Executable()
 	if err != nil {
 		return ""
 	}
+	return runtimeDirectoryBeside(executable)
+}
+
+func runtimeDirectoryBeside(executable string) string {
 	resources := filepath.Dir(filepath.Dir(executable))
 	for _, candidate := range []string{
 		filepath.Join(resources, "acp-runtime"),
