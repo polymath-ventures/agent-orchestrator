@@ -1607,6 +1607,11 @@ func (m *Manager) resolveSpawnTarget(ctx context.Context, cfg ports.SpawnConfig,
 		bucket := entry.BucketKey()
 		model := bucket.Model
 		if explicitModel := strings.TrimSpace(cfg.Model); explicitModel != "" {
+			harnessProvider := bucket.Harness.ModelProvider()
+			if !domain.ClassifyModelProvider(explicitModel).CompatibleWith(harnessProvider) {
+				return resolvedSpawnTarget{}, fmt.Errorf("%w: %q is not a %s model (harness %q)",
+					agentconfig.ErrModelHarnessMismatch, explicitModel, harnessProvider, bucket.Harness)
+			}
 			model = explicitModel
 		}
 		return resolvedSpawnTarget{
@@ -2717,7 +2722,7 @@ func (m *Manager) relaunchSessionWithPolicy(ctx context.Context, operation strin
 	// put the census and the running agent out of step.
 	agentConfig, err := restoreAgentConfig(rec, project.Config)
 	if err != nil {
-		return RestoreResult{}, fmt.Errorf("restore %s: agent config: %w", rec.ID, err)
+		return RestoreResult{}, fmt.Errorf("%s %s: agent config: %w", operation, rec.ID, err)
 	}
 	env := m.runtimeEnv(rec.ID, rec.ProjectID, rec.IssueID, project.Config.Env)
 	m.augmentAgentRuntimeEnv(agent, env)

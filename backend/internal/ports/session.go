@@ -34,8 +34,9 @@ type SpawnConfig struct {
 	Branch string
 	Prompt string
 
-	// AgentConfig overrides the resolved project/role agent config for this
-	// single spawn. Empty fields keep the project defaults.
+	// AgentConfig overrides the resolved project/role mode and permissions for
+	// this single spawn. A nested Model is folded into Model only when Model is
+	// empty; otherwise the top-level Model is authoritative.
 	AgentConfig AgentConfig
 
 	// RequestedMode is the caller's explicit session mode, or empty to let the

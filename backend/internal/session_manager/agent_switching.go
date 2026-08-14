@@ -2679,6 +2679,10 @@ func (m *Manager) reconcileStartingTarget(ctx context.Context, store ports.Agent
 		_, failErr := m.failAgentSwitch(ctx, store, sw, domain.AgentSwitchErrorDaemonRestartPostStop)
 		return failErr == nil, failErr
 	}
+	// The switch row predates durable target model/effort facts. A recovered
+	// starting target therefore adopts the current harness-aware project config;
+	// the saga is immediately failed before prompt delivery below, so it cannot
+	// be reported as a completed handoff with re-resolved launch identity.
 	project, err := m.loadProject(ctx, rec.ProjectID)
 	if err != nil {
 		return false, err
