@@ -7,9 +7,9 @@
 
 ## 2. Shared Runtime Diagnosis and Fork Contract
 
-- [ ] 2.1 Add failing Claude ACP adapter tests for a non-Electron install-prefix layout, the shared runtime check, and actionable remediation.
-- [ ] 2.2 Expose the adapter's runtime check without duplicating resolution rules.
-- [ ] 2.3 Add failing doctor coverage for valid and unavailable Claude ACP runtimes, then wire the shared check into agent harness diagnostics.
-- [ ] 2.4 Add the non-Electron Claude ACP runtime concern and sync anchors to `docs/fork.md` item 1.
-- [ ] 2.5 Run focused Go and ops tests and validate the OpenSpec change.
-- [ ] 2.6 Run the repository's full local CI gate, rebase, and push the completed phase.
+- [x] 2.1 Add failing Claude ACP adapter tests for a non-Electron install-prefix layout, the shared runtime check, and actionable remediation.
+- [x] 2.2 Expose the adapter's runtime check without duplicating resolution rules.
+- [x] 2.3 Add failing doctor coverage for valid and unavailable Claude ACP runtimes, then wire the shared check into agent harness diagnostics.
+- [x] 2.4 Add the non-Electron Claude ACP runtime concern and sync anchors to `docs/fork.md` item 1.
+- [x] 2.5 Run focused Go and ops tests and validate the OpenSpec change.
+- [x] 2.6 Run the repository's full local CI gate, rebase, and push the completed phase.

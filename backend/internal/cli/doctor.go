@@ -19,6 +19,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/codex"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/chatdriver/claudeacp"
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 )
 
@@ -192,7 +193,7 @@ func (c *commandContext) runDoctor(ctx context.Context) []doctorCheck {
 	for _, harness := range doctorHarnesses {
 		checks = append(checks, c.checkHarness(ctx, harness))
 	}
-	checks = append(checks, c.checkCodexLaunchFlags(ctx), c.checkGitHubToken(ctx), c.checkGitLabToken(ctx))
+	checks = append(checks, c.checkClaudeChatRuntime(ctx), c.checkCodexLaunchFlags(ctx), c.checkGitHubToken(ctx), c.checkGitLabToken(ctx))
 	return checks
 }
 
@@ -268,6 +269,17 @@ func (c *commandContext) checkAOBinary() doctorCheck {
 	return doctorCheck{
 		Level: doctorWarn, Section: doctorSectionTools, Name: name,
 		Message: fmt.Sprintf("ao in PATH is %s, not this binary (%s); workspace hooks run `ao hooks` and a foreign ao breaks activity tracking outside daemon-spawned sessions", onPath, self),
+	}
+}
+
+func (c *commandContext) checkClaudeChatRuntime(ctx context.Context) doctorCheck {
+	const name = "claude-chat-runtime"
+	if err := claudeacp.CheckRuntime(ctx); err != nil {
+		return doctorCheck{Level: doctorWarn, Section: doctorSectionAgents, Name: name, Message: err.Error()}
+	}
+	return doctorCheck{
+		Level: doctorPass, Section: doctorSectionAgents, Name: name,
+		Message: "Claude Code chat runtime is available",
 	}
 }
 
