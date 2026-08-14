@@ -477,6 +477,25 @@ func TestChatSpawnUsesResolvedSpawnModelForController(t *testing.T) {
 	}
 }
 
+func TestChatSpawnProjectlessPrimeUsesConfiguredPermissions(t *testing.T) {
+	launcher := &recordingLauncher{}
+	mgr, store, _ := newChatManager(launcher)
+	store.prime = domain.PrimeSettings{Enabled: true, Harness: domain.HarnessCodex}
+
+	_, _, _, err := mgr.Spawn(context.Background(), ports.SpawnConfig{
+		Kind: domain.KindPrime, RequestedMode: domain.SessionModeChat,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(launcher.started) != 1 {
+		t.Fatalf("started %d controllers, want 1", len(launcher.started))
+	}
+	if got := launcher.started[0].Permissions; got != ports.PermissionModeBypassPermissions {
+		t.Fatalf("chat Prime permissions = %q, want %q", got, ports.PermissionModeBypassPermissions)
+	}
+}
+
 func TestChatSpawnAppliesRequestAgentConfigOverProjectDefaults(t *testing.T) {
 	launcher := &recordingLauncher{}
 	mgr, store, _ := newChatManager(launcher)

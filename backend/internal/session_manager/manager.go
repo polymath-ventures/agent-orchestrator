@@ -852,9 +852,8 @@ func (m *Manager) preflightSpawn(ctx context.Context, cfg ports.SpawnConfig, pas
 		// effective mode is reported by GET /prime/settings, which applies the
 		// same defaulting, so it needs no separate spawn-time disclosure.
 		agentConfig = settings.WithDefaults().AgentConfig
-		if agentConfig.Effort == "" {
-			agentConfig.Effort = target.effort
-		}
+		agentConfig.Model = target.model
+		agentConfig.Effort = target.effort
 	} else {
 		agentConfig, err = harnessAwareAgentConfig(cfg.Kind, project.Config, cfg.Harness, "")
 		if err != nil {
@@ -1584,15 +1583,15 @@ func (m *Manager) resolveSpawnTarget(ctx context.Context, cfg ports.SpawnConfig,
 		if harness == "" {
 			return resolvedSpawnTarget{}, fmt.Errorf("%w: configure fleet prime agent or pass --harness", ErrMissingHarness)
 		}
-		model := strings.TrimSpace(cfg.Model)
-		if model == "" {
-			model = strings.TrimSpace(settings.AgentConfig.Model)
+		resolved, err := agentconfig.EffectiveFromConfigs(settings.AgentConfig, domain.AgentConfig{}, cfg.Model, harness)
+		if err != nil {
+			return resolvedSpawnTarget{}, err
 		}
 		effort := cfg.Effort
 		if effort == "" {
-			effort = settings.AgentConfig.Effort
+			effort = resolved.Effort
 		}
-		return resolvedSpawnTarget{harness: harness, model: model, effort: effort}, nil
+		return resolvedSpawnTarget{harness: harness, model: strings.TrimSpace(resolved.Model), effort: effort}, nil
 	}
 	pinnedHarness := cfg.Harness != ""
 	if !pinnedHarness && cfg.Kind == domain.KindWorker && len(project.Config.WorkerMix) > 0 {
@@ -1600,18 +1599,28 @@ func (m *Manager) resolveSpawnTarget(ctx context.Context, cfg ports.SpawnConfig,
 		if err != nil {
 			return resolvedSpawnTarget{}, err
 		}
-		entry, err := m.selectMixBucket(ctx, cfg.ProjectID, mix, strings.TrimSpace(cfg.Model))
+		explicitModel := strings.TrimSpace(cfg.Model)
+		if explicitModel != "" {
+			compatible := make(domain.WorkerMix, 0, len(mix))
+			modelProvider := domain.ClassifyModelProvider(explicitModel)
+			for _, candidate := range mix {
+				if modelProvider.CompatibleWith(candidate.Harness.ModelProvider()) {
+					compatible = append(compatible, candidate)
+				}
+			}
+			if len(compatible) == 0 {
+				return resolvedSpawnTarget{}, fmt.Errorf("%w: %q has no compatible harness in the worker mix",
+					agentconfig.ErrModelHarnessMismatch, explicitModel)
+			}
+			mix = compatible
+		}
+		entry, err := m.selectMixBucket(ctx, cfg.ProjectID, mix, explicitModel)
 		if err != nil {
 			return resolvedSpawnTarget{}, err
 		}
 		bucket := entry.BucketKey()
 		model := bucket.Model
-		if explicitModel := strings.TrimSpace(cfg.Model); explicitModel != "" {
-			harnessProvider := bucket.Harness.ModelProvider()
-			if !domain.ClassifyModelProvider(explicitModel).CompatibleWith(harnessProvider) {
-				return resolvedSpawnTarget{}, fmt.Errorf("%w: %q is not a %s model (harness %q)",
-					agentconfig.ErrModelHarnessMismatch, explicitModel, harnessProvider, bucket.Harness)
-			}
+		if explicitModel != "" {
 			model = explicitModel
 		}
 		return resolvedSpawnTarget{
@@ -1980,9 +1989,6 @@ func harnessAwareAgentConfig(kind domain.SessionKind, cfg domain.ProjectConfig, 
 	}
 	merged := effectiveAgentConfig(kind, cfg)
 	resolved.Mode = merged.Mode
-	if merged.Permissions != "" {
-		resolved.Permissions = merged.Permissions
-	}
 	return resolved, nil
 }
 
