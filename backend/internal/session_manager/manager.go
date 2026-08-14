@@ -977,10 +977,14 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	if requestedModel != "" || target.mixSelected {
 		agentConfig.Model = launchModelForBucket(cfg.Harness, cfg.Model, target.mixSelected)
 	}
+	persistedModel := cfg.Model
+	if !target.mixSelected {
+		persistedModel = agentConfig.Model
+	}
 	promptBytes := len(prompt)
 	systemPromptBytes := len(systemPrompt)
 
-	rec, err := m.store.CreateSession(ctx, seedRecord(cfg, agentConfig.Effort, target.mixSelected, target.mixBucketModel, m.clock()))
+	rec, err := m.store.CreateSession(ctx, seedRecord(cfg, persistedModel, agentConfig.Effort, target.mixSelected, target.mixBucketModel, m.clock()))
 	if err != nil {
 		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn: create: %w", err)
 	}
@@ -2636,6 +2640,22 @@ func (m *Manager) relaunchSessionFresh(ctx context.Context, operation string, re
 	return m.relaunchSessionWithPolicy(ctx, operation, rec, project, ws, restartHandle, true)
 }
 
+func restoreAgentConfig(rec domain.SessionRecord, project domain.ProjectConfig) (ports.AgentConfig, error) {
+	agentConfig, err := agentconfig.Effective(rec.Kind, project, "", rec.Harness)
+	if err != nil {
+		return ports.AgentConfig{}, err
+	}
+	if rec.MixSelected {
+		agentConfig.Model = launchModelForBucket(rec.Harness, rec.Model, true)
+	} else if rec.Model != "" {
+		agentConfig.Model = rec.Model
+	}
+	if rec.Effort != "" {
+		agentConfig.Effort = rec.Effort
+	}
+	return agentConfig, nil
+}
+
 func (m *Manager) relaunchSessionWithPolicy(ctx context.Context, operation string, rec domain.SessionRecord, project domain.ProjectRecord, ws ports.WorkspaceInfo, restartHandle *ports.RuntimeHandle, forceFresh bool) (RestoreResult, error) {
 	// Relaunch dispatches from the currently committed persisted mode, never from
 	// a caller hint. The interface-transition coordinator changes that fact only
@@ -2674,20 +2694,9 @@ func (m *Manager) relaunchSessionWithPolicy(ctx context.Context, operation strin
 	// comes from the row rather than config: the session is already counted in
 	// its (harness, model) bucket, so relaunching it on a different model would
 	// put the census and the running agent out of step.
-	agentConfig, err := agentconfig.Effective(rec.Kind, project.Config, "", rec.Harness)
+	agentConfig, err := restoreAgentConfig(rec, project.Config)
 	if err != nil {
 		return RestoreResult{}, fmt.Errorf("restore %s: agent config: %w", rec.ID, err)
-	}
-	// A mix-selected session carries its bucket's model authoritatively. The
-	// empty string remains the persisted bucket identity, but the adapter still
-	// receives that harness's default model rather than a later project scalar.
-	if rec.MixSelected {
-		agentConfig.Model = launchModelForBucket(rec.Harness, rec.Model, true)
-	} else if rec.Model != "" {
-		agentConfig.Model = rec.Model
-	}
-	if rec.Effort != "" {
-		agentConfig.Effort = rec.Effort
 	}
 	env := m.runtimeEnv(rec.ID, rec.ProjectID, rec.IssueID, project.Config.Env)
 	m.augmentAgentRuntimeEnv(agent, env)
@@ -3964,7 +3973,7 @@ func (m *Manager) cleanupRecords(ctx context.Context, project domain.ProjectID) 
 // resolveSpawnTarget — the one place that knows whether the worker mix, rather
 // than an explicit pin, chose this (harness, model) — and is recorded so the
 // census counts only the mix's own selections.
-func seedRecord(cfg ports.SpawnConfig, effort domain.Effort, mixSelected bool, mixBucketModel string, now time.Time) domain.SessionRecord {
+func seedRecord(cfg ports.SpawnConfig, model string, effort domain.Effort, mixSelected bool, mixBucketModel string, now time.Time) domain.SessionRecord {
 	return domain.SessionRecord{
 		ProjectID:      cfg.ProjectID,
 		IssueID:        cfg.IssueID,
@@ -3972,7 +3981,7 @@ func seedRecord(cfg ports.SpawnConfig, effort domain.Effort, mixSelected bool, m
 		CreatedAt:      now,
 		UpdatedAt:      now,
 		Harness:        cfg.Harness,
-		Model:          cfg.Model,
+		Model:          model,
 		Effort:         effort,
 		MixSelected:    mixSelected,
 		MixBucketModel: mixBucketModel,
