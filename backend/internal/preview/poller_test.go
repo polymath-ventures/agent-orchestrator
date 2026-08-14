@@ -19,6 +19,7 @@ type fakePreviewSessions struct {
 	sessions []domain.SessionRecord
 	sets     []previewSet
 	listErr  error
+	setErr   error
 }
 
 type previewSet struct {
@@ -34,6 +35,9 @@ func (f *fakePreviewSessions) ListAllSessions(_ context.Context) ([]domain.Sessi
 }
 
 func (f *fakePreviewSessions) SetPreview(_ context.Context, id domain.SessionID, previewURL string) (domain.Session, error) {
+	if f.setErr != nil {
+		return domain.Session{}, f.setErr
+	}
 	f.sets = append(f.sets, previewSet{id: id, url: previewURL})
 	for i, sess := range f.sessions {
 		if sess.ID == id {
@@ -339,6 +343,30 @@ func TestPollerLogsOperationalPollFailure(t *testing.T) {
 
 	if !strings.Contains(logs.String(), "preview poller: poll failed") {
 		t.Fatalf("logs = %q, want poll failed error", logs.String())
+	}
+}
+
+func TestPollerDoesNotAbandonStalePreviewBookkeepingOnClearCancellation(t *testing.T) {
+	workspace := t.TempDir()
+	svc := &fakePreviewSessions{
+		sessions: []domain.SessionRecord{workerSession("ao-1", workspace, "index.html")},
+		setErr:   context.Canceled,
+	}
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logs, nil))
+	poller := NewPoller(svc, svc, "http://127.0.0.1:3001", PollerConfig{Logger: logger})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if err := poller.Poll(ctx); err != nil {
+		t.Fatalf("Poll: %v", err)
+	}
+
+	if strings.Contains(logs.String(), "preview poller: failed to clear stale preview") {
+		t.Fatalf("logs = %q, want no stale preview clear error for shutdown cancellation", logs.String())
+	}
+	if got := poller.seen["ao-1"]; !got.cleared || got.path != "index.html" {
+		t.Fatalf("seen[ao-1] = %#v, want cleared stale entry bookkeeping", got)
 	}
 }
 
