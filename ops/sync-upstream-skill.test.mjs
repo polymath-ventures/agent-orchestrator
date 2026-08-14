@@ -37,6 +37,8 @@ test("sync-upstream inspects merge commits and runs behavioral guards", async ()
 	const skill = await readFile(skillPath, "utf8");
 
 	assert.match(skill, /git log -m --merges/);
+	assert.match(skill, /"origin\/main\.\.HEAD"/);
+	assert.doesNotMatch(skill, /\$DEFAULT_BRANCH/);
 	assert.match(skill, /anchor(?: path)?\s+existence alone is (?:not|never) sufficient/i);
 	assert.match(skill, /every named behavioral guard/i);
 	assert.match(skill, /frontend\/e2e\/browser-mode\.spec\.ts/);

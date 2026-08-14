@@ -86,7 +86,7 @@ Before the general gates, read every **Behavioral guards** entry in
 for every sync-anchor path it could have changed:
 
 ```bash
-git log -m --merges --name-status --oneline "origin/$DEFAULT_BRANCH..HEAD" -- <anchored-paths-from-docs/fork.md>
+git log -m --merges --name-status --oneline "origin/main..HEAD" -- <anchored-paths-from-docs/fork.md>
 ```
 
 The `-m` is mandatory: ordinary `git log` hides the per-parent diffs where an
