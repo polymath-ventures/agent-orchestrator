@@ -1587,9 +1587,9 @@ func (m *Manager) resolveSpawnTarget(ctx context.Context, cfg ports.SpawnConfig,
 		if err != nil {
 			return resolvedSpawnTarget{}, err
 		}
-		effort := cfg.Effort
-		if effort == "" {
-			effort = resolved.Effort
+		effort := resolved.Effort
+		if cfg.Effort != "" {
+			effort = domain.NormalizeEffortForHarness(harness, cfg.Effort)
 		}
 		return resolvedSpawnTarget{harness: harness, model: strings.TrimSpace(resolved.Model), effort: effort}, nil
 	}
@@ -1737,9 +1737,6 @@ func (m *Manager) selectMixBucket(ctx context.Context, project domain.ProjectID,
 	m.applyWorkerMixSkipped(census, mix, explicitModel)
 	entry, ok := mix.Select(census)
 	if !ok {
-		if explicitModel != "" {
-			return domain.WorkerMixEntry{}, fmt.Errorf("%w: project %s has no selectable worker mix bucket compatible with model %q", ErrWorkerMixExhausted, project, explicitModel)
-		}
 		return domain.WorkerMixEntry{}, fmt.Errorf("%w: project %s configures %d bucket(s), none selectable", ErrWorkerMixExhausted, project, len(mix))
 	}
 	bk := selectedWorkerMixKey(entry, explicitModel)
