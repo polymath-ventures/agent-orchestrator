@@ -42,6 +42,7 @@ type systemPromptConfig struct {
 	ProjectRules          string
 	OrchestratorRules     string
 	PrimeRules            string
+	TrackerIntakeAssignee string
 	AdditionalSections    []string
 }
 
@@ -163,6 +164,9 @@ func buildSystemPromptText(cfg systemPromptConfig) string {
 	case sessionPromptRoleWorker:
 		orchestratorID := strings.TrimSpace(cfg.OrchestratorSessionID)
 		sections = append(sections, workerSystemPrompt(cfg.Project))
+		if claimPrompt := trackerIntakeClaimPrompt(cfg.TrackerIntakeAssignee); claimPrompt != "" {
+			sections = append(sections, claimPrompt)
+		}
 		if orchestratorID != "" {
 			sections = append(sections, workerOrchestratorPrompt(orchestratorID))
 		}
@@ -346,6 +350,20 @@ You are an AO worker for project %s.
 This prompt includes the standing worker policy when this project configures one. Treat that injected policy as the authority for escalation, ticket authority, implementation boundaries, and review/merge gates. If no policy is configured, no role policy is appended.
 
 %s`, project.ID, projectContextSection(project))
+}
+
+func trackerIntakeClaimPrompt(assignee string) string {
+	assignee = strings.TrimSpace(assignee)
+	if assignee == "" || assignee == "*" || strings.EqualFold(assignee, "none") {
+		return ""
+	}
+	return fmt.Sprintf(`## Tracker Intake Claim
+
+This project's configured tracker-intake assignee is `+"`%s`"+`. It is a queue-routing marker, not a competing worker claim.
+
+When starting work on a tracker issue, add the worker account without removing any existing assignee. Keep `+"`%s`"+` assigned for as long as the issue remains open so tracker intake can still observe it.
+
+Before claiming or writing a progress log, check whether completing the issue requires operator-only credentials or actions that this session cannot access. If it does, do not claim the issue or report work as in progress. Leave `+"`%s`"+` assigned and post an explicit escalation comment naming what the operator must supply. If a progress log already exists, make it explicitly parked or escalated rather than implying active work.`, assignee, assignee, assignee)
 }
 
 func workerOrchestratorPrompt(orchestratorID string) string {
