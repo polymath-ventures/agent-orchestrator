@@ -1,11 +1,14 @@
 package preview
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,6 +18,7 @@ import (
 type fakePreviewSessions struct {
 	sessions []domain.SessionRecord
 	sets     []previewSet
+	listErr  error
 }
 
 type previewSet struct {
@@ -23,6 +27,9 @@ type previewSet struct {
 }
 
 func (f *fakePreviewSessions) ListAllSessions(_ context.Context) ([]domain.SessionRecord, error) {
+	if f.listErr != nil {
+		return nil, f.listErr
+	}
 	return append([]domain.SessionRecord(nil), f.sessions...), nil
 }
 
@@ -304,6 +311,34 @@ func TestPollerSkipsNonWorkerSessions(t *testing.T) {
 
 	if len(svc.sets) != 0 {
 		t.Fatalf("sets = %#v, want no preview updates for orchestrator sessions", svc.sets)
+	}
+}
+
+func TestPollerDoesNotLogExpectedShutdownCancellation(t *testing.T) {
+	svc := &fakePreviewSessions{listErr: context.Canceled}
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logs, nil))
+	poller := NewPoller(svc, svc, "http://127.0.0.1:3001", PollerConfig{Logger: logger})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	poller.pollAndLog(ctx)
+
+	if strings.Contains(logs.String(), "preview poller: poll failed") {
+		t.Fatalf("logs contain shutdown cancellation error = %q, want no poll failed log", logs.String())
+	}
+}
+
+func TestPollerLogsOperationalPollFailure(t *testing.T) {
+	svc := &fakePreviewSessions{listErr: errors.New("database unavailable")}
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logs, nil))
+	poller := NewPoller(svc, svc, "http://127.0.0.1:3001", PollerConfig{Logger: logger})
+
+	poller.pollAndLog(context.Background())
+
+	if !strings.Contains(logs.String(), "preview poller: poll failed") {
+		t.Fatalf("logs = %q, want poll failed error", logs.String())
 	}
 }
 
