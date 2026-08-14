@@ -390,6 +390,75 @@ func TestChatSpawnStartsControllerAndNoRuntime(t *testing.T) {
 	}
 }
 
+func TestChatSpawnUsesResolvedSpawnModelForController(t *testing.T) {
+	tests := []struct {
+		name      string
+		project   domain.ProjectConfig
+		spawn     ports.SpawnConfig
+		wantModel string
+	}{
+		{
+			name: "explicit model overrides cross-provider role scalar",
+			project: domain.ProjectConfig{
+				Worker: domain.RoleOverride{
+					Harness:     domain.HarnessClaudeCode,
+					AgentConfig: domain.AgentConfig{Model: "gpt-5.6-sol"},
+				},
+			},
+			spawn: ports.SpawnConfig{
+				ProjectID:     chatTestProject,
+				Kind:          domain.KindWorker,
+				Harness:       domain.HarnessClaudeCode,
+				Model:         "opus-4.8",
+				RequestedMode: domain.SessionModeChat,
+			},
+			wantModel: "opus-4.8",
+		},
+		{
+			name: "chat controller keeps harness-aware resolved model when spawn omits one",
+			project: domain.ProjectConfig{
+				AgentConfig: domain.AgentConfig{
+					Model: "gpt-5.6-sol",
+					ModelByHarness: map[domain.AgentHarness]domain.HarnessModel{
+						domain.HarnessClaudeCode: {Model: "opus-4.8"},
+					},
+				},
+				Worker: domain.RoleOverride{Harness: domain.HarnessClaudeCode},
+			},
+			spawn: ports.SpawnConfig{
+				ProjectID:     chatTestProject,
+				Kind:          domain.KindWorker,
+				RequestedMode: domain.SessionModeChat,
+			},
+			wantModel: "opus-4.8",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			launcher := &recordingLauncher{}
+			mgr, store, _ := newChatManager(launcher)
+			project := store.projects[string(chatTestProject)]
+			project.Config = tt.project
+			store.projects[string(chatTestProject)] = project
+
+			rec, _, _, err := mgr.Spawn(context.Background(), tt.spawn)
+			if err != nil {
+				t.Fatalf("Spawn: %v", err)
+			}
+			if rec.Model != tt.wantModel {
+				t.Fatalf("record model = %q, want %q", rec.Model, tt.wantModel)
+			}
+			if len(launcher.started) != 1 {
+				t.Fatalf("started %d controllers, want 1", len(launcher.started))
+			}
+			if got := launcher.started[0].Model; got != tt.wantModel {
+				t.Fatalf("controller model = %q, want resolved spawn model %q", got, tt.wantModel)
+			}
+		})
+	}
+}
+
 func TestChatSpawnAppliesRequestAgentConfigOverProjectDefaults(t *testing.T) {
 	launcher := &recordingLauncher{}
 	mgr, store, _ := newChatManager(launcher)
