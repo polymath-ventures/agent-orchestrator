@@ -1,8 +1,11 @@
 import { readFile } from "node:fs/promises";
+import { mkdtemp, mkdir, lstat, readlink, symlink, writeFile } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import test from "node:test";
 import assert from "node:assert/strict";
+import { tmpdir } from "node:os";
+import path from "node:path";
 
 const run = promisify(execFile);
 const script = new URL("./deploy.sh", import.meta.url).pathname;
@@ -15,6 +18,11 @@ test("deploy.sh --help prints usage without touching the system", async () => {
 	const { stdout } = await run("bash", [script, "--help"]);
 	assert.match(stdout, /Usage:/);
 	assert.match(stdout, /--rollback/);
+});
+
+test("deploy.sh can be sourced without running deploy for behavioral tests", async () => {
+	const text = await readFile(script, "utf8");
+	assert.match(text, /if \[ "\$\{BASH_SOURCE\[0\]\}" = "\$0" \]; then[\s\S]*case "\$\{1:-\}" in/);
 });
 
 test("deploy.sh keeps its load-bearing invariants", async () => {
@@ -80,13 +88,17 @@ test("deploy.sh keeps its load-bearing invariants", async () => {
 	assert.match(text, /"\$rel\/acp-runtime\/node_modules\/@agentclientprotocol\/claude-agent-acp\/dist\/index\.js"/);
 	assert.match(text, /ln -sfn "\$CURRENT\/acp-runtime" "\$ACP_RUNTIME_TARGET"/);
 	assert.match(text, /WARN: active release has no ACP runtime; Claude Code chat is unavailable/);
-	assert.match(text, /rm -f "\$ACP_RUNTIME_TARGET"/);
+	assert.match(text, /is_ao_managed_acp_runtime_link/);
 	assert.ok(
 		text.indexOf("npm --prefix frontend run build:acp-runtime --silent") < text.indexOf('ln -sfn "$rel" "$CURRENT"'),
 		"ACP runtime must be built before the active release flips",
 	);
+	const deployBody = text.slice(
+		text.indexOf("deploy() {"),
+		text.indexOf('\nif [[ "${BASH_SOURCE[0]}" == "$0" ]]; then'),
+	);
 	assert.ok(
-		text.indexOf('ln -sfn "$rel" "$CURRENT"') < text.lastIndexOf("\n  sync_acp_runtime_link\n"),
+		deployBody.indexOf('ln -sfn "$rel" "$CURRENT"') < deployBody.indexOf("\n  sync_acp_runtime_link\n"),
 		"runtime link must be installed after the newly active release flips",
 	);
 	const rollback = text.slice(text.indexOf("rollback() {"), text.indexOf("\ndeploy() {"));
@@ -95,4 +107,75 @@ test("deploy.sh keeps its load-bearing invariants", async () => {
 		/ln -sfn "\$prev" "\$CURRENT"[\s\S]*sync_acp_runtime_link/,
 		"rollback must refresh or remove the runtime link for its own release",
 	);
+});
+
+test("sync_acp_runtime_link preserves an operator-managed symlink on rollback", async () => {
+	const root = await mkdtemp(path.join(tmpdir(), "deploy-acp-"));
+	const deployRoot = path.join(root, "deploy");
+	const current = path.join(deployRoot, "current");
+	const release = path.join(deployRoot, "releases", "release-1");
+	const localHome = path.join(root, "home");
+	const operatorRuntime = path.join(root, "shared-acp-runtime");
+	const acpRuntimeTarget = path.join(localHome, ".local", "acp-runtime");
+	const logFile = path.join(root, "deploy.log");
+
+	await mkdir(path.join(localHome, ".local"), { recursive: true });
+	await mkdir(release, { recursive: true });
+	await mkdir(operatorRuntime, { recursive: true });
+	await writeFile(logFile, "");
+	await symlink(release, current);
+	await symlink(operatorRuntime, acpRuntimeTarget);
+
+	const harness = `
+		set -euo pipefail
+		source "${script}"
+		DEPLOY_ROOT="${deployRoot}"
+		CURRENT="${current}"
+		ACP_RUNTIME_TARGET="${acpRuntimeTarget}"
+		LOG_FILE="${logFile}"
+		log() { printf '%s\\n' "$*" >>"$LOG_FILE"; }
+		sync_acp_runtime_link
+	`;
+	await execFile("bash", ["-lc", harness]);
+
+	const link = await readlink(acpRuntimeTarget);
+	assert.equal(link, operatorRuntime);
+	const stat = await lstat(acpRuntimeTarget);
+	assert.ok(stat.isSymbolicLink());
+});
+
+test("sync_acp_runtime_link removes only AO-managed symlinks when runtime disappears", async () => {
+	const root = await mkdtemp(path.join(tmpdir(), "deploy-acp-"));
+	const deployRoot = path.join(root, "deploy");
+	const current = path.join(deployRoot, "current");
+	const release = path.join(deployRoot, "releases", "release-1");
+	const localHome = path.join(root, "home");
+	const acpRuntimeTarget = path.join(localHome, ".local", "acp-runtime");
+	const logFile = path.join(root, "deploy.log");
+
+	await mkdir(path.join(localHome, ".local"), { recursive: true });
+	await mkdir(release, { recursive: true });
+	await writeFile(logFile, "");
+	await symlink(release, current);
+	await symlink(path.join(current, "acp-runtime"), acpRuntimeTarget);
+
+	const harness = `
+		set -euo pipefail
+		source "${script}"
+		DEPLOY_ROOT="${deployRoot}"
+		CURRENT="${current}"
+		ACP_RUNTIME_TARGET="${acpRuntimeTarget}"
+		LOG_FILE="${logFile}"
+		log() { printf '%s\\n' "$*" >>"$LOG_FILE"; }
+		sync_acp_runtime_link
+		if [ -L "$ACP_RUNTIME_TARGET" ]; then
+			echo present
+		else
+			echo missing
+		fi
+	`;
+	const { stdout } = await run("bash", ["-lc", harness], { encoding: "utf8" });
+	assert.match(stdout, /missing/);
+	const log = await readFile(logFile, "utf8");
+	assert.match(log, /Claude Code chat is unavailable/);
 });

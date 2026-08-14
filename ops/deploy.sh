@@ -155,12 +155,30 @@ sync_units() {
   done
 }
 
+is_ao_managed_acp_runtime_link() {
+  local target=""
+  [ -L "$ACP_RUNTIME_TARGET" ] || return 1
+  target="$(readlink "$ACP_RUNTIME_TARGET" 2>/dev/null || true)"
+  [ -n "$target" ] || return 1
+  case "$target" in
+    "$DEPLOY_ROOT"/releases/*/acp-runtime|"$DEPLOY_ROOT"/current/acp-runtime) return 0 ;;
+  esac
+  target="$(readlink -f "$ACP_RUNTIME_TARGET" 2>/dev/null || true)"
+  [ -n "$target" ] || return 1
+  case "$target" in
+    "$DEPLOY_ROOT"/releases/*/acp-runtime|"$DEPLOY_ROOT"/current/acp-runtime) return 0 ;;
+  esac
+  return 1
+}
+
 sync_acp_runtime_link() {
   local backup
   if [ ! -d "$CURRENT/acp-runtime" ]; then
-    if [ -L "$ACP_RUNTIME_TARGET" ]; then
+    if is_ao_managed_acp_runtime_link; then
       rm -f "$ACP_RUNTIME_TARGET"
       log "WARN: active release has no ACP runtime; Claude Code chat is unavailable until a forward deploy or AO_ACP_RUNTIME_DIR override."
+    elif [ -L "$ACP_RUNTIME_TARGET" ]; then
+      log "WARN: active release has no packaged ACP runtime; left the existing operator-managed ACP runtime symlink at $ACP_RUNTIME_TARGET."
     elif [ -e "$ACP_RUNTIME_TARGET" ]; then
       log "WARN: active release has no packaged ACP runtime; left the existing operator-managed runtime at $ACP_RUNTIME_TARGET."
     else
@@ -268,8 +286,10 @@ deploy() {
   log "Deploy complete: $sha"
 }
 
-case "${1:-}" in
-  --rollback) preflight; rollback ;;
-  --help|-h) sed -n '2,18p' "${BASH_SOURCE[0]}"; exit 0 ;;
-  *) preflight; deploy "${1:-origin/main}" ;;
-esac
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+  case "${1:-}" in
+    --rollback) preflight; rollback ;;
+    --help|-h) sed -n '2,18p' "${BASH_SOURCE[0]}"; exit 0 ;;
+    *) preflight; deploy "${1:-origin/main}" ;;
+  esac
+fi
