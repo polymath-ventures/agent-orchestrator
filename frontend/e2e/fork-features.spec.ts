@@ -1,5 +1,9 @@
 import { expect, test } from "@playwright/test";
+import { mkdir } from "node:fs/promises";
 import { installBrowserModeApiFixtures } from "./fixtures";
+
+const captureEvidence = process.env.CAPTURE_FORK_SCREENSHOTS === "1";
+const evidenceDir = "../docs/screenshots/fork-features";
 
 test.beforeEach(async ({ page }) => {
 	await installBrowserModeApiFixtures(page);
@@ -57,15 +61,33 @@ test.beforeEach(async ({ page }) => {
 
 test("fork UI features stay mounted from the application shell", async ({ page }) => {
 	await page.goto("/");
+	if (captureEvidence) {
+		await mkdir(evidenceDir, { recursive: true });
+		await page.screenshot({ path: `${evidenceDir}/web-client.png`, fullPage: true });
+	}
 
 	const workerRow = page.getByRole("button", { name: "Open fix-webgl-fallback" });
 	await expect(workerRow.locator("[data-harness-glyph]")).toHaveAttribute("title", "Codex");
 	await expect(workerRow).toHaveAttribute("aria-describedby", /sidebar-harness-/);
+	if (captureEvidence) {
+		await workerRow.screenshot({ path: `${evidenceDir}/sidebar-harness-glyph.png` });
+		await page.goto("/#/terminals");
+		await expect(page.getByTestId("session-terminal")).toBeVisible();
+		await page.screenshot({ path: `${evidenceDir}/terminal-focus.png`, fullPage: true });
+		await page.setViewportSize({ width: 1280, height: 1200 });
+	}
 
 	await page.goto("/#/settings");
 	const globalSettings = page.getByRole("dialog");
-	await expect(globalSettings.getByText("Fleet", { exact: true })).toBeVisible();
-	await expect(globalSettings.getByText("Prime", { exact: true })).toBeVisible();
+	const fleetCard = globalSettings.getByText("Fleet", { exact: true }).locator("../..");
+	const primeCard = globalSettings.getByText("Prime", { exact: true }).locator("../..");
+	await expect(fleetCard).toBeVisible();
+	await expect(primeCard).toBeVisible();
+	if (captureEvidence) {
+		await fleetCard.screenshot({ path: `${evidenceDir}/fleet-controls.png` });
+		await primeCard.getByText("Prime", { exact: true }).evaluate((title) => title.scrollIntoView({ block: "start" }));
+		await globalSettings.screenshot({ path: `${evidenceDir}/prime-controls.png` });
+	}
 
 	await page.goto("/#/projects/api-gateway/settings");
 	const projectSettings = page.getByRole("dialog");
@@ -75,12 +97,18 @@ test("fork UI features stay mounted from the application shell", async ({ page }
 	const reviewer = projectSettings.getByRole("button", { name: "Default reviewer agent" });
 	await reviewer.click();
 	await expect(page.getByRole("menuitem", { name: "Codex Fugu" })).toBeVisible();
+	if (captureEvidence) {
+		await page.screenshot({ path: `${evidenceDir}/harness-selection.png`, fullPage: true });
+	}
 	await page.keyboard.press("Escape");
 
 	await projectSettings.getByRole("button", { name: "Instructions", exact: true }).click();
 	await expect(projectSettings.getByRole("textbox", { name: "Worker task prompt template" })).toHaveValue(
 		"/address-issue {issue}",
 	);
+	if (captureEvidence) {
+		await page.screenshot({ path: `${evidenceDir}/worker-task-prompt.png`, fullPage: true });
+	}
 
 	await projectSettings.getByRole("button", { name: "Workers", exact: true }).click();
 	await expect(projectSettings.getByText("Bucket 1", { exact: true })).toBeVisible();

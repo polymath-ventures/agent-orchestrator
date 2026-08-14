@@ -5,6 +5,7 @@ import test from "node:test";
 const skillPath = new URL("../skills/sync-upstream/SKILL.md", import.meta.url);
 const claudeSkillPath = new URL("../.claude/skills/sync-upstream/SKILL.md", import.meta.url);
 const codexSkillPath = new URL("../.agents/skills/sync-upstream/SKILL.md", import.meta.url);
+const forkDocPath = new URL("../docs/fork.md", import.meta.url);
 
 test("sync-upstream client copies match the canonical skill", async () => {
 	const canonical = await readFile(skillPath, "utf8");
@@ -44,4 +45,33 @@ test("sync-upstream inspects merge commits and runs behavioral guards", async ()
 	assert.match(skill, /frontend\/e2e\/fork-features\.spec\.ts/);
 	assert.match(skill, /AO_E2E_PORT/);
 	assert.match(skill, /failure.*STOP condition|STOP condition.*failure/is);
+});
+
+test("fork checklist distinguishes anchors from behavioral guards", async () => {
+	const forkDoc = await readFile(forkDocPath, "utf8");
+	const checklist = forkDoc.match(
+		/## Fork Features To Preserve \(sync checklist\)([\s\S]*?)\*\*Explicitly NOT fork-specific/,
+	)?.[1];
+	assert.ok(checklist, "fork sync checklist is present");
+	assert.match(checklist, /Anchors say where a feature lives; behavioral guards prove it still works\./);
+	assert.match(checklist, /sync is not complete until every named behavioral guard passes/i);
+
+	const starts = [...checklist.matchAll(/^(\d+)\. \*\*/gm)];
+	assert.deepEqual(
+		starts.map((match) => Number(match[1])),
+		[1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+	);
+	const entries = new Map(
+		starts.map((match, index) => [
+			Number(match[1]),
+			checklist.slice(match.index, starts[index + 1]?.index ?? checklist.length),
+		]),
+	);
+	// Item 3 is completed by the separately-owned quota remount in #280.
+	for (const number of [1, 2, 4, 5, 6, 7, 8, 9, 10]) {
+		assert.match(entries.get(number), /\*\*Behavioral guards?:\*\*/, `item ${number} names a behavioral guard`);
+	}
+	for (const number of [1, 2, 4, 5, 6, 10]) {
+		assert.match(entries.get(number), /screenshots\/fork-features\//, `item ${number} links reference evidence`);
+	}
 });
