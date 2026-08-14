@@ -85,6 +85,7 @@ import { useUiStore } from "../stores/ui-store";
 import { useKeybindingsStore } from "../stores/keybindings-store";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { CreateProjectFlow, type CreateProjectInput } from "./CreateProjectFlow";
+import { QuotaPanel } from "./QuotaPanel";
 import { ResizeHandle } from "./ResizeHandle";
 import { isMacPlatform } from "../lib/platform";
 import { useCloudSession } from "../lib/cloud-session";
@@ -191,11 +192,24 @@ export function Sidebar({
 }: SidebarProps) {
 	const { t } = useTranslation();
 	const selection = useSelection();
-	const { state, setOpen } = useSidebar();
+	const { state, setOpen, isMobile, openMobile } = useSidebar();
 	const isCollapsed = state === "collapsed";
 	const [expandedChromeVisible, setExpandedChromeVisible] = useState(!isCollapsed);
 	// One IPC subscription for both footer variants of the restart-to-update prompt.
 	const updateStatus = useUpdateStatus();
+	// The sidebar-footer quota widget is hidden entirely by the Settings toggle.
+	// It is also gated on the sidebar actually being on screen, because the
+	// expanded-chrome cluster only *visually* drops out on the icon rail while
+	// QuotaPanel keeps polling /api/v1/metrics every 30s behind it. Remounting when
+	// the sidebar reopens is safe: the widget derives probe-in-flight state from the
+	// global mutation key precisely so it survives one.
+	//
+	// Which "on screen" applies depends on the variant. `state` tracks the DESKTOP
+	// open flag, so it says nothing about the mobile sheet — reusing it there would
+	// blank the widget inside an open sheet whenever the desktop sidebar happened to
+	// be collapsed.
+	const isQuotaWidgetVisible = useUiStore((state) => state.isQuotaWidgetVisible);
+	const showQuotaWidget = isQuotaWidgetVisible && (isMobile ? openMobile : !isCollapsed);
 	// Daemon status for the smoke suite's sr-only mirror in the footer. Null when
 	// rendered outside the shell (unit tests) — the mirror simply doesn't render.
 	const daemonStatus = useShellMaybe()?.daemonStatus ?? null;
@@ -450,6 +464,7 @@ export function Sidebar({
 					aria-hidden={isCollapsed || undefined}
 					className="sidebar-expanded-chrome relative flex w-full min-w-46.5 flex-col gap-0.5 transition-[opacity,transform] duration-150 ease-out group-data-[collapsible=icon]:pointer-events-none group-data-[collapsible=icon]:-translate-x-2 group-data-[collapsible=icon]:opacity-0"
 				>
+					{showQuotaWidget && <QuotaPanel />}
 					<RestartToUpdateRow status={updateStatus} tabIndex={isCollapsed ? -1 : 0} />
 					<CloudAccountRow tabIndex={isCollapsed ? -1 : 0} />
 					<button

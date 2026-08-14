@@ -519,6 +519,7 @@
 	"settings.connectMobile": "连接手机",
 	"settings.developerMode": "开发者模式",
 	"settings.general": "通用",
+	"settings.showQuotaWidget": "显示配额小组件",
 	"settings.getHelp": "获取帮助",
 	"settings.keyboardShortcuts": "键盘快捷键",
 	"settings.language": "语言",

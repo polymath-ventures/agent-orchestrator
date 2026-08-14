@@ -90,10 +90,24 @@ them as the starting point for a search, not as an exhaustive file list.
    the per-harness parsers such as
    `backend/internal/adapters/agent/claudecode/quota.go`, aggregation and
    alerting in `backend/internal/observe/metrics/{quota,alert,observer}.go`, and
-   the sidebar widget `frontend/src/renderer/components/QuotaPanel.tsx`.
+   the sidebar widget `frontend/src/renderer/components/QuotaPanel.tsx`, mounted
+   from the sidebar footer in `frontend/src/renderer/components/Sidebar.tsx` and
+   gated by the "Show quota widget" row in
+   `frontend/src/renderer/components/settings/GeneralSettingsSection.tsx`.
+   The **mount guard** is
+   `frontend/src/renderer/test/shell-quota-widget-mount.test.tsx`: it renders the
+   real `/_shell` route layout with the real `Sidebar` and asserts the meter is on
+   screen with live probe data, so a sync that unmounts the widget fails CI.
+   `QuotaPanel.test.tsx` does not cover this — it renders the component directly
+   and passed throughout the period the widget was orphaned (#280). Keep that
+   guard rendering from the application entry point; narrowing it to render
+   `Sidebar` or `QuotaPanel` directly silently retires it. The toggle's own guard
+   is
+   `frontend/src/renderer/components/settings/GeneralSettingsSection.test.tsx`.
    This is mechanism-independent — re-layer it onto whatever signal path upstream
    uses.
-   Reference issues/PRs: #8 → #16, #88; #97 → #102; #112 → #113; #116 → #117.
+   Reference issues/PRs: #8 → #16, #88; #97 → #102; #112 → #113; #116 → #117;
+   #280 → #282.
 4. **Harness/agent setup & selection.** The agent-selection catalog, the per-role
    model+effort tuples, and the worker-mix UI, plus the fork-only **codex-fugu**
    harness — as both a worker and a **reviewer**, so the Settings "Default

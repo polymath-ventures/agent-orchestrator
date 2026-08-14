@@ -1,4 +1,4 @@
-import { SidebarProvider } from "@/components/ui/sidebar";
+import { SidebarProvider, useSidebar } from "@/components/ui/sidebar";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 // Disable motion animations so AnimatePresence unmounts children immediately
@@ -18,16 +18,33 @@ import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 import { agentsQueryKey } from "../hooks/useAgentsQuery";
 import { useUiStore } from "../stores/ui-store";
 
-const { getMock, navigateMock, mockParams, renameSessionMock, spawnMock, updateStatusMock, commandPaletteEnabled } =
-	vi.hoisted(() => ({
-		getMock: vi.fn(),
-		navigateMock: vi.fn(),
-		mockParams: { projectId: undefined as string | undefined, sessionId: undefined as string | undefined },
-		renameSessionMock: vi.fn().mockResolvedValue(undefined),
-		spawnMock: vi.fn(),
-		updateStatusMock: vi.fn(),
-		commandPaletteEnabled: { current: true },
-	}));
+const {
+	getMock,
+	postMock,
+	trustedMock,
+	navigateMock,
+	mockParams,
+	renameSessionMock,
+	spawnMock,
+	updateStatusMock,
+	commandPaletteEnabled,
+	isMobileViewport,
+} = vi.hoisted(() => ({
+	getMock: vi.fn(),
+	postMock: vi.fn(),
+	trustedMock: vi.fn(() => false),
+	navigateMock: vi.fn(),
+	mockParams: { projectId: undefined as string | undefined, sessionId: undefined as string | undefined },
+	renameSessionMock: vi.fn().mockResolvedValue(undefined),
+	spawnMock: vi.fn(),
+	updateStatusMock: vi.fn(),
+	commandPaletteEnabled: { current: true },
+	// Default false matches the jsdom viewport every other case already assumes;
+	// only the mobile-sheet case flips it.
+	isMobileViewport: { current: false },
+}));
+
+vi.mock("@/hooks/use-mobile", () => ({ useIsMobile: () => isMobileViewport.current }));
 
 vi.mock("../lib/rename-session", () => ({ renameSession: renameSessionMock }));
 vi.mock("../lib/spawn-orchestrator", () => ({ spawnOrchestrator: spawnMock }));
@@ -58,7 +75,7 @@ vi.mock("../lib/bridge", async (importOriginal) => {
 });
 
 vi.mock("../lib/api-client", () => ({
-	apiClient: { GET: getMock },
+	apiClient: { GET: getMock, POST: postMock },
 	apiErrorMessage: (error: unknown) => {
 		if (error instanceof Error) return error.message;
 		if (typeof error === "object" && error !== null && "message" in error && typeof error.message === "string") {
@@ -66,6 +83,10 @@ vi.mock("../lib/api-client", () => ({
 		}
 		return "Request failed";
 	},
+	// Off by default so the footer quota widget's metrics query stays inert and
+	// does not consume the one-shot getMock responses the agent-catalog cases
+	// seed; the quota cases opt in via trustedMock.mockReturnValue(true).
+	hasTrustedApiBaseUrl: () => trustedMock(),
 }));
 
 const workspace: WorkspaceSummary = {
@@ -114,6 +135,15 @@ type CreateProjectHandler = (input: CreateProjectInput) => Promise<void>;
 type InitializeProjectHandler = (path: string) => Promise<void>;
 type RemoveProjectHandler = (projectId: string) => Promise<void>;
 
+function MobileSheetOpener() {
+	const { toggleSidebar } = useSidebar();
+	return (
+		<button onClick={toggleSidebar} type="button">
+			open-mobile-sheet
+		</button>
+	);
+}
+
 function renderSidebar({
 	onCreateProject = vi.fn().mockResolvedValue(undefined) as CreateProjectHandler,
 	onInitializeProject = vi.fn().mockResolvedValue(undefined) as InitializeProjectHandler,
@@ -123,6 +153,7 @@ function renderSidebar({
 	initialOpen = true,
 	primeSession,
 	primeVisible,
+	mobile = false,
 }: {
 	onCreateProject?: CreateProjectHandler;
 	onInitializeProject?: InitializeProjectHandler;
@@ -132,7 +163,9 @@ function renderSidebar({
 	initialOpen?: boolean;
 	primeSession?: WorkspaceSession;
 	primeVisible?: boolean;
+	mobile?: boolean;
 } = {}) {
+	isMobileViewport.current = mobile;
 	const queryClient = new QueryClient({
 		defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
 	});
@@ -163,6 +196,9 @@ function renderSidebar({
 					primeVisible={primeVisible}
 					workspaces={workspaces}
 				/>
+				{/* The mobile sheet has no initial-open prop; this drives the same
+				    context toggle the real mobile opener uses. */}
+				<MobileSheetOpener />
 			</SidebarProvider>
 		</QueryClientProvider>,
 	);
@@ -237,12 +273,18 @@ beforeEach(() => {
 		},
 		error: undefined,
 	});
+	postMock.mockReset();
+	postMock.mockResolvedValue({ data: { statuses: [] }, error: undefined });
+	trustedMock.mockReset();
+	trustedMock.mockReturnValue(false);
 	navigateMock.mockReset();
 	renameSessionMock.mockReset().mockResolvedValue(undefined);
 	spawnMock.mockReset();
 	updateStatusMock.mockReset().mockResolvedValue({ state: "idle" });
 	mockParams.projectId = undefined;
 	mockParams.sessionId = undefined;
+	useUiStore.setState({ isQuotaWidgetVisible: true, isQuotaWidgetCollapsed: false });
+	isMobileViewport.current = false;
 });
 
 afterEach(() => {
@@ -1012,6 +1054,75 @@ describe("Sidebar", () => {
 				asWorkspace: false,
 			}),
 		);
+	});
+
+	// Complements test/shell-quota-widget-mount.test.tsx, which guards the same
+	// widget from the application entry point. These cover the sidebar's own
+	// footer ordering and visibility gate.
+	function seedQuotaMetrics() {
+		trustedMock.mockReturnValue(true);
+		getMock.mockImplementation((url: string) => {
+			if (url === "/api/v1/metrics") {
+				return Promise.resolve({
+					data: {
+						history: [],
+						probeStatuses: [{ harness: "codex", state: "not_probed", hasData: false }],
+						latest: { quotas: [] },
+					},
+					error: undefined,
+					response: { status: 200 },
+				});
+			}
+			return Promise.resolve({
+				data: {
+					supported: [{ id: "codex", label: "Codex" }],
+					installed: [{ id: "codex", label: "Codex" }],
+					authorized: [{ id: "codex", label: "Codex", authStatus: "authorized" }],
+				},
+				error: undefined,
+			});
+		});
+	}
+
+	it("renders the quota widget in the footer above Settings when visible", async () => {
+		seedQuotaMetrics();
+		renderSidebar();
+
+		const quota = await screen.findByText("Quota");
+		const settings = screen.getAllByRole("button", { name: "Settings" })[0];
+		// The widget precedes the Settings button in the footer DOM order.
+		expect(quota.compareDocumentPosition(settings) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+	});
+
+	it("drops the quota widget on the icon rail so it stops polling metrics", async () => {
+		seedQuotaMetrics();
+		renderSidebar({ initialOpen: false });
+
+		// The collapsed rail never shows the widget, so leaving it mounted would
+		// keep QuotaPanel's 30s /api/v1/metrics poll running behind hidden chrome.
+		await waitFor(() => expect(screen.getAllByRole("button", { name: "Settings" })[0]).toBeInTheDocument());
+		expect(screen.queryByText("Quota")).not.toBeInTheDocument();
+		expect(getMock.mock.calls.some(([url]) => url === "/api/v1/metrics")).toBe(false);
+	});
+
+	it("keeps the quota widget in an open mobile sheet even when the desktop sidebar is collapsed", async () => {
+		seedQuotaMetrics();
+		// `state` tracks the DESKTOP open flag, so a collapsed desktop sidebar must
+		// not blank the widget inside the mobile sheet, which `openMobile` governs.
+		const user = userEvent.setup();
+		renderSidebar({ initialOpen: false, mobile: true });
+
+		await user.click(screen.getByRole("button", { name: "open-mobile-sheet" }));
+		expect(await screen.findByText("Quota")).toBeInTheDocument();
+	});
+
+	it("hides the quota widget when the visibility flag is off", async () => {
+		seedQuotaMetrics();
+		useUiStore.setState({ isQuotaWidgetVisible: false });
+		renderSidebar();
+
+		await waitFor(() => expect(screen.getAllByRole("button", { name: "Settings" })[0]).toBeInTheDocument());
+		expect(screen.queryByText("Quota")).not.toBeInTheDocument();
 	});
 
 	it("opens settings when the footer Settings button is clicked", async () => {
