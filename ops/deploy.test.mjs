@@ -77,19 +77,14 @@ test("deploy.sh keeps its load-bearing invariants", async () => {
 	assert.match(text, /npm --prefix frontend run build:acp-runtime --silent/);
 	assert.match(text, /mv "\$rel\/source\/frontend\/resources\/acp-runtime" "\$rel\/acp-runtime"/);
 	assert.match(text, /"\$rel\/acp-runtime\/node\/bin\/node"/);
-	assert.match(
-		text,
-		/"\$rel\/acp-runtime\/node_modules\/@agentclientprotocol\/claude-agent-acp\/dist\/index\.js"/,
-	);
+	assert.match(text, /"\$rel\/acp-runtime\/node_modules\/@agentclientprotocol\/claude-agent-acp\/dist\/index\.js"/);
 	assert.match(text, /ln -sfn "\$CURRENT\/acp-runtime" "\$ACP_RUNTIME_TARGET"/);
 	assert.ok(
-		text.indexOf("npm --prefix frontend run build:acp-runtime --silent") <
-			text.indexOf('ln -sfn "$rel" "$CURRENT"'),
+		text.indexOf("npm --prefix frontend run build:acp-runtime --silent") < text.indexOf('ln -sfn "$rel" "$CURRENT"'),
 		"ACP runtime must be built before the active release flips",
 	);
 	assert.ok(
-		text.indexOf('ln -sfn "$rel" "$CURRENT"') <
-			text.lastIndexOf("\n  link_acp_runtime\n"),
+		text.indexOf('ln -sfn "$rel" "$CURRENT"') < text.lastIndexOf("\n  link_acp_runtime\n"),
 		"runtime link must be installed after the newly active release flips",
 	);
 });
