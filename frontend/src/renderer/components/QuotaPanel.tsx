@@ -205,7 +205,17 @@ function WindowLine({ snapshot, label }: { snapshot: QuotaSnapshot; label: strin
 	// Always name the window — the headline was previously anonymous ("46% used"),
 	// which hides WHICH limit (weekly vs session) the percentage measures.
 	const name = snapshot.windowName || "quota window";
-	const fillColor = severity === "critical" ? "bg-error" : severity === "warning" ? "bg-warning" : "bg-accent";
+	// Normal severity paints `bg-foreground` on a `bg-muted` groove. Both are
+	// shadcn roles upstream carries in every theme scope, so a sync cannot leave
+	// them undefined. The two tokens that used to do this job could: the
+	// 2026-08-07 sync deleted the fork-only `--color-quota-track` the groove
+	// referenced, and its named-theme system redefined `--accent` — the fill —
+	// as a subtle hover surface holding the same value as `--muted`, which made
+	// the bar the exact colour of its own track (#289). `bg-foreground` on
+	// `bg-muted` is the only upstream pair that clears 3:1 in all of them;
+	// `quota-meter-contrast.test.tsx` holds it there.
+	const fillColor = severity === "critical" ? "bg-error" : severity === "warning" ? "bg-warning" : "bg-foreground";
+	const trackColor = "bg-muted";
 	const numberColor =
 		used === 0
 			? "text-passive"
@@ -236,7 +246,7 @@ function WindowLine({ snapshot, label }: { snapshot: QuotaSnapshot; label: strin
 				aria-valuemax={100}
 				aria-valuemin={0}
 				{...(used === null ? { "aria-valuetext": "usage unknown" } : { "aria-valuenow": progressValue })}
-				className="h-1.5 w-full overflow-hidden rounded-full bg-[var(--color-quota-track)]"
+				className={cn("h-1.5 w-full overflow-hidden rounded-full", trackColor)}
 				role="progressbar"
 			>
 				<div className={cn("h-full rounded-full transition-[width]", fillColor)} style={fillStyle} />

@@ -111,13 +111,22 @@ them as the starting point for a search, not as an exhaustive file list.
    `QuotaPanel.test.tsx` does not cover this — it renders the component directly
    and passed throughout the period the widget was orphaned (#280). Keep that
    guard rendering from the application entry point; narrowing it to render
-   `Sidebar` or `QuotaPanel` directly silently retires it. The toggle's own guard
-   is
+   `Sidebar` or `QuotaPanel` directly silently retires it. The **contrast guard**
+   is `frontend/src/renderer/test/quota-meter-contrast.test.tsx`: being mounted is
+   not the same as being visible. It reads the background utilities off the
+   rendered meter, resolves them to real colours out of `frontend/src/styles/tokens.css`
+   for every theme scope that sheet defines, and holds the normal-severity fill to
+   3:1 against its track. The same sync that unmounted the widget also deleted the
+   fork-only `--color-quota-track` and redefined `--accent` to the value of
+   `--muted`, which made the bar invisible below 75% with no test failing (#289) —
+   so paint the meter from shadcn roles upstream maintains per theme, and keep the
+   guard resolving colours. An assertion on the class name is what passed
+   throughout that bug. The toggle's own guard is
    `frontend/src/renderer/components/settings/GeneralSettingsSection.test.tsx`.
    This is mechanism-independent — re-layer it onto whatever signal path upstream
    uses.
    Reference issues/PRs: #8 → #16, #88; #97 → #102; #112 → #113; #116 → #117;
-   #280 → #282.
+   #280 → #282; #289 → #290.
 4. **Harness/agent setup & selection.** The agent-selection catalog, the per-role
    model+effort tuples, and the worker-mix UI, plus the fork-only **codex-fugu**
    harness — as both a worker and a **reviewer**, so the Settings "Default

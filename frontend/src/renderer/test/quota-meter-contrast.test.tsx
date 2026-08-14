@@ -107,7 +107,10 @@ async function meterUtilities(used: number): Promise<{ track: string; fill: stri
 	const track = backgroundClass(meter);
 	const fill = backgroundClass(fillElement as Element);
 	expect(track, `the meter track carries no background utility (classes: ${meter.className})`).not.toBeNull();
-	expect(fill, `the meter fill carries no background utility (classes: ${(fillElement as Element).className})`).not.toBeNull();
+	expect(
+		fill,
+		`the meter fill carries no background utility (classes: ${(fillElement as Element).className})`,
+	).not.toBeNull();
 	return { track: track as string, fill: fill as string };
 }
 

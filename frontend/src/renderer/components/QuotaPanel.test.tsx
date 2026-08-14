@@ -193,8 +193,12 @@ describe("QuotaPanel", () => {
 		expect(reset.textContent).not.toMatch(/\d{1,2}:\d{2}\s?(AM|PM)/i);
 	});
 
+	// These cases pin which severity each threshold routes to, not whether the
+	// result is legible: a class name is exactly what stayed correct while the
+	// token behind it was deleted or redefined (#289). Legibility belongs to
+	// `../test/quota-meter-contrast.test.tsx`, which resolves the colours.
 	it.each([
-		[74, "bg-accent", "text-foreground", "text-passive"],
+		[74, "bg-foreground", "text-foreground", "text-passive"],
 		[75, "bg-warning", "text-warning", "text-passive"],
 		[89, "bg-warning", "text-warning", "text-passive"],
 		[90, "bg-error", "text-error", "text-error"],
