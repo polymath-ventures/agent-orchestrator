@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/agentconfig"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
@@ -521,6 +522,27 @@ func TestResumeChatUsesHarnessAwarePersistedModel(t *testing.T) {
 	}
 	if got := launcher.started[0].Model; got != "" {
 		t.Fatalf("controller model = %q, want persisted/default codex selection without cross-provider scalar", got)
+	}
+}
+
+func TestResumeChatRejectsPersistedCrossProviderModel(t *testing.T) {
+	launcher := &recordingLauncher{}
+	mgr, store, _ := newChatManager(launcher)
+	project := store.projects[string(chatTestProject)]
+	project.Config.Worker = domain.RoleOverride{Harness: domain.HarnessCodex}
+	store.projects[string(chatTestProject)] = project
+	seedChatResumeSession(store, domain.ActivityExited)
+	rec := store.sessions["mer-1"]
+	rec.Harness = domain.HarnessCodex
+	rec.Model = "claude-opus-4-5"
+	store.sessions["mer-1"] = rec
+
+	_, err := mgr.ResumeAgentWithMode(context.Background(), "mer-1")
+	if !errors.Is(err, agentconfig.ErrModelHarnessMismatch) {
+		t.Fatalf("ResumeAgentWithMode err = %v, want ErrModelHarnessMismatch", err)
+	}
+	if len(launcher.started) != 0 {
+		t.Fatalf("started %d chat controllers with a cross-provider model, want 0", len(launcher.started))
 	}
 }
 
