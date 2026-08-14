@@ -1,8 +1,8 @@
 ## 1. Headless Runtime Packaging
 
-- [ ] 1.1 Add failing ops guards for immutable-release runtime construction, pre-activation validation, and the stable install-prefix runtime symlink.
-- [ ] 1.2 Update `ops/deploy.sh` to reuse the shared ACP runtime builder before release activation and expose the completed runtime beside `~/.local/bin/ao` through the rollback-safe `current` link.
-- [ ] 1.3 Exercise a real temporary build and verify the packaged Node executable and pinned adapter entrypoint.
+- [x] 1.1 Add failing ops guards for immutable-release runtime construction, pre-activation validation, and the stable install-prefix runtime symlink.
+- [x] 1.2 Update `ops/deploy.sh` to reuse the shared ACP runtime builder before release activation and expose the completed runtime beside `~/.local/bin/ao` through the rollback-safe `current` link.
+- [x] 1.3 Exercise a real temporary build and verify the packaged Node executable and pinned adapter entrypoint.
 - [ ] 1.4 Run focused ops tests, mark the phase complete, and pass the pre-push/rebase gate.
 
 ## 2. Shared Runtime Diagnosis and Fork Contract

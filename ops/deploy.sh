@@ -28,6 +28,7 @@ BIN_TARGET="$HOME/.local/bin/ao"
 # aong must land beside ao: it resolves its sibling before PATH so the pair that
 # was built together stays together.
 AONG_BIN_TARGET="$HOME/.local/bin/aong"
+ACP_RUNTIME_TARGET="$HOME/.local/acp-runtime"
 UNIT_DIR="${AO_UNIT_DIR:-$HOME/.config/systemd/user}"
 SERVICES=(ao-web.service ao.service)
 
@@ -154,6 +155,20 @@ sync_units() {
   done
 }
 
+link_acp_runtime() {
+  local backup
+  # Preserve an operator-created workaround instead of deleting it. Replacing
+  # it makes the committed lockfile authoritative again; the timestamped copy
+  # remains available if the operator needs to inspect or restore it.
+  if [ -e "$ACP_RUNTIME_TARGET" ] && [ ! -L "$ACP_RUNTIME_TARGET" ]; then
+    backup="$ACP_RUNTIME_TARGET.pre-ao-$(date -u +%Y%m%d%H%M%S)-$$"
+    mv "$ACP_RUNTIME_TARGET" "$backup"
+    log "Preserved existing ACP runtime at $backup."
+  fi
+  ln -sfn "$CURRENT/acp-runtime" "$ACP_RUNTIME_TARGET"
+  log "ACP runtime linked: $ACP_RUNTIME_TARGET -> $CURRENT/acp-runtime"
+}
+
 rollback() {
   local prev
   prev="$(cat "$PREVIOUS_FILE" 2>/dev/null || true)"
@@ -210,6 +225,13 @@ deploy() {
   log "Building backend."
   (cd "$rel/source/backend" && go build -trimpath -o "$rel/bin/ao" ./cmd/ao)
   (cd "$rel/source/backend" && go build -trimpath -o "$rel/bin/aong" ./cmd/aong)
+  log "Building Claude ACP runtime."
+  (cd "$rel/source" && npm --prefix frontend run build:acp-runtime --silent) >/dev/null
+  mv "$rel/source/frontend/resources/acp-runtime" "$rel/acp-runtime"
+  [ -x "$rel/acp-runtime/node/bin/node" ] \
+    || die "ACP runtime missing packaged Node at $rel/acp-runtime/node/bin/node"
+  [ -f "$rel/acp-runtime/node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js" ] \
+    || die "ACP runtime missing claude-agent-acp entrypoint"
   log "Building web bundle."
   (cd "$rel/source" && npm --prefix frontend ci --silent && npm --prefix frontend run build:web --silent) >/dev/null
   [ -f "$rel/source/frontend/dist/index.html" ] || die "web bundle missing after build"
@@ -220,6 +242,7 @@ deploy() {
     echo "$prev_target" > "$PREVIOUS_FILE"
   fi
   ln -sfn "$rel" "$CURRENT"
+  link_acp_runtime
   echo "$sha" > "$LAST_FILE"
   install -m 755 "$rel/bin/ao" "$BIN_TARGET"
   install -m 755 "$rel/bin/aong" "$AONG_BIN_TARGET"
