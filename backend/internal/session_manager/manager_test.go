@@ -4702,6 +4702,27 @@ func TestDefaultSessionBranch_ProjectlessPrimeUsesFleetBranch(t *testing.T) {
 	}
 }
 
+func TestSpawn_ProjectlessPrimeNormalizesExplicitEffortForHarness(t *testing.T) {
+	st := newFakeStore()
+	st.prime = domain.PrimeSettings{Enabled: true, Harness: domain.HarnessCodexFugu}
+	agent := &recordingAgent{}
+	m := New(Deps{
+		Runtime: &fakeRuntime{}, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, DataDir: t.TempDir(),
+		LookPath: func(string) (string, error) { return "/bin/true", nil },
+	})
+
+	rec, _, _, err := m.Spawn(ctx, ports.SpawnConfig{
+		Kind: domain.KindPrime, Harness: domain.HarnessCodexFugu, Effort: domain.EffortMax,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Effort != domain.EffortXHigh || agent.lastConfig.Effort != domain.EffortXHigh {
+		t.Fatalf("projectless prime effort = persisted %q launched %q, want xhigh", rec.Effort, agent.lastConfig.Effort)
+	}
+}
+
 func TestSpawn_ProjectlessPrimeFiltersCrossProviderScalarModel(t *testing.T) {
 	st := newFakeStore()
 	st.prime = domain.PrimeSettings{
