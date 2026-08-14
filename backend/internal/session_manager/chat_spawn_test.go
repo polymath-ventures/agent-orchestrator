@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/agentconfig"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
@@ -390,6 +391,133 @@ func TestChatSpawnStartsControllerAndNoRuntime(t *testing.T) {
 	}
 }
 
+func TestChatSpawnUsesResolvedSpawnModelForController(t *testing.T) {
+	tests := []struct {
+		name      string
+		project   domain.ProjectConfig
+		spawn     ports.SpawnConfig
+		wantModel string
+	}{
+		{
+			name: "explicit model overrides cross-provider role scalar",
+			project: domain.ProjectConfig{
+				Worker: domain.RoleOverride{
+					Harness:     domain.HarnessClaudeCode,
+					AgentConfig: domain.AgentConfig{Model: "gpt-5.6-sol"},
+				},
+			},
+			spawn: ports.SpawnConfig{
+				ProjectID:     chatTestProject,
+				Kind:          domain.KindWorker,
+				Harness:       domain.HarnessClaudeCode,
+				Model:         "opus-4.8",
+				RequestedMode: domain.SessionModeChat,
+			},
+			wantModel: "opus-4.8",
+		},
+		{
+			name: "chat controller keeps harness-aware resolved model when spawn omits one",
+			project: domain.ProjectConfig{
+				AgentConfig: domain.AgentConfig{
+					Model: "gpt-5.6-sol",
+					ModelByHarness: map[domain.AgentHarness]domain.HarnessModel{
+						domain.HarnessClaudeCode: {Model: "opus-4.8"},
+					},
+				},
+				Worker: domain.RoleOverride{Harness: domain.HarnessClaudeCode},
+			},
+			spawn: ports.SpawnConfig{
+				ProjectID:     chatTestProject,
+				Kind:          domain.KindWorker,
+				RequestedMode: domain.SessionModeChat,
+			},
+			wantModel: "opus-4.8",
+		},
+		{
+			name: "worker mix model reaches chat controller",
+			project: domain.ProjectConfig{
+				AgentConfig: domain.AgentConfig{Model: "gpt-5.6-sol"},
+				WorkerMix: domain.WorkerMix{{
+					Harness: domain.HarnessClaudeCode,
+					Model:   "opus-4.8",
+					Weight:  100,
+				}},
+			},
+			spawn: ports.SpawnConfig{
+				ProjectID:     chatTestProject,
+				Kind:          domain.KindWorker,
+				RequestedMode: domain.SessionModeChat,
+			},
+			wantModel: "opus-4.8",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			launcher := &recordingLauncher{}
+			mgr, store, _ := newChatManager(launcher)
+			project := store.projects[string(chatTestProject)]
+			project.Config = tt.project
+			store.projects[string(chatTestProject)] = project
+
+			rec, _, _, err := mgr.Spawn(context.Background(), tt.spawn)
+			if err != nil {
+				t.Fatalf("Spawn: %v", err)
+			}
+			if rec.Model != tt.wantModel {
+				t.Fatalf("record model = %q, want %q", rec.Model, tt.wantModel)
+			}
+			if len(launcher.started) != 1 {
+				t.Fatalf("started %d controllers, want 1", len(launcher.started))
+			}
+			if got := launcher.started[0].Model; got != tt.wantModel {
+				t.Fatalf("controller model = %q, want resolved spawn model %q", got, tt.wantModel)
+			}
+		})
+	}
+}
+
+func TestResumeChatProjectlessPrimeUsesConfiguredPermissions(t *testing.T) {
+	launcher := &recordingLauncher{}
+	mgr, store, _ := newChatManager(launcher)
+	store.prime = domain.PrimeSettings{Enabled: true, Harness: domain.HarnessCodex}
+	store.sessions["prime-1"] = domain.SessionRecord{
+		ID: "prime-1", Kind: domain.KindPrime, Harness: domain.HarnessCodex,
+		Mode: domain.SessionModeChat, Activity: domain.Activity{State: domain.ActivityExited},
+		Metadata: domain.SessionMetadata{WorkspacePath: "/ws/prime-1", Branch: "ao/prime",
+			ProviderConversationID: "thread-prime"},
+	}
+
+	if _, err := mgr.ResumeAgentWithMode(context.Background(), "prime-1"); err != nil {
+		t.Fatal(err)
+	}
+	if len(launcher.started) != 1 {
+		t.Fatalf("started %d controllers, want 1", len(launcher.started))
+	}
+	if got := launcher.started[0].Permissions; got != ports.PermissionModeBypassPermissions {
+		t.Fatalf("resumed chat Prime permissions = %q, want %q", got, ports.PermissionModeBypassPermissions)
+	}
+}
+
+func TestChatSpawnProjectlessPrimeUsesConfiguredPermissions(t *testing.T) {
+	launcher := &recordingLauncher{}
+	mgr, store, _ := newChatManager(launcher)
+	store.prime = domain.PrimeSettings{Enabled: true, Harness: domain.HarnessCodex}
+
+	_, _, _, err := mgr.Spawn(context.Background(), ports.SpawnConfig{
+		Kind: domain.KindPrime, RequestedMode: domain.SessionModeChat,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(launcher.started) != 1 {
+		t.Fatalf("started %d controllers, want 1", len(launcher.started))
+	}
+	if got := launcher.started[0].Permissions; got != ports.PermissionModeBypassPermissions {
+		t.Fatalf("chat Prime permissions = %q, want %q", got, ports.PermissionModeBypassPermissions)
+	}
+}
+
 func TestChatSpawnAppliesRequestAgentConfigOverProjectDefaults(t *testing.T) {
 	launcher := &recordingLauncher{}
 	mgr, store, _ := newChatManager(launcher)
@@ -397,7 +525,7 @@ func TestChatSpawnAppliesRequestAgentConfigOverProjectDefaults(t *testing.T) {
 	project.Config.AgentConfig.Model = "project-model"
 	store.projects[string(chatTestProject)] = project
 
-	_, _, _, err := mgr.Spawn(context.Background(), ports.SpawnConfig{
+	rec, _, _, err := mgr.Spawn(context.Background(), ports.SpawnConfig{
 		ProjectID:     chatTestProject,
 		Kind:          domain.KindWorker,
 		Harness:       domain.HarnessCodex,
@@ -412,6 +540,50 @@ func TestChatSpawnAppliesRequestAgentConfigOverProjectDefaults(t *testing.T) {
 	}
 	if got := launcher.started[0].Model; got != "request-model" {
 		t.Fatalf("controller model = %q, want request-model", got)
+	}
+	if rec.Model != "request-model" {
+		t.Fatalf("persisted model = %q, want request-model used by controller", rec.Model)
+	}
+}
+
+func TestResumeChatUsesHarnessAwarePersistedModel(t *testing.T) {
+	launcher := &recordingLauncher{}
+	mgr, store, _ := newChatManager(launcher)
+	project := store.projects[string(chatTestProject)]
+	project.Config.AgentConfig.Model = "claude-opus-4-5"
+	project.Config.Worker = domain.RoleOverride{Harness: domain.HarnessCodex}
+	store.projects[string(chatTestProject)] = project
+	seedChatResumeSession(store, domain.ActivityExited)
+
+	if _, err := mgr.ResumeAgentWithMode(context.Background(), "mer-1"); err != nil {
+		t.Fatalf("ResumeAgentWithMode: %v", err)
+	}
+	if len(launcher.started) != 1 {
+		t.Fatalf("started %d chat controllers, want 1", len(launcher.started))
+	}
+	if got := launcher.started[0].Model; got != "" {
+		t.Fatalf("controller model = %q, want persisted/default codex selection without cross-provider scalar", got)
+	}
+}
+
+func TestResumeChatRejectsPersistedCrossProviderModel(t *testing.T) {
+	launcher := &recordingLauncher{}
+	mgr, store, _ := newChatManager(launcher)
+	project := store.projects[string(chatTestProject)]
+	project.Config.Worker = domain.RoleOverride{Harness: domain.HarnessCodex}
+	store.projects[string(chatTestProject)] = project
+	seedChatResumeSession(store, domain.ActivityExited)
+	rec := store.sessions["mer-1"]
+	rec.Harness = domain.HarnessCodex
+	rec.Model = "claude-opus-4-5"
+	store.sessions["mer-1"] = rec
+
+	_, err := mgr.ResumeAgentWithMode(context.Background(), "mer-1")
+	if !errors.Is(err, agentconfig.ErrModelHarnessMismatch) {
+		t.Fatalf("ResumeAgentWithMode err = %v, want ErrModelHarnessMismatch", err)
+	}
+	if len(launcher.started) != 0 {
+		t.Fatalf("started %d chat controllers with a cross-provider model, want 0", len(launcher.started))
 	}
 }
 

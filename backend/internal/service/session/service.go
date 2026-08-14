@@ -601,8 +601,6 @@ func (s *Service) planRole(ctx context.Context, target domain.RoleTarget) (roleP
 				Kind:        domain.KindPrime,
 				DisplayName: displayName,
 				Harness:     settings.Harness,
-				Model:       settings.AgentConfig.Model,
-				Effort:      settings.AgentConfig.Effort,
 			},
 			// Prime is spawned through the internal path: the public one bans
 			// kind=prime so a client cannot create an unsupervised Prime.

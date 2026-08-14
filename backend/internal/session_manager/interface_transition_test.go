@@ -207,6 +207,25 @@ func (emptyTransitionAgent) NativeConversationExists(context.Context, ports.Sess
 	return false, nil
 }
 
+type recordingTransitionAgent struct {
+	transitionAgent
+	restoreConfigs []ports.AgentConfig
+	launchConfigs  []ports.AgentConfig
+}
+
+func (a *recordingTransitionAgent) GetLaunchCommand(_ context.Context, cfg ports.LaunchConfig) ([]string, error) {
+	a.launchConfigs = append(a.launchConfigs, cfg.Config)
+	return []string{"launch"}, nil
+}
+
+func (a *recordingTransitionAgent) GetRestoreCommand(_ context.Context, cfg ports.RestoreConfig) ([]string, bool, error) {
+	a.restoreConfigs = append(a.restoreConfigs, cfg.Config)
+	if id := cfg.Session.Metadata[ports.MetadataKeyAgentSessionID]; id != "" {
+		return []string{"resume", id}, true, nil
+	}
+	return nil, false, nil
+}
+
 type transitionRuntime struct {
 	*fakeRuntime
 	log                        *[]string
@@ -912,6 +931,43 @@ func TestInterfaceTransitionChatToTUIStartsFreshWhenReservedIDHasNoHistory(t *te
 	}
 	if got := fmt.Sprint(*log); got != "[prepare:chat:drain stop:chat start:tui]" {
 		t.Fatalf("controller order = %s", got)
+	}
+}
+
+func TestInterfaceTransitionChatToTUIUsesPersistedHarnessAwareConfigForPreflightAndRelaunch(t *testing.T) {
+	manager, store, _, _, _ := newTransitionManager(t, domain.SessionModeChat)
+	agent := &recordingTransitionAgent{}
+	manager.agents = singleAgent{agent: agent}
+	project := store.projects["proj"]
+	project.Config = domain.ProjectConfig{
+		AgentConfig: domain.AgentConfig{Model: "claude-opus-4-5"},
+		Worker:      domain.RoleOverride{Harness: domain.HarnessCodex},
+	}
+	store.projects["proj"] = project
+	rec := store.sessions["session-1"]
+	rec.Harness = domain.HarnessCodex
+	rec.Model = "gpt-5-codex"
+	rec.Effort = domain.EffortHigh
+	rec.Metadata.AgentSessionID = "codex-native-1"
+	rec.Metadata.ProviderConversationID = "codex-native-1"
+	store.sessions["session-1"] = rec
+
+	transition, err := manager.StartInterfaceTransition(context.Background(), "session-1",
+		domain.SessionModeTUI, domain.SessionInterfaceTransitionDrain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	settled := awaitTransition(t, store, transition.ID)
+	if settled.Phase != domain.SessionInterfaceTransitionCompleted {
+		t.Fatalf("phase = %s, error = %s", settled.Phase, settled.ErrorDetail)
+	}
+	if len(agent.restoreConfigs) == 0 {
+		t.Fatal("no restore config was recorded")
+	}
+	for i, cfg := range agent.restoreConfigs {
+		if cfg.Model != "gpt-5-codex" || cfg.Effort != domain.EffortHigh {
+			t.Fatalf("restore config %d = %#v, want persisted codex model+effort", i, cfg)
+		}
 	}
 }
 

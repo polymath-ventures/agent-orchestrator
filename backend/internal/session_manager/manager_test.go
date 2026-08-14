@@ -19,6 +19,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/claudecode"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/codex"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/workspace/scratch"
+	"github.com/aoagents/agent-orchestrator/backend/internal/agentconfig"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
@@ -3504,6 +3505,86 @@ func TestSpawn_ExplicitModelWinsOverConfigAndIsPersisted(t *testing.T) {
 	}
 }
 
+func TestSpawn_RequestAgentConfigModelCrossProviderRejectedBeforeAnyState(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{
+		Worker: domain.RoleOverride{Harness: domain.HarnessCodex},
+	}}
+	runtime := &fakeRuntime{}
+	workspace := &fakeWorkspace{}
+	agent := &recordingAgent{}
+	m := New(Deps{
+		Runtime: runtime, Agents: singleAgent{agent: agent}, Workspace: workspace, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st},
+		LookPath: func(string) (string, error) { return "/bin/true", nil },
+	})
+
+	_, _, _, err := m.Spawn(ctx, ports.SpawnConfig{
+		ProjectID: "mer",
+		Kind:      domain.KindWorker,
+		AgentConfig: ports.AgentConfig{
+			Model: "claude-opus-4-5",
+		},
+	})
+	if !errors.Is(err, agentconfig.ErrModelHarnessMismatch) {
+		t.Fatalf("Spawn err = %v, want ErrModelHarnessMismatch", err)
+	}
+	if st.num != 0 || len(st.sessions) != 0 {
+		t.Fatalf("session state created before rejection: num=%d rows=%#v", st.num, st.sessions)
+	}
+	if runtime.created != 0 {
+		t.Fatalf("runtime created = %d, want 0", runtime.created)
+	}
+	if workspace.lastCfg.SessionID != "" || workspace.lastProjectCfg.SessionID != "" {
+		t.Fatalf("workspace created before rejection: single=%#v project=%#v", workspace.lastCfg, workspace.lastProjectCfg)
+	}
+	if agent.launchCalls != 0 {
+		t.Fatalf("launchCalls = %d, want 0", agent.launchCalls)
+	}
+}
+
+func TestSpawn_RequestAgentConfigModelUsesCanonicalValidatedPath(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{
+		Worker: domain.RoleOverride{Harness: domain.HarnessCodex},
+	}}
+	agent := &recordingAgent{}
+	validator := &fakeSpawnSelectionValidator{result: ports.ModelValidationResult{
+		Status: ports.ModelValidationReachable,
+	}}
+	m := New(Deps{
+		Runtime: &fakeRuntime{}, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, ModelValidator: validator,
+		LookPath: func(string) (string, error) { return "/bin/true", nil },
+	})
+
+	rec, _, _, err := m.Spawn(ctx, ports.SpawnConfig{
+		ProjectID: "mer",
+		Kind:      domain.KindWorker,
+		AgentConfig: ports.AgentConfig{
+			Model: "gpt-5-codex",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(validator.calls) != 1 {
+		t.Fatalf("validator calls = %#v, want exactly one call", validator.calls)
+	}
+	if got := validator.calls[0].model; got != "gpt-5-codex" {
+		t.Fatalf("validated model = %q, want request agent-config model", got)
+	}
+	if rec.Model != "gpt-5-codex" {
+		t.Fatalf("record model = %q, want request agent-config model", rec.Model)
+	}
+	if got := st.sessions[rec.ID].Model; got != "gpt-5-codex" {
+		t.Fatalf("persisted model = %q, want request agent-config model", got)
+	}
+	if agent.lastConfig.Model != "gpt-5-codex" {
+		t.Fatalf("launch model = %q, want request agent-config model", agent.lastConfig.Model)
+	}
+}
+
 func TestSpawn_OmittedModelFallsBackToConfigResolution(t *testing.T) {
 	st := newFakeStore()
 	st.projects["mer"] = modelProject("base-model", "role-model")
@@ -3872,6 +3953,62 @@ func TestRestore_UsesPersistedModel(t *testing.T) {
 	}
 	if agent.lastRestore.Config.Model != "launched-model" {
 		t.Fatalf("restore model = %q, want the persisted launched-model", agent.lastRestore.Config.Model)
+	}
+}
+
+func TestRestoreWithMode_StaleCrossProviderModelUsesRestoreOperationLabel(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer"}
+	seedTerminal(st, "mer-1", domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "ao/mer-1", AgentSessionID: "agent-x"})
+	rec := st.sessions["mer-1"]
+	rec.Kind = domain.KindWorker
+	rec.Harness = domain.HarnessCodex
+	rec.Model = "claude-opus-4-5"
+	st.sessions[rec.ID] = rec
+
+	agent := &recordingAgent{}
+	m := modelManager(st, agent)
+
+	_, err := m.RestoreWithMode(ctx, "mer-1")
+	if !errors.Is(err, ErrModelHarnessMismatch) {
+		t.Fatalf("RestoreWithMode err = %v, want ErrModelHarnessMismatch", err)
+	}
+	if !strings.Contains(err.Error(), "restore mer-1:") {
+		t.Fatalf("RestoreWithMode err = %v, want restore operation label", err)
+	}
+	if agent.restoreCalls != 0 {
+		t.Fatalf("restore calls = %d, want stale cross-provider model rejected before adapter restore", agent.restoreCalls)
+	}
+}
+
+func TestRelaunchSession_StaleCrossProviderModelUsesPassedOperationLabel(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer"}
+	rec := domain.SessionRecord{
+		ID:        "mer-1",
+		ProjectID: "mer",
+		Kind:      domain.KindWorker,
+		Harness:   domain.HarnessCodex,
+		Model:     "claude-opus-4-5",
+		Metadata:  domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "ao/mer-1", AgentSessionID: "agent-x"},
+	}
+	agent := &recordingAgent{}
+	m := modelManager(st, agent)
+
+	_, err := m.relaunchSession(ctx, "switch interface", rec, st.projects["mer"], ports.WorkspaceInfo{
+		Path: "/ws/mer-1", Branch: "ao/mer-1", SessionID: "mer-1", ProjectID: "mer",
+	}, nil)
+	if !errors.Is(err, ErrModelHarnessMismatch) {
+		t.Fatalf("relaunchSession err = %v, want ErrModelHarnessMismatch", err)
+	}
+	if !strings.Contains(err.Error(), "switch interface mer-1:") {
+		t.Fatalf("relaunchSession err = %v, want passed operation label", err)
+	}
+	if strings.Contains(err.Error(), "restore mer-1:") {
+		t.Fatalf("relaunchSession err = %v, want no hardcoded restore label", err)
+	}
+	if agent.restoreCalls != 0 {
+		t.Fatalf("restore calls = %d, want stale cross-provider model rejected before adapter restore", agent.restoreCalls)
 	}
 }
 
@@ -4562,6 +4699,49 @@ func TestDefaultSessionBranch_ProjectlessPrimeUsesFleetBranch(t *testing.T) {
 	got := defaultSessionBranch("prime-1", domain.KindPrime, "", "")
 	if got != "ao/prime" {
 		t.Fatalf("projectless prime branch = %q, want ao/prime", got)
+	}
+}
+
+func TestSpawn_ProjectlessPrimeNormalizesExplicitEffortForHarness(t *testing.T) {
+	st := newFakeStore()
+	st.prime = domain.PrimeSettings{Enabled: true, Harness: domain.HarnessCodexFugu}
+	agent := &recordingAgent{}
+	m := New(Deps{
+		Runtime: &fakeRuntime{}, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, DataDir: t.TempDir(),
+		LookPath: func(string) (string, error) { return "/bin/true", nil },
+	})
+
+	rec, _, _, err := m.Spawn(ctx, ports.SpawnConfig{
+		Kind: domain.KindPrime, Harness: domain.HarnessCodexFugu, Effort: domain.EffortMax,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Effort != domain.EffortXHigh || agent.lastConfig.Effort != domain.EffortXHigh {
+		t.Fatalf("projectless prime effort = persisted %q launched %q, want xhigh", rec.Effort, agent.lastConfig.Effort)
+	}
+}
+
+func TestSpawn_ProjectlessPrimeFiltersCrossProviderScalarModel(t *testing.T) {
+	st := newFakeStore()
+	st.prime = domain.PrimeSettings{
+		Enabled: true, Harness: domain.HarnessCodex,
+		AgentConfig: domain.AgentConfig{Model: "claude-opus-4-5"},
+	}
+	agent := &recordingAgent{}
+	m := New(Deps{
+		Runtime: &fakeRuntime{}, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, DataDir: t.TempDir(),
+		LookPath: func(string) (string, error) { return "/bin/true", nil },
+	})
+
+	rec, _, _, err := m.Spawn(ctx, ports.SpawnConfig{Kind: domain.KindPrime})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Model != "" || agent.lastConfig.Model != "" {
+		t.Fatalf("projectless prime model = persisted %q launched %q, want codex default without claude scalar", rec.Model, agent.lastConfig.Model)
 	}
 }
 

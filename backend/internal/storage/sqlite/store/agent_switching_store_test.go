@@ -764,6 +764,10 @@ func TestAgentSwitchSourceStopAndTargetActivationAreAtomicAndNarrow(t *testing.T
 	rec.Metadata.LatestUserPrompt = "latest user direction"
 	rec.Metadata.LatestAssistantUpdate = "latest assistant update"
 	rec.Metadata.PreviewURL = "http://localhost:3000"
+	rec.Model = "claude-opus-4-5"
+	rec.Effort = domain.EffortLow
+	rec.MixSelected = true
+	rec.MixBucketModel = "configured-claude-model"
 	session, err := s.CreateSession(ctx, rec)
 	if err != nil {
 		t.Fatalf("create AO session: %v", err)
@@ -873,8 +877,8 @@ func TestAgentSwitchSourceStopAndTargetActivationAreAtomicAndNarrow(t *testing.T
 		SwitchID: sw.ID, SessionID: session.ID, SourceHarness: domain.HarnessClaudeCode,
 		SourceGenerationID:            "stale-source",
 		ExpectedSourceRuntimeLaunchID: "source-runtime-generation",
-		TargetHarness:                 domain.HarnessCodex, TargetNativeSessionRef: target.ID,
-		TargetGenerationID: "target-generation", RuntimeHandleID: "target-handle",
+		TargetHarness:                 domain.HarnessCodex, TargetModel: "gpt-5-codex", TargetEffort: domain.EffortHigh,
+		TargetNativeSessionRef: target.ID, TargetGenerationID: "target-generation", RuntimeHandleID: "target-handle",
 		ActivatedAt: now.Add(4 * time.Second),
 	}
 	if ok, err := s.ActivateAgentSwitchTarget(ctx, activation); err != nil || ok {
@@ -905,6 +909,12 @@ func TestAgentSwitchSourceStopAndTargetActivationAreAtomicAndNarrow(t *testing.T
 		activated.Metadata.RuntimeHandleID != "target-handle" || activated.Metadata.RuntimeLaunchID != "target-generation" ||
 		activated.Metadata.AgentSessionID != target.NativeSessionID || activated.Metadata.NativeTranscriptPath != target.TranscriptPath {
 		t.Fatalf("target owner projection = %+v", activated)
+	}
+	if activated.Model != "gpt-5-codex" || activated.Effort != domain.EffortHigh {
+		t.Fatalf("target model identity = (model=%q effort=%q), want (gpt-5-codex, high)", activated.Model, activated.Effort)
+	}
+	if activated.MixSelected || activated.MixBucketModel != "" {
+		t.Fatalf("target activation retained stale mix identity: selected=%v bucket=%q", activated.MixSelected, activated.MixBucketModel)
 	}
 	if !activated.FirstSignalAt.IsZero() {
 		t.Fatalf("target activation retained old hook receipt: %v", activated.FirstSignalAt)

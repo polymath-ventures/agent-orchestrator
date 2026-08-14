@@ -290,6 +290,10 @@ WHERE id = sqlc.arg(id)
 -- name: ActivateSessionAgentSwitchTarget :execrows
 UPDATE sessions SET
     harness = sqlc.arg(target_harness),
+    model = sqlc.arg(target_model),
+    effort = sqlc.arg(target_effort),
+    mix_selected = 0,
+    mix_bucket_model = '',
     activity_state = 'idle',
     activity_last_at = sqlc.arg(activated_at),
     first_signal_at = NULL,

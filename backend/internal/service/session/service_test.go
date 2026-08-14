@@ -2505,8 +2505,8 @@ func TestSpawnPrimeUsesFleetSettingsWithoutProject(t *testing.T) {
 	if fc.spawnedCfg.ProjectID != "" || fc.spawnedCfg.DisplayName != "Fleet Lead" || fc.spawnedCfg.Harness != domain.HarnessCodex {
 		t.Fatalf("spawn cfg = %+v, want projectless Fleet Lead codex", fc.spawnedCfg)
 	}
-	if fc.spawnedCfg.Model != "gpt-5-codex" || fc.spawnedCfg.Effort != domain.EffortHigh {
-		t.Fatalf("spawn model/effort = %q/%q, want gpt-5-codex/high", fc.spawnedCfg.Model, fc.spawnedCfg.Effort)
+	if fc.spawnedCfg.Model != "" || fc.spawnedCfg.Effort != "" {
+		t.Fatalf("spawn model/effort = %q/%q, want empty so the manager resolves fleet settings harness-aware", fc.spawnedCfg.Model, fc.spawnedCfg.Effort)
 	}
 }
 

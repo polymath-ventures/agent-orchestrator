@@ -51,24 +51,30 @@ func (q *Queries) AcknowledgeAgentSwitchTarget(ctx context.Context, arg Acknowle
 const activateSessionAgentSwitchTarget = `-- name: ActivateSessionAgentSwitchTarget :execrows
 UPDATE sessions SET
     harness = ?1,
+    model = ?2,
+    effort = ?3,
+    mix_selected = 0,
+    mix_bucket_model = '',
     activity_state = 'idle',
-    activity_last_at = ?2,
+    activity_last_at = ?4,
     first_signal_at = NULL,
-    runtime_handle_id = ?3,
-    runtime_launch_id = ?4,
-    agent_session_id = ?5,
-    native_transcript_path = ?6,
-    updated_at = ?2
-WHERE id = ?7
+    runtime_handle_id = ?5,
+    runtime_launch_id = ?6,
+    agent_session_id = ?7,
+    native_transcript_path = ?8,
+    updated_at = ?4
+WHERE id = ?9
   AND is_terminated = 0
   AND activity_state = 'exited'
-  AND harness = ?8
-  AND runtime_launch_id = ?9
-  AND activity_last_at <= ?2
+  AND harness = ?10
+  AND runtime_launch_id = ?11
+  AND activity_last_at <= ?4
 `
 
 type ActivateSessionAgentSwitchTargetParams struct {
 	TargetHarness                 domain.AgentHarness
+	TargetModel                   string
+	TargetEffort                  string
 	ActivatedAt                   time.Time
 	RuntimeHandleID               string
 	TargetGenerationID            string
@@ -82,6 +88,8 @@ type ActivateSessionAgentSwitchTargetParams struct {
 func (q *Queries) ActivateSessionAgentSwitchTarget(ctx context.Context, arg ActivateSessionAgentSwitchTargetParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, activateSessionAgentSwitchTarget,
 		arg.TargetHarness,
+		arg.TargetModel,
+		arg.TargetEffort,
 		arg.ActivatedAt,
 		arg.RuntimeHandleID,
 		arg.TargetGenerationID,

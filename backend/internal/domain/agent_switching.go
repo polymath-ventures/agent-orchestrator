@@ -326,7 +326,8 @@ func (s AgentSwitch) RequiresRecovery() bool {
 }
 
 // AgentSwitchTargetActivation is the narrow command that transfers durable
-// session ownership to a prepared target generation. SourceGenerationID fences
+// session ownership and resolved launch identity to a prepared target generation.
+// SourceGenerationID fences
 // the immutable switch provenance; ExpectedSourceRuntimeLaunchID independently
 // fences the current sessions row (and may be empty for a pre-generation legacy
 // session). Native identity and transcript facts are loaded from the referenced
@@ -338,6 +339,8 @@ type AgentSwitchTargetActivation struct {
 	SourceGenerationID            AgentGenerationID
 	ExpectedSourceRuntimeLaunchID string
 	TargetHarness                 AgentHarness
+	TargetModel                   string
+	TargetEffort                  Effort
 	TargetNativeSessionRef        AgentNativeSessionID
 	TargetGenerationID            AgentGenerationID
 	RuntimeHandleID               string

@@ -63,9 +63,9 @@ func (s *Service) DelegateTask(ctx context.Context, in DelegateTaskInput) (Deleg
 		ProjectID:     in.ProjectID,
 		Kind:          domain.KindWorker,
 		Harness:       in.RequestedAgent,
+		Model:         strings.TrimSpace(in.Model),
 		Prompt:        prompt,
 		DisplayName:   delegatedTaskDisplayName(in.Brief),
-		AgentConfig:   ports.AgentConfig{Model: strings.TrimSpace(in.Model)},
 		RequestedMode: in.RequestedMode,
 		Attachments:   in.Attachments,
 	})

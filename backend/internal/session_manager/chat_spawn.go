@@ -92,6 +92,7 @@ type chatSpawn struct {
 	record           domain.SessionRecord
 	workspace        ports.WorkspaceInfo
 	workspaceProject *ports.WorkspaceProjectInfo
+	agentConfig      ports.AgentConfig
 	prompt           string
 	systemPrompt     string
 }
@@ -104,10 +105,7 @@ type chatSpawn struct {
 // first so no app-server process is left behind holding the worktree.
 func (m *Manager) launchChatController(ctx context.Context, in chatSpawn) (domain.SessionRecord, error) {
 	id := in.record.ID
-	agentConfig := applySpawnAgentConfig(
-		effectiveAgentConfig(in.cfg.Kind, in.project.Config),
-		in.cfg.AgentConfig,
-	)
+	agentConfig := in.agentConfig
 
 	// The same env the terminal path builds, including the HookPATH pin. The
 	// provider passes its environment through to the shell commands it runs, so
@@ -284,7 +282,10 @@ func (m *Manager) resumeChatController(
 		return RestoreResult{}, fmt.Errorf("%s %s: system prompt: %w", operation, rec.ID, err)
 	}
 
-	agentConfig := effectiveAgentConfig(rec.Kind, project.Config)
+	agentConfig, err := m.restoreAgentConfig(ctx, rec, project.Config)
+	if err != nil {
+		return RestoreResult{}, fmt.Errorf("%s %s: agent config: %w", operation, rec.ID, err)
+	}
 	additionalDirectories, err := m.restoredWorkspaceProjectDirectories(ctx, rec, project, ws.Path)
 	if err != nil {
 		return RestoreResult{}, fmt.Errorf("%s %s: workspace roots: %w", operation, rec.ID, err)

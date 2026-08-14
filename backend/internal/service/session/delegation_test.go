@@ -49,8 +49,11 @@ func TestDelegateTaskSpawnsWorkerThenRequestsTitleFromNewestActiveOrchestrator(t
 			if !cmd.spawned || cmd.spawnedCfg.ProjectID != "ao" || cmd.spawnedCfg.Kind != domain.KindWorker || cmd.spawnedCfg.Harness != tt.wantAgent || cmd.spawnedCfg.Prompt != brief || cmd.spawnedCfg.DisplayName != "Fix the renderer wit" {
 				t.Fatalf("spawn cfg = %#v", cmd.spawnedCfg)
 			}
-			if cmd.spawnedCfg.AgentConfig.Model != strings.TrimSpace(tt.model) {
-				t.Fatalf("spawn model = %q, want %q", cmd.spawnedCfg.AgentConfig.Model, strings.TrimSpace(tt.model))
+			if cmd.spawnedCfg.Model != strings.TrimSpace(tt.model) {
+				t.Fatalf("spawn model = %q, want %q", cmd.spawnedCfg.Model, strings.TrimSpace(tt.model))
+			}
+			if cmd.spawnedCfg.AgentConfig.Model != "" {
+				t.Fatalf("spawn agent-config model = %q, want the validated model selection path", cmd.spawnedCfg.AgentConfig.Model)
 			}
 			if cmd.spawnedCfg.RequestedMode != tt.mode {
 				t.Fatalf("spawn mode = %q, want %q", cmd.spawnedCfg.RequestedMode, tt.mode)

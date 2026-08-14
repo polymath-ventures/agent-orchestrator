@@ -228,6 +228,101 @@ func TestSpawn_ModelOnlyPinUsesMixSelectedHarness(t *testing.T) {
 	}
 }
 
+func TestSpawn_ModelOnlyPinSelectsCompatibleWorkerMixHarness(t *testing.T) {
+	tests := []struct {
+		name  string
+		spawn ports.SpawnConfig
+	}{
+		{
+			name:  "explicit model pin",
+			spawn: ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Model: "claude-opus-4-5"},
+		},
+		{
+			name: "delegated agent config model pin",
+			spawn: ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker,
+				AgentConfig: ports.AgentConfig{Model: "claude-opus-4-5"}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m, _ := mixManager(domain.ProjectConfig{WorkerMix: domain.WorkerMix{
+				{Harness: domain.HarnessCodex, Model: "gpt-5-codex", Weight: 90},
+				{Harness: domain.HarnessClaudeCode, Model: "claude-sonnet-4-5", Weight: 10},
+			}})
+			rec, _, _, err := m.Spawn(ctx, tt.spawn)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if rec.Harness != domain.HarnessClaudeCode || rec.Model != "claude-opus-4-5" {
+				t.Fatalf("model-only spawn = (%q, %q), want compatible (claude-code, claude-opus-4-5)", rec.Harness, rec.Model)
+			}
+			if !rec.MixSelected || rec.MixBucketModel != "claude-sonnet-4-5" {
+				t.Fatalf("mix identity = selected %v bucket %q, want selected claude bucket", rec.MixSelected, rec.MixBucketModel)
+			}
+		})
+	}
+}
+
+func TestSpawn_WorkerMixCrossProviderPinsAreRejectedBeforeState(t *testing.T) {
+	tests := []struct {
+		name  string
+		spawn ports.SpawnConfig
+	}{
+		{
+			name: "explicit model pin",
+			spawn: ports.SpawnConfig{
+				ProjectID: "mer",
+				Kind:      domain.KindWorker,
+				Model:     "claude-opus-4-5",
+			},
+		},
+		{
+			name: "delegated agent config model pin",
+			spawn: ports.SpawnConfig{
+				ProjectID: "mer",
+				Kind:      domain.KindWorker,
+				AgentConfig: ports.AgentConfig{
+					Model: "claude-opus-4-5",
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			st := newFakeStore()
+			st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{
+				WorkerMix: domain.WorkerMix{{Harness: domain.HarnessCodex, Weight: 100}},
+			}}
+			runtime := &fakeRuntime{}
+			workspace := &fakeWorkspace{}
+			validator := &fakeSpawnSelectionValidator{result: ports.ModelValidationResult{Status: ports.ModelValidationReachable}}
+			m := New(Deps{
+				Runtime: runtime, Agents: singleAgent{agent: &recordingAgent{}}, Workspace: workspace, Store: st,
+				Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, ModelValidator: validator,
+				LookPath: func(string) (string, error) { return "/bin/true", nil },
+			})
+
+			_, _, _, err := m.Spawn(ctx, tt.spawn)
+			if !errors.Is(err, ErrModelHarnessMismatch) {
+				t.Fatalf("Spawn err = %v, want ErrModelHarnessMismatch", err)
+			}
+			if len(st.sessions) != 0 || st.num != 0 {
+				t.Fatalf("sessions created before mismatch rejection: num=%d rows=%#v", st.num, st.sessions)
+			}
+			if runtime.created != 0 {
+				t.Fatalf("runtime created = %d, want 0", runtime.created)
+			}
+			if workspace.lastCfg.SessionID != "" || workspace.lastProjectCfg.SessionID != "" {
+				t.Fatalf("workspace created before mismatch rejection: single=%#v project=%#v", workspace.lastCfg, workspace.lastProjectCfg)
+			}
+			if len(validator.calls) != 0 {
+				t.Fatalf("model validator called before static mismatch rejection: %#v", validator.calls)
+			}
+		})
+	}
+}
+
 func TestSpawn_ModelOnlyPinConsumesSelectedBucketShare(t *testing.T) {
 	m, st := mixManager(domain.ProjectConfig{
 		WorkerMix: domain.WorkerMix{

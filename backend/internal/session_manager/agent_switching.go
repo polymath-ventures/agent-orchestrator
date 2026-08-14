@@ -546,6 +546,8 @@ func (m *Manager) SwitchAgent(ctx context.Context, id domain.SessionID, cfg Swit
 		SourceGenerationID:            result.SourceGenerationID,
 		ExpectedSourceRuntimeLaunchID: rec.Metadata.RuntimeLaunchID,
 		TargetHarness:                 cfg.TargetHarness,
+		TargetModel:                   target.launch.Config.Model,
+		TargetEffort:                  target.launch.Config.Effort,
 		TargetNativeSessionRef:        target.native.ID,
 		TargetGenerationID:            target.launchID,
 		RuntimeHandleID:               handle.ID,
@@ -738,7 +740,10 @@ func (m *Manager) prepareTargetActivation(ctx context.Context, store ports.Agent
 	if err != nil {
 		return preparedTargetActivation{}, fmt.Errorf("system prompt file: %w", err)
 	}
-	config := effectiveAgentConfig(rec.Kind, project.Config)
+	config, err := harnessAwareAgentConfig(rec.Kind, project.Config, harness, "")
+	if err != nil {
+		return preparedTargetActivation{}, fmt.Errorf("agent config: %w", err)
+	}
 	env := m.runtimeEnv(rec.ID, rec.ProjectID, rec.IssueID, project.Config.Env)
 	m.augmentAgentRuntimeEnv(agent, env)
 	configDir, err := nativeConfigDir(ctx, agent, env)
@@ -2674,6 +2679,18 @@ func (m *Manager) reconcileStartingTarget(ctx context.Context, store ports.Agent
 		_, failErr := m.failAgentSwitch(ctx, store, sw, domain.AgentSwitchErrorDaemonRestartPostStop)
 		return failErr == nil, failErr
 	}
+	// The switch row predates durable target model/effort facts. A recovered
+	// starting target therefore adopts the current harness-aware project config;
+	// the saga is immediately failed before prompt delivery below, so it cannot
+	// be reported as a completed handoff with re-resolved launch identity.
+	project, err := m.loadProject(ctx, rec.ProjectID)
+	if err != nil {
+		return false, err
+	}
+	targetConfig, err := harnessAwareAgentConfig(rec.Kind, project.Config, sw.TargetHarness, "")
+	if err != nil {
+		return false, err
+	}
 	activated, err := m.lcm.ActivateAgentSwitchTarget(ctx, domain.AgentSwitchTargetActivation{
 		SwitchID:                      sw.ID,
 		SessionID:                     rec.ID,
@@ -2681,6 +2698,8 @@ func (m *Manager) reconcileStartingTarget(ctx context.Context, store ports.Agent
 		SourceGenerationID:            sw.SourceGenerationID,
 		ExpectedSourceRuntimeLaunchID: rec.Metadata.RuntimeLaunchID,
 		TargetHarness:                 sw.TargetHarness,
+		TargetModel:                   targetConfig.Model,
+		TargetEffort:                  targetConfig.Effort,
 		TargetNativeSessionRef:        *sw.TargetNativeSessionRef,
 		TargetGenerationID:            sw.TargetGenerationID,
 		RuntimeHandleID:               handle.ID,

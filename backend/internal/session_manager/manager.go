@@ -780,6 +780,7 @@ const (
 // ports.ErrAgentBinaryNotFound from the adapter's launch command. A caller that
 // retires before spawning can still be caught by those.
 func (m *Manager) preflightSpawn(ctx context.Context, cfg ports.SpawnConfig, pass spawnPass) (spawnPlan, error) {
+	canonicalizeSpawnAgentConfigModel(&cfg)
 	projectlessPrime := cfg.Kind == domain.KindPrime && cfg.ProjectID == ""
 	project := domain.ProjectRecord{}
 	var err error
@@ -851,11 +852,10 @@ func (m *Manager) preflightSpawn(ctx context.Context, cfg ports.SpawnConfig, pas
 		// effective mode is reported by GET /prime/settings, which applies the
 		// same defaulting, so it needs no separate spawn-time disclosure.
 		agentConfig = settings.WithDefaults().AgentConfig
-		if agentConfig.Effort == "" {
-			agentConfig.Effort = target.effort
-		}
+		agentConfig.Model = target.model
+		agentConfig.Effort = target.effort
 	} else {
-		agentConfig, err = agentconfig.Effective(cfg.Kind, project.Config, "", cfg.Harness)
+		agentConfig, err = harnessAwareAgentConfig(cfg.Kind, project.Config, cfg.Harness, "")
 		if err != nil {
 			return spawnPlan{}, fmt.Errorf("spawn: agent config: %w", err)
 		}
@@ -973,10 +973,18 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	prompt := plan.prompt
 	systemPrompt := plan.systemPrompt
 	mode := domain.NormalizeSessionMode(cfg.RequestedMode)
+	agentConfig = applySpawnAgentConfig(agentConfig, cfg.AgentConfig)
+	if requestedModel != "" || target.mixSelected {
+		agentConfig.Model = launchModelForBucket(cfg.Harness, cfg.Model, target.mixSelected)
+	}
+	persistedModel := cfg.Model
+	if !target.mixSelected {
+		persistedModel = agentConfig.Model
+	}
 	promptBytes := len(prompt)
 	systemPromptBytes := len(systemPrompt)
 
-	rec, err := m.store.CreateSession(ctx, seedRecord(cfg, agentConfig.Effort, target.mixSelected, target.mixBucketModel, m.clock()))
+	rec, err := m.store.CreateSession(ctx, seedRecord(cfg, persistedModel, agentConfig.Effort, target.mixSelected, target.mixBucketModel, m.clock()))
 	if err != nil {
 		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn: create: %w", err)
 	}
@@ -1059,6 +1067,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 			record:           rec,
 			workspace:        ws,
 			workspaceProject: workspaceProject,
+			agentConfig:      agentConfig,
 			prompt:           prompt,
 			systemPrompt:     systemPrompt,
 		})
@@ -1084,8 +1093,6 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 			return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: allocated empty native session id", id)
 		}
 	}
-	agentConfig = applySpawnAgentConfig(agentConfig, cfg.AgentConfig)
-	agentConfig.Model = launchModelForBucket(cfg.Harness, cfg.Model, target.mixSelected)
 	env := m.runtimeEnv(id, cfg.ProjectID, cfg.IssueID, project.Config.Env)
 	m.augmentAgentRuntimeEnv(agent, env)
 	if err := m.prepareWorkspace(ctx, agent, id, ws.Path, systemPrompt, systemPromptFile, agentConfig, env); err != nil {
@@ -1576,15 +1583,15 @@ func (m *Manager) resolveSpawnTarget(ctx context.Context, cfg ports.SpawnConfig,
 		if harness == "" {
 			return resolvedSpawnTarget{}, fmt.Errorf("%w: configure fleet prime agent or pass --harness", ErrMissingHarness)
 		}
-		model := strings.TrimSpace(cfg.Model)
-		if model == "" {
-			model = strings.TrimSpace(settings.AgentConfig.Model)
+		resolved, err := agentconfig.EffectiveFromConfigs(settings.AgentConfig, domain.AgentConfig{}, cfg.Model, harness)
+		if err != nil {
+			return resolvedSpawnTarget{}, err
 		}
-		effort := cfg.Effort
-		if effort == "" {
-			effort = settings.AgentConfig.Effort
+		effort := resolved.Effort
+		if cfg.Effort != "" {
+			effort = domain.NormalizeEffortForHarness(harness, cfg.Effort)
 		}
-		return resolvedSpawnTarget{harness: harness, model: model, effort: effort}, nil
+		return resolvedSpawnTarget{harness: harness, model: strings.TrimSpace(resolved.Model), effort: effort}, nil
 	}
 	pinnedHarness := cfg.Harness != ""
 	if !pinnedHarness && cfg.Kind == domain.KindWorker && len(project.Config.WorkerMix) > 0 {
@@ -1592,13 +1599,28 @@ func (m *Manager) resolveSpawnTarget(ctx context.Context, cfg ports.SpawnConfig,
 		if err != nil {
 			return resolvedSpawnTarget{}, err
 		}
-		entry, err := m.selectMixBucket(ctx, cfg.ProjectID, mix, strings.TrimSpace(cfg.Model))
+		explicitModel := strings.TrimSpace(cfg.Model)
+		if explicitModel != "" {
+			compatible := make(domain.WorkerMix, 0, len(mix))
+			modelProvider := domain.ClassifyModelProvider(explicitModel)
+			for _, candidate := range mix {
+				if modelProvider.CompatibleWith(candidate.Harness.ModelProvider()) {
+					compatible = append(compatible, candidate)
+				}
+			}
+			if len(compatible) == 0 {
+				return resolvedSpawnTarget{}, fmt.Errorf("%w: %q has no compatible harness in the worker mix",
+					agentconfig.ErrModelHarnessMismatch, explicitModel)
+			}
+			mix = compatible
+		}
+		entry, err := m.selectMixBucket(ctx, cfg.ProjectID, mix, explicitModel)
 		if err != nil {
 			return resolvedSpawnTarget{}, err
 		}
 		bucket := entry.BucketKey()
 		model := bucket.Model
-		if explicitModel := strings.TrimSpace(cfg.Model); explicitModel != "" {
+		if explicitModel != "" {
 			model = explicitModel
 		}
 		return resolvedSpawnTarget{
@@ -1720,6 +1742,9 @@ func (m *Manager) selectMixBucket(ctx context.Context, project domain.ProjectID,
 	bk := selectedWorkerMixKey(entry, explicitModel)
 	if m.health.RecordSkipIfDown(workerMixCandidate(bk.Harness, bk.Model, bk.Effort)) {
 		if m.allWorkerMixCandidatesDown(mix, explicitModel) {
+			if explicitModel != "" {
+				return domain.WorkerMixEntry{}, fmt.Errorf("%w: project %s has every worker mix bucket compatible with model %q down", ErrWorkerMixExhausted, project, explicitModel)
+			}
 			return domain.WorkerMixEntry{}, fmt.Errorf("%w: project %s has every worker mix bucket down", ErrWorkerMixExhausted, project)
 		}
 		return domain.WorkerMixEntry{}, fmt.Errorf("worker mix selected %s: %w", bucketKeyString(bk), ErrWorkerMixBucketDown)
@@ -1952,10 +1977,25 @@ func effectiveAgentConfig(kind domain.SessionKind, cfg domain.ProjectConfig) por
 	return merged
 }
 
-func applySpawnAgentConfig(base, override ports.AgentConfig) ports.AgentConfig {
-	if override.Model != "" {
-		base.Model = override.Model
+func canonicalizeSpawnAgentConfigModel(cfg *ports.SpawnConfig) {
+	model := strings.TrimSpace(cfg.AgentConfig.Model)
+	if strings.TrimSpace(cfg.Model) == "" && model != "" {
+		cfg.Model = model
 	}
+	cfg.AgentConfig.Model = ""
+}
+
+func harnessAwareAgentConfig(kind domain.SessionKind, cfg domain.ProjectConfig, harness domain.AgentHarness, spawnModel string) (ports.AgentConfig, error) {
+	resolved, err := agentconfig.Effective(kind, cfg, spawnModel, harness)
+	if err != nil {
+		return ports.AgentConfig{}, err
+	}
+	merged := effectiveAgentConfig(kind, cfg)
+	resolved.Mode = merged.Mode
+	return resolved, nil
+}
+
+func applySpawnAgentConfig(base, override ports.AgentConfig) ports.AgentConfig {
 	if override.Mode != "" {
 		base.Mode = override.Mode
 	}
@@ -2633,6 +2673,36 @@ func (m *Manager) relaunchSessionFresh(ctx context.Context, operation string, re
 	return m.relaunchSessionWithPolicy(ctx, operation, rec, project, ws, restartHandle, true)
 }
 
+func (m *Manager) restoreAgentConfig(ctx context.Context, rec domain.SessionRecord, project domain.ProjectConfig) (ports.AgentConfig, error) {
+	persistedModel := rec.Model
+	if rec.MixSelected {
+		persistedModel = ""
+	}
+	var agentConfig ports.AgentConfig
+	var err error
+	if rec.Kind == domain.KindPrime && rec.ProjectID == "" {
+		settings, settingsErr := m.store.GetPrimeSettings(ctx)
+		if settingsErr != nil {
+			return ports.AgentConfig{}, settingsErr
+		}
+		primeConfig := settings.WithDefaults().AgentConfig
+		agentConfig, err = agentconfig.EffectiveFromConfigs(primeConfig, domain.AgentConfig{}, persistedModel, rec.Harness)
+		agentConfig.Mode = primeConfig.Mode
+	} else {
+		agentConfig, err = harnessAwareAgentConfig(rec.Kind, project, rec.Harness, persistedModel)
+	}
+	if err != nil {
+		return ports.AgentConfig{}, err
+	}
+	if rec.MixSelected {
+		agentConfig.Model = launchModelForBucket(rec.Harness, rec.Model, true)
+	}
+	if rec.Effort != "" {
+		agentConfig.Effort = domain.NormalizeEffortForHarness(rec.Harness, rec.Effort)
+	}
+	return agentConfig, nil
+}
+
 func (m *Manager) relaunchSessionWithPolicy(ctx context.Context, operation string, rec domain.SessionRecord, project domain.ProjectRecord, ws ports.WorkspaceInfo, restartHandle *ports.RuntimeHandle, forceFresh bool) (RestoreResult, error) {
 	// Relaunch dispatches from the currently committed persisted mode, never from
 	// a caller hint. The interface-transition coordinator changes that fact only
@@ -2671,20 +2741,9 @@ func (m *Manager) relaunchSessionWithPolicy(ctx context.Context, operation strin
 	// comes from the row rather than config: the session is already counted in
 	// its (harness, model) bucket, so relaunching it on a different model would
 	// put the census and the running agent out of step.
-	agentConfig, err := agentconfig.Effective(rec.Kind, project.Config, "", rec.Harness)
+	agentConfig, err := m.restoreAgentConfig(ctx, rec, project.Config)
 	if err != nil {
-		return RestoreResult{}, fmt.Errorf("restore %s: agent config: %w", rec.ID, err)
-	}
-	// A mix-selected session carries its bucket's model authoritatively. The
-	// empty string remains the persisted bucket identity, but the adapter still
-	// receives that harness's default model rather than a later project scalar.
-	if rec.MixSelected {
-		agentConfig.Model = launchModelForBucket(rec.Harness, rec.Model, true)
-	} else if rec.Model != "" {
-		agentConfig.Model = rec.Model
-	}
-	if rec.Effort != "" {
-		agentConfig.Effort = rec.Effort
+		return RestoreResult{}, fmt.Errorf("%s %s: agent config: %w", operation, rec.ID, err)
 	}
 	env := m.runtimeEnv(rec.ID, rec.ProjectID, rec.IssueID, project.Config.Env)
 	m.augmentAgentRuntimeEnv(agent, env)
@@ -3961,7 +4020,7 @@ func (m *Manager) cleanupRecords(ctx context.Context, project domain.ProjectID) 
 // resolveSpawnTarget — the one place that knows whether the worker mix, rather
 // than an explicit pin, chose this (harness, model) — and is recorded so the
 // census counts only the mix's own selections.
-func seedRecord(cfg ports.SpawnConfig, effort domain.Effort, mixSelected bool, mixBucketModel string, now time.Time) domain.SessionRecord {
+func seedRecord(cfg ports.SpawnConfig, model string, effort domain.Effort, mixSelected bool, mixBucketModel string, now time.Time) domain.SessionRecord {
 	return domain.SessionRecord{
 		ProjectID:      cfg.ProjectID,
 		IssueID:        cfg.IssueID,
@@ -3969,7 +4028,7 @@ func seedRecord(cfg ports.SpawnConfig, effort domain.Effort, mixSelected bool, m
 		CreatedAt:      now,
 		UpdatedAt:      now,
 		Harness:        cfg.Harness,
-		Model:          cfg.Model,
+		Model:          model,
 		Effort:         effort,
 		MixSelected:    mixSelected,
 		MixBucketModel: mixBucketModel,

@@ -133,6 +133,18 @@ func TestPrimeSettingsRejectAnUnsafeDisplayNameOnWrite(t *testing.T) {
 	}
 }
 
+func TestPrimeSettingsValidateForWriteRejectsCrossProviderScalarModel(t *testing.T) {
+	s := DefaultPrimeSettings()
+	s.Harness = HarnessCodex
+	s.AgentConfig.Model = "claude-opus-4-5"
+	if err := s.Validate(); err != nil {
+		t.Fatalf("legacy read validation rejected stored settings: %v", err)
+	}
+	if err := s.ValidateForWrite(); err == nil {
+		t.Fatal("write validation accepted a Claude scalar model for Codex")
+	}
+}
+
 // Validate also runs when stored settings are READ, so it must stay tolerant of
 // a name that was legal when it was saved. Rejecting one there would fail every
 // subsequent read and take the Prime supervisor down with it — the settings
