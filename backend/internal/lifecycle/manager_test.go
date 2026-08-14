@@ -271,6 +271,10 @@ func (f *fakeAgentSwitchLifecycleStore) ActivateAgentSwitchTarget(_ context.Cont
 		return false, nil
 	}
 	rec.Harness = activation.TargetHarness
+	rec.Model = activation.TargetModel
+	rec.Effort = activation.TargetEffort
+	rec.MixSelected = false
+	rec.MixBucketModel = ""
 	rec.Activity = domain.Activity{State: domain.ActivityIdle, LastActivityAt: activation.ActivatedAt}
 	rec.FirstSignalAt = time.Time{}
 	rec.Metadata.RuntimeHandleID = activation.RuntimeHandleID

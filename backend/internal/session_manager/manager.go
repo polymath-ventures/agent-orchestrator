@@ -780,6 +780,7 @@ const (
 // ports.ErrAgentBinaryNotFound from the adapter's launch command. A caller that
 // retires before spawning can still be caught by those.
 func (m *Manager) preflightSpawn(ctx context.Context, cfg ports.SpawnConfig, pass spawnPass) (spawnPlan, error) {
+	canonicalizeSpawnAgentConfigModel(&cfg)
 	projectlessPrime := cfg.Kind == domain.KindPrime && cfg.ProjectID == ""
 	project := domain.ProjectRecord{}
 	var err error
@@ -855,7 +856,7 @@ func (m *Manager) preflightSpawn(ctx context.Context, cfg ports.SpawnConfig, pas
 			agentConfig.Effort = target.effort
 		}
 	} else {
-		agentConfig, err = agentconfig.Effective(cfg.Kind, project.Config, "", cfg.Harness)
+		agentConfig, err = harnessAwareAgentConfig(cfg.Kind, project.Config, cfg.Harness, "")
 		if err != nil {
 			return spawnPlan{}, fmt.Errorf("spawn: agent config: %w", err)
 		}
@@ -1959,10 +1960,28 @@ func effectiveAgentConfig(kind domain.SessionKind, cfg domain.ProjectConfig) por
 	return merged
 }
 
-func applySpawnAgentConfig(base, override ports.AgentConfig) ports.AgentConfig {
-	if override.Model != "" {
-		base.Model = override.Model
+func canonicalizeSpawnAgentConfigModel(cfg *ports.SpawnConfig) {
+	model := strings.TrimSpace(cfg.AgentConfig.Model)
+	if strings.TrimSpace(cfg.Model) == "" && model != "" {
+		cfg.Model = model
 	}
+	cfg.AgentConfig.Model = ""
+}
+
+func harnessAwareAgentConfig(kind domain.SessionKind, cfg domain.ProjectConfig, harness domain.AgentHarness, spawnModel string) (ports.AgentConfig, error) {
+	resolved, err := agentconfig.Effective(kind, cfg, spawnModel, harness)
+	if err != nil {
+		return ports.AgentConfig{}, err
+	}
+	merged := effectiveAgentConfig(kind, cfg)
+	resolved.Mode = merged.Mode
+	if merged.Permissions != "" {
+		resolved.Permissions = merged.Permissions
+	}
+	return resolved, nil
+}
+
+func applySpawnAgentConfig(base, override ports.AgentConfig) ports.AgentConfig {
 	if override.Mode != "" {
 		base.Mode = override.Mode
 	}
@@ -2641,17 +2660,19 @@ func (m *Manager) relaunchSessionFresh(ctx context.Context, operation string, re
 }
 
 func restoreAgentConfig(rec domain.SessionRecord, project domain.ProjectConfig) (ports.AgentConfig, error) {
-	agentConfig, err := agentconfig.Effective(rec.Kind, project, "", rec.Harness)
+	persistedModel := rec.Model
+	if rec.MixSelected {
+		persistedModel = ""
+	}
+	agentConfig, err := harnessAwareAgentConfig(rec.Kind, project, rec.Harness, persistedModel)
 	if err != nil {
 		return ports.AgentConfig{}, err
 	}
 	if rec.MixSelected {
 		agentConfig.Model = launchModelForBucket(rec.Harness, rec.Model, true)
-	} else if rec.Model != "" {
-		agentConfig.Model = rec.Model
 	}
 	if rec.Effort != "" {
-		agentConfig.Effort = rec.Effort
+		agentConfig.Effort = domain.NormalizeEffortForHarness(rec.Harness, rec.Effort)
 	}
 	return agentConfig, nil
 }

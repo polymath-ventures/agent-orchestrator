@@ -460,8 +460,9 @@ func (s *Store) AcknowledgeAgentSwitchTarget(ctx context.Context, id domain.Agen
 
 // ActivateAgentSwitchTarget atomically transfers the sessions row to a
 // validated native target and advances starting_target -> target_ready. Only
-// owner/activity fields are updated; task, workspace, prompts, lifecycle
-// policy, cleanup generation, and termination facts remain untouched. The
+// owner, resolved model, effort, mix identity, and activity fields are updated;
+// task, workspace, prompts, lifecycle policy, cleanup generation, and
+// termination facts remain untouched. The
 // is_terminated/source-owner predicates make a concurrent kill or replacement
 // win instead of being resurrected by a stale activation.
 func (s *Store) ActivateAgentSwitchTarget(ctx context.Context, activation domain.AgentSwitchTargetActivation) (bool, error) {
@@ -517,7 +518,10 @@ func (s *Store) ActivateAgentSwitchTarget(ctx context.Context, activation domain
 	}
 
 	n, err := q.ActivateSessionAgentSwitchTarget(ctx, gen.ActivateSessionAgentSwitchTargetParams{
-		TargetHarness: activation.TargetHarness, ActivatedAt: activation.ActivatedAt,
+		TargetHarness:              activation.TargetHarness,
+		TargetModel:                strings.TrimSpace(activation.TargetModel),
+		TargetEffort:               string(activation.TargetEffort),
+		ActivatedAt:                activation.ActivatedAt,
 		RuntimeHandleID:            activation.RuntimeHandleID,
 		TargetGenerationID:         string(activation.TargetGenerationID),
 		TargetNativeSessionID:      targetNative.NativeSessionID,
@@ -653,6 +657,9 @@ func validateAgentSwitchTargetActivation(activation domain.AgentSwitchTargetActi
 	}
 	if !activation.SourceHarness.IsKnown() || !activation.TargetHarness.IsKnown() || activation.SourceHarness == activation.TargetHarness {
 		return fmt.Errorf("activate agent switch target %s: source and distinct known target harnesses are required", activation.SwitchID)
+	}
+	if !activation.TargetEffort.Valid() {
+		return fmt.Errorf("activate agent switch target %s: invalid target effort %q", activation.SwitchID, activation.TargetEffort)
 	}
 	return nil
 }
