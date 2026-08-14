@@ -284,7 +284,7 @@ func (m *Manager) resumeChatController(
 
 	agentConfig, err := restoreAgentConfig(rec, project.Config)
 	if err != nil {
-		return RestoreResult{}, fmt.Errorf("restore %s: agent config: %w", rec.ID, err)
+		return RestoreResult{}, fmt.Errorf("%s %s: agent config: %w", operation, rec.ID, err)
 	}
 	additionalDirectories, err := m.restoredWorkspaceProjectDirectories(ctx, rec, project, ws.Path)
 	if err != nil {
