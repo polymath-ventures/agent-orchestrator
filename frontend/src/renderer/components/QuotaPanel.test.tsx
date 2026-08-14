@@ -13,7 +13,7 @@ vi.mock("../lib/api-client", () => ({
 }));
 
 import { QuotaPanel } from "./QuotaPanel";
-import { QUOTA_METER_COLORS } from "./quota-meter-colors";
+import { quotaMeterClassName, type QuotaSeverity } from "./quota-meter-colors";
 import { useUiStore } from "../stores/ui-store";
 
 const AGENTS = {
@@ -195,20 +195,20 @@ describe("QuotaPanel", () => {
 	});
 
 	// These cases pin which severity each threshold routes to, and that the meter
-	// really paints the utilities `QUOTA_METER_COLORS` declares — the link the
-	// contrast guard relies on when it measures those utilities in a real
-	// browser. What they deliberately do NOT prove is that the result is legible:
+	// wears exactly the classes `quota-meter-colors.ts` declares — the link the
+	// contrast guard relies on when it measures those classes in a real browser.
+	// What they deliberately do NOT prove is that the result is legible:
 	// a class name is exactly what stayed correct while the token behind it was
 	// deleted or redefined (#289). That belongs to
 	// `e2e/quota-meter-contrast.spec.ts`, which resolves the colours.
 	it.each([
-		[74, QUOTA_METER_COLORS.fill.normal, "text-foreground", "text-passive"],
-		[75, QUOTA_METER_COLORS.fill.warning, "text-warning", "text-passive"],
-		[89, QUOTA_METER_COLORS.fill.warning, "text-warning", "text-passive"],
-		[90, QUOTA_METER_COLORS.fill.critical, "text-error", "text-error"],
-	])(
+		[74, "normal", "text-foreground", "text-passive"],
+		[75, "warning", "text-warning", "text-passive"],
+		[89, "warning", "text-warning", "text-passive"],
+		[90, "critical", "text-error", "text-error"],
+	] as Array<[number, QuotaSeverity, string, string]>)(
 		"uses the expected severity classes at %i%% used",
-		async (used, expectedFillClass, expectedNumberClass, expectedResetClass) => {
+		async (used, expectedSeverity, expectedNumberClass, expectedResetClass) => {
 			seed({
 				probeStatuses: [
 					{
@@ -238,18 +238,14 @@ describe("QuotaPanel", () => {
 			const number = await screen.findByText(`${used}%`);
 			const meter = screen.getByRole("progressbar", { name: "Claude Code weekly (all models) quota usage" });
 			expect(number).toHaveClass(expectedNumberClass);
-			expect(meter).toHaveClass(QUOTA_METER_COLORS.track);
-			expect(meter.firstElementChild).toHaveClass(expectedFillClass);
-			// The contrast guard composites background colours, which is the whole
-			// of how this meter is painted today. Keep it that way: a utility that
-			// dims the bar by some other route (opacity, a blend mode, a filter)
-			// would make it invisible without changing a single colour the guard
-			// measures. Adding one means teaching that guard to see it first.
-			for (const element of [meter, meter.firstElementChild as Element]) {
-				expect(element.className, "the meter must be painted by background colour alone").not.toMatch(
-					/(^|\s)(opacity-|mix-blend-|bg-blend-|blur-|brightness-|contrast-|grayscale|invert|saturate-|sepia)/,
-				);
-			}
+			// Exhaustive, not `toHaveClass`: the contrast guard measures a probe
+			// wearing exactly these lists, so anything the meter carries that is not
+			// declared in `quota-meter-colors.ts` is something the guard never sees.
+			// That is how a bar dimmed by `opacity-*`, a blend mode, or a filter
+			// could go invisible with the colours themselves unchanged. Declare it
+			// there and the guard measures it; add it here only and this fails.
+			expect(meter.className).toBe(quotaMeterClassName("track"));
+			expect((meter.firstElementChild as Element).className).toBe(quotaMeterClassName("fill", expectedSeverity));
 			expect(screen.getByText(/^resets /).parentElement).toHaveClass(expectedResetClass);
 			if (used >= 75) {
 				expect(screen.getByText(`${100 - used}% left`)).toBeInTheDocument();

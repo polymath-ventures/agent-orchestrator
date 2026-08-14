@@ -8,7 +8,7 @@ import { agentDisplayLabel } from "../lib/agent-selection";
 import { formatTimeCompact } from "../lib/format-time";
 import { useUiStore } from "../stores/ui-store";
 import { cn } from "../lib/utils";
-import { QUOTA_METER_COLORS, type QuotaSeverity } from "./quota-meter-colors";
+import { quotaMeterClassName, type QuotaSeverity } from "./quota-meter-colors";
 
 type QuotaSnapshot = components["schemas"]["QuotaSnapshot"];
 type HarnessQuotaStatus = components["schemas"]["HarnessQuotaStatus"];
@@ -205,8 +205,6 @@ function WindowLine({ snapshot, label }: { snapshot: QuotaSnapshot; label: strin
 	// Always name the window — the headline was previously anonymous ("46% used"),
 	// which hides WHICH limit (weekly vs session) the percentage measures.
 	const name = snapshot.windowName || "quota window";
-	const fillColor = QUOTA_METER_COLORS.fill[severity];
-	const trackColor = QUOTA_METER_COLORS.track;
 	const numberColor =
 		used === 0
 			? "text-passive"
@@ -237,10 +235,10 @@ function WindowLine({ snapshot, label }: { snapshot: QuotaSnapshot; label: strin
 				aria-valuemax={100}
 				aria-valuemin={0}
 				{...(used === null ? { "aria-valuetext": "usage unknown" } : { "aria-valuenow": progressValue })}
-				className={cn("h-1.5 w-full overflow-hidden rounded-full", trackColor)}
+				className={quotaMeterClassName("track")}
 				role="progressbar"
 			>
-				<div className={cn("h-full rounded-full transition-[width]", fillColor)} style={fillStyle} />
+				<div className={quotaMeterClassName("fill", severity)} style={fillStyle} />
 			</div>
 			{reset ? (
 				<span className={cn("flex min-w-0 items-center gap-0.5 overflow-hidden text-[9px] leading-none", resetColor)}>
