@@ -477,6 +477,28 @@ func TestChatSpawnUsesResolvedSpawnModelForController(t *testing.T) {
 	}
 }
 
+func TestResumeChatProjectlessPrimeUsesConfiguredPermissions(t *testing.T) {
+	launcher := &recordingLauncher{}
+	mgr, store, _ := newChatManager(launcher)
+	store.prime = domain.PrimeSettings{Enabled: true, Harness: domain.HarnessCodex}
+	store.sessions["prime-1"] = domain.SessionRecord{
+		ID: "prime-1", Kind: domain.KindPrime, Harness: domain.HarnessCodex,
+		Mode: domain.SessionModeChat, Activity: domain.Activity{State: domain.ActivityExited},
+		Metadata: domain.SessionMetadata{WorkspacePath: "/ws/prime-1", Branch: "ao/prime",
+			ProviderConversationID: "thread-prime"},
+	}
+
+	if _, err := mgr.ResumeAgentWithMode(context.Background(), "prime-1"); err != nil {
+		t.Fatal(err)
+	}
+	if len(launcher.started) != 1 {
+		t.Fatalf("started %d controllers, want 1", len(launcher.started))
+	}
+	if got := launcher.started[0].Permissions; got != ports.PermissionModeBypassPermissions {
+		t.Fatalf("resumed chat Prime permissions = %q, want %q", got, ports.PermissionModeBypassPermissions)
+	}
+}
+
 func TestChatSpawnProjectlessPrimeUsesConfiguredPermissions(t *testing.T) {
 	launcher := &recordingLauncher{}
 	mgr, store, _ := newChatManager(launcher)
