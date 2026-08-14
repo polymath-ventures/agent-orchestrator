@@ -6,7 +6,7 @@ const captureEvidence = process.env.CAPTURE_FORK_SCREENSHOTS === "1";
 const evidenceDir = "../docs/screenshots/fork-features";
 
 test.beforeEach(async ({ page }) => {
-	await installBrowserModeApiFixtures(page);
+	await installBrowserModeApiFixtures(page, { includePrimeSession: true });
 	const agents = [
 		{ id: "claude-code", label: "Claude Code", authStatus: "authorized", reviewerCapable: true },
 		{ id: "codex", label: "Codex", authStatus: "authorized", reviewerCapable: true },
@@ -19,6 +19,26 @@ test.beforeEach(async ({ page }) => {
 		route.fulfill({ json: { checkedAt: "2026-08-14T00:00:00Z", harnesses: [] } }),
 	);
 	await page.route("**/api/v1/fleet", (route) => route.fulfill({ json: { paused: false } }));
+	await page.route("**/api/v1/metrics", (route) =>
+		route.fulfill({
+			json: {
+				history: [],
+				latest: { quotas: [] },
+				probeStatuses: [
+					{
+						harness: "codex",
+						hasData: true,
+						probedAt: "2026-08-14T00:00:00Z",
+						snapshots: [
+							{ used: 42, windowEnd: "2026-08-16T00:00:00Z", windowName: "primary" },
+							{ used: 7, windowEnd: "2026-08-21T00:00:00Z", windowName: "secondary" },
+						],
+						state: "ok",
+					},
+				],
+			},
+		}),
+	);
 	await page.route("**/api/v1/prime/settings", (route) =>
 		route.fulfill({
 			json: {
@@ -61,16 +81,20 @@ test.beforeEach(async ({ page }) => {
 
 test("fork UI features stay mounted from the application shell", async ({ page }) => {
 	await page.goto("/");
-	if (captureEvidence) {
-		await mkdir(evidenceDir, { recursive: true });
-		await page.screenshot({ path: `${evidenceDir}/web-client.png`, fullPage: true });
-	}
-
 	const workerRow = page.getByRole("button", { name: "Open fix-webgl-fallback" });
 	await expect(workerRow.locator("[data-harness-glyph]")).toHaveAttribute("title", "Codex");
 	await expect(workerRow).toHaveAttribute("aria-describedby", /sidebar-harness-/);
+	const primeRow = page.getByRole("button", { name: "Open AO Prime" });
+	await expect(primeRow.locator("[data-harness-glyph]")).toHaveAttribute("title", "Codex");
+	await expect(primeRow).toHaveAttribute("aria-describedby", /sidebar-harness-/);
 	if (captureEvidence) {
+		await mkdir(evidenceDir, { recursive: true });
+		await page.screenshot({ path: `${evidenceDir}/web-client.png`, fullPage: true });
+		const quotaPanel = page.getByText("Quota", { exact: true }).locator("../..");
+		await expect(quotaPanel).toBeVisible();
+		await quotaPanel.screenshot({ path: `${evidenceDir}/quota-usage.png` });
 		await workerRow.screenshot({ path: `${evidenceDir}/sidebar-harness-glyph.png` });
+		await primeRow.screenshot({ path: `${evidenceDir}/prime-harness-glyph.png` });
 		await page.goto("/#/terminals");
 		await expect(page.getByTestId("session-terminal")).toBeVisible();
 		await page.screenshot({ path: `${evidenceDir}/terminal-focus.png`, fullPage: true });

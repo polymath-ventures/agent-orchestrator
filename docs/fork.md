@@ -116,8 +116,8 @@ product, and a sync is not complete until every named behavioral guard passes.
    from the sidebar footer in `frontend/src/renderer/components/Sidebar.tsx` and
    gated by the "Show quota widget" row in
    `frontend/src/renderer/components/settings/GeneralSettingsSection.tsx`.
-   The **mount guard** is
-   `frontend/src/renderer/test/shell-quota-widget-mount.test.tsx`: it renders the
+   **Behavioral guard:**
+   `frontend/src/renderer/test/shell-quota-widget-mount.test.tsx` renders the
    real `/_shell` route layout with the real `Sidebar` and asserts the meter is on
    screen with live probe data, so a sync that unmounts the widget fails CI.
    `QuotaPanel.test.tsx` does not cover this — it renders the component directly
@@ -126,6 +126,7 @@ product, and a sync is not complete until every named behavioral guard passes.
    `Sidebar` or `QuotaPanel` directly silently retires it. The toggle's own guard
    is
    `frontend/src/renderer/components/settings/GeneralSettingsSection.test.tsx`.
+   Reference evidence: [quota usage](screenshots/fork-features/quota-usage.png).
    This is mechanism-independent — re-layer it onto whatever signal path upstream
    uses.
    Reference issues/PRs: #8 → #16, #88; #97 → #102; #112 → #113; #116 → #117;
@@ -177,7 +178,8 @@ product, and a sync is not complete until every named behavioral guard passes.
    asserts the real session-row control contains both the glyph and its
    accessible harness description. A direct `HarnessGlyph` or `Sidebar` render
    is supplementary and cannot prove the feature is mounted. Reference
-   evidence: [sidebar harness glyph](screenshots/fork-features/sidebar-harness-glyph.png).
+   evidence: [worker harness glyph](screenshots/fork-features/sidebar-harness-glyph.png)
+   and [Prime harness glyph](screenshots/fork-features/prime-harness-glyph.png).
    Reference issues/PRs: #152 → #174.
 6. **Fleet & Prime.** The projectless "AO Fleet" workspace (`FLEET_WORKSPACE_ID`,
    projectless-prime sessions), worker-mix percentages, fleet pause, and the

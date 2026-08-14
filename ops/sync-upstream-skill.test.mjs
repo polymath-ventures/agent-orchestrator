@@ -67,11 +67,10 @@ test("fork checklist distinguishes anchors from behavioral guards", async () => 
 			checklist.slice(match.index, starts[index + 1]?.index ?? checklist.length),
 		]),
 	);
-	// Item 3 is completed by the separately-owned quota remount in #280.
-	for (const number of [1, 2, 4, 5, 6, 7, 8, 9, 10]) {
+	for (const number of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]) {
 		assert.match(entries.get(number), /\*\*Behavioral guards?:\*\*/, `item ${number} names a behavioral guard`);
 	}
-	for (const number of [1, 2, 4, 5, 6, 10]) {
+	for (const number of [1, 2, 3, 4, 5, 6, 10]) {
 		assert.match(entries.get(number), /screenshots\/fork-features\//, `item ${number} links reference evidence`);
 	}
 });
