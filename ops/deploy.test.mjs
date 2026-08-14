@@ -1,5 +1,4 @@
-import { readFile } from "node:fs/promises";
-import { mkdtemp, mkdir, lstat, readlink, symlink, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readFile, readdir, readlink, symlink, writeFile } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import test from "node:test";
@@ -141,6 +140,41 @@ test("sync_acp_runtime_link preserves an operator-managed symlink on rollback", 
 	assert.equal(link, operatorRuntime);
 	const stat = await lstat(acpRuntimeTarget);
 	assert.ok(stat.isSymbolicLink());
+	assert.match(await readFile(logFile, "utf8"), /left the existing operator-managed ACP runtime symlink/);
+});
+
+test("sync_acp_runtime_link preserves an operator runtime directory before linking a packaged runtime", async () => {
+	const root = await mkdtemp(path.join(tmpdir(), "deploy-acp-"));
+	const deployRoot = path.join(root, "deploy");
+	const current = path.join(deployRoot, "current");
+	const release = path.join(deployRoot, "releases", "release-1");
+	const localDir = path.join(root, "home", ".local");
+	const acpRuntimeTarget = path.join(localDir, "acp-runtime");
+	const logFile = path.join(root, "deploy.log");
+
+	await mkdir(path.join(release, "acp-runtime"), { recursive: true });
+	await mkdir(acpRuntimeTarget, { recursive: true });
+	await writeFile(path.join(acpRuntimeTarget, "operator-sentinel"), "preserve me");
+	await writeFile(logFile, "");
+	await symlink(release, current);
+
+	const harness = `
+		set -euo pipefail
+		source "${script}"
+		DEPLOY_ROOT="${deployRoot}"
+		CURRENT="${current}"
+		ACP_RUNTIME_TARGET="${acpRuntimeTarget}"
+		LOG_FILE="${logFile}"
+		log() { printf '%s\\n' "$*" >>"$LOG_FILE"; }
+		sync_acp_runtime_link
+	`;
+	await run("bash", ["-lc", harness], { encoding: "utf8" });
+
+	assert.equal(await readlink(acpRuntimeTarget), path.join(current, "acp-runtime"));
+	const backups = (await readdir(localDir)).filter((name) => name.startsWith("acp-runtime.pre-ao-"));
+	assert.equal(backups.length, 1);
+	assert.equal(await readFile(path.join(localDir, backups[0], "operator-sentinel"), "utf8"), "preserve me");
+	assert.match(await readFile(logFile, "utf8"), /Preserved existing ACP runtime at/);
 });
 
 test("sync_acp_runtime_link removes only AO-managed symlinks when runtime disappears", async () => {
