@@ -11,6 +11,7 @@
  */
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useUiStore } from "../../stores/ui-store";
 import { GlobalSettingsForm } from "../GlobalSettingsForm";
@@ -27,17 +28,26 @@ beforeEach(() => {
 	useUiStore.setState({ isQuotaWidgetVisible: true });
 });
 
+function renderGeneralSettings() {
+	const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+	return render(
+		<QueryClientProvider client={queryClient}>
+			<GlobalSettingsForm section="general" />
+		</QueryClientProvider>,
+	);
+}
+
 describe("General settings — quota widget toggle", () => {
 	it("reflects the persisted visibility flag", () => {
 		useUiStore.setState({ isQuotaWidgetVisible: false });
-		render(<GlobalSettingsForm section="general" />);
+		renderGeneralSettings();
 
 		expect(screen.getByRole("switch", { name: "Show quota widget" })).not.toBeChecked();
 	});
 
 	it("turns the quota meter off and back on", async () => {
 		const user = userEvent.setup();
-		render(<GlobalSettingsForm section="general" />);
+		renderGeneralSettings();
 
 		const toggle = screen.getByRole("switch", { name: "Show quota widget" });
 		expect(toggle).toBeChecked();

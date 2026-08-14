@@ -115,7 +115,7 @@ run "frontend typecheck" npm run frontend:typecheck
 #
 # The slower browser-mode Playwright e2e (frontend/e2e) is deliberately NOT in
 # this gate — it needs a built web bundle, a Playwright browser download, and a
-# free port (5173 is hardcoded in frontend/playwright.config.ts). It stays a
+# free port (configurable through AO_E2E_PORT in frontend/playwright.config.ts). It stays a
 # manual opt-in step; see docs/local-ci.md. Remote CI (frontend.yml) runs it on
 # every frontend-touching PR.
 #

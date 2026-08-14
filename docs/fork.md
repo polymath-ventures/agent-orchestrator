@@ -50,6 +50,10 @@ issue. Anchor paths are repository-root-relative, except where written as an
 explicit glob or brace set. Anchors say where the behavior lives today; treat
 them as the starting point for a search, not as an exhaustive file list.
 
+**Anchors say where a feature lives; behavioral guards prove it still works.**
+Anchor existence alone is not evidence that a feature remains connected to the
+product, and a sync is not complete until every named behavioral guard passes.
+
 1. **Web client as a first-class client.** The browser-served renderer
    (`ops/ao-web-server.mjs`, `npm run build:web`, `VITE_NO_ELECTRON`) must stay
    fully servable and usable in a plain browser, on par with Electron. No
@@ -62,11 +66,12 @@ them as the starting point for a search, not as an exhaustive file list.
    `frontend/src/renderer/hooks/useShellTerminals.ts` carry the fork's
    trusted-base-URL guards that keep production web mode off preview data;
    `ops/ao-web.service` and `ops/ao-web-server.test.mjs` cover the server itself.
-   The `frontend/e2e/*.spec.ts` **browser-mode** suite is the guard — keep it
-   green and meaningful, especially `frontend/e2e/browser-mode.spec.ts` and
-   `frontend/e2e/mobile-sidebar-toggle.spec.ts`. Claude Code chat is part of the
-   same parity contract: non-Electron installs must package the ACP runtime so
-   chat spawn and TUI→chat handoff do not depend on Electron resources. Sync
+   **Behavioral guards:** `frontend/e2e/browser-mode.spec.ts` and
+   `frontend/e2e/mobile-sidebar-toggle.spec.ts` enter through the browser app
+   and exercise its HTTP transport and responsive navigation. Claude Code chat
+   is part of the same parity contract: non-Electron installs must package the
+   ACP runtime so chat spawn and TUI→chat handoff do not depend on Electron
+   resources. Sync
    anchors: the shared dependency pin and packager are
    `frontend/acp-runtime/{package.json,package-lock.json}` and
    `frontend/scripts/build-acp-runtime.mjs`; headless provisioning and rollback
@@ -74,8 +79,12 @@ them as the starting point for a search, not as an exhaustive file list.
    and its non-bundle guard live in
    `backend/internal/adapters/chatdriver/claudeacp/{driver.go,driver_test.go}`;
    and preflight diagnosis lives in
-   `backend/internal/cli/{doctor.go,doctor_test.go}`. UX shape may follow
-   upstream; browser functionality may not regress.
+   `backend/internal/cli/{doctor.go,doctor_test.go}`. The corresponding
+   `ops/deploy.test.mjs`, `driver_test.go`, and `doctor_test.go` suites exercise
+   packaged-runtime preservation, discovery, and diagnosis. Keep every guard
+   green and meaningful. UX shape may follow upstream; browser functionality
+   may not regress. Reference evidence:
+   [web client](screenshots/fork-features/web-client.png).
    Reference issues/PRs: #2 → #18; #46 → #55; #54 → #62; #182 → #191; and #109
    (web project import daemon readiness); #281.
 2. **Terminal auto-focus.** A terminal pane takes keyboard focus when it appears
@@ -85,8 +94,11 @@ them as the starting point for a search, not as an exhaustive file list.
    focus requests, `TerminalPane` gates and preserves them until an attachable
    terminal handle exists, `XtermTerminal` focuses xterm's helper textarea, and
    `ShellTerminalsView`/`CenterPane` pass activation requests for shell and
-   session-tab selection. Regression coverage lives in
-   `frontend/e2e/terminal-focus.spec.ts` and the matching component tests.
+   session-tab selection. **Behavioral guard:**
+   `frontend/e2e/terminal-focus.spec.ts` enters through real routes and asserts
+   that the active xterm helper textarea receives focus; the matching component
+   tests are supplementary. Reference evidence:
+   [focused terminal surface](screenshots/fork-features/terminal-focus.png).
    Reference issues/PRs: #131 → #136, #230; #137 → #157 (which also absorbed
    #134 and #135).
 3. **Quota & usage tracking.** Per-turn usage telemetry and quota snapshots from
@@ -104,8 +116,8 @@ them as the starting point for a search, not as an exhaustive file list.
    from the sidebar footer in `frontend/src/renderer/components/Sidebar.tsx` and
    gated by the "Show quota widget" row in
    `frontend/src/renderer/components/settings/GeneralSettingsSection.tsx`.
-   The **mount guard** is
-   `frontend/src/renderer/test/shell-quota-widget-mount.test.tsx`: it renders the
+   **Behavioral guard:**
+   `frontend/src/renderer/test/shell-quota-widget-mount.test.tsx` renders the
    real `/_shell` route layout with the real `Sidebar` and asserts the meter is on
    screen with live probe data, so a sync that unmounts the widget fails CI.
    `QuotaPanel.test.tsx` does not cover this — it renders the component directly
@@ -118,10 +130,11 @@ them as the starting point for a search, not as an exhaustive file list.
    can break it without touching its markup: the 2026-08-07 sync deleted the
    fork-only `--color-quota-track` token and redefined `--accent` (the
    normal-severity fill) as a subtle hover surface, leaving the bar invisible with
-   every class-name assertion still green (#289). The guard is
+   every class-name assertion still green (#289). That is guarded by
    `frontend/e2e/quota-meter-contrast.spec.ts`, which resolves the fill and track
    colours in a browser and fails if either stops resolving or they fall within
    3:1 of each other.
+   Reference evidence: [quota usage](screenshots/fork-features/quota-usage.png).
    This is mechanism-independent — re-layer it onto whatever signal path upstream
    uses.
    Reference issues/PRs: #8 → #16, #88; #97 → #102; #112 → #113; #116 → #117;
@@ -149,8 +162,13 @@ them as the starting point for a search, not as an exhaustive file list.
    in `backend/internal/adapters/reviewer/registry.go`;
    `backend/internal/domain/reviewerharness.go` is an upstream file whose
    `ReviewerCodexFugu` constant and its `AllReviewerHarnesses` entry are fork-only
-   lines, and `backend/internal/adapters/reviewer/registry_test.go` is the guard
-   that keeps the adapter set and the domain set in sync.
+   lines. **Behavioral guards:** `frontend/e2e/fork-features.spec.ts` opens the
+   real project-settings dialog and verifies the fugu reviewer and configured
+   worker-mix row; `backend/internal/adapters/reviewer/registry_test.go`,
+   `backend/internal/adapters/agent/codex/fugu_test.go`, and
+   `backend/internal/session_manager/workermix_test.go` verify resolver,
+   launcher, and spawn selection behavior. Reference evidence:
+   [harness selection](screenshots/fork-features/harness-selection.png).
    Reference issues/PRs: model management #4 → #34, #64; codex-fugu worker
    harness #12 → #21; fugu reviewer registration #229 → #231; selector
    unification #121 → #124, #125, #132 → #139, and #140 → #141; setup defaults
@@ -163,8 +181,14 @@ them as the starting point for a search, not as an exhaustive file list.
    `frontend/src/renderer/components/Sidebar.tsx` (`SessionRow`, `PrimeItem`),
    `frontend/src/renderer/components/HarnessGlyph.tsx`,
    `frontend/src/renderer/lib/harness-glyphs.ts`, and
-   `openspec/specs/sidebar-harness-indicator/spec.md`. Reference issues/PRs:
-   #152 → #174.
+   `openspec/specs/sidebar-harness-indicator/spec.md`. **Behavioral guard:**
+   `frontend/e2e/fork-features.spec.ts` enters through the application shell and
+   asserts the real session-row control contains both the glyph and its
+   accessible harness description. A direct `HarnessGlyph` or `Sidebar` render
+   is supplementary and cannot prove the feature is mounted. Reference
+   evidence: [worker harness glyph](screenshots/fork-features/sidebar-harness-glyph.png)
+   and [Prime harness glyph](screenshots/fork-features/prime-harness-glyph.png).
+   Reference issues/PRs: #152 → #174.
 6. **Fleet & Prime.** The projectless "AO Fleet" workspace (`FLEET_WORKSPACE_ID`,
    projectless-prime sessions), worker-mix percentages, fleet pause, and the
    daemon-global Prime supervisor. Sync anchors: `FLEET_WORKSPACE_ID` and
@@ -180,6 +204,16 @@ them as the starting point for a search, not as an exhaustive file list.
    `backend/internal/domain/workermix.go`; pause/drain is
    `backend/internal/observe/drain/drain.go` with route coverage in
    `backend/internal/httpd/controllers/pause_routes_test.go`.
+   **Behavioral guards:**
+   `frontend/e2e/fork-features.spec.ts` opens global settings from the application
+   shell and verifies the Fleet and Prime controls are mounted;
+   `backend/internal/session_manager/manager_test.go`,
+   `backend/internal/daemon/prime_supervisor_test.go`,
+   `backend/internal/httpd/controllers/pause_routes_test.go`, and
+   `backend/internal/session_manager/workermix_test.go` exercise projectless
+   Prime, supervision, pause/resume, and mix behavior. Reference evidence:
+   [fleet controls](screenshots/fork-features/fleet-controls.png) and
+   [Prime controls](screenshots/fork-features/prime-controls.png).
    Reference issues/PRs: Prime #7 → #45, #87; fleet-scoped Prime #92 → #95;
    Prime settings unification #99 → #103 and #167 → #184; Prime permission mode
    #163 → #189; pause/drain #5 → #33, #66; worker mix #3 → #17, #80.
@@ -205,6 +239,14 @@ them as the starting point for a search, not as an exhaustive file list.
    paths remain keyed by session ID. Sync anchors:
    `backend/internal/adapters/workspace/scratch/{workspace.go,workspace_test.go}`.
    Preserve this behavior when upstream changes the adapter.
+   **Behavioral guards:**
+   `backend/internal/storage/sqlite/store/store_test.go` round-trips the four
+   session fields through SQLite;
+   `backend/internal/session_manager/workermix_test.go` verifies their launch
+   and census effects; and
+   `backend/internal/adapters/workspace/scratch/workspace_test.go` verifies the
+   namespace used by real scratch-workspace creation. This item is a persisted
+   backend invariant, so it has no meaningful screenshot.
    Reference issues/PRs: worker mix #3 → #17, #80 — the session `model` and
    `mix_selected` columns landed in #17; session prefix #151 → #179; readable
    session namespace #257 → #259.
@@ -230,7 +272,18 @@ them as the starting point for a search, not as an exhaustive file list.
    must retain their bounded error on the session record. Sync anchors:
    `backend/internal/adapters/agent/claudecode/claudecode.go`,
    `backend/internal/session_manager/manager.go`, and
-   `backend/internal/cli/agent_process.go`. Reference issue: #244.
+   `backend/internal/cli/agent_process.go`. **Behavioral guards:** the focused
+   regression suites are
+   `backend/internal/session_manager/{spawn_rollback_context_test.go,workspace_ownership_test.go,manager_test.go}`,
+   `backend/internal/adapters/workspace/gitworktree/workspace_integration_test.go`,
+   `backend/internal/daemon/supervisor/supervisor_test.go`,
+   `backend/internal/adapters/runtime/tmux/socket_integration_test.go`,
+   `backend/internal/lifecycle/manager_test.go`,
+   `backend/internal/cli/{hooks_test.go,agent_process_unix_test.go}`, and
+   `backend/internal/adapters/agent/claudecode/claudecode_test.go`. They exercise
+   cleanup, ownership, liveness, attribution, identity, and error preservation
+   through their owning services. These backend failure semantics have no
+   meaningful screenshot. Reference issue: #244.
 9. **Ops / SDLC infrastructure.** `ops/deploy.sh` + the web server + systemd /
    Tailscale wiring; the Prettier CI the fork keeps (upstream removed it); and
    the agent SDLC files (`CLAUDE.md`, the repo-carried `skills/`,
@@ -246,7 +299,13 @@ them as the starting point for a search, not as an exhaustive file list.
    tool, but they are what keeps leftover local Beads state (a Dolt DB, jsonl
    logs, a lock file) from marking a checkout dirty — and a dirty shared
    checkout blocks orchestrator convergence. The `aong` porcelain has its own
-   section below.
+   section below. **Behavioral guards:** `ops/ao-web-server.test.mjs`,
+   `ops/ao-systemd-units.test.mjs`, `ops/ci-format-check.test.mjs`,
+   `ops/final-review-status.test.mjs`, and `ops/deploy-gate.test.mjs` exercise
+   the deployed server, service, CI, review, and deployment contracts;
+   `ops/retired-tracker-ignore.test.mjs` creates the retired Beads residue in a
+   temporary Git checkout and proves it stays clean. This operator
+   infrastructure has no meaningful product screenshot.
    Reference issues/PRs: headless standup #13 → #19; tmux socket #160 → #176;
    pre-push gate #105 → #108, #219 → #222, #227 → #228; build revision on the
    health probe #196, #200, #201 → #198; agent-ci workdir #169 → #172; and #52
@@ -265,8 +324,16 @@ them as the starting point for a search, not as an exhaustive file list.
     `backend/internal/{cli,httpd/controllers}/`; generated contracts in
     `backend/internal/httpd/apispec/openapi.yaml` and `frontend/src/api/schema.ts`;
     and the supervisor setting in
-    `frontend/src/renderer/components/ProjectSettingsForm.tsx`. Reference issue:
-    #242.
+    `frontend/src/renderer/components/ProjectSettingsForm.tsx`.
+    **Behavioral guards:**
+    `frontend/e2e/fork-features.spec.ts` opens the real project-settings dialog
+    and verifies the operator prompt field; backend precedence and
+    literal `{issue}` substitution are exercised by
+    `backend/internal/session_manager/{prompt_test.go,manager_test.go}`,
+    `backend/internal/observe/trackerintake/observer_test.go`, and
+    `backend/internal/cli/projectconfig_e2e_test.go`. Reference evidence:
+    [worker task prompt](screenshots/fork-features/worker-task-prompt.png).
+    Reference issue: #242.
 
 **Explicitly NOT fork-specific — absorb upstream freely** (do not spend a sync
 preserving these; they were merged toward upstream and re-preserving them
