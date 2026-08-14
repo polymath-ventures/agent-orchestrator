@@ -197,9 +197,14 @@ export function Sidebar({
 	const [expandedChromeVisible, setExpandedChromeVisible] = useState(!isCollapsed);
 	// One IPC subscription for both footer variants of the restart-to-update prompt.
 	const updateStatus = useUpdateStatus();
-	// The sidebar-footer quota widget is hidden entirely by the Settings toggle;
-	// it also lives in the expanded-chrome cluster, so it drops out on the rail.
+	// The sidebar-footer quota widget is hidden entirely by the Settings toggle.
+	// The expanded-chrome cluster only *visually* drops out on the icon rail, so
+	// the mount is gated on isCollapsed too: QuotaPanel polls /api/v1/metrics on a
+	// 30s interval, and an invisible widget must not keep that poll alive.
+	// Remounting on expand is safe — the widget derives probe-in-flight state from
+	// the global mutation key precisely so it survives one.
 	const isQuotaWidgetVisible = useUiStore((state) => state.isQuotaWidgetVisible);
+	const showQuotaWidget = isQuotaWidgetVisible && !isCollapsed;
 	// Daemon status for the smoke suite's sr-only mirror in the footer. Null when
 	// rendered outside the shell (unit tests) — the mirror simply doesn't render.
 	const daemonStatus = useShellMaybe()?.daemonStatus ?? null;
@@ -454,7 +459,7 @@ export function Sidebar({
 					aria-hidden={isCollapsed || undefined}
 					className="sidebar-expanded-chrome relative flex w-full min-w-46.5 flex-col gap-0.5 transition-[opacity,transform] duration-150 ease-out group-data-[collapsible=icon]:pointer-events-none group-data-[collapsible=icon]:-translate-x-2 group-data-[collapsible=icon]:opacity-0"
 				>
-					{isQuotaWidgetVisible && <QuotaPanel />}
+					{showQuotaWidget && <QuotaPanel />}
 					<RestartToUpdateRow status={updateStatus} tabIndex={isCollapsed ? -1 : 0} />
 					<CloudAccountRow tabIndex={isCollapsed ? -1 : 0} />
 					<button

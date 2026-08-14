@@ -1072,6 +1072,17 @@ describe("Sidebar", () => {
 		expect(quota.compareDocumentPosition(settings) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 	});
 
+	it("drops the quota widget on the icon rail so it stops polling metrics", async () => {
+		seedQuotaMetrics();
+		renderSidebar({ initialOpen: false });
+
+		// The collapsed rail never shows the widget, so leaving it mounted would
+		// keep QuotaPanel's 30s /api/v1/metrics poll running behind hidden chrome.
+		await waitFor(() => expect(screen.getAllByRole("button", { name: "Settings" })[0]).toBeInTheDocument());
+		expect(screen.queryByText("Quota")).not.toBeInTheDocument();
+		expect(getMock.mock.calls.some(([url]) => url === "/api/v1/metrics")).toBe(false);
+	});
+
 	it("hides the quota widget when the visibility flag is off", async () => {
 		seedQuotaMetrics();
 		useUiStore.setState({ isQuotaWidgetVisible: false });

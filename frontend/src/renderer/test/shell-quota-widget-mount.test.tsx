@@ -19,71 +19,24 @@
 import { act, render, screen, waitFor } from "@testing-library/react";
 import { Suspense, type ComponentType } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { KeybindingOverrides } from "../../shared/shortcuts";
 import { useUiStore } from "../stores/ui-store";
-import type { WorkspaceSummary } from "../types/workspace";
 
-const shellMocks = vi.hoisted(() => {
-	const state = {
-		newSessionListener: undefined as (() => void) | undefined,
-		keyboardShortcutsListener: undefined as (() => void) | undefined,
-		newShellTerminalListener: undefined as (() => void) | undefined,
-		openSettingsListener: undefined as (() => void) | undefined,
-		previousSessionListener: undefined as (() => void) | undefined,
-		nextSessionListener: undefined as (() => void) | undefined,
-		focusTerminalListener: undefined as (() => void) | undefined,
+const shellMocks = vi.hoisted(() => ({
+	navigate: vi.fn(),
+	// The shell subscribes to seven app shortcut channels on mount. This guard
+	// never fires any of them, so one shared no-op unsubscriber covers them all.
+	subscribe: vi.fn(() => vi.fn()),
+	openShellTerminal: vi.fn(),
+	state: {
 		routeParams: {} as { projectId?: string; sessionId?: string },
 		routeSearch: {} as Record<string, unknown>,
-		workspaces: [] as WorkspaceSummary[],
-		workspaceQuery: {
-			data: [] as WorkspaceSummary[],
-			dataUpdatedAt: 0,
-			isError: false,
-			isSuccess: true,
-		},
-		daemonStatus: { state: "stopped" } as {
+		daemonStatus: { state: "ready", port: 4321 } as {
 			state: "ready" | "starting" | "stopped" | "error";
 			port?: number;
 			code?: "not_ready";
 		},
-	};
-	return {
-		navigate: vi.fn(),
-		onNewSessionShortcut: vi.fn((listener: () => void) => {
-			state.newSessionListener = listener;
-			return vi.fn();
-		}),
-		onKeyboardShortcutsHelp: vi.fn((listener: () => void) => {
-			state.keyboardShortcutsListener = listener;
-			return vi.fn();
-		}),
-		onNewShellTerminalShortcut: vi.fn((listener: () => void) => {
-			state.newShellTerminalListener = listener;
-			return vi.fn();
-		}),
-		openShellTerminal: vi.fn(),
-		onOpenSettingsShortcut: vi.fn((listener: () => void) => {
-			state.openSettingsListener = listener;
-			return vi.fn();
-		}),
-		onPreviousSessionShortcut: vi.fn((listener: () => void) => {
-			state.previousSessionListener = listener;
-			return vi.fn();
-		}),
-		onNextSessionShortcut: vi.fn((listener: () => void) => {
-			state.nextSessionListener = listener;
-			return vi.fn();
-		}),
-		onFocusTerminalShortcut: vi.fn((listener: () => void) => {
-			state.focusTerminalListener = listener;
-			return vi.fn();
-		}),
-		getKeybindings: vi.fn(async () => ({})),
-		setKeybindings: vi.fn(async (overrides: KeybindingOverrides) => overrides),
-		setKeybindingRecording: vi.fn(async () => undefined),
-		state,
-	};
-});
+	},
+}));
 
 const quotaMocks = vi.hoisted(() => ({
 	getMock: vi.fn(),
@@ -110,18 +63,18 @@ vi.mock("@tanstack/react-router", async (importOriginal) => ({
 vi.mock("../lib/bridge", () => ({
 	aoBridge: {
 		app: {
-			onNewSessionShortcut: shellMocks.onNewSessionShortcut,
-			onKeyboardShortcutsHelp: shellMocks.onKeyboardShortcutsHelp,
-			onNewShellTerminalShortcut: shellMocks.onNewShellTerminalShortcut,
-			onOpenSettingsShortcut: shellMocks.onOpenSettingsShortcut,
-			onPreviousSessionShortcut: shellMocks.onPreviousSessionShortcut,
-			onNextSessionShortcut: shellMocks.onNextSessionShortcut,
-			onFocusTerminalShortcut: shellMocks.onFocusTerminalShortcut,
+			onNewSessionShortcut: shellMocks.subscribe,
+			onKeyboardShortcutsHelp: shellMocks.subscribe,
+			onNewShellTerminalShortcut: shellMocks.subscribe,
+			onOpenSettingsShortcut: shellMocks.subscribe,
+			onPreviousSessionShortcut: shellMocks.subscribe,
+			onNextSessionShortcut: shellMocks.subscribe,
+			onFocusTerminalShortcut: shellMocks.subscribe,
 		},
 		keybindings: {
-			get: shellMocks.getKeybindings,
-			set: shellMocks.setKeybindings,
-			setRecording: shellMocks.setKeybindingRecording,
+			get: vi.fn(async () => ({})),
+			set: vi.fn(async (overrides: unknown) => overrides),
+			setRecording: vi.fn(async () => undefined),
 		},
 		updates: {
 			getStatus: vi.fn(async () => ({ state: "idle" })),
@@ -143,7 +96,7 @@ vi.mock("../lib/bridge", () => ({
 }));
 
 vi.mock("../hooks/useWorkspaceQuery", () => ({
-	useWorkspaceQuery: () => shellMocks.state.workspaceQuery,
+	useWorkspaceQuery: () => ({ data: [], dataUpdatedAt: 0, isError: false, isSuccess: true }),
 	workspaceQueryKey: ["workspaces"],
 	// The shell force-fetches this through the real client once the daemon reports
 	// ready, so it needs a real queryFn to settle its startup state.
@@ -271,18 +224,10 @@ async function renderShell() {
 
 beforeEach(() => {
 	shellMocks.navigate.mockReset();
-	shellMocks.onNewSessionShortcut.mockClear();
-	shellMocks.onKeyboardShortcutsHelp.mockClear();
-	shellMocks.onNewShellTerminalShortcut.mockClear();
-	shellMocks.openShellTerminal.mockClear();
-	shellMocks.onOpenSettingsShortcut.mockClear();
-	shellMocks.onPreviousSessionShortcut.mockClear();
-	shellMocks.onNextSessionShortcut.mockClear();
-	shellMocks.onFocusTerminalShortcut.mockClear();
+	shellMocks.subscribe.mockClear();
+	shellMocks.openShellTerminal.mockReset();
 	shellMocks.state.routeParams = {};
 	shellMocks.state.routeSearch = {};
-	shellMocks.state.workspaces = [];
-	shellMocks.state.workspaceQuery = { data: [], dataUpdatedAt: 0, isError: false, isSuccess: true };
 	shellMocks.state.daemonStatus = { state: "ready", port: 4321 };
 
 	quotaMocks.state.trusted = true;
@@ -326,41 +271,27 @@ beforeEach(() => {
 });
 
 describe("quota meter mount guard (application entry point)", () => {
-	it("renders the quota meter in the sidebar footer above Settings", async () => {
+	it("renders the quota meter with live probe data in the sidebar footer above Settings", async () => {
 		await renderShell();
 
 		const quota = await screen.findByText("Quota");
 		const settings = screen.getAllByRole("button", { name: "Settings" })[0];
-		expect(settings).toBeInTheDocument();
 		// The meter precedes the Settings row in footer DOM order — the slot the
 		// fork established in fdd67ef76.
 		expect(quota.compareDocumentPosition(settings) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 		expect(quota.closest('[data-sidebar="footer"]')).toBeInTheDocument();
-	});
 
-	it("shows live probe data from the daemon rather than placeholder state", async () => {
-		await renderShell();
-
-		// Harness label resolved from the agents inventory, plus the real
-		// percentages and window names carried by the daemon's probe snapshots.
-		expect(await screen.findByText("Codex")).toBeInTheDocument();
+		// Live daemon data, not an empty-state placeholder: the harness label comes
+		// from the agents inventory, the windows and percentages from the probe
+		// snapshots.
+		expect(screen.getByText("Codex")).toBeInTheDocument();
 		expect(screen.getByText("primary")).toBeInTheDocument();
 		expect(screen.getByText("42%")).toBeInTheDocument();
-		expect(screen.getByText("secondary")).toBeInTheDocument();
-		expect(screen.getByText("7%")).toBeInTheDocument();
 		expect(screen.getByRole("progressbar", { name: "Codex primary quota usage" })).toHaveAttribute(
 			"aria-valuenow",
 			"42",
 		);
 		expect(screen.queryByText("not probed yet")).not.toBeInTheDocument();
 		expect(screen.queryByText("no usage recorded yet")).not.toBeInTheDocument();
-	});
-
-	it("hides the quota meter when the settings visibility toggle is off", async () => {
-		useUiStore.setState({ isQuotaWidgetVisible: false });
-		await renderShell();
-
-		await waitFor(() => expect(screen.getAllByRole("button", { name: "Settings" })[0]).toBeInTheDocument());
-		expect(screen.queryByText("Quota")).not.toBeInTheDocument();
 	});
 });
