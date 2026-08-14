@@ -90,8 +90,10 @@ test("@T0 the quota meter's usage bar stays legible against its track in every t
 			// being read as if it were opaque. Computed values arrive in whatever
 			// syntax the author wrote — Chromium preserves `oklch()` — and the
 			// canvas normalises all of them. The white base only matters if the
-			// page surface itself is translucent.
-			const flatten = (...layers: string[]): [number, number, number] => {
+			// page surface itself is translucent. A layer that paints nothing —
+			// what an undefined custom property computes to, and half of #289 —
+			// comes back null rather than as the colour beneath it.
+			const flatten = (...layers: string[]): [number, number, number] | null => {
 				ctx.clearRect(0, 0, 1, 1);
 				for (const layer of ["#ffffff", ...layers]) {
 					ctx.fillStyle = "#000000";
@@ -99,17 +101,8 @@ test("@T0 the quota meter's usage bar stays legible against its track in every t
 					ctx.fillRect(0, 0, 1, 1);
 				}
 				const [r, g, b] = ctx.getImageData(0, 0, 1, 1).data;
-				return [r, g, b];
-			};
-			// A utility whose custom property is defined nowhere makes the
-			// declaration invalid, and the computed value falls back to fully
-			// transparent. That is what a deleted token looks like from here.
-			const paintsNothing = (value: string) => {
-				ctx.clearRect(0, 0, 1, 1);
-				ctx.fillStyle = "#000000";
-				ctx.fillStyle = value;
-				ctx.fillRect(0, 0, 1, 1);
-				return ctx.getImageData(0, 0, 1, 1).data[3] === 0;
+				const top = layers[layers.length - 1];
+				return top === "rgba(0, 0, 0, 0)" || top === "transparent" ? null : [r, g, b];
 			};
 
 			const saved = {
@@ -126,12 +119,11 @@ test("@T0 the quota meter's usage bar stays legible against its track in every t
 				const surface = getComputedStyle(host).backgroundColor;
 				const trackCss = getComputedStyle(track).backgroundColor;
 				const measured: Record<string, [number, number, number] | null> = {
-					[colors.track]: paintsNothing(trackCss) ? null : flatten(surface, trackCss),
+					[colors.track]: flatten(surface, trackCss),
 				};
 				for (const utility of Object.values(colors.fill)) {
 					fill.className = utility;
-					const fillCss = getComputedStyle(fill).backgroundColor;
-					measured[utility] = paintsNothing(fillCss) ? null : flatten(surface, trackCss, fillCss);
+					measured[utility] = flatten(surface, trackCss, getComputedStyle(fill).backgroundColor);
 				}
 				fill.className = "";
 				results.push({ scope: scope.name, colors: measured });

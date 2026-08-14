@@ -240,6 +240,16 @@ describe("QuotaPanel", () => {
 			expect(number).toHaveClass(expectedNumberClass);
 			expect(meter).toHaveClass(QUOTA_METER_COLORS.track);
 			expect(meter.firstElementChild).toHaveClass(expectedFillClass);
+			// The contrast guard composites background colours, which is the whole
+			// of how this meter is painted today. Keep it that way: a utility that
+			// dims the bar by some other route (opacity, a blend mode, a filter)
+			// would make it invisible without changing a single colour the guard
+			// measures. Adding one means teaching that guard to see it first.
+			for (const element of [meter, meter.firstElementChild as Element]) {
+				expect(element.className, "the meter must be painted by background colour alone").not.toMatch(
+					/(^|\s)(opacity-|mix-blend-|bg-blend-|blur-|brightness-|contrast-|grayscale|invert|saturate-|sepia)/,
+				);
+			}
 			expect(screen.getByText(/^resets /).parentElement).toHaveClass(expectedResetClass);
 			if (used >= 75) {
 				expect(screen.getByText(`${100 - used}% left`)).toBeInTheDocument();
