@@ -88,10 +88,6 @@ test("the usage bar stays legible against its track in every theme", async ({ pa
 	await page.goto("/");
 	const bar = page.getByRole("progressbar", { name: /quota usage$/ }).first();
 	await expect(bar).toBeVisible();
-	// The chip is the nearest ancestor painting an opaque background, so its
-	// screenshot contains the bar plus the surface the bar sits on.
-	const chip = bar.locator("xpath=ancestor::*[contains(@class,'bg-background')][1]");
-	await expect(chip).toBeVisible();
 
 	const failures: string[] = [];
 
@@ -112,29 +108,58 @@ test("the usage bar stays legible against its track in every theme", async ({ pa
 			);
 
 			const scope = `${style}/${appearance}`;
-			const chipBox = await chip.boundingBox();
-			const barBox = await bar.boundingBox();
-			if (!chipBox || !barBox) {
-				failures.push(`${scope}: the bar or its chip has no layout box`);
+			// Find the painted surface behind the bar by computed background rather than
+			// by class name: a `bg-background` → `bg-card` refactor is a rename, not a
+			// regression, and a guard that fails on it teaches people to distrust it.
+			const region = await bar.evaluate((el) => {
+				const transparent = (colour: string) => colour === "transparent" || /,\s*0\)$/.test(colour);
+				let node: Element | null = el.parentElement;
+				while (node && transparent(getComputedStyle(node).backgroundColor)) node = node.parentElement;
+				const host = (node ?? el).getBoundingClientRect();
+				const self = el.getBoundingClientRect();
+				return {
+					host: { x: host.x, y: host.y, width: host.width, height: host.height },
+					bar: { x: self.x, y: self.y, width: self.width, height: self.height },
+				};
+			});
+			const chipBox = region.host;
+			const barBox = region.bar;
+			if (!chipBox.width || !barBox.width) {
+				failures.push(`${scope}: the bar or its surrounding surface has no layout box`);
 				continue;
 			}
 
-			const png = PNG.sync.read(await chip.screenshot());
+			const png = PNG.sync.read(await page.screenshot({ clip: chipBox }));
 			const scale = png.width / chipBox.width;
-			const at = (cssX: number, cssY: number): Rgb => {
+			const pixel = (cssX: number, cssY: number): Rgb => {
 				const x = Math.min(png.width - 1, Math.max(0, Math.round((cssX - chipBox.x) * scale)));
 				const y = Math.min(png.height - 1, Math.max(0, Math.round((cssY - chipBox.y) * scale)));
 				const i = (png.width * y + x) << 2;
 				return { r: png.data[i], g: png.data[i + 1], b: png.data[i + 2] };
 			};
+			// Median of several samples across a span, not one pixel: a single sample can
+			// be stood up by a sliver of colour (a clip-path exposing just that point)
+			// while the bar reads as empty, and it is more exposed to antialiasing.
+			const median = (values: number[]) => values.slice().sort((a, b) => a - b)[values.length >> 1];
+			const at = (fromFraction: number, toFraction: number, cssY: number): Rgb => {
+				const samples = [0, 0.5, 1].map((step) => {
+					const fraction = fromFraction + (toFraction - fromFraction) * step;
+					return pixel(barBox.x + barBox.width * fraction, cssY);
+				});
+				return {
+					r: median(samples.map((s) => s.r)),
+					g: median(samples.map((s) => s.g)),
+					b: median(samples.map((s) => s.b)),
+				};
+			};
 
 			const midY = barBox.y + barBox.height / 2;
-			// 40% used: sample well inside the fill and well inside the remainder, away
-			// from the rounded caps and their antialiasing.
-			const fill = at(barBox.x + barBox.width * 0.15, midY);
-			const track = at(barBox.x + barBox.width * 0.85, midY);
-			// The chip's own padding, level with the bar: background only, no glyphs.
-			const backdrop = at(chipBox.x + 3, midY);
+			// 40% used: span well inside the fill and well inside the remainder, clear of
+			// the rounded caps and their antialiasing.
+			const fill = at(0.1, 0.3, midY);
+			const track = at(0.6, 0.9, midY);
+			// The surface's own padding, level with the bar: background only, no glyphs.
+			const backdrop = pixel(chipBox.x + 3, midY);
 
 			const ratio = contrast(fill, track);
 			if (ratio < MIN_RATIO) {
