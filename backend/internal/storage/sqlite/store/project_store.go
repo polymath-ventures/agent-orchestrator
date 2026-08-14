@@ -340,7 +340,7 @@ func (s *Store) SetPrimeSettings(ctx context.Context, settings domain.PrimeSetti
 	if err := settings.Validate(); err != nil {
 		return err
 	}
-	if err := settings.ValidateDisplayNameForWrite(); err != nil {
+	if err := settings.ValidateForWrite(); err != nil {
 		return err
 	}
 	raw, err := json.Marshal(settings)

@@ -1737,11 +1737,17 @@ func (m *Manager) selectMixBucket(ctx context.Context, project domain.ProjectID,
 	m.applyWorkerMixSkipped(census, mix, explicitModel)
 	entry, ok := mix.Select(census)
 	if !ok {
+		if explicitModel != "" {
+			return domain.WorkerMixEntry{}, fmt.Errorf("%w: project %s has no selectable worker mix bucket compatible with model %q", ErrWorkerMixExhausted, project, explicitModel)
+		}
 		return domain.WorkerMixEntry{}, fmt.Errorf("%w: project %s configures %d bucket(s), none selectable", ErrWorkerMixExhausted, project, len(mix))
 	}
 	bk := selectedWorkerMixKey(entry, explicitModel)
 	if m.health.RecordSkipIfDown(workerMixCandidate(bk.Harness, bk.Model, bk.Effort)) {
 		if m.allWorkerMixCandidatesDown(mix, explicitModel) {
+			if explicitModel != "" {
+				return domain.WorkerMixEntry{}, fmt.Errorf("%w: project %s has every worker mix bucket compatible with model %q down", ErrWorkerMixExhausted, project, explicitModel)
+			}
 			return domain.WorkerMixEntry{}, fmt.Errorf("%w: project %s has every worker mix bucket down", ErrWorkerMixExhausted, project)
 		}
 		return domain.WorkerMixEntry{}, fmt.Errorf("worker mix selected %s: %w", bucketKeyString(bk), ErrWorkerMixBucketDown)
@@ -2670,12 +2676,24 @@ func (m *Manager) relaunchSessionFresh(ctx context.Context, operation string, re
 	return m.relaunchSessionWithPolicy(ctx, operation, rec, project, ws, restartHandle, true)
 }
 
-func restoreAgentConfig(rec domain.SessionRecord, project domain.ProjectConfig) (ports.AgentConfig, error) {
+func (m *Manager) restoreAgentConfig(ctx context.Context, rec domain.SessionRecord, project domain.ProjectConfig) (ports.AgentConfig, error) {
 	persistedModel := rec.Model
 	if rec.MixSelected {
 		persistedModel = ""
 	}
-	agentConfig, err := harnessAwareAgentConfig(rec.Kind, project, rec.Harness, persistedModel)
+	var agentConfig ports.AgentConfig
+	var err error
+	if rec.Kind == domain.KindPrime && rec.ProjectID == "" {
+		settings, settingsErr := m.store.GetPrimeSettings(ctx)
+		if settingsErr != nil {
+			return ports.AgentConfig{}, settingsErr
+		}
+		primeConfig := settings.WithDefaults().AgentConfig
+		agentConfig, err = agentconfig.EffectiveFromConfigs(primeConfig, domain.AgentConfig{}, persistedModel, rec.Harness)
+		agentConfig.Mode = primeConfig.Mode
+	} else {
+		agentConfig, err = harnessAwareAgentConfig(rec.Kind, project, rec.Harness, persistedModel)
+	}
 	if err != nil {
 		return ports.AgentConfig{}, err
 	}
@@ -2726,7 +2744,7 @@ func (m *Manager) relaunchSessionWithPolicy(ctx context.Context, operation strin
 	// comes from the row rather than config: the session is already counted in
 	// its (harness, model) bucket, so relaunching it on a different model would
 	// put the census and the running agent out of step.
-	agentConfig, err := restoreAgentConfig(rec, project.Config)
+	agentConfig, err := m.restoreAgentConfig(ctx, rec, project.Config)
 	if err != nil {
 		return RestoreResult{}, fmt.Errorf("%s %s: agent config: %w", operation, rec.ID, err)
 	}

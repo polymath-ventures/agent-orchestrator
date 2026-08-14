@@ -282,7 +282,7 @@ func (m *Manager) resumeChatController(
 		return RestoreResult{}, fmt.Errorf("%s %s: system prompt: %w", operation, rec.ID, err)
 	}
 
-	agentConfig, err := restoreAgentConfig(rec, project.Config)
+	agentConfig, err := m.restoreAgentConfig(ctx, rec, project.Config)
 	if err != nil {
 		return RestoreResult{}, fmt.Errorf("%s %s: agent config: %w", operation, rec.ID, err)
 	}

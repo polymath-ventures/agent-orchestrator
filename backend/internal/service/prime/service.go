@@ -93,6 +93,9 @@ func (s *Service) SetSettings(ctx context.Context, settings domain.PrimeSettings
 	if err := settings.ValidateDisplayNameForWrite(); err != nil {
 		return SettingsView{}, apierr.Invalid("DISPLAY_NAME_UNSAFE", err.Error(), nil)
 	}
+	if err := settings.ValidateForWrite(); err != nil {
+		return SettingsView{}, apierr.Invalid("INVALID_PRIME_SETTINGS", err.Error(), nil)
+	}
 	if s.settingsReconciler != nil {
 		if err := s.setAndReconcileSettings(ctx, settings); err != nil {
 			return SettingsView{}, err

@@ -113,6 +113,22 @@ func (s PrimeSettings) ValidateDisplayNameForWrite() error {
 	return nil
 }
 
+// ValidateForWrite applies compatibility rules that new settings must satisfy
+// but legacy stored rows must remain readable without satisfying.
+func (s PrimeSettings) ValidateForWrite() error {
+	if err := s.ValidateDisplayNameForWrite(); err != nil {
+		return err
+	}
+	model := strings.TrimSpace(s.AgentConfig.Model)
+	if model != "" {
+		harnessProvider := s.Harness.ModelProvider()
+		if !ClassifyModelProvider(model).CompatibleWith(harnessProvider) {
+			return fmt.Errorf("agentConfig.model: %q is not a %s model (harness %q)", model, harnessProvider, s.Harness)
+		}
+	}
+	return nil
+}
+
 // Validate rejects invalid Prime settings at the write boundary.
 func (s PrimeSettings) Validate() error {
 	if strings.TrimSpace(s.DisplayName) == "" {

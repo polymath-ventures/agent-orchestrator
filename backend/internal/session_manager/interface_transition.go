@@ -444,7 +444,7 @@ func (m *Manager) preflightInterfaceTarget(
 	if err != nil {
 		return err
 	}
-	config, err := restoreAgentConfig(rec, project.Config)
+	config, err := m.restoreAgentConfig(ctx, rec, project.Config)
 	if err != nil {
 		return err
 	}
