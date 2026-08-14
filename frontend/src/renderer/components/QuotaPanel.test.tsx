@@ -193,8 +193,12 @@ describe("QuotaPanel", () => {
 		expect(reset.textContent).not.toMatch(/\d{1,2}:\d{2}\s?(AM|PM)/i);
 	});
 
+	// These pin severity ROUTING, not legibility. This table asserted "bg-accent"
+	// happily for the whole period that class painted an invisible near-white bar
+	// (#289) — whether the resulting colour can actually be seen is checked against
+	// real computed styles in e2e/quota-meter-contrast.spec.ts.
 	it.each([
-		[74, "bg-accent", "text-foreground", "text-passive"],
+		[74, "bg-logo-accent", "text-foreground", "text-passive"],
 		[75, "bg-warning", "text-warning", "text-passive"],
 		[89, "bg-warning", "text-warning", "text-passive"],
 		[90, "bg-error", "text-error", "text-error"],

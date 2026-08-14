@@ -205,7 +205,11 @@ function WindowLine({ snapshot, label }: { snapshot: QuotaSnapshot; label: strin
 	// Always name the window — the headline was previously anonymous ("46% used"),
 	// which hides WHICH limit (weekly vs session) the percentage measures.
 	const name = snapshot.windowName || "quota window";
-	const fillColor = severity === "critical" ? "bg-error" : severity === "warning" ? "bg-warning" : "bg-accent";
+	// Normal usage is informational, so it takes AO's logo blue; warning and critical
+	// keep the status colours. `bg-accent` is deliberately NOT used: upstream's theme
+	// system defines --accent as a subtle hover surface (light theme resolves it to
+	// oklch(0.967 …)), so a fill painted with it is invisible on every theme. See #289.
+	const fillColor = severity === "critical" ? "bg-error" : severity === "warning" ? "bg-warning" : "bg-logo-accent";
 	const numberColor =
 		used === 0
 			? "text-passive"
@@ -236,7 +240,11 @@ function WindowLine({ snapshot, label }: { snapshot: QuotaSnapshot; label: strin
 				aria-valuemax={100}
 				aria-valuemin={0}
 				{...(used === null ? { "aria-valuetext": "usage unknown" } : { "aria-valuenow": progressValue })}
-				className="h-1.5 w-full overflow-hidden rounded-full bg-[var(--color-quota-track)]"
+				// `bg-border` rather than a fork-only track token: --color-quota-track was
+				// added by #117 and deleted by the 2026-08-07 sync, leaving this groove
+				// painted with an undefined custom property. --border is defined by every
+				// theme scope upstream ships, so a sync cannot silently drop it (#289).
+				className="h-1.5 w-full overflow-hidden rounded-full bg-border"
 				role="progressbar"
 			>
 				<div className={cn("h-full rounded-full transition-[width]", fillColor)} style={fillStyle} />

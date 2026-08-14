@@ -114,10 +114,20 @@ them as the starting point for a search, not as an exhaustive file list.
    `Sidebar` or `QuotaPanel` directly silently retires it. The toggle's own guard
    is
    `frontend/src/renderer/components/settings/GeneralSettingsSection.test.tsx`.
+   The **contrast guard** is `frontend/e2e/quota-meter-contrast.spec.ts`: it reads
+   the colours Chromium actually computes for the usage bar's fill and track in
+   every theme scope `frontend/src/styles/tokens.css` defines, and fails if either
+   stops resolving or the two drift within 3:1 of each other. It exists because a
+   sync can break this widget without touching its markup — the 2026-08-07 sync
+   deleted the fork-only `--color-quota-track` token and redefined `--accent` (the
+   normal-severity fill) as a subtle hover surface, leaving the bar invisible with
+   every class-name assertion still green (#289). Two rules follow: **paint this
+   widget only with tokens every theme scope defines** — a fork-only colour token
+   is what got deleted — and never reduce that guard to a class assertion.
    This is mechanism-independent — re-layer it onto whatever signal path upstream
    uses.
    Reference issues/PRs: #8 → #16, #88; #97 → #102; #112 → #113; #116 → #117;
-   #280 → #282.
+   #280 → #282; #289 → #290.
 4. **Harness/agent setup & selection.** The agent-selection catalog, the per-role
    model+effort tuples, and the worker-mix UI, plus the fork-only **codex-fugu**
    harness — as both a worker and a **reviewer**, so the Settings "Default
