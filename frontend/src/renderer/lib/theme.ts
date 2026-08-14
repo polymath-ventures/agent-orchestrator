@@ -1,8 +1,25 @@
 export type Theme = "light" | "dark";
 export type ThemePreference = Theme | "system";
 
-export type ThemeStyle =
-	"orchestrate" | "github" | "catppuccin" | "dracula" | "tokyo-night" | "rose-pine" | "nord" | "gruvbox" | "solarized";
+/**
+ * Every named theme, in menu order. Exported as a runtime value, not just a
+ * union, so tests that must cover *all* of them derive the list instead of
+ * restating it — a second hand-maintained copy silently under-covers the moment
+ * a theme is added (agent-orchestrator#289).
+ */
+export const THEME_STYLES = [
+	"orchestrate",
+	"github",
+	"catppuccin",
+	"dracula",
+	"tokyo-night",
+	"rose-pine",
+	"nord",
+	"gruvbox",
+	"solarized",
+] as const;
+
+export type ThemeStyle = (typeof THEME_STYLES)[number];
 
 export const themeStorageKey = "ao.theme";
 export const themeStyleStorageKey = "ao.theme-style";

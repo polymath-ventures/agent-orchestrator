@@ -126,11 +126,19 @@ product, and a sync is not complete until every named behavioral guard passes.
    `Sidebar` or `QuotaPanel` directly silently retires it. The toggle's own guard
    is
    `frontend/src/renderer/components/settings/GeneralSettingsSection.test.tsx`.
+   **Paint this widget only with colour tokens every theme scope defines.** A sync
+   can break it without touching its markup: the 2026-08-07 sync deleted the
+   fork-only `--color-quota-track` token and redefined `--accent` (the
+   normal-severity fill) as a subtle hover surface, leaving the bar invisible with
+   every class-name assertion still green (#289). That is guarded by
+   `frontend/e2e/quota-meter-contrast.spec.ts`, which resolves the fill and track
+   colours in a browser and fails if either stops resolving or they fall within
+   3:1 of each other.
    Reference evidence: [quota usage](screenshots/fork-features/quota-usage.png).
    This is mechanism-independent — re-layer it onto whatever signal path upstream
    uses.
    Reference issues/PRs: #8 → #16, #88; #97 → #102; #112 → #113; #116 → #117;
-   #280 → #282.
+   #280 → #282; #289 → #291.
 4. **Harness/agent setup & selection.** The agent-selection catalog, the per-role
    model+effort tuples, and the worker-mix UI, plus the fork-only **codex-fugu**
    harness — as both a worker and a **reviewer**, so the Settings "Default
