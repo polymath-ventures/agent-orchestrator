@@ -51,6 +51,7 @@ Alternative considered: duplicate file and version checks in the CLI package. Re
 
 - **[Deploy grows a network/package-build step]** → Runtime construction happens before the release flip, uses the committed lockfile, and fails without mutating the active release.
 - **[Stable runtime symlink becomes stale]** → It points to the existing `current` release symlink, so deploy and rollback move it together; tests pin this relationship.
+- **[Rollback targets a release from before ACP packaging]** → The deploy script removes its now-dangling managed link and emits an explicit warning that Claude chat needs a forward deploy or runtime override; it leaves any operator-managed runtime untouched.
 - **[Optional provider package slips into the runtime]** → The shared builder continues to omit optional dependencies and retains its explicit post-build invariant.
 
 ## Migration Plan
@@ -58,7 +59,7 @@ Alternative considered: duplicate file and version checks in the CLI package. Re
 1. Build the ACP runtime in the new immutable release before changing `current`.
 2. Create or refresh the stable install-prefix symlink only after the runtime exists.
 3. Flip `current`, install binaries, restart, and run existing deployment verification.
-4. Rollback flips `current` back; the stable runtime symlink follows without a separate rollback mutation.
+4. Rollback flips `current` back and reconciles the stable runtime link; a pre-feature release produces an explicit chat-unavailable warning rather than a silent dangling link.
 
 ## Open Questions
 

@@ -79,12 +79,20 @@ test("deploy.sh keeps its load-bearing invariants", async () => {
 	assert.match(text, /"\$rel\/acp-runtime\/node\/bin\/node"/);
 	assert.match(text, /"\$rel\/acp-runtime\/node_modules\/@agentclientprotocol\/claude-agent-acp\/dist\/index\.js"/);
 	assert.match(text, /ln -sfn "\$CURRENT\/acp-runtime" "\$ACP_RUNTIME_TARGET"/);
+	assert.match(text, /WARN: active release has no ACP runtime; Claude Code chat is unavailable/);
+	assert.match(text, /rm -f "\$ACP_RUNTIME_TARGET"/);
 	assert.ok(
 		text.indexOf("npm --prefix frontend run build:acp-runtime --silent") < text.indexOf('ln -sfn "$rel" "$CURRENT"'),
 		"ACP runtime must be built before the active release flips",
 	);
 	assert.ok(
-		text.indexOf('ln -sfn "$rel" "$CURRENT"') < text.lastIndexOf("\n  link_acp_runtime\n"),
+		text.indexOf('ln -sfn "$rel" "$CURRENT"') < text.lastIndexOf("\n  sync_acp_runtime_link\n"),
 		"runtime link must be installed after the newly active release flips",
+	);
+	const rollback = text.slice(text.indexOf("rollback() {"), text.indexOf("\ndeploy() {"));
+	assert.match(
+		rollback,
+		/ln -sfn "\$prev" "\$CURRENT"[\s\S]*sync_acp_runtime_link/,
+		"rollback must refresh or remove the runtime link for its own release",
 	);
 });

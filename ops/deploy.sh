@@ -155,8 +155,19 @@ sync_units() {
   done
 }
 
-link_acp_runtime() {
+sync_acp_runtime_link() {
   local backup
+  if [ ! -d "$CURRENT/acp-runtime" ]; then
+    if [ -L "$ACP_RUNTIME_TARGET" ]; then
+      rm -f "$ACP_RUNTIME_TARGET"
+      log "WARN: active release has no ACP runtime; Claude Code chat is unavailable until a forward deploy or AO_ACP_RUNTIME_DIR override."
+    elif [ -e "$ACP_RUNTIME_TARGET" ]; then
+      log "WARN: active release has no packaged ACP runtime; left the existing operator-managed runtime at $ACP_RUNTIME_TARGET."
+    else
+      log "WARN: active release has no ACP runtime; Claude Code chat is unavailable until a forward deploy or AO_ACP_RUNTIME_DIR override."
+    fi
+    return
+  fi
   # Preserve an operator-created workaround instead of deleting it. Replacing
   # it makes the committed lockfile authoritative again; the timestamped copy
   # remains available if the operator needs to inspect or restore it.
@@ -177,6 +188,7 @@ rollback() {
   fi
   log "Rolling back to $prev"
   ln -sfn "$prev" "$CURRENT"
+  sync_acp_runtime_link
   install -m 755 "$prev/bin/ao" "$BIN_TARGET"
   # aong resolves ao as its sibling, so the pair rolls back together when the
   # outgoing release has one. A release predating aong has nothing to restore;
@@ -242,7 +254,10 @@ deploy() {
     echo "$prev_target" > "$PREVIOUS_FILE"
   fi
   ln -sfn "$rel" "$CURRENT"
-  link_acp_runtime
+  # Like binary installation below, this is inside the script's existing
+  # post-flip consistency window. A failure is recoverable through the previous
+  # release recorded above; it never activates an incompletely built runtime.
+  sync_acp_runtime_link
   echo "$sha" > "$LAST_FILE"
   install -m 755 "$rel/bin/ao" "$BIN_TARGET"
   install -m 755 "$rel/bin/aong" "$AONG_BIN_TARGET"
