@@ -13,6 +13,7 @@ vi.mock("../lib/api-client", () => ({
 }));
 
 import { QuotaPanel } from "./QuotaPanel";
+import { QUOTA_METER_COLORS } from "./quota-meter-colors";
 import { useUiStore } from "../stores/ui-store";
 
 const AGENTS = {
@@ -193,15 +194,18 @@ describe("QuotaPanel", () => {
 		expect(reset.textContent).not.toMatch(/\d{1,2}:\d{2}\s?(AM|PM)/i);
 	});
 
-	// These cases pin which severity each threshold routes to, not whether the
-	// result is legible: a class name is exactly what stayed correct while the
-	// token behind it was deleted or redefined (#289). Legibility belongs to
-	// `../test/quota-meter-contrast.test.tsx`, which resolves the colours.
+	// These cases pin which severity each threshold routes to, and that the meter
+	// really paints the utilities `QUOTA_METER_COLORS` declares — the link the
+	// contrast guard relies on when it measures those utilities in a real
+	// browser. What they deliberately do NOT prove is that the result is legible:
+	// a class name is exactly what stayed correct while the token behind it was
+	// deleted or redefined (#289). That belongs to
+	// `e2e/quota-meter-contrast.spec.ts`, which resolves the colours.
 	it.each([
-		[74, "bg-foreground", "text-foreground", "text-passive"],
-		[75, "bg-warning", "text-warning", "text-passive"],
-		[89, "bg-warning", "text-warning", "text-passive"],
-		[90, "bg-error", "text-error", "text-error"],
+		[74, QUOTA_METER_COLORS.fill.normal, "text-foreground", "text-passive"],
+		[75, QUOTA_METER_COLORS.fill.warning, "text-warning", "text-passive"],
+		[89, QUOTA_METER_COLORS.fill.warning, "text-warning", "text-passive"],
+		[90, QUOTA_METER_COLORS.fill.critical, "text-error", "text-error"],
 	])(
 		"uses the expected severity classes at %i%% used",
 		async (used, expectedFillClass, expectedNumberClass, expectedResetClass) => {
@@ -234,6 +238,7 @@ describe("QuotaPanel", () => {
 			const number = await screen.findByText(`${used}%`);
 			const meter = screen.getByRole("progressbar", { name: "Claude Code weekly (all models) quota usage" });
 			expect(number).toHaveClass(expectedNumberClass);
+			expect(meter).toHaveClass(QUOTA_METER_COLORS.track);
 			expect(meter.firstElementChild).toHaveClass(expectedFillClass);
 			expect(screen.getByText(/^resets /).parentElement).toHaveClass(expectedResetClass);
 			if (used >= 75) {

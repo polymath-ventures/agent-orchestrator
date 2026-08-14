@@ -112,16 +112,19 @@ them as the starting point for a search, not as an exhaustive file list.
    and passed throughout the period the widget was orphaned (#280). Keep that
    guard rendering from the application entry point; narrowing it to render
    `Sidebar` or `QuotaPanel` directly silently retires it. The **contrast guard**
-   is `frontend/src/renderer/test/quota-meter-contrast.test.tsx`: being mounted is
-   not the same as being visible. It reads the background utilities off the
-   rendered meter, resolves them to real colours out of `frontend/src/styles/tokens.css`
-   for every theme scope that sheet defines, and holds the normal-severity fill to
+   is `frontend/e2e/quota-meter-contrast.spec.ts`: being mounted is not the same as
+   being visible. It runs against the real built bundle and reads
+   `getComputedStyle` for the meter's utilities in every theme scope
+   `frontend/src/styles/tokens.css` defines, holding the normal-severity fill to
    3:1 against its track. The same sync that unmounted the widget also deleted the
    fork-only `--color-quota-track` and redefined `--accent` to the value of
    `--muted`, which made the bar invisible below 75% with no test failing (#289) —
    so paint the meter from shadcn roles upstream maintains per theme, and keep the
-   guard resolving colours. An assertion on the class name is what passed
-   throughout that bug. The toggle's own guard is
+   guard measuring colours in a browser. An assertion on the class name is what
+   passed throughout that bug, and a hand-rolled CSS resolver would only be a
+   second implementation to drift from the one that ships. The utilities live in
+   `frontend/src/renderer/components/quota-meter-colors.ts` so the component and
+   the guard cannot disagree about what is measured. The toggle's own guard is
    `frontend/src/renderer/components/settings/GeneralSettingsSection.test.tsx`.
    This is mechanism-independent — re-layer it onto whatever signal path upstream
    uses.

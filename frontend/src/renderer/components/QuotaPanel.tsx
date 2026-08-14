@@ -8,13 +8,13 @@ import { agentDisplayLabel } from "../lib/agent-selection";
 import { formatTimeCompact } from "../lib/format-time";
 import { useUiStore } from "../stores/ui-store";
 import { cn } from "../lib/utils";
+import { QUOTA_METER_COLORS, type QuotaSeverity } from "./quota-meter-colors";
 
 type QuotaSnapshot = components["schemas"]["QuotaSnapshot"];
 type HarnessQuotaStatus = components["schemas"]["HarnessQuotaStatus"];
 type ProbeMutation = ReturnType<typeof useProbeQuota>;
 
 const MAX_REASON_LEN = 120;
-type QuotaSeverity = "normal" | "warning" | "critical";
 
 /**
  * Sidebar-footer quota widget. Renders one chip per harness reported by the
@@ -205,17 +205,8 @@ function WindowLine({ snapshot, label }: { snapshot: QuotaSnapshot; label: strin
 	// Always name the window — the headline was previously anonymous ("46% used"),
 	// which hides WHICH limit (weekly vs session) the percentage measures.
 	const name = snapshot.windowName || "quota window";
-	// Normal severity paints `bg-foreground` on a `bg-muted` groove. Both are
-	// shadcn roles upstream carries in every theme scope, so a sync cannot leave
-	// them undefined. The two tokens that used to do this job could: the
-	// 2026-08-07 sync deleted the fork-only `--color-quota-track` the groove
-	// referenced, and its named-theme system redefined `--accent` — the fill —
-	// as a subtle hover surface holding the same value as `--muted`, which made
-	// the bar the exact colour of its own track (#289). `bg-foreground` on
-	// `bg-muted` is the only upstream pair that clears 3:1 in all of them;
-	// `quota-meter-contrast.test.tsx` holds it there.
-	const fillColor = severity === "critical" ? "bg-error" : severity === "warning" ? "bg-warning" : "bg-foreground";
-	const trackColor = "bg-muted";
+	const fillColor = QUOTA_METER_COLORS.fill[severity];
+	const trackColor = QUOTA_METER_COLORS.track;
 	const numberColor =
 		used === 0
 			? "text-passive"
