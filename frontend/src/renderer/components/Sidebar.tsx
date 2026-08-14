@@ -85,6 +85,7 @@ import { useUiStore } from "../stores/ui-store";
 import { useKeybindingsStore } from "../stores/keybindings-store";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { CreateProjectFlow, type CreateProjectInput } from "./CreateProjectFlow";
+import { QuotaPanel } from "./QuotaPanel";
 import { ResizeHandle } from "./ResizeHandle";
 import { isMacPlatform } from "../lib/platform";
 import { useCloudSession } from "../lib/cloud-session";
@@ -196,6 +197,9 @@ export function Sidebar({
 	const [expandedChromeVisible, setExpandedChromeVisible] = useState(!isCollapsed);
 	// One IPC subscription for both footer variants of the restart-to-update prompt.
 	const updateStatus = useUpdateStatus();
+	// The sidebar-footer quota widget is hidden entirely by the Settings toggle;
+	// it also lives in the expanded-chrome cluster, so it drops out on the rail.
+	const isQuotaWidgetVisible = useUiStore((state) => state.isQuotaWidgetVisible);
 	// Daemon status for the smoke suite's sr-only mirror in the footer. Null when
 	// rendered outside the shell (unit tests) — the mirror simply doesn't render.
 	const daemonStatus = useShellMaybe()?.daemonStatus ?? null;
@@ -450,6 +454,7 @@ export function Sidebar({
 					aria-hidden={isCollapsed || undefined}
 					className="sidebar-expanded-chrome relative flex w-full min-w-46.5 flex-col gap-0.5 transition-[opacity,transform] duration-150 ease-out group-data-[collapsible=icon]:pointer-events-none group-data-[collapsible=icon]:-translate-x-2 group-data-[collapsible=icon]:opacity-0"
 				>
+					{isQuotaWidgetVisible && <QuotaPanel />}
 					<RestartToUpdateRow status={updateStatus} tabIndex={isCollapsed ? -1 : 0} />
 					<CloudAccountRow tabIndex={isCollapsed ? -1 : 0} />
 					<button

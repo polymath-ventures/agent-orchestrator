@@ -3,6 +3,7 @@ import type { ThemePreference, ThemeStyle } from "../../lib/theme";
 import type { AppLocale } from "../../i18n";
 import { useLocaleStore } from "../../stores/locale-store";
 import { useUiStore } from "../../stores/ui-store";
+import { Switch } from "../ui/switch";
 import { SettingsOptionMenu, type SettingsOption } from "./SettingsOptionMenu";
 import { SettingsLinkRow, SettingsRow } from "./SettingsRow";
 import { SettingsSection } from "./SettingsSection";
@@ -90,6 +91,8 @@ export function GeneralSettingsSection({
 	const setThemePreference = useUiStore((state) => state.setThemePreference);
 	const themeStyle = useUiStore((state) => state.themeStyle);
 	const setThemeStyle = useUiStore((state) => state.setThemeStyle);
+	const isQuotaWidgetVisible = useUiStore((state) => state.isQuotaWidgetVisible);
+	const setQuotaWidgetVisible = useUiStore((state) => state.setQuotaWidgetVisible);
 	const locale = useLocaleStore((state) => state.locale);
 	const setLocale = useLocaleStore((state) => state.setLocale);
 	const localeSaving = useLocaleStore((state) => state.saving);
@@ -131,6 +134,14 @@ export function GeneralSettingsSection({
 					value={themePreference}
 					options={themeOptions}
 					onChange={setThemePreference}
+				/>
+			</SettingsRow>
+			{/* Governs the sidebar-footer quota/usage meter (agent-orchestrator#280). */}
+			<SettingsRow label={t("settings.showQuotaWidget")}>
+				<Switch
+					aria-label={t("settings.showQuotaWidget")}
+					checked={isQuotaWidgetVisible}
+					onCheckedChange={setQuotaWidgetVisible}
 				/>
 			</SettingsRow>
 			<SettingsRow label={t("settings.language")}>

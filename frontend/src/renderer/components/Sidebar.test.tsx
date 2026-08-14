@@ -18,16 +18,27 @@ import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 import { agentsQueryKey } from "../hooks/useAgentsQuery";
 import { useUiStore } from "../stores/ui-store";
 
-const { getMock, navigateMock, mockParams, renameSessionMock, spawnMock, updateStatusMock, commandPaletteEnabled } =
-	vi.hoisted(() => ({
-		getMock: vi.fn(),
-		navigateMock: vi.fn(),
-		mockParams: { projectId: undefined as string | undefined, sessionId: undefined as string | undefined },
-		renameSessionMock: vi.fn().mockResolvedValue(undefined),
-		spawnMock: vi.fn(),
-		updateStatusMock: vi.fn(),
-		commandPaletteEnabled: { current: true },
-	}));
+const {
+	getMock,
+	postMock,
+	trustedMock,
+	navigateMock,
+	mockParams,
+	renameSessionMock,
+	spawnMock,
+	updateStatusMock,
+	commandPaletteEnabled,
+} = vi.hoisted(() => ({
+	getMock: vi.fn(),
+	postMock: vi.fn(),
+	trustedMock: vi.fn(() => false),
+	navigateMock: vi.fn(),
+	mockParams: { projectId: undefined as string | undefined, sessionId: undefined as string | undefined },
+	renameSessionMock: vi.fn().mockResolvedValue(undefined),
+	spawnMock: vi.fn(),
+	updateStatusMock: vi.fn(),
+	commandPaletteEnabled: { current: true },
+}));
 
 vi.mock("../lib/rename-session", () => ({ renameSession: renameSessionMock }));
 vi.mock("../lib/spawn-orchestrator", () => ({ spawnOrchestrator: spawnMock }));
@@ -58,7 +69,7 @@ vi.mock("../lib/bridge", async (importOriginal) => {
 });
 
 vi.mock("../lib/api-client", () => ({
-	apiClient: { GET: getMock },
+	apiClient: { GET: getMock, POST: postMock },
 	apiErrorMessage: (error: unknown) => {
 		if (error instanceof Error) return error.message;
 		if (typeof error === "object" && error !== null && "message" in error && typeof error.message === "string") {
@@ -66,6 +77,10 @@ vi.mock("../lib/api-client", () => ({
 		}
 		return "Request failed";
 	},
+	// Off by default so the footer quota widget's metrics query stays inert and
+	// does not consume the one-shot getMock responses the agent-catalog cases
+	// seed; the quota cases opt in via trustedMock.mockReturnValue(true).
+	hasTrustedApiBaseUrl: () => trustedMock(),
 }));
 
 const workspace: WorkspaceSummary = {
@@ -237,12 +252,17 @@ beforeEach(() => {
 		},
 		error: undefined,
 	});
+	postMock.mockReset();
+	postMock.mockResolvedValue({ data: { statuses: [] }, error: undefined });
+	trustedMock.mockReset();
+	trustedMock.mockReturnValue(false);
 	navigateMock.mockReset();
 	renameSessionMock.mockReset().mockResolvedValue(undefined);
 	spawnMock.mockReset();
 	updateStatusMock.mockReset().mockResolvedValue({ state: "idle" });
 	mockParams.projectId = undefined;
 	mockParams.sessionId = undefined;
+	useUiStore.setState({ isQuotaWidgetVisible: true, isQuotaWidgetCollapsed: false });
 });
 
 afterEach(() => {
@@ -1012,6 +1032,53 @@ describe("Sidebar", () => {
 				asWorkspace: false,
 			}),
 		);
+	});
+
+	// Complements test/shell-quota-widget-mount.test.tsx, which guards the same
+	// widget from the application entry point. These cover the sidebar's own
+	// footer ordering and visibility gate.
+	function seedQuotaMetrics() {
+		trustedMock.mockReturnValue(true);
+		getMock.mockImplementation((url: string) => {
+			if (url === "/api/v1/metrics") {
+				return Promise.resolve({
+					data: {
+						history: [],
+						probeStatuses: [{ harness: "codex", state: "not_probed", hasData: false }],
+						latest: { quotas: [] },
+					},
+					error: undefined,
+					response: { status: 200 },
+				});
+			}
+			return Promise.resolve({
+				data: {
+					supported: [{ id: "codex", label: "Codex" }],
+					installed: [{ id: "codex", label: "Codex" }],
+					authorized: [{ id: "codex", label: "Codex", authStatus: "authorized" }],
+				},
+				error: undefined,
+			});
+		});
+	}
+
+	it("renders the quota widget in the footer above Settings when visible", async () => {
+		seedQuotaMetrics();
+		renderSidebar();
+
+		const quota = await screen.findByText("Quota");
+		const settings = screen.getAllByRole("button", { name: "Settings" })[0];
+		// The widget precedes the Settings button in the footer DOM order.
+		expect(quota.compareDocumentPosition(settings) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+	});
+
+	it("hides the quota widget when the visibility flag is off", async () => {
+		seedQuotaMetrics();
+		useUiStore.setState({ isQuotaWidgetVisible: false });
+		renderSidebar();
+
+		await waitFor(() => expect(screen.getAllByRole("button", { name: "Settings" })[0]).toBeInTheDocument());
+		expect(screen.queryByText("Quota")).not.toBeInTheDocument();
 	});
 
 	it("opens settings when the footer Settings button is clicked", async () => {
