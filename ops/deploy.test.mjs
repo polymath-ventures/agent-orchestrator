@@ -93,10 +93,9 @@ test("deploy.sh keeps its load-bearing invariants", async () => {
 		text.indexOf("npm --prefix frontend run build:acp-runtime --silent") < text.indexOf('ln -sfn "$rel" "$CURRENT"'),
 		"ACP runtime must be built before the active release flips",
 	);
-	const deployBody = text.slice(
-		text.indexOf("deploy() {"),
-		text.indexOf('\nif [[ "${BASH_SOURCE[0]}" == "$0" ]]; then'),
-	);
+	const dispatchGuardIndex = text.indexOf('\nif [ "${BASH_SOURCE[0]}" = "$0" ]; then');
+	assert.ok(dispatchGuardIndex >= 0, "deploy dispatch guard must exist");
+	const deployBody = text.slice(text.indexOf("deploy() {"), dispatchGuardIndex);
 	assert.ok(
 		deployBody.indexOf('ln -sfn "$rel" "$CURRENT"') < deployBody.indexOf("\n  sync_acp_runtime_link\n"),
 		"runtime link must be installed after the newly active release flips",
@@ -136,7 +135,7 @@ test("sync_acp_runtime_link preserves an operator-managed symlink on rollback", 
 		log() { printf '%s\\n' "$*" >>"$LOG_FILE"; }
 		sync_acp_runtime_link
 	`;
-	await execFile("bash", ["-lc", harness]);
+	await run("bash", ["-lc", harness], { encoding: "utf8" });
 
 	const link = await readlink(acpRuntimeTarget);
 	assert.equal(link, operatorRuntime);
