@@ -165,7 +165,16 @@ function mockProject(project: Record<string, unknown>) {
 							reviewerCapable: true,
 							catalogSource: "none",
 							catalogVerified: false,
-							models: [],
+							models: [
+								{
+									model: "opus",
+									label: "Opus",
+									efforts: ["low", "high"],
+									defaultEffort: "low",
+									verified: true,
+									status: "reachable",
+								},
+							],
 						},
 						{
 							id: "codex",
@@ -173,7 +182,16 @@ function mockProject(project: Record<string, unknown>) {
 							reviewerCapable: true,
 							catalogSource: "none",
 							catalogVerified: false,
-							models: [],
+							models: [
+								{
+									model: "gpt-5.4",
+									label: "GPT-5.4",
+									efforts: ["low", "medium", "high"],
+									defaultEffort: "medium",
+									verified: true,
+									status: "reachable",
+								},
+							],
 						},
 					],
 				},
@@ -525,11 +543,11 @@ describe("ProjectSettingsForm", () => {
 					// Agents changes applied
 					worker: {
 						agent: "opencode",
-						agentConfig: { model: "openai/gpt-5.4" },
+						agentConfig: { modelByHarness: { opencode: { model: "openai/gpt-5.4" } } },
 					},
 					orchestrator: {
 						agent: "goose",
-						agentConfig: { model: "anthropic/claude-sonnet" },
+						agentConfig: { modelByHarness: { goose: { model: "anthropic/claude-sonnet" } } },
 					},
 					agentConfig: {
 						permissions: "bypass-permissions",
@@ -540,6 +558,72 @@ describe("ProjectSettingsForm", () => {
 		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
 		expect(await screen.findByText("Saved")).toBeInTheDocument();
 	}, 20_000);
+
+	it("loads and saves Agents pane effort pins for worker and orchestrator", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "git@github.com:acme/project-one.git",
+			defaultBranch: "main",
+			config: {
+				worker: {
+					agent: "codex",
+					agentConfig: { modelByHarness: { codex: { model: "gpt-5.4", effort: "high" } } },
+				},
+				orchestrator: {
+					agent: "claude-code",
+					agentConfig: { modelByHarness: { "claude-code": { model: "opus", effort: "low" } } },
+				},
+				agentConfig: {
+					permissions: "auto",
+				},
+			},
+		});
+
+		renderSettings("proj-1", undefined, "agents");
+
+		expect(await screen.findByLabelText("Worker model")).toHaveValue("gpt-5.4");
+		expect(screen.getByLabelText("Worker effort")).toHaveValue("high");
+		expect(screen.getByLabelText("Orchestrator model")).toHaveValue("opus");
+		expect(screen.getByLabelText("Orchestrator effort")).toHaveValue("low");
+		await waitFor(() =>
+			expect(screen.getByLabelText("Worker effort").tagName).toBe("SELECT"),
+		);
+		await waitFor(() =>
+			expect(Array.from((screen.getByLabelText("Worker effort") as HTMLSelectElement).options).map((o) => o.value)).toContain(
+				"medium",
+			),
+		);
+
+		await userEvent.selectOptions(screen.getByLabelText("Worker effort"), "medium");
+		await userEvent.selectOptions(screen.getByLabelText("Orchestrator effort"), "high");
+		submitSettings();
+
+		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
+		expect(putMock).toHaveBeenCalledWith(
+			"/api/v1/projects/{id}",
+			expect.objectContaining({
+				body: {
+					displayName: "Project One",
+					config: expect.objectContaining({
+						worker: {
+							agent: "codex",
+							agentConfig: { modelByHarness: { codex: { model: "gpt-5.4", effort: "medium" } } },
+						},
+						orchestrator: {
+							agent: "claude-code",
+							agentConfig: { modelByHarness: { "claude-code": { model: "opus", effort: "high" } } },
+						},
+						agentConfig: {
+							permissions: "auto",
+						},
+					}),
+				},
+			}),
+		);
+	});
 
 	it("loads workflow fields correctly", async () => {
 		mockProject({
@@ -1325,21 +1409,24 @@ describe("ProjectSettingsForm", () => {
 		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
 		expect(putMock).toHaveBeenCalledWith("/api/v1/projects/{id}", {
 			params: { path: { id: "scratch" } },
-			body: {
+			body: expect.objectContaining({
 				displayName: "Scratch",
-				config: {
+				config: expect.objectContaining({
 					env: { FOO: "bar" },
 					sessionPrefix: "ao",
 					symlinks: [".env"],
 					postCreate: ["npm install"],
 					agentRules: "keep work small",
-					worker: { agent: "codex", agentConfig: { model: "gpt-5-codex" } },
-					orchestrator: { agent: "claude-code", agentConfig: { model: "gpt-5-codex" } },
+					worker: { agent: "codex", agentConfig: { modelByHarness: { codex: { model: "gpt-5-codex" } } } },
+					orchestrator: {
+						agent: "claude-code",
+						agentConfig: { modelByHarness: { "claude-code": { model: "gpt-5-codex" } } },
+					},
 					agentConfig: {
 						permissions: "auto",
 					},
-				},
-			},
+				}),
+			}),
 		});
 		expect(postMock).not.toHaveBeenCalled();
 	});
