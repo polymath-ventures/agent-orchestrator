@@ -41,9 +41,14 @@ export function intakeNeedsRule(form: IntakeForm): boolean {
 // blank intake serializes to `undefined` (omit) rather than an empty object the
 // daemon would persist.
 export function buildIntake(form: IntakeForm): TrackerIntakeConfig | undefined {
+	// A configured provider is kept whether or not intake is currently enabled:
+	// dropping it while disabled loses the setting quietly, so re-enabling later
+	// would fall back to GitHub on a GitLab project. "github" is the default only
+	// for an intake that has never named one.
+	const provider = form.provider.trim() || (form.enabled ? "github" : "");
 	const next: TrackerIntakeConfig = {
 		enabled: form.enabled || undefined,
-		provider: form.enabled ? ((form.provider.trim() || "github") as TrackerIntakeConfig["provider"]) : undefined,
+		provider: (provider || undefined) as TrackerIntakeConfig["provider"],
 		repo: form.repo.trim() || undefined,
 		assignee: form.assignee.trim() || undefined,
 		optOutLabel: form.optOutLabel.trim() || undefined,

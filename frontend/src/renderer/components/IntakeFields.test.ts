@@ -46,6 +46,13 @@ describe("buildIntake", () => {
 	it("defaults an intake being enabled for the first time to github", () => {
 		expect(buildIntake(form({ enabled: true, assignee: "alice" }))?.provider).toBe("github");
 	});
+
+	// Pausing intake must not lose the tracker it was configured against, or
+	// re-enabling it later would quietly point a GitLab project at GitHub.
+	it("keeps a configured provider while intake is disabled", () => {
+		expect(buildIntake(form({ enabled: false, provider: "gitlab", assignee: "alice" }))?.provider).toBe("gitlab");
+		expect(buildIntake(form({ enabled: false, assignee: "alice" }))?.provider).toBeUndefined();
+	});
 });
 
 describe("intakeNeedsRule", () => {
