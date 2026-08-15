@@ -220,12 +220,10 @@ function SettingsBody({
 		mutationFn: async () => {
 			void captureRendererEvent("ao.renderer.settings_save_requested", { project_id: projectId });
 			const displayName = form.displayName.trim();
-			const {
-				model: _legacyModel,
-				mode: _legacyMode,
-				effort: _legacyEffort,
-				...sharedAgentConfig
-			} = config.agentConfig ?? {};
+			const sharedAgentConfig = buildSharedAgentConfig(config.agentConfig, [
+				{ agentId: form.workerAgent, model: form.workerModel, effort: form.workerEffort },
+				{ agentId: form.orchestratorAgent, model: form.orchestratorModel, effort: form.orchestratorEffort },
+			]);
 			const next: ProjectConfig = isScratchProject
 				? {
 						...scratchSupportedConfig(config),
@@ -239,6 +237,7 @@ function SettingsBody({
 								form.workerModel,
 								form.workerMode,
 								form.workerEffort,
+								form.workerMix.length > 0,
 							),
 						},
 						orchestrator: {
@@ -251,6 +250,7 @@ function SettingsBody({
 								form.orchestratorModel,
 								form.orchestratorMode,
 								form.orchestratorEffort,
+								false,
 							),
 						},
 						agentConfig: blankToUndefined({
@@ -281,6 +281,7 @@ function SettingsBody({
 								form.workerModel,
 								form.workerMode,
 								form.workerEffort,
+								form.workerMix.length > 0,
 							),
 						},
 						orchestrator: {
@@ -293,6 +294,7 @@ function SettingsBody({
 								form.orchestratorModel,
 								form.orchestratorMode,
 								form.orchestratorEffort,
+								false,
 							),
 						},
 						agentConfig: blankToUndefined({
@@ -1220,6 +1222,7 @@ function buildRoleAgentConfig(
 	model: string,
 	mode: string,
 	effort: string,
+	scopeEffortToHarness: boolean,
 ): components["schemas"]["AgentConfig"] | undefined {
 	const next = { ...existing };
 	const trimmedModel = model.trim();
@@ -1227,17 +1230,30 @@ function buildRoleAgentConfig(
 	if (mode) next.mode = mode;
 	else delete next.mode;
 	const modelByHarness = { ...(next.modelByHarness ?? {}) };
-	const useHarnessScopedPin = Boolean(
-		agentId && (existing?.modelByHarness?.[agentId] || shared?.modelByHarness?.[agentId]),
-	);
-	if (useHarnessScopedPin && agentId) {
-		delete next.model;
-		delete next.effort;
+	const existingEntry = agentId ? existing?.modelByHarness?.[agentId] : undefined;
+	const sharedEntry = agentId ? shared?.modelByHarness?.[agentId] : undefined;
+	const scopeModelToHarness = Boolean(existingEntry?.model || sharedEntry?.model);
+	const scopeEffort = Boolean(existingEntry?.effort || sharedEntry?.effort || scopeEffortToHarness);
+	if (agentId && (scopeModelToHarness || scopeEffort)) {
 		const entry = { ...(modelByHarness[agentId] ?? {}) };
-		if (trimmedModel) entry.model = trimmedModel;
-		else delete entry.model;
-		if (trimmedEffort) entry.effort = trimmedEffort;
-		else delete entry.effort;
+		if (scopeModelToHarness) {
+			delete next.model;
+			if (trimmedModel) entry.model = trimmedModel;
+			else delete entry.model;
+		} else if (trimmedModel) {
+			next.model = trimmedModel;
+		} else {
+			delete next.model;
+		}
+		if (scopeEffort) {
+			delete next.effort;
+			if (trimmedEffort) entry.effort = trimmedEffort;
+			else delete entry.effort;
+		} else if (trimmedEffort) {
+			next.effort = trimmedEffort;
+		} else {
+			delete next.effort;
+		}
 		if (Object.keys(entry).length > 0) modelByHarness[agentId] = entry;
 		else delete modelByHarness[agentId];
 	} else {
@@ -1249,4 +1265,25 @@ function buildRoleAgentConfig(
 	if (Object.keys(modelByHarness).length > 0) next.modelByHarness = modelByHarness;
 	else delete next.modelByHarness;
 	return Object.keys(next).length > 0 ? next : undefined;
+}
+
+function buildSharedAgentConfig(
+	shared: components["schemas"]["AgentConfig"] | undefined,
+	roleSelections: { agentId: string; model: string; effort: string }[],
+): components["schemas"]["AgentConfig"] | undefined {
+	const { model: _legacyModel, mode: _legacyMode, ...next } = shared ?? {};
+	const modelByHarness = { ...(next.modelByHarness ?? {}) };
+	for (const selection of roleSelections) {
+		if (!selection.agentId) continue;
+		const entry = modelByHarness[selection.agentId];
+		if (!entry) continue;
+		const nextEntry = { ...entry };
+		if (!selection.model.trim()) delete nextEntry.model;
+		if (!selection.effort.trim()) delete nextEntry.effort;
+		if (Object.keys(nextEntry).length > 0) modelByHarness[selection.agentId] = nextEntry;
+		else delete modelByHarness[selection.agentId];
+	}
+	if (Object.keys(modelByHarness).length > 0) next.modelByHarness = modelByHarness;
+	else delete next.modelByHarness;
+	return blankToUndefined(next);
 }
