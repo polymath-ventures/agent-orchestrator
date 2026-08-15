@@ -127,6 +127,7 @@ type StartConfig struct {
 	WorkspacePath         string
 	Env                   map[string]string
 	Model                 string
+	Effort                string
 	Permissions           ports.PermissionMode
 	SystemPrompt          string
 	AdditionalDirectories []string
@@ -138,6 +139,27 @@ type StartConfig struct {
 	// the launch has been marked live, so its exited signal cannot be overwritten
 	// by a later launch-completion write.
 	ControllerReady func(StartResult) error
+}
+
+func (s *Service) seedConversationSettings(ctx context.Context, controller *Controller, cfg StartConfig) error {
+	settings := controller.Settings()
+	seeded := settings
+	changed := false
+	if seeded.Model == "" && cfg.Model != "" {
+		seeded.Model = cfg.Model
+		changed = true
+	}
+	if seeded.ReasoningEffort == "" && cfg.Effort != "" {
+		seeded.ReasoningEffort = cfg.Effort
+		changed = true
+	}
+	if !changed {
+		return nil
+	}
+	if err := controller.SetSettings(ctx, seeded); err != nil {
+		return fmt.Errorf("seed conversation settings: %w", err)
+	}
+	return nil
 }
 
 func controllerStartResult(controller *Controller) StartResult {
@@ -334,6 +356,10 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 	// replaced can be told apart from the current one's.
 	controller := newController(
 		cfg.SessionID, conversation, generation, conv, s.store, s.activity, s.log, s.newID, s.now)
+	if err := s.seedConversationSettings(ctx, controller, cfg); err != nil {
+		_ = conv.Close()
+		return nil, err
+	}
 	if cfg.ProviderConversationID != "" {
 		// The provider's native thread is the continuity authority across TUI and
 		// Chat. Import it before the live projector starts so the first notification
@@ -807,6 +833,7 @@ type StartRequest struct {
 	WorkspacePath         string
 	Env                   map[string]string
 	Model                 string
+	Effort                string
 	Permissions           ports.PermissionMode
 	SystemPrompt          string
 	AdditionalDirectories []string

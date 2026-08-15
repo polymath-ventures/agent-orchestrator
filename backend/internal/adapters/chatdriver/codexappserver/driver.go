@@ -13,8 +13,10 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/chatdriver/procdiag"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/chatdriver/processenv"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
@@ -52,6 +54,16 @@ type process struct {
 	stdout io.Reader
 	// stop releases the process. It must be safe to call more than once.
 	stop func() error
+	// stderrTail returns what the child last wrote to stderr, or "" when nothing
+	// was captured. Nil for fakes that never spawn a process.
+	stderrTail func() string
+}
+
+func (p *process) diagnostics() string {
+	if p == nil || p.stderrTail == nil {
+		return ""
+	}
+	return procdiag.Diagnostics("app-server stderr", p.stderrTail())
 }
 
 // spawnFunc launches an app-server. Injected so tests never exec anything.
@@ -353,9 +365,16 @@ func (d *Driver) connect(ctx context.Context, workdir string, env map[string]str
 			"optOutNotificationMethods": nil,
 		},
 	}, nil); err != nil {
+		// Read the child's stderr before Close reaps it: without this every startup
+		// failure reads as the same handshake timeout.
+		diagnostics := proc.diagnostics()
 		_ = conv.Close()
+		if diagnostics != "" {
+			d.log.Warn("codex app-server failed to initialize",
+				"binary", bin, "error", err, "stderr", proc.stderrTail())
+		}
 		// A handshake the provider rejects means a protocol AO cannot speak.
-		return nil, fmt.Errorf("%w: initialize: %w", ports.ErrChatDriverIncompatible, err)
+		return nil, fmt.Errorf("%w: initialize: %w%s", ports.ErrChatDriverIncompatible, err, diagnostics)
 	}
 
 	if err := conv.conn.notify("initialized", nil); err != nil {
@@ -392,6 +411,7 @@ func spawnAppServer(ctx context.Context, bin, workdir string, env []string) (*pr
 	if len(env) > 0 {
 		cmd.Env = env
 	}
+	configureProcessGroup(cmd)
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -410,30 +430,54 @@ func spawnAppServer(ctx context.Context, bin, workdir string, env []string) (*pr
 	}
 
 	// Drain stderr so a chatty provider cannot fill the pipe buffer and wedge
-	// its own process.
-	go func() { _, _ = io.Copy(io.Discard, stderr) }()
+	// its own process — but retain the tail, because it is the only thing that
+	// distinguishes one startup failure from another.
+	tail := &procdiag.Tail{}
+	go func() { _, _ = io.Copy(tail, stderr) }()
 
-	var stopped bool
+	done := make(chan error, 1)
+	go func() {
+		_, err := cmd.Process.Wait()
+		done <- err
+	}()
+	var once sync.Once
 	return &process{
-		stdin:  stdin,
-		stdout: stdout,
+		stdin:      stdin,
+		stdout:     stdout,
+		stderrTail: tail.String,
 		stop: func() error {
-			if stopped {
-				return nil
-			}
-			stopped = true
-			// Closing stdin is the graceful shutdown; kill only if it lingers.
-			_ = stdin.Close()
-			done := make(chan struct{})
-			go func() { _, _ = cmd.Process.Wait(); close(done) }()
-			select {
-			case <-done:
-			case <-time.After(3 * time.Second):
-				_ = cmd.Process.Kill()
-			}
-			return nil
+			var stopErr error
+			once.Do(func() {
+				// Closing stdin is the graceful shutdown; kill only if it lingers.
+				_ = stdin.Close()
+				select {
+				case err := <-done:
+					stopErr = processExitError(err)
+				case <-time.After(3 * time.Second):
+					stopErr = killProcessTree(cmd)
+					select {
+					case <-done:
+					case <-time.After(2 * time.Second):
+						if stopErr == nil {
+							stopErr = errors.New("codex app-server process did not exit after kill")
+						}
+					}
+				}
+			})
+			return stopErr
 		},
 	}, nil
+}
+
+func processExitError(err error) error {
+	if err == nil {
+		return nil
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		return nil
+	}
+	return err
 }
 
 // envSlice merges AO's session env OVER the daemon's own, in the KEY=VALUE form

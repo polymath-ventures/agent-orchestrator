@@ -430,6 +430,13 @@ func (m *Manager) preflightInterfaceTarget(
 		if m.chat == nil {
 			return ports.ErrChatUnsupported
 		}
+		project, err := m.loadProject(ctx, rec.ProjectID)
+		if err != nil {
+			return err
+		}
+		if _, err := m.restoreAgentConfig(ctx, rec, project.Config); err != nil {
+			return err
+		}
 		return m.chat.PreflightChat(ctx, rec.Harness)
 	}
 	agent, ok := m.agents.Agent(rec.Harness)
@@ -534,14 +541,17 @@ func (m *Manager) prepareSourceHandoff(
 	}
 
 	var detector ports.TerminalActivityDetector
+	var emptyComposer ports.EmptyComposerDetector
 	if agent, ok := m.agents.Agent(rec.Harness); ok {
 		detector, _ = agent.(ports.TerminalActivityDetector)
+		emptyComposer, _ = agent.(ports.EmptyComposerDetector)
 	}
 	ticker := time.NewTicker(m.interfaceTransition.pollInterval)
 	defer ticker.Stop()
 	idleSince := time.Time{}
 	idleSamples := 0
 	staleIdleSince := time.Time{}
+	lastEmptyComposerOutput := ""
 	for {
 		current, ok, err := m.store.GetSession(ctx, rec.ID)
 		if err != nil {
@@ -576,10 +586,26 @@ func (m *Manager) prepareSourceHandoff(
 					idleProven = authoritative && state == domain.ActivityIdle
 				}
 			}
+			if detector == nil && !idleProven && emptyComposer != nil && inputQuiet {
+				output, empty, emptyErr := m.composerOutputIsEmpty(probeCtx, handle, emptyComposer)
+				now = time.Now()
+				if emptyErr == nil {
+					// EmptyComposerDetector proves no unsent human draft; it does
+					// not prove the agent is idle. Require the same empty composer
+					// frame to persist across polls before accepting a stale idle row.
+					idleProven = empty && output == lastEmptyComposerOutput
+					if empty {
+						lastEmptyComposerOutput = output
+					} else {
+						lastEmptyComposerOutput = ""
+					}
+				}
+			}
 		} else {
 			// A reported active turn or user-paced decision is allowed to wait
 			// without a deadline. A real state change resets prior ambiguity.
 			staleIdleSince = time.Time{}
+			lastEmptyComposerOutput = ""
 		}
 		if idleProven {
 			idleSamples++

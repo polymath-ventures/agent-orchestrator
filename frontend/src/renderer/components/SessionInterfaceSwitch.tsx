@@ -57,6 +57,7 @@ export function SessionInterfaceSwitchButton({
 }) {
 	if (transition && interfaceTransitionIsActive(transition)) {
 		const cancellable = interfaceTransitionIsCancellable(transition) && Boolean(onCancel);
+		const cancelErrorText = cancelError ? String(cancelError) : "";
 		return (
 			<div
 				role="status"
@@ -66,7 +67,9 @@ export function SessionInterfaceSwitchButton({
 					cancellable ? "pr-0.5" : "pr-2",
 					className,
 				)}
-				title={cancelError || `${phaseCopy[transition.phase]} Switching to ${targetTitleLabel(transition.targetMode)}.`}
+				title={
+					cancelErrorText || `${phaseCopy[transition.phase]} Switching to ${targetTitleLabel(transition.targetMode)}.`
+				}
 			>
 				<Loader2 aria-hidden="true" className="size-3.5 shrink-0 animate-spin" />
 				<span className="whitespace-nowrap">
@@ -91,9 +94,9 @@ export function SessionInterfaceSwitchButton({
 						{cancelling ? "Cancelling" : "Cancel"}
 					</Button>
 				) : null}
-				{cancelError ? (
-					<span role="alert" className="ml-1 whitespace-nowrap pr-1.5 text-[11px] text-destructive">
-						Cancel failed
+				{cancelErrorText ? (
+					<span role="alert" className="ml-1 max-w-[18rem] truncate pr-1.5 text-[11px] text-destructive">
+						Cancel failed: {cancelErrorText}
 					</span>
 				) : null}
 			</div>

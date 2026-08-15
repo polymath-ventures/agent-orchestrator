@@ -1491,15 +1491,20 @@ func (m *Manager) sourceGenerationCanReceiveCoordination(ctx context.Context, re
 }
 
 func (m *Manager) composerIsEmpty(ctx context.Context, handle ports.RuntimeHandle, detector ports.EmptyComposerDetector) (bool, error) {
+	_, empty, err := m.composerOutputIsEmpty(ctx, handle, detector)
+	return empty, err
+}
+
+func (m *Manager) composerOutputIsEmpty(ctx context.Context, handle ports.RuntimeHandle, detector ports.EmptyComposerDetector) (string, bool, error) {
 	styled, ok := m.runtime.(ports.StyledTerminalOutputReader)
 	if !ok {
-		return false, errors.New("runtime cannot preserve terminal styling for an empty-composer check")
+		return "", false, errors.New("runtime cannot preserve terminal styling for an empty-composer check")
 	}
 	output, err := styled.GetStyledOutput(ctx, handle, sourceComposerProbeLines)
 	if err != nil {
-		return false, err
+		return "", false, err
 	}
-	return detector.ComposerIsEmpty(output), nil
+	return output, detector.ComposerIsEmpty(output), nil
 }
 
 func buildSourceHandoffRequest(sw domain.AgentSwitch, candidatePath, aoExecutable string) string {

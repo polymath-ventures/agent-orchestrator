@@ -190,10 +190,39 @@ func (transitionAgent) NativeConversationID(_ context.Context, session ports.Ses
 type transitionDetectorAgent struct{ transitionAgent }
 
 func (transitionDetectorAgent) DetectTerminalActivity(output string) (domain.ActivityState, bool) {
-	if output == "idle" {
+	switch output {
+	case "idle":
 		return domain.ActivityIdle, true
+	case "active":
+		return domain.ActivityActive, true
 	}
 	return "", false
+}
+
+type emptyComposerTransitionAgent struct{ transitionAgent }
+
+func (emptyComposerTransitionAgent) ComposerIsEmpty(output string) bool {
+	return strings.HasPrefix(output, "empty-composer")
+}
+
+type activeEmptyTransitionAgent struct{ transitionAgent }
+
+func (activeEmptyTransitionAgent) DetectTerminalActivity(output string) (domain.ActivityState, bool) {
+	return transitionDetectorAgent{}.DetectTerminalActivity(output)
+}
+
+func (activeEmptyTransitionAgent) ComposerIsEmpty(output string) bool {
+	return emptyComposerTransitionAgent{}.ComposerIsEmpty(output)
+}
+
+type ambiguousEmptyTransitionAgent struct{ transitionAgent }
+
+func (ambiguousEmptyTransitionAgent) DetectTerminalActivity(string) (domain.ActivityState, bool) {
+	return "", false
+}
+
+func (ambiguousEmptyTransitionAgent) ComposerIsEmpty(output string) bool {
+	return emptyComposerTransitionAgent{}.ComposerIsEmpty(output)
 }
 
 const (
@@ -232,6 +261,7 @@ type transitionRuntime struct {
 	stopErrors                 []error
 	runtimeOccupied            bool
 	outputForCall              func(int) string
+	styledOutputForCall        func(int) string
 	outputCallTimes            []time.Time
 	blockAliveUntilContextDone bool
 }
@@ -284,6 +314,15 @@ func (r *transitionRuntime) GetOutput(ctx context.Context, handle ports.RuntimeH
 	}
 	r.outputCalls++
 	return r.outputForCall(r.outputCalls), nil
+}
+
+func (r *transitionRuntime) GetStyledOutput(ctx context.Context, handle ports.RuntimeHandle, lines int) (string, error) {
+	r.outputCallTimes = append(r.outputCallTimes, time.Now())
+	r.outputCalls++
+	if r.styledOutputForCall == nil {
+		return r.fakeRuntime.GetStyledOutput(ctx, handle, lines)
+	}
+	return r.styledOutputForCall(r.outputCalls), nil
 }
 
 type transitionChat struct {
@@ -638,6 +677,126 @@ func TestInterfaceTransitionTUIToChatFailsClosedWhenStaleIdleCannotBeVerified(t 
 	}
 }
 
+func TestInterfaceTransitionDrainUsesEmptyComposerDetectorForStaleIdle(t *testing.T) {
+	manager, store, runtime, _, _ := newTransitionManager(t, domain.SessionModeTUI)
+	useFastInterfaceTransitionTimings(manager)
+	manager.agents = singleAgent{agent: emptyComposerTransitionAgent{}}
+	now := time.Now()
+	rec := store.sessions["session-1"]
+	rec.Activity = domain.Activity{State: domain.ActivityIdle, LastActivityAt: now.Add(-time.Minute)}
+	store.sessions["session-1"] = rec
+	runtime.aliveByHandle = map[string]bool{"runtime-1": true}
+	runtime.styledOutputForCall = func(int) string { return "empty-composer" }
+	manager.SetTerminalInputGate(&transitionInputGate{
+		acquired:    make(chan string, 1),
+		released:    make(chan string, 1),
+		lastInputAt: now,
+	})
+
+	transition, err := manager.StartInterfaceTransition(context.Background(), "session-1",
+		domain.SessionModeChat, domain.SessionInterfaceTransitionDrain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	settled := awaitTransition(t, store, transition.ID)
+	if settled.Phase != domain.SessionInterfaceTransitionCompleted {
+		t.Fatalf("transition = %+v, want empty composer proof to complete the handoff", settled)
+	}
+	if runtime.outputCalls < interfaceTransitionStaleIdleSamples {
+		t.Fatalf("empty composer calls = %d, want at least %d samples",
+			runtime.outputCalls, interfaceTransitionStaleIdleSamples)
+	}
+}
+
+func TestInterfaceTransitionDrainRequiresStableEmptyComposerOutput(t *testing.T) {
+	manager, store, runtime, _, _ := newTransitionManager(t, domain.SessionModeTUI)
+	useFastInterfaceTransitionTimings(manager)
+	manager.agents = singleAgent{agent: emptyComposerTransitionAgent{}}
+	now := time.Now()
+	rec := store.sessions["session-1"]
+	rec.Activity = domain.Activity{State: domain.ActivityIdle, LastActivityAt: now.Add(-time.Minute)}
+	store.sessions["session-1"] = rec
+	runtime.aliveByHandle = map[string]bool{"runtime-1": true}
+	runtime.styledOutputForCall = func(call int) string { return fmt.Sprintf("empty-composer-%d", call) }
+	manager.SetTerminalInputGate(&transitionInputGate{
+		acquired:    make(chan string, 1),
+		released:    make(chan string, 1),
+		lastInputAt: now,
+	})
+
+	transition, err := manager.StartInterfaceTransition(context.Background(), "session-1",
+		domain.SessionModeChat, domain.SessionInterfaceTransitionDrain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	settled := awaitTransition(t, store, transition.ID)
+	if settled.Phase != domain.SessionInterfaceTransitionFailed || settled.ErrorCode != "DRAIN_QUIESCENCE_UNVERIFIED" {
+		t.Fatalf("transition = %+v, want unstable empty composer output to fail closed", settled)
+	}
+	if runtime.destroyed != 0 {
+		t.Fatalf("source runtime destroyed %d times after unverified drain", runtime.destroyed)
+	}
+}
+
+func TestInterfaceTransitionDrainDoesNotUseEmptyComposerWhenActivityDetectorIsAmbiguous(t *testing.T) {
+	manager, store, runtime, _, _ := newTransitionManager(t, domain.SessionModeTUI)
+	useFastInterfaceTransitionTimings(manager)
+	manager.agents = singleAgent{agent: ambiguousEmptyTransitionAgent{}}
+	now := time.Now()
+	rec := store.sessions["session-1"]
+	rec.Activity = domain.Activity{State: domain.ActivityIdle, LastActivityAt: now.Add(-time.Minute)}
+	store.sessions["session-1"] = rec
+	runtime.aliveByHandle = map[string]bool{"runtime-1": true}
+	runtime.outputForCall = func(int) string { return ambiguousTerminalOutput }
+	runtime.styledOutputForCall = func(int) string { return "empty-composer" }
+	manager.SetTerminalInputGate(&transitionInputGate{
+		acquired:    make(chan string, 1),
+		released:    make(chan string, 1),
+		lastInputAt: now,
+	})
+
+	transition, err := manager.StartInterfaceTransition(context.Background(), "session-1",
+		domain.SessionModeChat, domain.SessionInterfaceTransitionDrain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	settled := awaitTransition(t, store, transition.ID)
+	if settled.Phase != domain.SessionInterfaceTransitionFailed || settled.ErrorCode != "DRAIN_QUIESCENCE_UNVERIFIED" {
+		t.Fatalf("transition = %+v, want ambiguous activity detector to fail closed", settled)
+	}
+	if runtime.destroyed != 0 {
+		t.Fatalf("source runtime destroyed %d times after unverified drain", runtime.destroyed)
+	}
+}
+
+func TestInterfaceTransitionDrainHonorsAuthoritativeActiveOverEmptyComposer(t *testing.T) {
+	manager, store, runtime, _, _ := newTransitionManager(t, domain.SessionModeTUI)
+	useFastInterfaceTransitionTimings(manager)
+	manager.agents = singleAgent{agent: activeEmptyTransitionAgent{}}
+	now := time.Now()
+	rec := store.sessions["session-1"]
+	rec.Activity = domain.Activity{State: domain.ActivityIdle, LastActivityAt: now.Add(-time.Minute)}
+	store.sessions["session-1"] = rec
+	runtime.aliveByHandle = map[string]bool{"runtime-1": true}
+	runtime.outputForCall = func(int) string { return "active" }
+	runtime.styledOutputForCall = func(int) string { return "empty-composer" }
+	manager.SetTerminalInputGate(&transitionInputGate{
+		acquired:    make(chan string, 1),
+		released:    make(chan string, 1),
+		lastInputAt: now,
+	})
+
+	transition, err := manager.StartInterfaceTransition(context.Background(), "session-1",
+		domain.SessionModeChat, domain.SessionInterfaceTransitionDrain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	settled := awaitTransition(t, store, transition.ID)
+	if settled.Phase != domain.SessionInterfaceTransitionFailed || settled.ErrorCode != "DRAIN_QUIESCENCE_UNVERIFIED" {
+		t.Fatalf("transition = %+v, want authoritative active detector to fail closed", settled)
+	}
+}
+
 func TestInterfaceTransitionTUIToChatAcceptsConfirmedRuntimeExitDuringStaleIdle(t *testing.T) {
 	manager, store, runtime, _, _ := newTransitionManager(t, domain.SessionModeTUI)
 	useFastInterfaceTransitionTimings(manager)
@@ -768,6 +927,32 @@ func TestInterfaceTransitionGatesTUIInputBeforePreflightAndReleasesIt(t *testing
 		}
 	case <-time.After(time.Second):
 		t.Fatal("terminal input gate was not released after transition")
+	}
+}
+
+func TestInterfaceTransitionChatTargetRejectsBadPersistedModelBeforeStoppingSource(t *testing.T) {
+	manager, store, runtime, chat, _ := newTransitionManager(t, domain.SessionModeTUI)
+	rec := store.sessions["session-1"]
+	rec.Model = "gpt-5"
+	store.sessions["session-1"] = rec
+
+	transition, err := manager.StartInterfaceTransition(context.Background(), "session-1",
+		domain.SessionModeChat, domain.SessionInterfaceTransitionDrain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	settled := awaitTransition(t, store, transition.ID)
+	if settled.Phase != domain.SessionInterfaceTransitionFailed {
+		t.Fatalf("phase = %s, want failed before source teardown", settled.Phase)
+	}
+	if !strings.Contains(settled.ErrorDetail, ErrModelHarnessMismatch.Error()) {
+		t.Fatalf("error detail = %q, want model/harness mismatch", settled.ErrorDetail)
+	}
+	if runtime.destroyed != 0 {
+		t.Fatalf("source runtime destroyed %d times before target config was validated", runtime.destroyed)
+	}
+	if chat.start.SessionID != "" {
+		t.Fatalf("chat target started despite failed config preflight: %+v", chat.start)
 	}
 }
 
