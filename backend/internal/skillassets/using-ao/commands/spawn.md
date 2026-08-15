@@ -25,8 +25,10 @@ aong spawn [flags]
 `--agent` is an alias for `--harness`.
 
 A bare `--issue 142` is resolved against the project's tracker repository and
-stored as `github:owner/repo#142`, the same form tracker intake writes, so
-intake sees the issue as covered and does not spawn a second worker on it.
+stored as `<provider>:<repo>#142` — `github:owner/repo#142` for a GitHub
+project, `gitlab:group/project#142` for a GitLab one. That is the same form
+tracker intake writes, so intake sees the issue as covered and does not spawn a
+second worker on it.
 
 AO computes the immutable namespace key once from the creation-time work label
 and the complete session identity. Passing `--branch` opts out of that generated

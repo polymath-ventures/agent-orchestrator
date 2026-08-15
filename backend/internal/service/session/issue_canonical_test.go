@@ -249,3 +249,40 @@ func TestSpawnScopeMatchesIntakeWhenTheProviderIsUnset(t *testing.T) {
 		})
 	}
 }
+
+// The canonical form carries no GitLab instance host, so it can only stand in
+// for an issue on the project's own instance. Flattening a reference that names
+// a second self-managed host into it would re-resolve to the project's host —
+// a different instance, and a real issue number on it.
+func TestSpawnLeavesCrossHostGitLabReferencesAlone(t *testing.T) {
+	st := newFakeStore()
+	st.projects["demo"] = domain.ProjectRecord{ID: "demo", RepoOriginURL: "https://gitlab.internal/group/project.git"}
+	fc := &fakeCommander{}
+	svc := NewWithDeps(Deps{Manager: fc, Store: st, SCM: staticSCM{repo: ports.SCMRepo{
+		Provider: "gitlab",
+		Host:     "gitlab.internal",
+		Owner:    "group",
+		Name:     "project",
+		Repo:     "group/project",
+	}}})
+
+	const other = "https://gitlab.other.example/group/project/-/issues/7"
+	if _, _, _, err := svc.Spawn(context.Background(), ports.SpawnConfig{ProjectID: "demo", Kind: domain.KindWorker, IssueID: other}); err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	if fc.spawnedCfg.IssueID != other {
+		t.Fatalf("persisted IssueID = %q, want the reference kept verbatim", fc.spawnedCfg.IssueID)
+	}
+
+	// The project's own instance still canonicalises.
+	if _, _, _, err := svc.Spawn(context.Background(), ports.SpawnConfig{
+		ProjectID: "demo",
+		Kind:      domain.KindWorker,
+		IssueID:   "https://gitlab.internal/group/project/-/issues/7",
+	}); err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	if fc.spawnedCfg.IssueID != "gitlab:group/project#7" {
+		t.Fatalf("persisted IssueID = %q, want gitlab:group/project#7", fc.spawnedCfg.IssueID)
+	}
+}

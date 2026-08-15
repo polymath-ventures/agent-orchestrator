@@ -70,12 +70,17 @@ func NativeIssueRef(id IssueID, scope TrackerRepo) string {
 	if !ok {
 		return strings.TrimPrefix(ref, "#")
 	}
-	repo, _, _ := strings.Cut(native, "#")
+	repo, number, _ := strings.Cut(native, "#")
+	sameProvider := scope.Provider == "" || scope.Provider == provider
 	if scopeRepo := strings.TrimSpace(scope.Native); scopeRepo != "" &&
-		strings.EqualFold(repo, scopeRepo) &&
-		(scope.Provider == "" || scope.Provider == provider) {
-		_, number, _ := strings.Cut(native, "#")
+		sameProvider && strings.EqualFold(repo, scopeRepo) {
 		return number
+	}
+	if !sameProvider {
+		// Same repo path on a different tracker is a different issue. Without
+		// the provider, "acme/code#242" on a GitHub-backed project reads as the
+		// GitHub issue, which is the one thing this must not say.
+		return string(provider) + ":" + native
 	}
 	return native
 }

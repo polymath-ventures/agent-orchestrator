@@ -252,7 +252,7 @@ func TestNativeIssueRefKeepsCrossRepoQualifiers(t *testing.T) {
 		{name: "own repo renders the number alone", id: "github:acme/code#242", want: "242"},
 		{name: "own repo case-insensitively", id: "github:Acme/Code#242", want: "242"},
 		{name: "other repo keeps its qualifier", id: "github:acme/other#242", want: "acme/other#242"},
-		{name: "other provider keeps its qualifier", id: "gitlab:acme/code#242", want: "acme/code#242"},
+		{name: "other provider keeps a provider qualifier", id: "gitlab:acme/code#242", want: "gitlab:acme/code#242"},
 		{name: "manual bare number is unchanged", id: "242", want: "242"},
 		{name: "manual hash prefix is trimmed", id: "#242", want: "242"},
 		{name: "unrecognised shape is unchanged", id: "ISS-1", want: "ISS-1"},
@@ -276,5 +276,22 @@ func TestNativeIssueRefKeepsCrossRepoQualifiers(t *testing.T) {
 	gitlab := TrackerRepo{Provider: TrackerProviderGitLab, Native: "group/sub/proj"}
 	if got := NativeIssueRef("gitlab:group/sub/proj#7", gitlab); got != "7" {
 		t.Fatalf("NativeIssueRef = %q, want 7", got)
+	}
+}
+
+// The same repo path on a different tracker is a different issue. Rendering it
+// bare would name the scope provider's issue of that number instead.
+func TestNativeIssueRefKeepsCrossProviderQualifiers(t *testing.T) {
+	scope := TrackerRepo{Provider: TrackerProviderGitHub, Native: "acme/code"}
+	if got := NativeIssueRef("gitlab:acme/code#242", scope); got != "gitlab:acme/code#242" {
+		t.Fatalf("NativeIssueRef = %q, want the provider kept", got)
+	}
+	if got := NativeIssueRef("gitlab:other/repo#242", scope); got != "gitlab:other/repo#242" {
+		t.Fatalf("NativeIssueRef = %q, want the provider kept", got)
+	}
+	// A scope that names no provider cannot contradict the id, so the plain
+	// native form stays.
+	if got := NativeIssueRef("gitlab:acme/code#242", TrackerRepo{Native: "acme/code"}); got != "242" {
+		t.Fatalf("NativeIssueRef = %q, want 242", got)
 	}
 }

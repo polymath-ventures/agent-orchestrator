@@ -75,8 +75,17 @@ func (s *Service) withCanonicalIssueID(cfg ports.SpawnConfig, project domain.Pro
 	if cfg.IssueID == "" {
 		return cfg
 	}
-	id, ok := s.trackerIDForIssue(cfg, project)
+	scope := s.trackerScope(project, cfg.TrackerProvider)
+	id, ok := domain.ParseIssueRef(string(cfg.IssueID), scope)
 	if !ok {
+		return cfg
+	}
+	// The canonical form carries no GitLab instance host, so it can only stand
+	// in for an issue on the project's own instance. A reference that names
+	// another host — an issue URL on a second self-managed GitLab — would come
+	// back pointing at the project's instance, so it keeps its original text
+	// rather than being flattened into an id that means something else.
+	if id.Host != scope.Host {
 		return cfg
 	}
 	cfg.IssueID = domain.CanonicalIssueID(id)
