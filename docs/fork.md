@@ -169,7 +169,10 @@ product, and a sync is not complete until every named behavioral guard passes.
    `frontend/src/renderer/components/CreateProjectAgentSheet.tsx`;
    `frontend/src/renderer/components/WorkerMixFields.tsx` renders the mix rows and
    receives its options through `ProjectSettingsForm` rather than calling the
-   catalog itself. On the backend the mix is resolved at spawn by
+   catalog itself. Worker spawn selection precedence is explicit spawn harness,
+   configured `workerMix`, scalar `worker.agent`, then an automatic even split
+   over installed+authorized worker harnesses, with any remainder assigned by
+   lowest harness id first. On the backend the mix is resolved at spawn by
    `resolveSpawnTarget` and `selectMixBucket` in
    `backend/internal/session_manager/manager.go`;
    `backend/internal/observe/trackerintake/observer.go` is the tracker-intake
@@ -185,7 +188,9 @@ product, and a sync is not complete until every named behavioral guard passes.
    worker-mix row; `backend/internal/adapters/reviewer/registry_test.go`,
    `backend/internal/adapters/agent/codex/fugu_test.go`, and
    `backend/internal/session_manager/workermix_test.go` verify resolver,
-   launcher, and spawn selection behavior. Reference evidence:
+   launcher, and spawn selection behavior, including that the default path can
+   select `codex-fugu` when the readiness provider reports it available.
+   Reference evidence:
    [harness selection](screenshots/fork-features/harness-selection.png).
    Reference issues/PRs: model management #4 → #34, #64; codex-fugu worker
    harness #12 → #21; fugu reviewer registration #229 → #231; selector

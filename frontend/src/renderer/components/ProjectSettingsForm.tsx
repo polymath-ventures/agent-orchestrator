@@ -161,7 +161,7 @@ function SettingsBody({
 	const [replacementError, setReplacementError] = useState<string | null>(null);
 	const [validationError, setValidationError] = useState<string | null>(null);
 	const initialOrchestratorAgent = config.orchestrator?.agent ?? "";
-	const missingRequiredAgent = form.workerAgent === "" || form.orchestratorAgent === "";
+	const missingRequiredAgent = form.orchestratorAgent === "";
 	const agentsQuery = useQuery(agentsQueryOptions);
 	const agentCatalog = agentsQuery.data;
 	const modelAvailabilityQuery = useModelAvailabilityQuery();
@@ -403,11 +403,11 @@ function SettingsBody({
 								value={form.workerAgent}
 								placeholder={t("settings.project.selectWorker")}
 								label={t("settings.project.defaultWorker")}
+								emptyOptionLabel={t("settings.project.defaultWorkerEvenSplit")}
 								authorized={agentCatalog?.authorized}
 								installed={agentCatalog?.installed}
 								supported={agentCatalog?.supported}
 								disabled={agentsQuery.isFetching && agentCatalog === undefined}
-								invalid={validationError !== null && form.workerAgent === ""}
 								onChange={(v) => setForm((f) => ({ ...f, workerAgent: v, workerModel: "", workerMode: "" }))}
 							/>
 						}

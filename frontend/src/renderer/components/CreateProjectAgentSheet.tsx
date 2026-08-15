@@ -472,9 +472,11 @@ export const RequiredAgentField = memo(function RequiredAgentField({
 	fieldGapClassName = "gap-1.5",
 	value,
 	variant = "stacked",
+	emptyOptionLabel,
 }: {
 	authorized?: AgentInfo[];
 	disabled?: boolean;
+	emptyOptionLabel?: string;
 	hint?: string;
 	icon?: LucideIcon;
 	id: string;
@@ -516,6 +518,12 @@ export const RequiredAgentField = memo(function RequiredAgentField({
 		})
 		.sort((a, b) => a.rank - b.rank || a.priorityRank - b.priorityRank || agentLabelCompare(a, b));
 	const selectedOption = options.find((agent) => agent.id === value);
+	const settingOptions = emptyOptionLabel
+		? [
+				{ value: "", label: emptyOptionLabel },
+				...options.map((agent) => ({ value: agent.id, label: agent.label, disabled: agent.disabled })),
+			]
+		: options.map((agent) => ({ value: agent.id, label: agent.label, disabled: agent.disabled }));
 
 	if (variant === "settings-row") {
 		return (
@@ -524,7 +532,7 @@ export const RequiredAgentField = memo(function RequiredAgentField({
 					aria-label={label}
 					value={value}
 					placeholder={placeholder}
-					options={options.map((agent) => ({ value: agent.id, label: agent.label, disabled: agent.disabled }))}
+					options={settingOptions}
 					disabled={disabled}
 					onChange={onChange}
 					triggerClassName={invalid ? "text-error" : undefined}
@@ -532,7 +540,7 @@ export const RequiredAgentField = memo(function RequiredAgentField({
 					menuItemClassName="settings-agent-menu-item"
 					renderTrigger={(selected, triggerPlaceholder) => (
 						<>
-							{selected ? <AgentAvatar provider={selected.value} className="size-icon-lg" /> : null}
+							{selected?.value ? <AgentAvatar provider={selected.value} className="size-icon-lg" /> : null}
 							<span className="min-w-0 truncate">{selected?.label ?? triggerPlaceholder}</span>
 						</>
 					)}

@@ -175,8 +175,8 @@ export function WorkerMixFields({
 	return (
 		<div className="flex flex-col gap-4">
 			<p className="text-xs leading-row text-muted-foreground">
-				Distribute unpinned worker spawns across agent buckets by weight. Weights must sum to 100; an empty mix leaves
-				the feature off.
+				Worker spawn precedence is explicit mix, default worker agent, then an automatic even split over
+				installed+authorized agents. Mix weights must sum to 100.
 			</p>
 			{buckets.length === 0 ? (
 				<p className="text-xs leading-row text-passive">No worker mix configured.</p>

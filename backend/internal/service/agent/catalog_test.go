@@ -266,6 +266,82 @@ func TestListReturnsInitialSupportedInventoryWithoutProbing(t *testing.T) {
 	}
 }
 
+func TestDefaultWorkerHarnessesRefreshesWhenInventoryHasNoAuthorizedHarnesses(t *testing.T) {
+	var probes int
+	svc := NewWithAgents([]agentregistry.HarnessAgent{
+		{
+			Harness: domain.HarnessCodexFugu,
+			Manifest: adapters.Manifest{
+				ID:   string(domain.HarnessCodexFugu),
+				Name: "Codex Fugu",
+			},
+			Agent: fakeAuthAgent{
+				fakeAgent: fakeAgent{},
+				status:    ports.AgentAuthStatusAuthorized,
+			},
+		},
+		{
+			Harness: domain.HarnessCodex,
+			Manifest: adapters.Manifest{
+				ID:   string(domain.HarnessCodex),
+				Name: "Codex",
+			},
+			Agent: probeTrackingAgent{onProbe: func() { probes++ }},
+		},
+	})
+
+	got, err := svc.DefaultWorkerHarnesses(context.Background())
+	if err != nil {
+		t.Fatalf("DefaultWorkerHarnesses: %v", err)
+	}
+	if !reflect.DeepEqual(got, []domain.AgentHarness{domain.HarnessCodexFugu}) {
+		t.Fatalf("default worker harnesses = %#v, want codex-fugu only", got)
+	}
+	if probes != 1 {
+		t.Fatalf("probe calls = %d, want refresh to probe the empty initial inventory once", probes)
+	}
+}
+
+func TestDefaultWorkerHarnessesUsesCachedAuthorizedInventory(t *testing.T) {
+	var probes int
+	svc := NewWithAgents([]agentregistry.HarnessAgent{
+		{
+			Harness: domain.HarnessCodex,
+			Manifest: adapters.Manifest{
+				ID:   string(domain.HarnessCodex),
+				Name: "Codex",
+			},
+			Agent: fakeAuthAgent{
+				fakeAgent: fakeAgent{},
+				status:    ports.AgentAuthStatusAuthorized,
+			},
+		},
+		{
+			Harness: domain.HarnessCodexFugu,
+			Manifest: adapters.Manifest{
+				ID:   string(domain.HarnessCodexFugu),
+				Name: "Codex Fugu",
+			},
+			Agent: probeTrackingAgent{onProbe: func() { probes++ }},
+		},
+	})
+	if _, err := svc.Refresh(context.Background()); err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+	probes = 0
+
+	got, err := svc.DefaultWorkerHarnesses(context.Background())
+	if err != nil {
+		t.Fatalf("DefaultWorkerHarnesses: %v", err)
+	}
+	if !reflect.DeepEqual(got, []domain.AgentHarness{domain.HarnessCodex}) {
+		t.Fatalf("default worker harnesses = %#v, want cached codex only", got)
+	}
+	if probes != 0 {
+		t.Fatalf("probe calls = %d, want cached inventory without refresh", probes)
+	}
+}
+
 func TestInventoryDerivesReviewerCapabilityFromHarness(t *testing.T) {
 	svc := NewWithAgents([]agentregistry.HarnessAgent{
 		harnessAuthAgent(string(domain.HarnessOpenCode), "OpenCode", ports.AgentAuthStatusAuthorized, nil),
