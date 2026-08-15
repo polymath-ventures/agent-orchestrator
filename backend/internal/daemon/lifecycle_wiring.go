@@ -184,7 +184,7 @@ func (a primeSessionServiceAdapter) Send(ctx context.Context, id domain.SessionI
 // LCM, the per-session agent resolver, and the agent messenger. The returned
 // service is mounted at httpd APIDeps.Sessions. It also returns the manager so
 // the caller can wire Reconcile into the boot sequence.
-func startSession(ctx context.Context, cfg config.Config, runtime runtimeselect.Runtime, store *sqlite.Store, lcm *lifecycle.Manager, messenger ports.AgentMessenger, modelValidator sessionmanager.SpawnModelSelectionValidator, telemetry ports.EventSink, agents ports.AgentResolver, previewLifecycle sessionmanager.PreviewLifecycle, browserLifecycle sessionmanager.BrowserLifecycle, browserCapabilities sessionmanager.BrowserCapabilityIssuer, chat sessionmanager.ChatLauncher, defaults sessionmanager.SessionModeDefaults, log *slog.Logger) (*sessionsvc.Service, reviewsvc.Manager, sessionLifecycle, error) {
+func startSession(ctx context.Context, cfg config.Config, runtime runtimeselect.Runtime, store *sqlite.Store, lcm *lifecycle.Manager, messenger ports.AgentMessenger, modelValidator sessionmanager.SpawnModelSelectionValidator, defaultWorkerHarnesses sessionmanager.DefaultWorkerHarnessResolver, telemetry ports.EventSink, agents ports.AgentResolver, previewLifecycle sessionmanager.PreviewLifecycle, browserLifecycle sessionmanager.BrowserLifecycle, browserCapabilities sessionmanager.BrowserCapabilityIssuer, chat sessionmanager.ChatLauncher, defaults sessionmanager.SessionModeDefaults, log *slog.Logger) (*sessionsvc.Service, reviewsvc.Manager, sessionLifecycle, error) {
 	gitWS, err := gitworktree.New(gitworktree.Options{
 		// Per-session worktrees live under the data dir, so a single AO_DATA_DIR
 		// override moves all durable per-user state together.
@@ -217,22 +217,23 @@ func startSession(ctx context.Context, cfg config.Config, runtime runtimeselect.
 		Projects: store,
 	})
 	mgr := sessionmanager.New(sessionmanager.Deps{
-		Runtime:             runtime,
-		Agents:              agents,
-		Workspace:           ws,
-		Store:               store,
-		Messenger:           messenger,
-		Chat:                chat,
-		Defaults:            defaults,
-		Lifecycle:           lcm,
-		Preview:             previewLifecycle,
-		Browser:             browserLifecycle,
-		BrowserCapabilities: browserCapabilities,
-		DataDir:             cfg.DataDir,
-		Logger:              log,
-		Health:              health,
-		ModelValidator:      modelValidator,
-		ProjectDefaults:     cfg.ProjectDefaults,
+		Runtime:                runtime,
+		Agents:                 agents,
+		Workspace:              ws,
+		Store:                  store,
+		Messenger:              messenger,
+		Chat:                   chat,
+		Defaults:               defaults,
+		Lifecycle:              lcm,
+		Preview:                previewLifecycle,
+		Browser:                browserLifecycle,
+		BrowserCapabilities:    browserCapabilities,
+		DataDir:                cfg.DataDir,
+		Logger:                 log,
+		Health:                 health,
+		ModelValidator:         modelValidator,
+		DefaultWorkerHarnesses: defaultWorkerHarnesses,
+		ProjectDefaults:        cfg.ProjectDefaults,
 	})
 	scmProvider := newMultiSCMProvider(cfg.GitLab, log)
 	tracker := newMultiTracker(cfg.GitLab, log)

@@ -589,7 +589,7 @@
 	"settings.options.searchPlaceholder": "Pesquisar opções…",
 	"settings.field.edit": "Editar {{label}}",
 	"settings.project.agents": "Agentes",
-	"settings.project.agentsRequired": "Orchestrator agent is required.",
+	"settings.project.agentsRequired": "O agente orquestrador é obrigatório.",
 	"settings.project.agentDefault": "(padrão do agente)",
 	"settings.project.childReposEmpty": "Nenhum repositório filho registrado.",
 	"settings.project.default": "Padrão do projeto",
@@ -1169,5 +1169,5 @@
 	"chat.edit.cancel": "Cancelar edição",
 	"chat.edit.send": "Enviar mensagem editada",
 	"chat.edit.sendShortcut": "Enviar mensagem editada (⌘/Ctrl+Enter)",
-	"settings.project.defaultWorkerEvenSplit": "Automatic even split"
+	"settings.project.defaultWorkerEvenSplit": "Distribuição uniforme automática"
 }

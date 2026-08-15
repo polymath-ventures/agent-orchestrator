@@ -1108,7 +1108,9 @@ describe("ProjectSettingsForm", () => {
 			"Pi",
 			"KiroAuth unknown",
 		]);
-		expect(options[9]).not.toHaveAttribute("aria-disabled", "true");
+		const unknownAuthOption = options.find((option) => option.textContent === "KiroAuth unknown");
+		expect(unknownAuthOption).toBeDefined();
+		expect(unknownAuthOption).not.toHaveAttribute("aria-disabled", "true");
 	});
 
 	it("shows Copilot as a reviewer option and saves it in the reviewers payload", async () => {

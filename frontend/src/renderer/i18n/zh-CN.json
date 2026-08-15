@@ -561,7 +561,7 @@
 	"settings.field.edit": "编辑{{label}}",
 	"settings.preferences": "偏好设置",
 	"settings.project.agents": "代理",
-	"settings.project.agentsRequired": "Orchestrator agent is required.",
+	"settings.project.agentsRequired": "必须选择编排代理。",
 	"settings.project.agentDefault": "（代理默认值）",
 	"settings.project.childReposEmpty": "尚未注册子仓库。",
 	"settings.project.default": "项目默认",
@@ -1135,5 +1135,5 @@
 	"chat.edit.cancel": "取消编辑",
 	"chat.edit.send": "发送编辑后的消息",
 	"chat.edit.sendShortcut": "发送编辑后的消息（⌘/Ctrl+Enter）",
-	"settings.project.defaultWorkerEvenSplit": "Automatic even split"
+	"settings.project.defaultWorkerEvenSplit": "自动平均分配"
 }

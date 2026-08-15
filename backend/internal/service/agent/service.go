@@ -157,14 +157,19 @@ func (s *Service) List(ctx context.Context) (Inventory, error) {
 }
 
 // DefaultWorkerHarnesses returns the installed+authorized harnesses the session
-// manager may use for the implicit worker default. It refreshes through the same
-// bounded, rate-limited probe path as the UI inventory, so an empty workerMix
-// never selects a harness that the local binary/auth checks cannot currently
-// prove usable.
+// manager may use for the implicit worker default. It reads the same cached
+// readiness inventory the UI displays, and performs one bounded refresh only
+// when the cache has no authorized harnesses yet.
 func (s *Service) DefaultWorkerHarnesses(ctx context.Context) ([]domain.AgentHarness, error) {
-	inventory, err := s.Refresh(ctx)
+	inventory, err := s.List(ctx)
 	if err != nil {
 		return nil, err
+	}
+	if len(inventory.Authorized) == 0 {
+		inventory, err = s.Refresh(ctx)
+		if err != nil {
+			return nil, err
+		}
 	}
 	harnesses := make([]domain.AgentHarness, 0, len(inventory.Authorized))
 	for _, info := range inventory.Authorized {

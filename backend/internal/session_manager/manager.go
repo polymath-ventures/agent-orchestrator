@@ -222,7 +222,9 @@ type lifecycleRecorder interface {
 	MarkTerminated(ctx context.Context, id domain.SessionID) error
 }
 
-type defaultWorkerHarnessResolver interface {
+// DefaultWorkerHarnessResolver supplies the installed+authorized harness catalog
+// used when a project intentionally leaves workerMix and worker.agent unset.
+type DefaultWorkerHarnessResolver interface {
 	DefaultWorkerHarnesses(context.Context) ([]domain.AgentHarness, error)
 }
 
@@ -432,7 +434,7 @@ type Manager struct {
 	// catalog for projects that intentionally leave both workerMix and
 	// worker.agent unset. Explicit spawn harness > workerMix > worker.agent >
 	// this default even split.
-	defaultWorkerHarnesses defaultWorkerHarnessResolver
+	defaultWorkerHarnesses DefaultWorkerHarnessResolver
 	// projectDefaults are daemon-wide typed defaults. Per-project values are
 	// resolved over these at each spawn so newly registered projects inherit
 	// them without copied persistence.
@@ -655,7 +657,7 @@ type Deps struct {
 	// DefaultWorkerHarnesses supplies installed+authorized worker harnesses for
 	// the implicit no-workerMix/no-worker.agent even split. Nil preserves the
 	// old missing-harness error for embedders that have no readiness catalog.
-	DefaultWorkerHarnesses defaultWorkerHarnessResolver
+	DefaultWorkerHarnesses DefaultWorkerHarnessResolver
 	// ProjectDefaults are daemon-wide typed defaults for project configuration.
 	ProjectDefaults domain.ProjectConfig
 }
@@ -713,9 +715,9 @@ func New(d Deps) *Manager {
 		spawnLocks:             map[domain.ProjectID]*sync.Mutex{},
 	}
 	if m.defaultWorkerHarnesses == nil {
-		if resolver, ok := d.Agents.(defaultWorkerHarnessResolver); ok {
+		if resolver, ok := d.Agents.(DefaultWorkerHarnessResolver); ok {
 			m.defaultWorkerHarnesses = resolver
-		} else if resolver, ok := d.ModelValidator.(defaultWorkerHarnessResolver); ok {
+		} else if resolver, ok := d.ModelValidator.(DefaultWorkerHarnessResolver); ok {
 			m.defaultWorkerHarnesses = resolver
 		}
 	}
@@ -1642,11 +1644,9 @@ func (m *Manager) resolveSpawnTarget(ctx context.Context, cfg ports.SpawnConfig,
 }
 
 func (m *Manager) resolveWorkerMixTarget(ctx context.Context, cfg ports.SpawnConfig, projectConfig domain.ProjectConfig, rawMix domain.WorkerMix, source string) (resolvedSpawnTarget, error) {
-	mix, err := effectiveWorkerMix(domain.ProjectConfig{
-		AgentConfig: projectConfig.AgentConfig,
-		Worker:      projectConfig.Worker,
-		WorkerMix:   rawMix,
-	})
+	effectiveConfig := projectConfig
+	effectiveConfig.WorkerMix = rawMix
+	mix, err := effectiveWorkerMix(effectiveConfig)
 	if err != nil {
 		return resolvedSpawnTarget{}, err
 	}
@@ -1706,6 +1706,9 @@ func (m *Manager) defaultWorkerMix(ctx context.Context) (domain.WorkerMix, error
 	sort.Slice(unique, func(i, j int) bool { return unique[i] < unique[j] })
 	if len(unique) == 0 {
 		return nil, nil
+	}
+	if len(unique) > 100 {
+		return nil, fmt.Errorf("default worker harnesses: %d available harnesses exceeds 100 weight buckets", len(unique))
 	}
 	weight := 100 / len(unique)
 	remainder := 100 % len(unique)

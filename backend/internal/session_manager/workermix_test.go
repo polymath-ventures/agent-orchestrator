@@ -3,6 +3,7 @@ package sessionmanager
 import (
 	"context"
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -46,6 +47,12 @@ func (a defaultWorkerHarnessAgents) DefaultWorkerHarnesses(context.Context) ([]d
 	out := make([]domain.AgentHarness, len(a.available))
 	copy(out, a.available)
 	return out, nil
+}
+
+type defaultWorkerHarnessesFunc func(context.Context) ([]domain.AgentHarness, error)
+
+func (f defaultWorkerHarnessesFunc) DefaultWorkerHarnesses(ctx context.Context) ([]domain.AgentHarness, error) {
+	return f(ctx)
 }
 
 func defaultWorkerMixManager(cfg domain.ProjectConfig, available []domain.AgentHarness) (*Manager, *fakeStore) {
@@ -506,6 +513,35 @@ func TestSpawn_NoMixDefaultsToEvenAvailableWorkerHarnesses(t *testing.T) {
 	}
 }
 
+func TestSpawn_NoMixDefaultWorkerMixDistributesRemainderByHarnessID(t *testing.T) {
+	m, _ := defaultWorkerMixManager(domain.ProjectConfig{}, []domain.AgentHarness{
+		domain.HarnessAider,
+		domain.HarnessClaudeCode,
+		domain.HarnessCodex,
+		domain.HarnessCodexFugu,
+		domain.HarnessGrok,
+		domain.HarnessOpenCode,
+	})
+
+	counts := map[domain.AgentHarness]int{}
+	for i := 0; i < 100; i++ {
+		counts[spawnUnpinnedWorker(t, m).Harness]++
+	}
+	want := map[domain.AgentHarness]int{
+		domain.HarnessAider:      17,
+		domain.HarnessClaudeCode: 17,
+		domain.HarnessCodex:      17,
+		domain.HarnessCodexFugu:  17,
+		domain.HarnessGrok:       16,
+		domain.HarnessOpenCode:   16,
+	}
+	for harness, n := range want {
+		if counts[harness] != n {
+			t.Fatalf("after 100 default-mix spawns %s = %d, want %d (full distribution %v)", harness, counts[harness], n, counts)
+		}
+	}
+}
+
 func TestSpawn_NoMixHonorsExplicitWorkerHarnessOverDefaultEvenSplit(t *testing.T) {
 	m, _ := defaultWorkerMixManager(domain.ProjectConfig{
 		Worker: domain.RoleOverride{Harness: domain.HarnessCodex},
@@ -523,5 +559,46 @@ func TestSpawn_NoMixHonorsExplicitWorkerHarnessOverDefaultEvenSplit(t *testing.T
 		if rec.MixSelected {
 			t.Fatalf("spawn %d mixSelected = true, want explicit scalar worker.agent to bypass default mix", i+1)
 		}
+	}
+}
+
+func TestSpawn_NoMixDefaultWorkerMixFiltersByExplicitModel(t *testing.T) {
+	m, _ := defaultWorkerMixManager(domain.ProjectConfig{}, []domain.AgentHarness{
+		domain.HarnessClaudeCode,
+		domain.HarnessCodex,
+		domain.HarnessCodexFugu,
+	})
+
+	rec, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Model: "fugu"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Harness != domain.HarnessCodexFugu || rec.Model != "fugu" {
+		t.Fatalf("explicit fugu model default spawn = (%q, %q), want (codex-fugu, fugu)", rec.Harness, rec.Model)
+	}
+}
+
+func TestSpawn_NoMixDefaultWorkerMixFallsBackToMissingHarnessWhenNoHarnessesAvailable(t *testing.T) {
+	m, _ := defaultWorkerMixManager(domain.ProjectConfig{}, nil)
+
+	_, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker})
+	if !errors.Is(err, ErrMissingHarness) {
+		t.Fatalf("empty default harness set err = %v, want ErrMissingHarness", err)
+	}
+}
+
+func TestDefaultWorkerMixRejectsMoreThanOneHundredHarnesses(t *testing.T) {
+	m, _ := defaultWorkerMixManager(domain.ProjectConfig{}, nil)
+	harnesses := make([]domain.AgentHarness, 101)
+	for i := range harnesses {
+		harnesses[i] = domain.AgentHarness("test-harness-" + strconv.Itoa(i))
+	}
+	m.defaultWorkerHarnesses = defaultWorkerHarnessesFunc(func(context.Context) ([]domain.AgentHarness, error) {
+		return harnesses, nil
+	})
+
+	_, err := m.defaultWorkerMix(ctx)
+	if err == nil || !strings.Contains(err.Error(), "exceeds 100 weight buckets") {
+		t.Fatalf("defaultWorkerMix err = %v, want explicit bucket limit", err)
 	}
 }
