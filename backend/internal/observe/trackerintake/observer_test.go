@@ -786,3 +786,93 @@ func TestPollDefersWorkerMixCapacityWithoutBackoff(t *testing.T) {
 		})
 	}
 }
+
+// Regression for #298 defect 1. Intake writes `github:owner/repo#N` but the
+// dedup set was built from the raw stored value, so a session spawned with the
+// bare native id the CLI and docs advertise never matched the lookup key and
+// intake spawned a fresh duplicate worker on every tick, indefinitely.
+func TestPollDoesNotRespawnIssueHeldByNonCanonicalSession(t *testing.T) {
+	cases := []struct {
+		name    string
+		issueID domain.IssueID
+	}{
+		{name: "bare number", issueID: "12"},
+		{name: "hash prefixed", issueID: "#12"},
+		{name: "provider native", issueID: "acme/demo#12"},
+		{name: "issue url", issueID: "https://github.com/acme/demo/issues/12"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			store := &fakeStore{
+				projects: []domain.ProjectRecord{{
+					ID:            "demo",
+					RepoOriginURL: "https://github.com/acme/demo.git",
+					Config:        domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, Assignee: "alice"}},
+				}},
+				sessions: []domain.SessionRecord{{ID: "demo-1", ProjectID: "demo", IssueID: tc.issueID}},
+			}
+			tracker := &fakeTracker{issues: []domain.Issue{{
+				ID:        domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#12"},
+				State:     domain.IssueOpen,
+				Assignees: []string{"alice"},
+			}}}
+			spawner := &fakeSpawner{}
+
+			if err := New(singleResolver(tracker), store, spawner, Config{Logger: discardLogger()}).Poll(context.Background()); err != nil {
+				t.Fatalf("Poll() error = %v", err)
+			}
+			if len(spawner.calls) != 0 {
+				t.Fatalf("spawn calls = %+v, want 0 — session %q already services acme/demo#12", spawner.calls, tc.issueID)
+			}
+		})
+	}
+}
+
+// A non-canonical id belonging to a different project must not suppress intake:
+// bare ids are only equivalent to a canonical id within their own project's
+// tracker scope.
+func TestPollRespawnsWhenNonCanonicalSessionBelongsToAnotherProject(t *testing.T) {
+	store := &fakeStore{
+		projects: []domain.ProjectRecord{{
+			ID:            "demo",
+			RepoOriginURL: "https://github.com/acme/demo.git",
+			Config:        domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, Assignee: "alice"}},
+		}},
+		sessions: []domain.SessionRecord{{ID: "other-1", ProjectID: "other", IssueID: "12"}},
+	}
+	tracker := &fakeTracker{issues: []domain.Issue{{
+		ID:        domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#12"},
+		State:     domain.IssueOpen,
+		Assignees: []string{"alice"},
+	}}}
+	spawner := &fakeSpawner{}
+
+	if err := New(singleResolver(tracker), store, spawner, Config{Logger: discardLogger()}).Poll(context.Background()); err != nil {
+		t.Fatalf("Poll() error = %v", err)
+	}
+	if len(spawner.calls) != 1 || spawner.calls[0].IssueID != "github:acme/demo#12" {
+		t.Fatalf("spawn calls = %+v, want one spawn: project \"other\"'s bare 12 is a different issue", spawner.calls)
+	}
+}
+
+// Regression for #298 defect 2. The `no-ao` label documents itself as
+// "Opt-out: ao must not auto-work this issue" and was read by nothing.
+func TestPollSkipsIssueCarryingOptOutLabel(t *testing.T) {
+	store := &fakeStore{projects: []domain.ProjectRecord{{
+		ID:            "demo",
+		RepoOriginURL: "https://github.com/acme/demo.git",
+		Config:        domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, Assignee: "alice"}},
+	}}}
+	tracker := &fakeTracker{issues: []domain.Issue{
+		{ID: domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#1"}, Title: "opted out", State: domain.IssueOpen, Labels: []string{"no-ao", "feature"}, Assignees: []string{"alice"}},
+		{ID: domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#2"}, Title: "eligible", State: domain.IssueOpen, Labels: []string{"feature"}, Assignees: []string{"alice"}},
+	}}
+	spawner := &fakeSpawner{}
+
+	if err := New(singleResolver(tracker), store, spawner, Config{Logger: discardLogger()}).Poll(context.Background()); err != nil {
+		t.Fatalf("Poll() error = %v", err)
+	}
+	if len(spawner.calls) != 1 || spawner.calls[0].IssueID != "github:acme/demo#2" {
+		t.Fatalf("spawn calls = %+v, want only issue #2 — #1 carries the opt-out label", spawner.calls)
+	}
+}
