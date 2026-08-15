@@ -360,11 +360,11 @@ export function catalogProvenanceLabel(
 	}
 }
 
-function preferredEffort(model?: Pick<AgentModelAvailability, "defaultEffort" | "efforts">): string {
+export function preferredEffort(model?: Pick<AgentModelAvailability, "defaultEffort" | "efforts">): string {
 	return model?.defaultEffort ?? model?.efforts?.[0] ?? "";
 }
 
-function shouldUseManualEffort(
+export function shouldUseManualEffort(
 	model: Pick<ModelCatalogOption, "catalogEffortCount" | "efforts" | "synthetic"> | undefined,
 ): boolean {
 	if (!model) return true;
@@ -372,7 +372,7 @@ function shouldUseManualEffort(
 	return (model.catalogEffortCount ?? model.efforts?.length ?? 0) === 0;
 }
 
-function harnessEfforts(harness: HarnessCatalogOption | undefined): string[] {
+export function harnessEfforts(harness: HarnessCatalogOption | undefined): string[] {
 	const efforts = new Set<string>();
 	for (const model of harness?.models ?? []) {
 		for (const effort of model.efforts ?? []) {
@@ -382,7 +382,7 @@ function harnessEfforts(harness: HarnessCatalogOption | undefined): string[] {
 	return [...efforts];
 }
 
-function buildEffortOptions(efforts: string[] | undefined): string[] {
+export function buildEffortOptions(efforts: string[] | undefined): string[] {
 	const options = new Set<string>();
 	for (const effort of efforts ?? []) {
 		const trimmed = effort.trim();

@@ -262,17 +262,24 @@ product, and a sync is not complete until every named behavioral guard passes.
    paths remain keyed by session ID. Sync anchors:
    `backend/internal/adapters/workspace/scratch/{workspace.go,workspace_test.go}`.
    Preserve this behavior when upstream changes the adapter.
+   Project defaults for worker and orchestrator effort are operator-editable
+   from Project settings → Agents, alongside the role model control, and
+   persisted harness-specific `modelByHarness` effort pins must display and save
+   there rather than only in worker-mix rows.
    **Behavioral guards:**
    `backend/internal/storage/sqlite/store/store_test.go` round-trips the four
    session fields through SQLite;
    `backend/internal/session_manager/workermix_test.go` verifies their launch
    and census effects; and
    `backend/internal/adapters/workspace/scratch/workspace_test.go` verifies the
-   namespace used by real scratch-workspace creation. This item is a persisted
-   backend invariant, so it has no meaningful screenshot.
+   namespace used by real scratch-workspace creation. The UI guard is
+   `frontend/e2e/fork-features.spec.ts`, which opens the real project settings
+   dialog, selects Agents, and asserts worker/orchestrator effort controls are
+   present, editable, and saved. Reference evidence:
+   [project settings Agents effort](screenshots/fork-features/project-settings-agents-effort.png).
    Reference issues/PRs: worker mix #3 → #17, #80 — the session `model` and
    `mix_selected` columns landed in #17; session prefix #151 → #179; readable
-   session namespace #257 → #259.
+   session namespace #257 → #259; Agents-pane effort #301.
 8. **Bug fixes.** Any fork divergence that fixes a real bug beats re-absorbing
    the upstream behavior it fixed. The clusters most likely to be silently
    reverted by a blend, because they live in shared upstream files: compensating

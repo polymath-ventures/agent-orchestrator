@@ -588,13 +588,11 @@ describe("ProjectSettingsForm", () => {
 		expect(screen.getByLabelText("Worker effort")).toHaveValue("high");
 		expect(screen.getByLabelText("Orchestrator model")).toHaveValue("opus");
 		expect(screen.getByLabelText("Orchestrator effort")).toHaveValue("low");
+		await waitFor(() => expect(screen.getByLabelText("Worker effort").tagName).toBe("SELECT"));
 		await waitFor(() =>
-			expect(screen.getByLabelText("Worker effort").tagName).toBe("SELECT"),
-		);
-		await waitFor(() =>
-			expect(Array.from((screen.getByLabelText("Worker effort") as HTMLSelectElement).options).map((o) => o.value)).toContain(
-				"medium",
-			),
+			expect(
+				Array.from((screen.getByLabelText("Worker effort") as HTMLSelectElement).options).map((o) => o.value),
+			).toContain("medium"),
 		);
 
 		await userEvent.selectOptions(screen.getByLabelText("Worker effort"), "medium");

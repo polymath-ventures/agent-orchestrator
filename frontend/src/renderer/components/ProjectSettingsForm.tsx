@@ -9,7 +9,7 @@ import {
 } from "@aoagents/product-ui";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Pencil, RefreshCw } from "lucide-react";
 import type { components } from "../../api/schema";
 import {
@@ -20,7 +20,11 @@ import {
 	type AgentModelCatalog,
 } from "../hooks/useAgentModelsQuery";
 import { agentsQueryKey, agentsQueryOptions, refreshAgents } from "../hooks/useAgentsQuery";
-import { useModelAvailabilityQuery, useRefreshModelAvailability } from "../hooks/useModelAvailabilityQuery";
+import {
+	type AgentModelAvailabilityResponse,
+	useModelAvailabilityQuery,
+	useRefreshModelAvailability,
+} from "../hooks/useModelAvailabilityQuery";
 import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { modelAvailabilityFromAgentInventory } from "../lib/agent-selection";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
@@ -30,6 +34,12 @@ import { cn } from "../lib/utils";
 import { newestActiveOrchestrator } from "../types/workspace";
 import { RequiredAgentField } from "./CreateProjectAgentSheet";
 import { buildIntake, deriveIntakeRepo, IntakeFields, type IntakeForm } from "./IntakeFields";
+import {
+	buildEffortOptions,
+	buildModelCatalogView,
+	harnessEfforts,
+	shouldUseManualEffort,
+} from "./ModelAvailabilityField";
 import { ProductExternalLink } from "./ProductExternalLink";
 import { ReviewerSelect, reviewerTrustWarning } from "./ReviewerSelect";
 import { AgentModelCombobox } from "./settings/AgentModelCombobox";
@@ -131,14 +141,26 @@ function SettingsBody({
 	const activeOrchestrator = newestActiveOrchestrator(workspace?.sessions ?? []);
 	const intake: TrackerIntakeConfig = config.trackerIntake ?? {};
 	const firstReviewer = config.reviewers?.[0];
+	const workerModelSelection = roleModelSelection(
+		config.worker?.agentConfig,
+		config.agentConfig,
+		config.worker?.agent ?? "",
+	);
+	const orchestratorModelSelection = roleModelSelection(
+		config.orchestrator?.agentConfig,
+		config.agentConfig,
+		config.orchestrator?.agent ?? "",
+	);
 	const [form, setForm] = useState({
 		displayName: project.name,
 		defaultBranch: config.defaultBranch ?? project.defaultBranch ?? "",
 		sessionPrefix: config.sessionPrefix ?? "",
 		workerAgent: config.worker?.agent ?? "",
 		orchestratorAgent: config.orchestrator?.agent ?? "",
-		workerModel: config.worker?.agentConfig?.model ?? config.agentConfig?.model ?? "",
-		orchestratorModel: config.orchestrator?.agentConfig?.model ?? config.agentConfig?.model ?? "",
+		workerModel: workerModelSelection.model,
+		workerEffort: workerModelSelection.effort,
+		orchestratorModel: orchestratorModelSelection.model,
+		orchestratorEffort: orchestratorModelSelection.effort,
 		workerMode: config.worker?.agentConfig?.mode ?? config.agentConfig?.mode ?? "",
 		orchestratorMode: config.orchestrator?.agentConfig?.mode ?? config.agentConfig?.mode ?? "",
 		permissions: config.agentConfig?.permissions ?? "",
@@ -205,15 +227,23 @@ function SettingsBody({
 						worker: {
 							...config.worker,
 							agent: form.workerAgent,
-							agentConfig: buildRoleAgentConfig(config.worker?.agentConfig, form.workerModel, form.workerMode),
+							agentConfig: buildRoleAgentConfig(
+								config.worker?.agentConfig,
+								form.workerAgent,
+								form.workerModel,
+								form.workerMode,
+								form.workerEffort,
+							),
 						},
 						orchestrator: {
 							...config.orchestrator,
 							agent: form.orchestratorAgent,
 							agentConfig: buildRoleAgentConfig(
 								config.orchestrator?.agentConfig,
+								form.orchestratorAgent,
 								form.orchestratorModel,
 								form.orchestratorMode,
+								form.orchestratorEffort,
 							),
 						},
 						agentConfig: blankToUndefined({
@@ -237,15 +267,23 @@ function SettingsBody({
 						worker: {
 							...config.worker,
 							agent: form.workerAgent,
-							agentConfig: buildRoleAgentConfig(config.worker?.agentConfig, form.workerModel, form.workerMode),
+							agentConfig: buildRoleAgentConfig(
+								config.worker?.agentConfig,
+								form.workerAgent,
+								form.workerModel,
+								form.workerMode,
+								form.workerEffort,
+							),
 						},
 						orchestrator: {
 							...config.orchestrator,
 							agent: form.orchestratorAgent,
 							agentConfig: buildRoleAgentConfig(
 								config.orchestrator?.agentConfig,
+								form.orchestratorAgent,
 								form.orchestratorModel,
 								form.orchestratorMode,
+								form.orchestratorEffort,
 							),
 						},
 						agentConfig: blankToUndefined({
@@ -415,7 +453,10 @@ function SettingsBody({
 								installed={agentCatalog?.installed}
 								supported={agentCatalog?.supported}
 								disabled={agentsQuery.isFetching && agentCatalog === undefined}
-								onChange={(v) => setForm((f) => ({ ...f, workerAgent: v, workerModel: "", workerMode: "" }))}
+								invalid={validationError !== null && form.workerAgent === ""}
+								onChange={(v) =>
+									setForm((f) => ({ ...f, workerAgent: v, workerModel: "", workerEffort: "", workerMode: "" }))
+								}
 							/>
 						}
 						workerModelArea={
@@ -424,8 +465,11 @@ function SettingsBody({
 								agentId={form.workerAgent}
 								projectId={projectId}
 								model={form.workerModel}
+								effort={form.workerEffort}
 								mode={form.workerMode}
+								availability={effectiveModelAvailability}
 								onModelChange={(workerModel) => setForm((f) => ({ ...f, workerModel }))}
+								onEffortChange={(workerEffort) => setForm((f) => ({ ...f, workerEffort }))}
 								onModeChange={(workerMode) => setForm((f) => ({ ...f, workerMode }))}
 							/>
 						}
@@ -446,6 +490,7 @@ function SettingsBody({
 										...f,
 										orchestratorAgent: v,
 										orchestratorModel: "",
+										orchestratorEffort: "",
 										orchestratorMode: "",
 									}))
 								}
@@ -457,8 +502,11 @@ function SettingsBody({
 								agentId={form.orchestratorAgent}
 								projectId={projectId}
 								model={form.orchestratorModel}
+								effort={form.orchestratorEffort}
 								mode={form.orchestratorMode}
+								availability={effectiveModelAvailability}
 								onModelChange={(orchestratorModel) => setForm((f) => ({ ...f, orchestratorModel }))}
+								onEffortChange={(orchestratorEffort) => setForm((f) => ({ ...f, orchestratorEffort }))}
 								onModeChange={(orchestratorMode) => setForm((f) => ({ ...f, orchestratorMode }))}
 							/>
 						}
@@ -638,16 +686,22 @@ function AgentModelField({
 	agentId,
 	projectId,
 	model,
+	effort,
 	mode,
+	availability,
 	onModelChange,
+	onEffortChange,
 	onModeChange,
 }: {
 	role: "worker" | "orchestrator";
 	agentId: string;
 	projectId: string;
 	model: string;
+	effort: string;
 	mode: string;
+	availability?: AgentModelAvailabilityResponse;
 	onModelChange: (value: string) => void;
+	onEffortChange: (value: string) => void;
 	onModeChange: (value: string) => void;
 }) {
 	const { t } = useTranslation();
@@ -719,6 +773,15 @@ function AgentModelField({
 						/>
 					</div>
 				</SettingsRow>
+				<AgentEffortField
+					role={role}
+					agentId={agentId}
+					model={model}
+					effort={effort}
+					availability={availability}
+					disabled={agentId === ""}
+					onChange={onEffortChange}
+				/>
 				{warning && <p className="px-1 text-xs leading-row text-warning">{warning}</p>}
 			</>
 		);
@@ -787,8 +850,97 @@ function AgentModelField({
 					)}
 				</div>
 			</SettingsRow>
+			<AgentEffortField
+				role={role}
+				agentId={agentId}
+				model={model}
+				effort={effort}
+				availability={availability}
+				disabled={agentId === ""}
+				onChange={onEffortChange}
+			/>
 			{warning && <p className="px-1 text-xs leading-row text-warning">{warning}</p>}
 		</>
+	);
+}
+
+function AgentEffortField({
+	role,
+	agentId,
+	model,
+	effort,
+	availability,
+	disabled,
+	onChange,
+}: {
+	role: "worker" | "orchestrator";
+	agentId: string;
+	model: string;
+	effort: string;
+	availability?: AgentModelAvailabilityResponse;
+	disabled: boolean;
+	onChange: (value: string) => void;
+}) {
+	const { t } = useTranslation();
+	const catalogValue = useMemo(() => ({ harness: agentId, model, effort }), [agentId, effort, model]);
+	const harnesses = useMemo(
+		() => buildModelCatalogView(availability, catalogValue, [catalogValue]),
+		[availability, catalogValue],
+	);
+	const harness = harnesses.find((option) => option.id === agentId);
+	const modelOption = harness?.models.find((option) => option.model === model);
+	const catalogEfforts = buildEffortOptions(
+		modelOption?.synthetic
+			? [...(modelOption.efforts ?? []), ...harnessEfforts(harness)]
+			: modelOption
+				? (modelOption.efforts ?? [])
+				: harnessEfforts(harness),
+	);
+	const effortOptions =
+		effort.trim() && !catalogEfforts.includes(effort) ? [...catalogEfforts, effort] : catalogEfforts;
+	const manualEffort = model.trim() !== "" && shouldUseManualEffort(modelOption);
+	const showEffort = agentId !== "" && (manualEffort || effortOptions.length > 0);
+	if (!showEffort) return null;
+	const label = role === "worker" ? "Worker effort" : "Orchestrator effort";
+	const id = `${role}-effort`;
+	return (
+		<SettingsRow label={label}>
+			{manualEffort ? (
+				<>
+					<input
+						id={id}
+						aria-label={label}
+						className="settings-inline-input settings-model-control"
+						value={effort}
+						list={`${id}-options`}
+						disabled={disabled}
+						placeholder={t("settings.models.agentDefault")}
+						onChange={(event) => onChange(event.target.value)}
+					/>
+					<datalist id={`${id}-options`}>
+						{effortOptions.map((option) => (
+							<option key={option} value={option} />
+						))}
+					</datalist>
+				</>
+			) : (
+				<select
+					id={id}
+					aria-label={label}
+					className="settings-inline-input settings-model-control"
+					value={effort}
+					disabled={disabled}
+					onChange={(event) => onChange(event.target.value)}
+				>
+					<option value="">{t("settings.models.agentDefault")}</option>
+					{effortOptions.map((option) => (
+						<option key={option} value={option}>
+							{option}
+						</option>
+					))}
+				</select>
+			)}
+		</SettingsRow>
 	);
 }
 
@@ -1023,15 +1175,60 @@ function blankToUndefined<T extends object>(obj: T): T | undefined {
 	return Object.values(obj).some((v) => v !== undefined) ? obj : undefined;
 }
 
+function roleModelSelection(
+	roleConfig: components["schemas"]["AgentConfig"] | undefined,
+	sharedConfig: components["schemas"]["AgentConfig"] | undefined,
+	harness: string,
+): { model: string; effort: string } {
+	return {
+		model: roleModelValue(roleConfig, sharedConfig, harness, "model"),
+		effort: roleModelValue(roleConfig, sharedConfig, harness, "effort"),
+	};
+}
+
+function roleModelValue(
+	roleConfig: components["schemas"]["AgentConfig"] | undefined,
+	sharedConfig: components["schemas"]["AgentConfig"] | undefined,
+	harness: string,
+	field: "model" | "effort",
+): string {
+	let value = sharedConfig?.[field] ?? "";
+	if (roleConfig?.[field]) value = roleConfig[field] ?? "";
+	if (harness) {
+		const sharedHarnessValue = sharedConfig?.modelByHarness?.[harness]?.[field];
+		if (sharedHarnessValue) value = sharedHarnessValue;
+		const roleHarnessValue = roleConfig?.modelByHarness?.[harness]?.[field];
+		if (roleHarnessValue) value = roleHarnessValue;
+	}
+	return value;
+}
+
 function buildRoleAgentConfig(
 	existing: components["schemas"]["AgentConfig"] | undefined,
+	agentId: string,
 	model: string,
 	mode: string,
+	effort: string,
 ): components["schemas"]["AgentConfig"] | undefined {
 	const next = { ...existing };
-	if (model) next.model = model;
-	else delete next.model;
+	delete next.model;
+	delete next.effort;
 	if (mode) next.mode = mode;
 	else delete next.mode;
+	const modelByHarness = { ...(next.modelByHarness ?? {}) };
+	if (agentId) {
+		const entry = { ...(modelByHarness[agentId] ?? {}) };
+		if (model) entry.model = model;
+		else delete entry.model;
+		if (effort) entry.effort = effort;
+		else delete entry.effort;
+		if (Object.keys(entry).length > 0) {
+			modelByHarness[agentId] = entry;
+		} else {
+			delete modelByHarness[agentId];
+		}
+	}
+	if (Object.keys(modelByHarness).length > 0) next.modelByHarness = modelByHarness;
+	else delete next.modelByHarness;
 	return Object.keys(next).length > 0 ? next : undefined;
 }
