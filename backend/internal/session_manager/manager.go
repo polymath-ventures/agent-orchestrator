@@ -4271,15 +4271,6 @@ func isDefaultDevDataDir(dataDir string) bool {
 	return filepath.Clean(got) == filepath.Clean(want)
 }
 
-func buildPrompt(cfg ports.SpawnConfig, scope domain.TrackerRepo) string {
-	return buildTaskPrompt(taskPromptConfig{
-		Role:         promptRoleForKind(cfg.Kind),
-		Prompt:       cfg.Prompt,
-		IssueRef:     domain.NativeIssueRef(cfg.IssueID, scope),
-		IssueContext: cfg.IssueContext,
-	})
-}
-
 // projectTrackerScope resolves the repository a project's issue references are
 // written against, through the same resolver the spawn boundary and tracker
 // intake use.
