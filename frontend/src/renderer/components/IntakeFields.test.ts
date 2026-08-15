@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildIntake, intakeNeedsRule, type IntakeForm } from "./IntakeFields";
+import { buildIntake, deriveIntakeRepo, intakeNeedsRule, type IntakeForm } from "./IntakeFields";
 
 function form(overrides: Partial<IntakeForm> = {}): IntakeForm {
 	return { enabled: false, provider: "", repo: "", assignee: "", optOutLabel: "", ...overrides };
@@ -60,5 +60,33 @@ describe("intakeNeedsRule", () => {
 		expect(intakeNeedsRule(form({ enabled: true }))).toBe(true);
 		expect(intakeNeedsRule(form({ enabled: true, assignee: "alice" }))).toBe(false);
 		expect(intakeNeedsRule(form())).toBe(false);
+	});
+});
+
+describe("deriveIntakeRepo", () => {
+	it("keeps a GitHub repo at owner/repo and links to its own host", () => {
+		expect(deriveIntakeRepo("https://github.com/acme/demo.git", "github")).toEqual({
+			path: "acme/demo",
+			url: "https://github.com/acme/demo",
+		});
+		expect(deriveIntakeRepo("git@github.com:acme/demo.git", "github")).toEqual({
+			path: "acme/demo",
+			url: "https://github.com/acme/demo",
+		});
+	});
+
+	// Truncating a GitLab namespace names a different project, and the link has
+	// to go to the project's own instance rather than github.com.
+	it("keeps a GitLab namespace whole and links to its instance", () => {
+		expect(deriveIntakeRepo("https://gitlab.internal/group/sub/proj.git", "gitlab")).toEqual({
+			path: "group/sub/proj",
+			url: "https://gitlab.internal/group/sub/proj",
+		});
+	});
+
+	it("returns nothing for an origin it cannot read", () => {
+		expect(deriveIntakeRepo(undefined)).toBeUndefined();
+		expect(deriveIntakeRepo("   ")).toBeUndefined();
+		expect(deriveIntakeRepo("https://github.com/acme")).toBeUndefined();
 	});
 });

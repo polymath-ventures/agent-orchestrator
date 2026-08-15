@@ -56,19 +56,29 @@ export function buildIntake(form: IntakeForm): TrackerIntakeConfig | undefined {
 	return Object.values(next).some((v) => v !== undefined) ? next : undefined;
 }
 
-// deriveGitHubRepo mirrors the daemon's parseGitHubRepoNative (observer.go):
-// derive "owner/repo" from a git origin URL for display only. The daemon does
-// the authoritative derivation server-side at poll time; this is purely so a
-// settings card can show which repo intake will actually poll.
-export function deriveGitHubRepo(remote?: string): string | undefined {
+// deriveIntakeRepo mirrors the daemon's own derivation (domain.TrackerScope):
+// work out which repository intake will poll, and where to browse it, from the
+// project's git origin. Display only — the daemon does the authoritative
+// derivation server-side at poll time.
+//
+// The provider matters twice: a GitHub repo is always owner/repo, while a
+// GitLab project path keeps its full namespace (truncating it names a different
+// project), and the link has to go to the origin's own host rather than
+// github.com.
+export function deriveIntakeRepo(remote?: string, provider?: string): { path: string; url?: string } | undefined {
 	const trimmed = remote?.trim();
 	if (!trimmed) return undefined;
+	let host: string | undefined;
 	let path: string | undefined;
 	if (trimmed.startsWith("git@")) {
-		path = trimmed.split(":")[1];
+		const [hostPart, pathPart] = trimmed.slice("git@".length).split(":");
+		host = hostPart;
+		path = pathPart;
 	} else {
 		try {
-			path = new URL(trimmed).pathname;
+			const url = new URL(trimmed);
+			host = url.host;
+			path = url.pathname;
 		} catch {
 			path = trimmed;
 		}
@@ -77,11 +87,12 @@ export function deriveGitHubRepo(remote?: string): string | undefined {
 	const parts = path
 		.replace(/\.git$/, "")
 		.replace(/^\/+|\/+$/g, "")
-		.split("/");
-	if (parts.length < 2) return undefined;
-	const owner = parts[parts.length - 2].trim();
-	const repo = parts[parts.length - 1].trim();
-	return owner && repo ? `${owner}/${repo}` : undefined;
+		.split("/")
+		.map((part) => part.trim());
+	if (parts.length < 2 || parts.some((part) => part === "")) return undefined;
+	const kept = provider === "gitlab" ? parts : parts.slice(-2);
+	const repoPath = kept.join("/");
+	return { path: repoPath, url: host ? `https://${host}/${repoPath}` : undefined };
 }
 
 // IntakeFields renders the shared "Tracker intake" controls: an enable checkbox
@@ -104,7 +115,7 @@ export function IntakeFields({
 }: {
 	form: IntakeForm;
 	onChange: (patch: Partial<IntakeForm>) => void;
-	repoPreview?: { value?: string };
+	repoPreview?: { value?: string; href?: string };
 	// compact drops the descriptive/help prose and folds the explanation into an
 	// info-icon tooltip — used by the create-project sheet, which stays minimal.
 	compact?: boolean;
@@ -128,15 +139,17 @@ export function IntakeFields({
 					<>
 						{repoPreview && (
 							<SettingsRow label={t("settings.project.repository")}>
-								{repoPreview.value ? (
+								{repoPreview.value && repoPreview.href ? (
 									<a
-										href={`https://github.com/${repoPreview.value}`}
+										href={repoPreview.href}
 										target="_blank"
 										rel="noopener noreferrer"
 										className="settings-row-value text-settings-accent hover:underline"
 									>
 										{repoPreview.value}
 									</a>
+								) : repoPreview.value ? (
+									<span className="settings-row-value">{repoPreview.value}</span>
 								) : (
 									<span className="settings-row-value">{t("settings.project.repoNotDetected")}</span>
 								)}

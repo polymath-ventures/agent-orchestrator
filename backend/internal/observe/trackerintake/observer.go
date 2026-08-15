@@ -372,18 +372,31 @@ func seenIssueIDs(sessions []domain.SessionRecord, projects []domain.ProjectReco
 		if sess.IssueID == "" || sess.IsTerminated {
 			continue
 		}
-		if id, ok := domain.ParseIssueRef(string(sess.IssueID), scopes[sess.ProjectID]); ok {
-			if key := dedupKey(id); key != "" {
-				seen[key] = true
-				continue
+		scope, scoped := scopes[sess.ProjectID]
+		if scoped {
+			if id, ok := domain.ParseIssueRef(string(sess.IssueID), scope); ok {
+				if key := dedupKey(id); key != "" {
+					seen[key] = true
+					continue
+				}
 			}
 		}
-		// A shape no tracker scope can resolve covers only itself. Keying it as
-		// a hostless canonical id would let it collide across instances, which
-		// is the thing dedupKey exists to prevent.
-		seen[string(sess.IssueID)] = true
+		// Without its project's scope there is no way to know which instance a
+		// stored id belongs to: `gitlab:group/proj#7` would read as gitlab.com
+		// and suppress an unrelated project's issue while still missing its
+		// own. Such a row is parked in a namespace no coverage key can equal,
+		// so it suppresses nothing. It costs no coverage either: a project
+		// whose scope will not resolve is one intake already skips, so its
+		// issues are never dispatched in the first place.
+		seen[unscopedKey(sess.IssueID)] = true
 	}
 	return seen
+}
+
+// unscopedKey namespaces a session whose issue could not be resolved against a
+// tracker scope, so it can never collide with a dedupKey.
+func unscopedKey(id domain.IssueID) string {
+	return "unscoped:" + string(id)
 }
 
 // BuildIssuePrompt turns normalized issue facts into the worker's initial task.

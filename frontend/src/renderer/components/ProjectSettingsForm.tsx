@@ -29,7 +29,7 @@ import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { cn } from "../lib/utils";
 import { newestActiveOrchestrator } from "../types/workspace";
 import { RequiredAgentField } from "./CreateProjectAgentSheet";
-import { buildIntake, deriveGitHubRepo, IntakeFields, type IntakeForm } from "./IntakeFields";
+import { buildIntake, deriveIntakeRepo, IntakeFields, type IntakeForm } from "./IntakeFields";
 import { ProductExternalLink } from "./ProductExternalLink";
 import { ReviewerSelect, reviewerTrustWarning } from "./ReviewerSelect";
 import { AgentModelCombobox } from "./settings/AgentModelCombobox";
@@ -190,7 +190,8 @@ function SettingsBody({
 			intakeAssignee: patch.assignee ?? f.intakeAssignee,
 			intakeOptOutLabel: patch.optOutLabel ?? f.intakeOptOutLabel,
 		}));
-	const effectiveIntakeRepo = form.intakeRepo.trim() || deriveGitHubRepo(project.repo);
+	const derivedIntakeRepo = deriveIntakeRepo(project.repo, form.intakeProvider);
+	const effectiveIntakeRepo = form.intakeRepo.trim() || derivedIntakeRepo?.path;
 	const reviewerWarning = reviewerTrustWarning(form.reviewerHarness);
 
 	const mutation = useMutation({
@@ -617,7 +618,10 @@ function SettingsBody({
 								variant="settings"
 								form={intakeForm}
 								onChange={patchIntake}
-								repoPreview={{ value: effectiveIntakeRepo }}
+								repoPreview={{
+									value: effectiveIntakeRepo,
+									href: effectiveIntakeRepo === derivedIntakeRepo?.path ? derivedIntakeRepo?.url : undefined,
+								}}
 							/>
 						</ProjectSettingsSection>
 					) : (

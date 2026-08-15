@@ -249,12 +249,16 @@ func TestPollRespawnsIssueAfterTerminatedSession(t *testing.T) {
 	}
 }
 
+func demoProjects() []domain.ProjectRecord {
+	return []domain.ProjectRecord{{ID: "demo", RepoOriginURL: "https://github.com/acme/demo.git"}}
+}
+
 func TestSeenIssueIDsExcludesTerminatedSessions(t *testing.T) {
 	sessions := []domain.SessionRecord{
-		{ID: "demo-1", IssueID: "github:acme/demo#12", IsTerminated: true},
-		{ID: "demo-2", IssueID: "github:acme/demo#12", IsTerminated: false},
+		{ID: "demo-1", ProjectID: "demo", IssueID: "github:acme/demo#12", IsTerminated: true},
+		{ID: "demo-2", ProjectID: "demo", IssueID: "github:acme/demo#12", IsTerminated: false},
 	}
-	seen := seenIssueIDs(sessions, nil)
+	seen := seenIssueIDs(sessions, demoProjects())
 	if !seen["github:acme/demo#12"] {
 		t.Fatal("issue with a live session alongside a terminated one should still be seen")
 	}
@@ -265,11 +269,36 @@ func TestSeenIssueIDsExcludesTerminatedSessions(t *testing.T) {
 
 func TestSeenIssueIDsIgnoresOnlyTerminatedSession(t *testing.T) {
 	sessions := []domain.SessionRecord{
-		{ID: "demo-1", IssueID: "github:acme/demo#12", IsTerminated: true},
+		{ID: "demo-1", ProjectID: "demo", IssueID: "github:acme/demo#12", IsTerminated: true},
 	}
-	seen := seenIssueIDs(sessions, nil)
+	seen := seenIssueIDs(sessions, demoProjects())
 	if seen["github:acme/demo#12"] {
 		t.Fatal("issue with only a terminated session should not be marked as seen")
+	}
+}
+
+// A session whose project scope cannot be resolved must suppress nothing: its
+// stored id cannot say which instance it belongs to, so reading it as coverage
+// would block an unrelated project's issue while still missing its own.
+func TestSeenIssueIDsParksSessionsWithoutAResolvableScope(t *testing.T) {
+	sessions := []domain.SessionRecord{
+		{ID: "orphan-1", ProjectID: "vanished", IssueID: "gitlab:group/proj#7"},
+		{ID: "orphan-2", ProjectID: "vanished", IssueID: "ISS-1"},
+	}
+
+	seen := seenIssueIDs(sessions, demoProjects())
+
+	if seen["gitlab:group/proj#7"] {
+		t.Fatal("an orphaned session must not suppress the gitlab.com issue of that path")
+	}
+	if seen[dedupKey(domain.TrackerID{Provider: domain.TrackerProviderGitLab, Native: "group/proj#7", Host: "gitlab.example"})] {
+		t.Fatal("an orphaned session must not suppress a self-managed issue either")
+	}
+	if seen["ISS-1"] {
+		t.Fatal("an unresolvable id must not occupy a bare coverage key")
+	}
+	if !seen[unscopedKey("gitlab:group/proj#7")] || !seen[unscopedKey("ISS-1")] {
+		t.Fatal("orphaned sessions should still be recorded, in the namespace that matches nothing")
 	}
 }
 
@@ -942,8 +971,8 @@ func TestSeenIssueIDsResolvesNonCanonicalSessionsPerProject(t *testing.T) {
 	if seen["github:acme/demo#56"] {
 		t.Error("a terminated session should not cover its issue")
 	}
-	if !seen["ISS-1"] {
-		t.Error("an unresolvable id should still cover itself verbatim")
+	if seen["ISS-1"] || !seen[unscopedKey("ISS-1")] {
+		t.Error("an id no scope can resolve belongs in the namespace that matches nothing")
 	}
 }
 
