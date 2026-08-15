@@ -10,21 +10,25 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/t
 type TrackerIntakeConfig = components["schemas"]["TrackerIntakeConfig"];
 
 // IntakeForm is the flat, string-backed shape both the create sheet and the
-// project settings form edit. repo and optOutLabel have no input today (repo is
-// derived from the git origin server-side; optOutLabel defaults to "no-ao") but
-// both are plumbed so a value set via the CLI survives a UI save instead of
-// being wiped.
+// project settings form edit. provider, repo and optOutLabel have no input
+// today (provider and repo are derived server-side; optOutLabel defaults to
+// "no-ao") but all three are plumbed so a value set via the CLI survives a UI
+// save instead of being wiped.
 export type IntakeForm = {
 	enabled: boolean;
+	provider: string;
 	repo: string;
 	assignee: string;
 	optOutLabel: string;
 };
 
-// Only "github" is a valid TrackerIntakeConfig["provider"] today (see the
-// backend's openapi enum). Adding Linear/Jira later means: the backend enum
-// grows, IntakeFields gains a provider <Select> + per-provider scope fields,
-// and buildIntake switches the scope field it emits.
+// The backend's openapi enum accepts "github" and "gitlab". This form has no
+// provider control, so it carries whatever the project already had and falls
+// back to "github" only for an intake being turned on for the first time —
+// rewriting a GitLab project to GitHub on an unrelated settings save is how a
+// project silently stops matching its own tracker. Adding Linear/Jira later
+// means: the backend enum grows, IntakeFields gains a provider <Select> +
+// per-provider scope fields, and buildIntake switches the scope field it emits.
 
 // intakeNeedsRule mirrors the backend guard (TrackerIntakeConfig.Validate):
 // enabling intake requires an assignee so it cannot drain an entire issue
@@ -39,7 +43,7 @@ export function intakeNeedsRule(form: IntakeForm): boolean {
 export function buildIntake(form: IntakeForm): TrackerIntakeConfig | undefined {
 	const next: TrackerIntakeConfig = {
 		enabled: form.enabled || undefined,
-		provider: form.enabled ? "github" : undefined,
+		provider: form.enabled ? ((form.provider.trim() || "github") as TrackerIntakeConfig["provider"]) : undefined,
 		repo: form.repo.trim() || undefined,
 		assignee: form.assignee.trim() || undefined,
 		optOutLabel: form.optOutLabel.trim() || undefined,

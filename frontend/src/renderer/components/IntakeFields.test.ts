@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { buildIntake, intakeNeedsRule, type IntakeForm } from "./IntakeFields";
 
 function form(overrides: Partial<IntakeForm> = {}): IntakeForm {
-	return { enabled: false, repo: "", assignee: "", optOutLabel: "", ...overrides };
+	return { enabled: false, provider: "", repo: "", assignee: "", optOutLabel: "", ...overrides };
 }
 
 describe("buildIntake", () => {
@@ -20,17 +20,31 @@ describe("buildIntake", () => {
 		});
 	});
 
-	// repo and optOutLabel have no UI input, so a value an operator set through
-	// the CLI has to survive a settings save rather than be silently wiped —
-	// wiping optOutLabel would quietly re-enable intake on opted-out issues.
+	// provider, repo and optOutLabel have no UI input, so a value an operator set
+	// through the CLI has to survive a settings save rather than be silently
+	// wiped — wiping optOutLabel would quietly re-enable intake on opted-out
+	// issues, and rewriting provider would point intake at the wrong tracker.
 	it("preserves CLI-only fields through a save", () => {
-		expect(buildIntake(form({ enabled: true, assignee: "alice", repo: "acme/tracker", optOutLabel: "none" }))).toEqual({
+		const saved = buildIntake(
+			form({
+				enabled: true,
+				provider: "gitlab",
+				assignee: "alice",
+				repo: "acme/tracker",
+				optOutLabel: "none",
+			}),
+		);
+		expect(saved).toEqual({
 			enabled: true,
-			provider: "github",
+			provider: "gitlab",
 			repo: "acme/tracker",
 			assignee: "alice",
 			optOutLabel: "none",
 		});
+	});
+
+	it("defaults an intake being enabled for the first time to github", () => {
+		expect(buildIntake(form({ enabled: true, assignee: "alice" }))?.provider).toBe("github");
 	});
 });
 

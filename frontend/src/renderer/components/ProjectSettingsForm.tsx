@@ -153,6 +153,7 @@ function SettingsBody({
 		workerMix: toWorkerMixForm(config.workerMix),
 		maxLiveWorkers: config.maxLiveWorkers ? String(config.maxLiveWorkers) : "",
 		intakeEnabled: intake.enabled ?? false,
+		intakeProvider: intake.provider ?? "",
 		intakeRepo: intake.repo ?? "",
 		intakeAssignee: intake.assignee ?? "",
 		intakeOptOutLabel: intake.optOutLabel ?? "",
@@ -175,6 +176,7 @@ function SettingsBody({
 
 	const intakeForm: IntakeForm = {
 		enabled: form.intakeEnabled,
+		provider: form.intakeProvider,
 		repo: form.intakeRepo,
 		assignee: form.intakeAssignee,
 		optOutLabel: form.intakeOptOutLabel,
@@ -183,6 +185,7 @@ function SettingsBody({
 		setForm((f) => ({
 			...f,
 			intakeEnabled: patch.enabled ?? f.intakeEnabled,
+			intakeProvider: patch.provider ?? f.intakeProvider,
 			intakeRepo: patch.repo ?? f.intakeRepo,
 			intakeAssignee: patch.assignee ?? f.intakeAssignee,
 			intakeOptOutLabel: patch.optOutLabel ?? f.intakeOptOutLabel,
