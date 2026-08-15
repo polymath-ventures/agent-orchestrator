@@ -99,6 +99,17 @@ type SessionInitialContextDocument struct {
 	Warnings        []string                       `json:"warnings"`
 }
 
+// Normalize makes required JSON arrays non-nil so API responses and persisted
+// snapshots always match the OpenAPI schema's array shape.
+func (d *SessionInitialContextDocument) Normalize() {
+	if d.Segments == nil {
+		d.Segments = []SessionInitialContextSegment{}
+	}
+	if d.Warnings == nil {
+		d.Warnings = []string{}
+	}
+}
+
 // SessionInitialContextSegment is one attributed source considered during
 // launch-context assembly. Content is the exact byte contribution for
 // contributing, non-redacted segments; when needed it includes the separator

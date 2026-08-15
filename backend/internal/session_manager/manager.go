@@ -1254,7 +1254,7 @@ func (m *Manager) sessionInitialContextDocument(rec domain.SessionRecord, cfg po
 		Source:          "ao.runtime.env",
 		Contributed:     false,
 		Redacted:        true,
-		RedactionReason: "runtime environment values may contain secrets and are not exposed",
+		RedactionReason: redactedEnvReason,
 		Note:            "AO runtime environment variables are delivered to the runtime separately from prompt text",
 	})
 	if envConfigured {
@@ -1264,7 +1264,7 @@ func (m *Manager) sessionInitialContextDocument(rec domain.SessionRecord, cfg po
 			Source:          "projectConfig.env",
 			Contributed:     false,
 			Redacted:        true,
-			RedactionReason: "runtime environment values may contain secrets and are not exposed",
+			RedactionReason: redactedEnvReason,
 			Note:            "environment values are delivered to the runtime separately from prompt text",
 		})
 	}
@@ -4226,6 +4226,8 @@ func promptProjectContext(projectID domain.ProjectID, project domain.ProjectReco
 // attachmentsDir is the worktree-relative directory where spawn file
 // attachments are written.
 const attachmentsDir = ".ao/attachments"
+
+const redactedEnvReason = "runtime environment values may contain secrets and are not exposed"
 
 // writeSpawnAttachments writes each attachment into the worktree under
 // attachmentsDir as attachment-1<ext>, attachment-2<ext>, ... and returns the

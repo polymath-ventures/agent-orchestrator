@@ -1274,7 +1274,7 @@ func (s *Service) InitialContext(ctx context.Context, id domain.SessionID) (doma
 	if doc, ok, err := s.store.GetSessionInitialContext(ctx, id); err != nil {
 		return domain.SessionInitialContextDocument{}, fmt.Errorf("get initial context %s: %w", id, err)
 	} else if ok {
-		normalizeInitialContextDocument(&doc)
+		doc.Normalize()
 		return doc, nil
 	}
 	prompt := rec.Metadata.Prompt
@@ -1307,15 +1307,6 @@ func (s *Service) InitialContext(ctx context.Context, id domain.SessionID) (doma
 		Segments:        []domain.SessionInitialContextSegment{seg},
 		Warnings:        []string{"no launch-time context snapshot was recorded (legacy session or capture failure); reconstructed from durable session metadata"},
 	}, nil
-}
-
-func normalizeInitialContextDocument(doc *domain.SessionInitialContextDocument) {
-	if doc.Segments == nil {
-		doc.Segments = []domain.SessionInitialContextSegment{}
-	}
-	if doc.Warnings == nil {
-		doc.Warnings = []string{}
-	}
 }
 
 // toAPIError maps the session engine's sentinel errors to their REST API

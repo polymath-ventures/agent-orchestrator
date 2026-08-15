@@ -2,7 +2,7 @@
 
 ### Requirement: Session initial context is inspectable
 
-AO SHALL expose a read-only session-scoped initial-context inspection surface for every non-terminated session and every persisted session for which a best-effort historical reconstruction is possible. The surface SHALL identify the session, role, harness, model, effort, mode, project, issue, and whether the response is an exact launch-time snapshot or a reconstructed best-effort view.
+AO SHALL expose a read-only session-scoped initial-context inspection surface for every non-terminated session and every persisted session for which a best-effort historical reconstruction is possible. The surface SHALL identify the session, kind, harness, model, effort, mode, project, issue, and whether the response is an exact launch-time snapshot or a reconstructed best-effort view.
 
 #### Scenario: Active session context is returned
 
@@ -15,6 +15,12 @@ AO SHALL expose a read-only session-scoped initial-context inspection surface fo
 - **WHEN** an operator requests the initial context for a persisted session that has no launch-time context snapshot
 - **THEN** AO returns a best-effort reconstruction when enough durable state exists
 - **AND** the response marks the context as reconstructed rather than exact
+
+#### Scenario: Missing snapshot is marked reconstructed
+
+- **WHEN** a session exists but no launch-time context snapshot was recorded because the session is historical or capture failed during spawn
+- **THEN** AO returns a best-effort reconstruction when enough durable state exists
+- **AND** the response warning says that no snapshot was recorded rather than attributing the absence only to age
 
 #### Scenario: Unknown session is rejected
 
@@ -62,6 +68,12 @@ AO SHALL NOT expose raw secret-bearing values through the initial-context inspec
 - **WHEN** a launch-time context segment is sourced from secret-bearing configuration or environment
 - **THEN** the inspection response includes the segment with `redacted=true`
 - **AND** the raw secret value is absent from both JSON and human-readable output
+
+#### Scenario: Runtime environment provenance is visible without values
+
+- **WHEN** AO records an exact launch-time context snapshot
+- **THEN** the response includes a redacted `ao.runtime.env` launch segment
+- **AND** environment values delivered outside prompt text are not exposed as segment content
 
 ### Requirement: Context inspection is available through API and CLI
 

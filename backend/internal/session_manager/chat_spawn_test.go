@@ -391,6 +391,38 @@ func TestChatSpawnStartsControllerAndNoRuntime(t *testing.T) {
 	}
 }
 
+func TestChatSpawn_InitialContextPersistFailureDoesNotFailSpawn(t *testing.T) {
+	launcher := &recordingLauncher{}
+	mgr, store, runtime := newChatManager(launcher)
+	store.initialContextErr = errors.New("snapshot unavailable")
+
+	rec, _, _, err := mgr.Spawn(context.Background(), ports.SpawnConfig{
+		ProjectID:     chatTestProject,
+		Kind:          domain.KindWorker,
+		Harness:       domain.HarnessCodex,
+		Prompt:        "coordinate the work",
+		RequestedMode: domain.SessionModeChat,
+	})
+	if err != nil {
+		t.Fatalf("Spawn returned error for initial context persistence failure: %v", err)
+	}
+	if rec.Mode != domain.SessionModeChat {
+		t.Fatalf("mode = %q, want chat", rec.Mode)
+	}
+	if runtime.created != 0 {
+		t.Fatalf("chat spawn touched terminal runtime: created=%d", runtime.created)
+	}
+	if len(launcher.started) != 1 || len(launcher.turns) != 1 {
+		t.Fatalf("started=%d turns=%d, want controller and initial turn", len(launcher.started), len(launcher.turns))
+	}
+	if store.sessions[rec.ID].IsTerminated {
+		t.Fatalf("session %s was marked terminated", rec.ID)
+	}
+	if _, ok := store.initialContexts[rec.ID]; ok {
+		t.Fatalf("initial context unexpectedly persisted despite configured error")
+	}
+}
+
 func TestChatSpawnUsesResolvedSpawnModelForController(t *testing.T) {
 	tests := []struct {
 		name      string
