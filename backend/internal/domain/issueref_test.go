@@ -300,3 +300,19 @@ func TestNativeIssueRefKeepsCrossProviderQualifiers(t *testing.T) {
 		t.Fatalf("NativeIssueRef = %q, want github:acme/code#242", got)
 	}
 }
+
+// Hostnames are case-insensitive but the dedup key is compared byte for byte,
+// so a GitLab URL host must normalise the same way an origin-derived host does.
+func TestParseIssueRefNormalisesGitLabURLHostCasing(t *testing.T) {
+	upper, ok := ParseIssueRef("https://GitLab.Internal/group/proj/-/issues/7", githubScope)
+	if !ok {
+		t.Fatal("ParseIssueRef not ok")
+	}
+	lower, ok := ParseIssueRef("https://gitlab.internal/group/proj/-/issues/7", githubScope)
+	if !ok {
+		t.Fatal("ParseIssueRef not ok")
+	}
+	if upper.Host != "gitlab.internal" || upper != lower {
+		t.Fatalf("host = %q (%+v), want it normalised to match %+v", upper.Host, upper, lower)
+	}
+}

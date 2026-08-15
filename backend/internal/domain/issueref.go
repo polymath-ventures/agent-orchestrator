@@ -263,9 +263,9 @@ func gitLabIssueURLNative(raw string) (native, host string, ok bool) {
 	}
 	// u.Host preserves the port (e.g. "gitlab.internal:8443") so that
 	// self-managed hosts with non-default ports match AllowedHosts entries.
-	host = u.Host
-	if strings.EqualFold(host, "gitlab.com") || strings.EqualFold(host, "www.gitlab.com") {
-		host = "" // zero value means gitlab.com
-	}
+	// Hostnames are case-insensitive, and this host reaches a dedup key that is
+	// compared byte for byte, so it is normalised the same way an origin-derived
+	// host is.
+	host = NormalizeTrackerHost(string(TrackerProviderGitLab), u.Host)
 	return fmt.Sprintf("%s#%d", projectPath, n), host, true
 }

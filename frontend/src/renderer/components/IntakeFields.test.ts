@@ -89,4 +89,17 @@ describe("deriveIntakeRepo", () => {
 		expect(deriveIntakeRepo("   ")).toBeUndefined();
 		expect(deriveIntakeRepo("https://github.com/acme")).toBeUndefined();
 	});
+
+	// With no provider configured yet, only GitHub's own hosts get the
+	// owner/repo rule; anything else keeps its full path.
+	it("infers the path rule from the host when no provider is set", () => {
+		expect(deriveIntakeRepo("https://gitlab.internal/group/sub/proj.git")).toEqual({
+			path: "group/sub/proj",
+			url: "https://gitlab.internal/group/sub/proj",
+		});
+		expect(deriveIntakeRepo("https://github.com/acme/demo.git")).toEqual({
+			path: "acme/demo",
+			url: "https://github.com/acme/demo",
+		});
+	});
 });

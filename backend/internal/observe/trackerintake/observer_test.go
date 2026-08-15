@@ -1018,3 +1018,22 @@ func TestSeenIssueIDsSeparatesSelfManagedGitLabInstances(t *testing.T) {
 		t.Fatal("a different instance sharing the project path must not be suppressed")
 	}
 }
+
+// A project with a usable GitLab origin but no intake config names no provider,
+// so the shared resolver would default to GitHub and fail to parse the origin.
+// The stored canonical id names the provider, so the session still resolves —
+// otherwise another project polling that repository spawns a duplicate.
+func TestSeenIssueIDsResolvesAProjectWithoutIntakeConfig(t *testing.T) {
+	projects := []domain.ProjectRecord{{ID: "alpha", RepoOriginURL: "https://gitlab.alpha.example/group/proj.git"}}
+	sessions := []domain.SessionRecord{{ID: "alpha-1", ProjectID: "alpha", IssueID: "gitlab:group/proj#7"}}
+
+	seen := seenIssueIDs(sessions, projects)
+
+	want := dedupKey(domain.TrackerID{Provider: domain.TrackerProviderGitLab, Native: "group/proj#7", Host: "gitlab.alpha.example"})
+	if !seen[want] {
+		t.Fatalf("seen = %+v, want coverage under %q", seen, want)
+	}
+	if seen[unscopedKey("gitlab:group/proj#7")] {
+		t.Fatal("a resolvable session should not be parked as unscoped")
+	}
+}

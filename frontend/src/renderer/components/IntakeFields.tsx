@@ -90,7 +90,18 @@ export function deriveIntakeRepo(remote?: string, provider?: string): { path: st
 		.split("/")
 		.map((part) => part.trim());
 	if (parts.length < 2 || parts.some((part) => part === "")) return undefined;
-	const kept = provider === "gitlab" ? parts : parts.slice(-2);
+	// With no configured provider, infer from the host the same way the daemon's
+	// parseRepoNative does: only GitHub's hosts get the owner/repo rule, because
+	// truncating anything else can name a different project.
+	const looksGitHub = (() => {
+		const h = (host ?? "")
+			.toLowerCase()
+			.replace(/^www\./, "")
+			.split(":")[0];
+		return h === "github.com" || h.endsWith(".github.com") || h.endsWith(".ghe.io");
+	})();
+	const twoSegmentRule = provider === "gitlab" ? false : provider === "github" || looksGitHub;
+	const kept = twoSegmentRule ? parts.slice(-2) : parts;
 	const repoPath = kept.join("/");
 	return { path: repoPath, url: host ? `https://${host}/${repoPath}` : undefined };
 }

@@ -361,23 +361,22 @@ func dedupKey(id domain.TrackerID) string {
 // session's issue_id would detach it from the worktree state its owner is
 // holding.
 func seenIssueIDs(sessions []domain.SessionRecord, projects []domain.ProjectRecord) map[string]bool {
-	scopes := make(map[domain.ProjectID]domain.TrackerRepo, len(projects))
+	byID := make(map[domain.ProjectID]domain.ProjectRecord, len(projects))
 	for _, project := range projects {
-		if repo, ok := trackerRepo(project, project.Config.TrackerIntake.WithDefaults()); ok {
-			scopes[domain.ProjectID(project.ID)] = repo
-		}
+		byID[domain.ProjectID(project.ID)] = project
 	}
 	seen := make(map[string]bool, len(sessions))
 	for _, sess := range sessions {
 		if sess.IssueID == "" || sess.IsTerminated {
 			continue
 		}
-		scope, scoped := scopes[sess.ProjectID]
-		if scoped {
-			if id, ok := domain.ParseIssueRef(string(sess.IssueID), scope); ok {
-				if key := dedupKey(id); key != "" {
-					seen[key] = true
-					continue
+		if project, known := byID[sess.ProjectID]; known {
+			if scope, ok := sessionTrackerScope(project, sess.IssueID); ok {
+				if id, ok := domain.ParseIssueRef(string(sess.IssueID), scope); ok {
+					if key := dedupKey(id); key != "" {
+						seen[key] = true
+						continue
+					}
 				}
 			}
 		}
@@ -391,6 +390,23 @@ func seenIssueIDs(sessions []domain.SessionRecord, projects []domain.ProjectReco
 		seen[unscopedKey(sess.IssueID)] = true
 	}
 	return seen
+}
+
+// sessionTrackerScope resolves the repository a session's stored issue id is
+// interpreted against.
+//
+// A project that has not configured intake names no provider, so the shared
+// resolver would default to GitHub and fail to parse a GitLab origin — parking
+// a perfectly resolvable session and letting another project polling that same
+// repository spawn a duplicate. The stored canonical id already names its
+// provider, so it supplies the hint, exactly as the session manager does when
+// it renders a prompt.
+func sessionTrackerScope(project domain.ProjectRecord, issueID domain.IssueID) (domain.TrackerRepo, bool) {
+	var fallback domain.TrackerProvider
+	if provider, _, ok := domain.SplitCanonicalIssueID(issueID); ok {
+		fallback = provider
+	}
+	return domain.TrackerScope(project.RepoOriginURL, project.Config.TrackerIntake.WithDefaults(), fallback)
 }
 
 // unscopedKey namespaces a session whose issue could not be resolved against a
