@@ -608,14 +608,56 @@ describe("ProjectSettingsForm", () => {
 					config: expect.objectContaining({
 						worker: {
 							agent: "codex",
-							agentConfig: { model: "gpt-5.4", effort: "medium" },
+							agentConfig: { modelByHarness: { codex: { model: "gpt-5.4", effort: "medium" } } },
 						},
 						orchestrator: {
 							agent: "claude-code",
-							agentConfig: { model: "opus", effort: "high" },
+							agentConfig: { modelByHarness: { "claude-code": { model: "opus", effort: "high" } } },
 						},
 						agentConfig: {
 							permissions: "auto",
+						},
+					}),
+				},
+			}),
+		);
+	});
+
+	it("trims manual Agents pane effort before saving", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "git@github.com:acme/project-one.git",
+			defaultBranch: "main",
+			config: {
+				worker: {
+					agent: "codex",
+					agentConfig: { model: "custom-model", effort: "medium" },
+				},
+				orchestrator: { agent: "claude-code" },
+			},
+		});
+
+		renderSettings("proj-1", undefined, "agents");
+
+		const effort = await screen.findByLabelText("Worker effort");
+		await waitFor(() => expect(effort.tagName).toBe("INPUT"));
+		await userEvent.clear(effort);
+		await userEvent.type(effort, " high ");
+		submitSettings();
+
+		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
+		expect(putMock).toHaveBeenCalledWith(
+			"/api/v1/projects/{id}",
+			expect.objectContaining({
+				body: {
+					displayName: "Project One",
+					config: expect.objectContaining({
+						worker: {
+							agent: "codex",
+							agentConfig: { model: "custom-model", effort: "high" },
 						},
 					}),
 				},

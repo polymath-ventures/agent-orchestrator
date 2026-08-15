@@ -225,7 +225,7 @@ function SettingsBody({
 				mode: _legacyMode,
 				effort: _legacyEffort,
 				...sharedAgentConfig
-			} = scrubSharedRoleModelPins(config.agentConfig, [form.workerAgent, form.orchestratorAgent]);
+			} = config.agentConfig ?? {};
 			const next: ProjectConfig = isScratchProject
 				? {
 						...scratchSupportedConfig(config),
@@ -234,6 +234,7 @@ function SettingsBody({
 							agent: form.workerAgent,
 							agentConfig: buildRoleAgentConfig(
 								config.worker?.agentConfig,
+								config.agentConfig,
 								form.workerAgent,
 								form.workerModel,
 								form.workerMode,
@@ -245,6 +246,7 @@ function SettingsBody({
 							agent: form.orchestratorAgent,
 							agentConfig: buildRoleAgentConfig(
 								config.orchestrator?.agentConfig,
+								config.agentConfig,
 								form.orchestratorAgent,
 								form.orchestratorModel,
 								form.orchestratorMode,
@@ -274,6 +276,7 @@ function SettingsBody({
 							agent: form.workerAgent,
 							agentConfig: buildRoleAgentConfig(
 								config.worker?.agentConfig,
+								config.agentConfig,
 								form.workerAgent,
 								form.workerModel,
 								form.workerMode,
@@ -285,6 +288,7 @@ function SettingsBody({
 							agent: form.orchestratorAgent,
 							agentConfig: buildRoleAgentConfig(
 								config.orchestrator?.agentConfig,
+								config.agentConfig,
 								form.orchestratorAgent,
 								form.orchestratorModel,
 								form.orchestratorMode,
@@ -901,8 +905,9 @@ function AgentEffortField({
 				? (modelOption.efforts ?? [])
 				: harnessEfforts(harness),
 	);
+	const trimmedEffort = effort.trim();
 	const effortOptions =
-		effort.trim() && !catalogEfforts.includes(effort) ? [...catalogEfforts, effort] : catalogEfforts;
+		trimmedEffort && !catalogEfforts.includes(trimmedEffort) ? [...catalogEfforts, trimmedEffort] : catalogEfforts;
 	const manualEffort = model.trim() !== "" && shouldUseManualEffort(modelOption);
 	const showEffort = agentId !== "" && (manualEffort || effortOptions.length > 0);
 	if (!showEffort) return null;
@@ -1210,37 +1215,38 @@ function roleModelValue(
 
 function buildRoleAgentConfig(
 	existing: components["schemas"]["AgentConfig"] | undefined,
+	shared: components["schemas"]["AgentConfig"] | undefined,
 	agentId: string,
 	model: string,
 	mode: string,
 	effort: string,
 ): components["schemas"]["AgentConfig"] | undefined {
 	const next = { ...existing };
-	if (model) next.model = model;
-	else delete next.model;
-	if (effort) next.effort = effort;
-	else delete next.effort;
+	const trimmedModel = model.trim();
+	const trimmedEffort = effort.trim();
 	if (mode) next.mode = mode;
 	else delete next.mode;
 	const modelByHarness = { ...(next.modelByHarness ?? {}) };
-	if (agentId) {
-		delete modelByHarness[agentId];
+	const useHarnessScopedPin = Boolean(
+		agentId && (existing?.modelByHarness?.[agentId] || shared?.modelByHarness?.[agentId]),
+	);
+	if (useHarnessScopedPin && agentId) {
+		delete next.model;
+		delete next.effort;
+		const entry = { ...(modelByHarness[agentId] ?? {}) };
+		if (trimmedModel) entry.model = trimmedModel;
+		else delete entry.model;
+		if (trimmedEffort) entry.effort = trimmedEffort;
+		else delete entry.effort;
+		if (Object.keys(entry).length > 0) modelByHarness[agentId] = entry;
+		else delete modelByHarness[agentId];
+	} else {
+		if (trimmedModel) next.model = trimmedModel;
+		else delete next.model;
+		if (trimmedEffort) next.effort = trimmedEffort;
+		else delete next.effort;
 	}
 	if (Object.keys(modelByHarness).length > 0) next.modelByHarness = modelByHarness;
 	else delete next.modelByHarness;
 	return Object.keys(next).length > 0 ? next : undefined;
-}
-
-function scrubSharedRoleModelPins(
-	shared: components["schemas"]["AgentConfig"] | undefined,
-	agentIds: string[],
-): components["schemas"]["AgentConfig"] {
-	const next = { ...(shared ?? {}) };
-	const modelByHarness = { ...(next.modelByHarness ?? {}) };
-	for (const agentId of agentIds) {
-		if (agentId) delete modelByHarness[agentId];
-	}
-	if (Object.keys(modelByHarness).length > 0) next.modelByHarness = modelByHarness;
-	else delete next.modelByHarness;
-	return next;
 }
