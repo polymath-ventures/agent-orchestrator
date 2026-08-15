@@ -458,7 +458,7 @@ func TestBuildIssuePromptCapsLargeIssueBody(t *testing.T) {
 		Title: "Large issue",
 		URL:   "https://github.com/acme/demo/issues/99",
 		Body:  strings.Repeat("body ", 2000),
-	})
+	}, domain.TrackerRepo{Provider: domain.TrackerProviderGitHub, Native: "acme/demo"})
 	if len(prompt) > maxIntakePromptLen {
 		t.Fatalf("prompt length = %d, want <= %d", len(prompt), maxIntakePromptLen)
 	}
@@ -482,7 +482,11 @@ func TestBuildIssuePromptPreservesLegacyBytes(t *testing.T) {
 		Assignees: []string{"alice"},
 		Body:      "The login form submits twice.\n",
 	}
-	want := `Work on tracker issue github:acme/demo#12.
+	// The opening line deliberately changed with #298: it addresses the issue
+	// (`12`) instead of naming the storage key (`github:acme/demo#12`), which no
+	// tracker CLI accepts and which the configured-template path never emitted.
+	// Every other byte of this legacy prompt is unchanged.
+	want := `Work on tracker issue 12.
 
 Title: Fix login
 URL: https://github.com/acme/demo/issues/12
@@ -493,7 +497,8 @@ Body:
 The login form submits twice.
 
 Implement the requested change in this repository, run the relevant checks, and open or update a pull request when ready.`
-	if got := BuildIssuePrompt(issue); got != want {
+	scope := domain.TrackerRepo{Provider: domain.TrackerProviderGitHub, Native: "acme/demo"}
+	if got := BuildIssuePrompt(issue, scope); got != want {
 		t.Fatalf("intake prompt changed from legacy bytes:\ngot:  %q\nwant: %q", got, want)
 	}
 }
@@ -939,5 +944,48 @@ func TestSeenIssueIDsResolvesNonCanonicalSessionsPerProject(t *testing.T) {
 	}
 	if !seen["ISS-1"] {
 		t.Error("an unresolvable id should still cover itself verbatim")
+	}
+}
+
+// An issue outside the polled repository keeps its qualifier, so the legacy
+// prompt cannot tell a worker to work on its own repo's issue of that number.
+func TestBuildIssuePromptQualifiesAnIssueOutsideTheScope(t *testing.T) {
+	issue := domain.Issue{
+		ID:    domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/other#12"},
+		Title: "Elsewhere",
+	}
+	scope := domain.TrackerRepo{Provider: domain.TrackerProviderGitHub, Native: "acme/demo"}
+	if got := BuildIssuePrompt(issue, scope); !strings.HasPrefix(got, "Work on tracker issue acme/other#12.") {
+		t.Fatalf("prompt = %q, want it to open with the qualified reference", got)
+	}
+}
+
+// Two self-managed GitLab instances can share a project path. The stored
+// canonical id cannot tell them apart, so coverage must not either — a live
+// session on one instance must not suppress intake for the other's issue.
+func TestSeenIssueIDsSeparatesSelfManagedGitLabInstances(t *testing.T) {
+	projects := []domain.ProjectRecord{
+		{
+			ID:            "alpha",
+			RepoOriginURL: "https://gitlab.alpha.example/group/proj.git",
+			Config:        domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, Assignee: "alice", Provider: domain.TrackerProviderGitLab}},
+		},
+		{
+			ID:            "beta",
+			RepoOriginURL: "https://gitlab.beta.example/group/proj.git",
+			Config:        domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, Assignee: "alice", Provider: domain.TrackerProviderGitLab}},
+		},
+	}
+	sessions := []domain.SessionRecord{{ID: "alpha-1", ProjectID: "alpha", IssueID: "gitlab:group/proj#7"}}
+
+	seen := seenIssueIDs(sessions, projects)
+
+	alpha := dedupKey(domain.TrackerID{Provider: domain.TrackerProviderGitLab, Native: "group/proj#7", Host: "gitlab.alpha.example"})
+	beta := dedupKey(domain.TrackerID{Provider: domain.TrackerProviderGitLab, Native: "group/proj#7", Host: "gitlab.beta.example"})
+	if !seen[alpha] {
+		t.Fatal("the instance that has a live session should be covered")
+	}
+	if seen[beta] {
+		t.Fatal("a different instance sharing the project path must not be suppressed")
 	}
 }

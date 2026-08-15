@@ -180,7 +180,7 @@ func (o *Observer) Poll(ctx context.Context) error {
 
 // pollProject returns failed=true for conditions that should be retried after a
 // backoff window rather than logged on every poll.
-func (o *Observer) pollProject(ctx context.Context, project domain.ProjectRecord, seen map[domain.IssueID]bool) (failed bool) {
+func (o *Observer) pollProject(ctx context.Context, project domain.ProjectRecord, seen map[string]bool) (failed bool) {
 	cfg := project.Config.TrackerIntake.WithDefaults()
 	if !cfg.Enabled {
 		return false
@@ -224,7 +224,11 @@ func (o *Observer) pollProject(ctx context.Context, project domain.ProjectRecord
 			continue
 		}
 		issueID := domain.CanonicalIssueID(issue.ID)
-		if issueID == "" || seen[issueID] {
+		// Intake lists one repository at a time, so that repo's host is the
+		// host of every issue in this pass — the adapter does not stamp it on
+		// each issue.
+		coverage := dedupKey(domain.TrackerID{Provider: issue.ID.Provider, Native: issue.ID.Native, Host: repo.Host})
+		if issueID == "" || coverage == "" || seen[coverage] {
 			continue
 		}
 		if workerPoolFull {
@@ -240,7 +244,7 @@ func (o *Observer) pollProject(ctx context.Context, project domain.ProjectRecord
 				return true
 			}
 		} else {
-			prompt = BuildIssuePrompt(issue)
+			prompt = BuildIssuePrompt(issue, repo)
 		}
 		if _, _, _, err := o.spawner.Spawn(ctx, ports.SpawnConfig{
 			ProjectID: domain.ProjectID(project.ID),
@@ -262,7 +266,7 @@ func (o *Observer) pollProject(ctx context.Context, project domain.ProjectRecord
 			spawnFailed = true
 			continue
 		}
-		seen[issueID] = true
+		seen[coverage] = true
 	}
 	return spawnFailed
 }
@@ -322,6 +326,25 @@ func containsFold(values []string, needle string) bool {
 	return false
 }
 
+// dedupKey identifies an issue for coverage purposes.
+//
+// The canonical id stored in sessions.issue_id carries no GitLab instance host,
+// so two self-managed instances that share a project path produce the same
+// stored value and would collide in this fleet-wide set — one instance's live
+// session suppressing intake for a different issue on the other. The host is
+// recovered from the owning project's tracker scope and folded in here, at read
+// time, so coverage is host-accurate without changing what is stored.
+func dedupKey(id domain.TrackerID) string {
+	canonical := domain.CanonicalIssueID(id)
+	if canonical == "" {
+		return ""
+	}
+	if id.Host == "" {
+		return string(canonical)
+	}
+	return string(canonical) + "@" + id.Host
+}
+
 // seenIssueIDs is the set of issues a live session already services, keyed the
 // way the spawn loop looks them up.
 //
@@ -337,32 +360,41 @@ func containsFold(values []string, needle string) bool {
 // matter belong to sessions that are mid-work, and rewriting a running
 // session's issue_id would detach it from the worktree state its owner is
 // holding.
-func seenIssueIDs(sessions []domain.SessionRecord, projects []domain.ProjectRecord) map[domain.IssueID]bool {
+func seenIssueIDs(sessions []domain.SessionRecord, projects []domain.ProjectRecord) map[string]bool {
 	scopes := make(map[domain.ProjectID]domain.TrackerRepo, len(projects))
 	for _, project := range projects {
 		if repo, ok := trackerRepo(project, project.Config.TrackerIntake.WithDefaults()); ok {
 			scopes[domain.ProjectID(project.ID)] = repo
 		}
 	}
-	seen := make(map[domain.IssueID]bool, len(sessions))
+	seen := make(map[string]bool, len(sessions))
 	for _, sess := range sessions {
 		if sess.IssueID == "" || sess.IsTerminated {
 			continue
 		}
-		seen[sess.IssueID] = true
 		if id, ok := domain.ParseIssueRef(string(sess.IssueID), scopes[sess.ProjectID]); ok {
-			if canonical := domain.CanonicalIssueID(id); canonical != "" {
-				seen[canonical] = true
+			if key := dedupKey(id); key != "" {
+				seen[key] = true
+				continue
 			}
 		}
+		// A shape no tracker scope can resolve covers only itself. Keying it as
+		// a hostless canonical id would let it collide across instances, which
+		// is the thing dedupKey exists to prevent.
+		seen[string(sess.IssueID)] = true
 	}
 	return seen
 }
 
 // BuildIssuePrompt turns normalized issue facts into the worker's initial task.
-func BuildIssuePrompt(issue domain.Issue) string {
+//
+// scope is the repository intake is polling, so the issue is addressed the way
+// the configured-template path addresses it: a bare number for the project's
+// own repo, qualified otherwise. Rendering the canonical id here would hand the
+// agent a storage key no tracker CLI accepts.
+func BuildIssuePrompt(issue domain.Issue, scope domain.TrackerRepo) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "Work on tracker issue %s.\n\n", domain.CanonicalIssueID(issue.ID))
+	fmt.Fprintf(&b, "Work on tracker issue %s.\n\n", domain.NativeIssueRef(domain.CanonicalIssueID(issue.ID), scope))
 	if issue.Title != "" {
 		fmt.Fprintf(&b, "Title: %s\n", issue.Title)
 	}
