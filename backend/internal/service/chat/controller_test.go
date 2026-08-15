@@ -1214,6 +1214,53 @@ func TestInterruptCancelsWhatIsQueuedBehindTheTurn(t *testing.T) {
 	}
 }
 
+func TestChatHandoffInterruptCancelsQueuedTurnAfterActiveTurnStops(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+
+	if _, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
+		Text: "running", ClientMessageID: "handoff-interrupt-1",
+	}); err != nil {
+		t.Fatalf("send running turn: %v", err)
+	}
+	h.conv.emit(ports.ChatEvent{Kind: ports.ChatEventTurnStarted, ProviderTurnID: "provider-turn-1"})
+	h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
+		return turnStateByText(t, s)["running"] == domain.TurnStateRunning
+	})
+	if _, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
+		Text: "queued", ClientMessageID: "handoff-interrupt-2",
+	}); err != nil {
+		t.Fatalf("queue second turn: %v", err)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		done <- h.svc.PrepareChatHandoff(ctx, testSession, domain.SessionInterfaceTransitionInterrupt)
+	}()
+	h.conv.emit(ports.ChatEvent{
+		Kind: ports.ChatEventTurnCompleted, ProviderTurnID: "provider-turn-1",
+		TurnState: domain.TurnStateInterrupted,
+	})
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("prepare interrupt handoff: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("interrupt handoff spun with a queued turn after the active turn stopped")
+	}
+	snapshot := h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
+		return turnStateByText(t, s)["queued"].Terminal()
+	})
+	if got := turnStateByText(t, snapshot)["queued"]; got != domain.TurnStateInterrupted {
+		t.Fatalf("queued turn = %s, want interrupted", got)
+	}
+	if got := h.conv.sentTexts(); len(got) != 1 {
+		t.Fatalf("provider received %v; interrupt handoff must not dispatch the queued turn", got)
+	}
+}
+
 func TestChatHandoffDrainFinishesAcceptedQueueAndClosesNewIntake(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()

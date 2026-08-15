@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/chatdriver/procdiag"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/chatdriver/processenv"
 )
 
@@ -15,6 +16,16 @@ type process struct {
 	stdin  io.WriteCloser
 	stdout io.Reader
 	stop   func() error
+	// stderrTail returns what the child last wrote to stderr, or "" when nothing
+	// was captured. Nil for fakes that never spawn a process.
+	stderrTail func() string
+}
+
+func (p *process) diagnostics() string {
+	if p == nil || p.stderrTail == nil {
+		return ""
+	}
+	return procdiag.Diagnostics("agent stderr", p.stderrTail())
 }
 
 type spawnFunc func(Launch, string) (*process, error)
@@ -42,15 +53,22 @@ func spawnAgent(launch Launch, workdir string) (*process, error) {
 	}
 
 	// ACP owns stdout. Always drain stderr separately so a verbose adapter cannot
-	// fill its OS pipe and deadlock the protocol.
-	go func() { _, _ = io.Copy(io.Discard, stderr) }()
+	// fill its OS pipe and deadlock the protocol — but retain the tail, because it
+	// is the only thing that distinguishes a broken install, a wrong executable,
+	// an invalid key, and an unknown flag from each other.
+	tail := &procdiag.Tail{}
+	go func() { _, _ = io.Copy(tail, stderr) }()
 
 	done := make(chan error, 1)
-	go func() { done <- cmd.Wait() }()
+	go func() {
+		_, err := cmd.Process.Wait()
+		done <- err
+	}()
 	var once sync.Once
 	return &process{
-		stdin:  stdin,
-		stdout: stdout,
+		stdin:      stdin,
+		stdout:     stdout,
+		stderrTail: tail.String,
 		stop: func() error {
 			var stopErr error
 			once.Do(func() {

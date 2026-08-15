@@ -65,6 +65,7 @@ type ChatStart struct {
 	// without this a chat orchestrator could talk but not work.
 	Env                   map[string]string
 	Model                 string
+	Effort                domain.Effort
 	Permissions           ports.PermissionMode
 	SystemPrompt          string
 	AdditionalDirectories []string
@@ -130,6 +131,7 @@ func (m *Manager) launchChatController(ctx context.Context, in chatSpawn) (domai
 		WorkspacePath:         in.workspace.Path,
 		Env:                   env,
 		Model:                 agentConfig.Model,
+		Effort:                agentConfig.Effort,
 		Permissions:           agentConfig.Permissions,
 		SystemPrompt:          in.systemPrompt,
 		AdditionalDirectories: workspaceProjectDirectories(in.workspace.Path, in.workspaceProject),
@@ -300,6 +302,7 @@ func (m *Manager) resumeChatController(
 		WorkspacePath:         ws.Path,
 		Env:                   m.runtimeEnv(rec.ID, rec.ProjectID, rec.IssueID, project.Config.Env),
 		Model:                 agentConfig.Model,
+		Effort:                agentConfig.Effort,
 		Permissions:           agentConfig.Permissions,
 		SystemPrompt:          systemPrompt,
 		AdditionalDirectories: additionalDirectories,

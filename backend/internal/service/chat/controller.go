@@ -799,7 +799,6 @@ func (c *Controller) drain(ctx context.Context) {
 
 	c.mu.Lock()
 	cutoff := c.cancelQueuedAt
-	c.cancelQueuedAt = time.Time{}
 	busy := c.pendingTurnID != ""
 	handoff := c.handoff
 	drainDuringHandoff := c.handoffDrain
@@ -813,11 +812,17 @@ func (c *Controller) drain(ctx context.Context) {
 	if !cutoff.IsZero() {
 		// The user stopped the agent. Everything queued at that moment is
 		// cancelled; anything typed afterwards is still theirs to send, and falls
-		// through to the dispatch below.
+		// through to the dispatch below. Keep the cutoff until cancellation succeeds
+		// so a busy controller or transient store error cannot strand a queued row.
 		if err := c.store.CancelQueuedTurns(ctx, c.conversation.ID, cutoff, c.now()); err != nil {
 			c.log.Error("failed to cancel queued turns", "session", c.sessionID, "error", err)
 			return
 		}
+		c.mu.Lock()
+		if c.cancelQueuedAt.Equal(cutoff) {
+			c.cancelQueuedAt = time.Time{}
+		}
+		c.mu.Unlock()
 	}
 	if handoff && !drainDuringHandoff {
 		return
@@ -913,7 +918,7 @@ func (c *Controller) BeginHandoff(
 			case err != nil:
 				c.AbortHandoff()
 				return fmt.Errorf("check queued turns before handoff: %w", err)
-			case policy == domain.SessionInterfaceTransitionDrain:
+			case policy == domain.SessionInterfaceTransitionDrain || policy == domain.SessionInterfaceTransitionInterrupt:
 				c.drain(ctx)
 			}
 		}

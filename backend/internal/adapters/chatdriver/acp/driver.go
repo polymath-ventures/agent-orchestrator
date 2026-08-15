@@ -292,11 +292,21 @@ func (d *Driver) connect(
 		},
 	})
 	if err != nil {
+		// Capture the child's stderr before Close reaps it. Every startup failure
+		// used to collapse to the same 60 s hang plus "context deadline exceeded",
+		// which made a broken install, a wrong CLAUDE_CODE_EXECUTABLE, an invalid
+		// key, and an unknown flag indistinguishable.
+		diagnostics := proc.diagnostics()
 		_ = conv.Close()
+		if diagnostics != "" {
+			d.log.Warn("ACP agent failed to initialize",
+				"command", launch.Command, "error", err, "stderr", proc.stderrTail())
+		}
 		if isACPAuthRequired(err) {
 			return nil, acpsdk.InitializeResponse{}, normalizeACPError("ACP initialize", err)
 		}
-		return nil, acpsdk.InitializeResponse{}, fmt.Errorf("%w: ACP initialize: %w", ports.ErrChatDriverIncompatible, err)
+		return nil, acpsdk.InitializeResponse{},
+			fmt.Errorf("%w: ACP initialize: %w%s", ports.ErrChatDriverIncompatible, err, diagnostics)
 	}
 	return conv, init, nil
 }

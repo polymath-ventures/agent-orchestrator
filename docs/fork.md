@@ -83,7 +83,25 @@ product, and a sync is not complete until every named behavioral guard passes.
    `ops/deploy.test.mjs`, `driver_test.go`, and `doctor_test.go` suites exercise
    packaged-runtime preservation, discovery, and diagnosis. Keep every guard
    green and meaningful. UX shape may follow upstream; browser functionality
-   may not regress. Reference evidence:
+   may not regress.
+   Session interface handoff is part of the same Chat preservation contract: a
+   sync must keep target config preflight before source teardown, preserve the
+   one-writer invariant, carry accepted queued work according to the selected
+   drain/interrupt policy, retain child stderr diagnostics for failed chat
+   drivers, keep model/effort pins in conversation turn settings after resume,
+   and disclose fresh-start risk without exposing provider-native IDs as client
+   authority. Sync anchors: `backend/internal/session_manager/interface_transition.go`,
+   `backend/internal/service/chat/{service.go,controller.go}`,
+   `backend/internal/adapters/chatdriver/{acp,codexappserver,claudeacp}`, and
+   `frontend/src/renderer/{hooks/useSessionInterfaceTransition.ts,components/SessionInterfaceSwitch.tsx,components/SessionView.tsx}`.
+   **Behavioral guards:** `backend/internal/session_manager/interface_transition_test.go`
+   covers target preflight before teardown and stale-idle drain proof;
+   `backend/internal/service/chat/controller_test.go` covers drain/interrupt
+   queue policy; `backend/internal/service/chat/config_resolution_test.go` covers
+   model and effort surviving resume; and
+   `backend/internal/adapters/chatdriver/procdiag/tail_test.go` covers
+   retained and redacted child stderr.
+   Reference evidence:
    [web client](screenshots/fork-features/web-client.png).
    Reference issues/PRs: #2 → #18; #46 → #55; #54 → #62; #182 → #191; and #109
    (web project import daemon readiness); #281.

@@ -479,6 +479,7 @@ func (c chatLauncher) StartChat(ctx context.Context, cfg sessionmanager.ChatStar
 		WorkspacePath:          cfg.WorkspacePath,
 		Env:                    cfg.Env,
 		Model:                  cfg.Model,
+		Effort:                 string(cfg.Effort),
 		Permissions:            cfg.Permissions,
 		SystemPrompt:           cfg.SystemPrompt,
 		AdditionalDirectories:  cfg.AdditionalDirectories,
