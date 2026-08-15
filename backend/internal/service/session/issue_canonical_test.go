@@ -286,3 +286,30 @@ func TestSpawnLeavesCrossHostGitLabReferencesAlone(t *testing.T) {
 		t.Fatalf("persisted IssueID = %q, want gitlab:group/project#7", fc.spawnedCfg.IssueID)
 	}
 }
+
+// A GitHub reference carries no host, so the cross-host guard must not catch it
+// on a self-managed GitLab project: nothing is lost by canonicalising it, and
+// leaving it raw breaks the invariant that stored ids are canonical.
+func TestSpawnCanonicalisesAGitHubURLOnASelfManagedGitLabProject(t *testing.T) {
+	st := newFakeStore()
+	st.projects["demo"] = domain.ProjectRecord{ID: "demo", RepoOriginURL: "https://gitlab.internal/group/project.git"}
+	fc := &fakeCommander{}
+	svc := NewWithDeps(Deps{Manager: fc, Store: st, SCM: staticSCM{repo: ports.SCMRepo{
+		Provider: "gitlab",
+		Host:     "gitlab.internal",
+		Owner:    "group",
+		Name:     "project",
+		Repo:     "group/project",
+	}}})
+
+	if _, _, _, err := svc.Spawn(context.Background(), ports.SpawnConfig{
+		ProjectID: "demo",
+		Kind:      domain.KindWorker,
+		IssueID:   "https://github.com/acme/demo/issues/12",
+	}); err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	if fc.spawnedCfg.IssueID != "github:acme/demo#12" {
+		t.Fatalf("persisted IssueID = %q, want github:acme/demo#12", fc.spawnedCfg.IssueID)
+	}
+}

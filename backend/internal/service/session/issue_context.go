@@ -81,11 +81,15 @@ func (s *Service) withCanonicalIssueID(cfg ports.SpawnConfig, project domain.Pro
 		return cfg
 	}
 	// The canonical form carries no GitLab instance host, so it can only stand
-	// in for an issue on the project's own instance. A reference that names
-	// another host — an issue URL on a second self-managed GitLab — would come
-	// back pointing at the project's instance, so it keeps its original text
-	// rather than being flattened into an id that means something else.
-	if id.Host != scope.Host {
+	// in for a GitLab issue on the project's own instance. A reference that
+	// names another host — an issue URL on a second self-managed GitLab — would
+	// come back pointing at the project's instance, so it keeps its original
+	// text rather than being flattened into an id that means something else.
+	//
+	// Only GitLab ids carry a host at all, so a GitHub reference on a
+	// self-managed GitLab project must not be caught by this: nothing about it
+	// is lost by canonicalising.
+	if id.Provider == domain.TrackerProviderGitLab && id.Host != scope.Host {
 		return cfg
 	}
 	cfg.IssueID = domain.CanonicalIssueID(id)
