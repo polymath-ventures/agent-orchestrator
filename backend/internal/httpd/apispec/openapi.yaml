@@ -2451,6 +2451,45 @@ paths:
       summary: Set the auto-inject review setting for a session
       tags:
       - sessions
+  /api/v1/sessions/{sessionId}/context:
+    get:
+      operationId: getSessionInitialContext
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionInitialContextResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Inspect a session's launch context by source
+      tags:
+      - sessions
   /api/v1/sessions/{sessionId}/conversation:
     get:
       operationId: getSessionConversation
@@ -8139,6 +8178,100 @@ components:
       - ok
       - sessionId
       - message
+      type: object
+    SessionInitialContextDocument:
+      properties:
+        capturedAt:
+          format: date-time
+          type: string
+        displayName:
+          type: string
+        effort:
+          type: string
+        exact:
+          type: boolean
+        harness:
+          type: string
+        issueId:
+          type: string
+        kind:
+          type: string
+        mode:
+          type: string
+        model:
+          type: string
+        projectId:
+          type: string
+        promptByteCount:
+          type: integer
+        reconstructed:
+          type: boolean
+        segments:
+          items:
+            $ref: '#/components/schemas/SessionInitialContextSegment'
+          type: array
+        sessionId:
+          type: string
+        systemByteCount:
+          type: integer
+        totalByteCount:
+          type: integer
+        warnings:
+          items:
+            type: string
+          type: array
+      required:
+      - sessionId
+      - kind
+      - mode
+      - capturedAt
+      - exact
+      - reconstructed
+      - systemByteCount
+      - promptByteCount
+      - totalByteCount
+      - segments
+      - warnings
+      type: object
+    SessionInitialContextResponse:
+      properties:
+        context:
+          $ref: '#/components/schemas/SessionInitialContextDocument'
+      required:
+      - context
+      type: object
+    SessionInitialContextSegment:
+      properties:
+        byteCount:
+          type: integer
+        channel:
+          type: string
+        content:
+          type: string
+        contributed:
+          type: boolean
+        index:
+          type: integer
+        note:
+          type: string
+        path:
+          type: string
+        reconstructed:
+          type: boolean
+        redacted:
+          type: boolean
+        redactionReason:
+          type: string
+        source:
+          type: string
+      required:
+      - index
+      - channel
+      - source
+      - byteCount
+      - contributed
+      - redacted
+      - reconstructed
       type: object
     SessionInterfaceTransition:
       properties:

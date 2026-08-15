@@ -100,7 +100,7 @@ func TestBuildSystemPrompt_WorkerIncludesRulesAndOrchestrator(t *testing.T) {
 			Path:          "/repo/mercury",
 		},
 		OrchestratorSessionID: "mer-orchestrator",
-		ProjectRules:          "Always run focused tests.",
+		ProjectRulesSources:   loadedRoleRules{Inline: "Always run focused tests."},
 	})
 	for _, want := range []string{
 		"## AO Worker Role",
@@ -162,9 +162,9 @@ func TestBuildSystemPrompt_OrchestratorUsesSlimPolicyScaffold(t *testing.T) {
 
 func TestBuildSystemPrompt_PrimeDefinesFleetSupervisorBoundary(t *testing.T) {
 	got := buildSystemPromptText(systemPromptConfig{
-		Role:       sessionPromptRolePrime,
-		Project:    promptProject{ID: "ao", Name: "Agent Orchestrator"},
-		PrimeRules: "Prime never dispatches workers directly.",
+		Role:              sessionPromptRolePrime,
+		Project:           promptProject{ID: "ao", Name: "Agent Orchestrator"},
+		PrimeRulesSources: loadedRoleRules{Inline: "Prime never dispatches workers directly."},
 	})
 	for _, want := range []string{
 		"## AO Prime Role",

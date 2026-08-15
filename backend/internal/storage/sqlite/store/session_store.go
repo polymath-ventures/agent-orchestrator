@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"regexp"
@@ -211,6 +212,49 @@ func (s *Store) ClaimChatControllerGeneration(
 		return fmt.Errorf("claim chat controller generation for %s: chat session not found", id)
 	}
 	return nil
+}
+
+// UpsertSessionInitialContext stores the immutable launch-context snapshot for a
+// session. The row is separate from ordinary session reads so dashboard list/get
+// paths never carry large prompt bodies.
+func (s *Store) UpsertSessionInitialContext(ctx context.Context, doc domain.SessionInitialContextDocument) error {
+	if doc.SessionID == "" {
+		return errors.New("session initial context session id is required")
+	}
+	doc.Normalize()
+	data, err := json.Marshal(doc)
+	if err != nil {
+		return fmt.Errorf("marshal session initial context %s: %w", doc.SessionID, err)
+	}
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	if err := s.qw.UpsertSessionInitialContext(ctx, gen.UpsertSessionInitialContextParams{
+		SessionID:    string(doc.SessionID),
+		SnapshotJson: string(data),
+		CreatedAt:    doc.CapturedAt,
+	}); err != nil {
+		return fmt.Errorf("upsert session initial context %s: %w", doc.SessionID, err)
+	}
+	return nil
+}
+
+// GetSessionInitialContext returns the stored launch-context snapshot when this
+// session was created by a build that captured one. ok=false identifies legacy
+// sessions that need best-effort reconstruction by the read service.
+func (s *Store) GetSessionInitialContext(ctx context.Context, id domain.SessionID) (domain.SessionInitialContextDocument, bool, error) {
+	data, err := s.qr.GetSessionInitialContext(ctx, string(id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.SessionInitialContextDocument{}, false, nil
+	}
+	if err != nil {
+		return domain.SessionInitialContextDocument{}, false, fmt.Errorf("get session initial context %s: %w", id, err)
+	}
+	var doc domain.SessionInitialContextDocument
+	if err := json.Unmarshal([]byte(data), &doc); err != nil {
+		return domain.SessionInitialContextDocument{}, false, fmt.Errorf("decode session initial context %s: %w", id, err)
+	}
+	doc.Normalize()
+	return doc, true, nil
 }
 
 // RenameSession updates only the user-facing display name for an existing

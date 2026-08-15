@@ -68,6 +68,8 @@ func sessionCommandServer(t *testing.T) (*httptest.Server, *sessionRequestLog) {
 			}
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/sessions/demo-1":
 			_, _ = io.WriteString(w, `{"session":`+sessionJSON("demo-1", "demo", "worker", "working", false)+`}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/sessions/demo-1/context":
+			_, _ = io.WriteString(w, `{"context":{"sessionId":"demo-1","projectId":"demo","kind":"worker","harness":"codex","mode":"tui","capturedAt":"2026-06-02T11:00:00Z","exact":true,"reconstructed":false,"systemByteCount":10,"promptByteCount":5,"totalByteCount":15,"segments":[{"index":0,"channel":"system","source":"projectConfig.agentRules","path":"/repo/demo/AGENTS.md","content":"rules","byteCount":5,"contributed":true,"redacted":false,"reconstructed":false},{"index":1,"channel":"system","source":"session.activeOrchestrator","byteCount":0,"contributed":false,"redacted":false,"reconstructed":false,"note":"no active orchestrator session at launch"}],"warnings":[]}}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/projects/demo":
 			_, _ = io.WriteString(w, `{"status":"ok","project":{"id":"demo","name":"Demo","path":"/repo/demo","repo":"https://github.com/aoagents/agent-orchestrator","defaultBranch":"main"}}`)
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/sessions/demo-1/pr/claim":
@@ -490,7 +492,7 @@ func TestSessionRename_SuccessWithProjectScope(t *testing.T) {
 
 func TestSessionCommands_MissingIDIsUsageError(t *testing.T) {
 	setConfigEnv(t)
-	for _, sub := range []string{"get", "kill", "restore"} {
+	for _, sub := range []string{"get", "context", "kill", "restore"} {
 		t.Run(sub, func(t *testing.T) {
 			_, _, err := executeCLI(t, Deps{}, "session", sub)
 			if err == nil {
@@ -600,6 +602,8 @@ func TestSessionClaimPR_GitLabMR(t *testing.T) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/sessions/demo-1":
 			_, _ = io.WriteString(w, `{"session":`+sessionJSON("demo-1", "demo", "worker", "working", false)+`}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/sessions/demo-1/context":
+			_, _ = io.WriteString(w, `{"context":{"sessionId":"demo-1","projectId":"demo","kind":"worker","harness":"codex","mode":"tui","capturedAt":"2026-06-02T11:00:00Z","exact":true,"reconstructed":false,"systemByteCount":10,"promptByteCount":5,"totalByteCount":15,"segments":[{"index":0,"channel":"system","source":"projectConfig.agentRules","path":"/repo/demo/AGENTS.md","content":"rules","byteCount":5,"contributed":true,"redacted":false,"reconstructed":false},{"index":1,"channel":"system","source":"session.activeOrchestrator","byteCount":0,"contributed":false,"redacted":false,"reconstructed":false,"note":"no active orchestrator session at launch"}],"warnings":[]}}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/projects/demo":
 			_, _ = io.WriteString(w, `{"status":"ok","project":{"id":"demo","name":"Demo","path":"/repo/demo","repo":"https://gitlab.com/castai/ctxd","defaultBranch":"main"}}`)
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/sessions/demo-1/pr/claim":
@@ -629,6 +633,8 @@ func TestSessionClaimPR_GitLabNumericRef(t *testing.T) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/sessions/demo-1":
 			_, _ = io.WriteString(w, `{"session":`+sessionJSON("demo-1", "demo", "worker", "working", false)+`}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/sessions/demo-1/context":
+			_, _ = io.WriteString(w, `{"context":{"sessionId":"demo-1","projectId":"demo","kind":"worker","harness":"codex","mode":"tui","capturedAt":"2026-06-02T11:00:00Z","exact":true,"reconstructed":false,"systemByteCount":10,"promptByteCount":5,"totalByteCount":15,"segments":[{"index":0,"channel":"system","source":"projectConfig.agentRules","path":"/repo/demo/AGENTS.md","content":"rules","byteCount":5,"contributed":true,"redacted":false,"reconstructed":false},{"index":1,"channel":"system","source":"session.activeOrchestrator","byteCount":0,"contributed":false,"redacted":false,"reconstructed":false,"note":"no active orchestrator session at launch"}],"warnings":[]}}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/projects/demo":
 			_, _ = io.WriteString(w, `{"status":"ok","project":{"id":"demo","name":"Demo","path":"/repo/demo","repo":"https://gitlab.com/castai/ctxd","defaultBranch":"main"}}`)
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/sessions/demo-1/pr/claim":
@@ -659,6 +665,8 @@ func TestSessionClaimPR_GHFallbackWhenProjectRepoMissing(t *testing.T) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/sessions/demo-1":
 			_, _ = io.WriteString(w, `{"session":`+sessionJSON("demo-1", "demo", "worker", "working", false)+`}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/sessions/demo-1/context":
+			_, _ = io.WriteString(w, `{"context":{"sessionId":"demo-1","projectId":"demo","kind":"worker","harness":"codex","mode":"tui","capturedAt":"2026-06-02T11:00:00Z","exact":true,"reconstructed":false,"systemByteCount":10,"promptByteCount":5,"totalByteCount":15,"segments":[{"index":0,"channel":"system","source":"projectConfig.agentRules","path":"/repo/demo/AGENTS.md","content":"rules","byteCount":5,"contributed":true,"redacted":false,"reconstructed":false},{"index":1,"channel":"system","source":"session.activeOrchestrator","byteCount":0,"contributed":false,"redacted":false,"reconstructed":false,"note":"no active orchestrator session at launch"}],"warnings":[]}}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/projects/demo":
 			_, _ = io.WriteString(w, `{"status":"ok","project":{"id":"demo","name":"Demo","path":"/repo/demo","repo":"","defaultBranch":"main"}}`)
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/sessions/demo-1/pr/claim":
@@ -687,5 +695,46 @@ func TestSessionClaimPR_GHFallbackWhenProjectRepoMissing(t *testing.T) {
 	}
 	if ghDir != "/repo/demo" || !strings.Contains(out, "claimed PR #142") {
 		t.Fatalf("ghDir=%q out=%s", ghDir, out)
+	}
+}
+
+func TestSessionContext_HumanOutput(t *testing.T) {
+	cfg := setConfigEnv(t)
+	srv, log := sessionCommandServer(t)
+	writeRunFileFor(t, cfg, srv)
+
+	out, errOut, err := executeCLI(t, Deps{
+		ProcessAlive: func(int) bool { return true },
+	}, "session", "context", "demo-1")
+	if err != nil {
+		t.Fatalf("session context failed: %v\nstderr=%s", err, errOut)
+	}
+	for _, want := range []string{"session demo-1 context", "bytes:", "projectConfig.agentRules", "/repo/demo/AGENTS.md", "session.activeOrchestrator", "empty", "no active orchestrator session"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("output missing %q:\n%s", want, out)
+		}
+	}
+	if got, want := log.all(), []string{"GET /api/v1/sessions/demo-1/context"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("requests = %#v, want %#v", got, want)
+	}
+}
+
+func TestSessionContext_JSONOutput(t *testing.T) {
+	cfg := setConfigEnv(t)
+	srv, _ := sessionCommandServer(t)
+	writeRunFileFor(t, cfg, srv)
+
+	out, errOut, err := executeCLI(t, Deps{
+		ProcessAlive: func(int) bool { return true },
+	}, "session", "context", "demo-1", "--json")
+	if err != nil {
+		t.Fatalf("session context --json failed: %v\nstderr=%s", err, errOut)
+	}
+	var got sessionInitialContextResponse
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("decode: %v\n%s", err, out)
+	}
+	if got.Context.SessionID != "demo-1" || len(got.Context.Segments) != 2 || got.Context.Segments[0].Path != "/repo/demo/AGENTS.md" {
+		t.Fatalf("context json = %+v", got.Context)
 	}
 }

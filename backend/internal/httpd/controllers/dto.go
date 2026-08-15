@@ -58,6 +58,11 @@ type RolePromptResponse struct {
 	TaskPromptSource   string `json:"taskPromptSource,omitempty" enum:"project,global"`
 }
 
+// SessionInitialContextResponse is the body of GET /api/v1/sessions/{id}/context.
+type SessionInitialContextResponse struct {
+	Context domain.SessionInitialContextDocument `json:"context"`
+}
+
 // ListProjectsResponse is the body of GET /api/v1/projects.
 type ListProjectsResponse struct {
 	Projects []projectsvc.Summary `json:"projects"`
