@@ -1699,9 +1699,13 @@ func TestSpawnIssueContextFetchFailureFallsBack(t *testing.T) {
 
 // TestSpawnPreservesIssueIDWhenTrackerIsNil covers the issue #2685 boundary: when
 // the daemon wiring cannot build a GitHub tracker (no token), it hands the session
-// service a true-nil ports.Tracker. Spawn must still create the session, preserve
-// IssueID, and skip only the GitHub issue-context enrichment — not panic on a
-// typed-nil tracker the way the pre-fix wiring did.
+// service a true-nil ports.Tracker. Spawn must still create the session, keep the
+// work item on it, and skip only the GitHub issue-context enrichment — not panic
+// on a typed-nil tracker the way the pre-fix wiring did.
+//
+// The id is canonicalised even here (#298): canonicalisation reads the project's
+// origin, not the tracker, and a record written without it would be invisible to
+// intake's dedup the moment a token appeared.
 func TestSpawnPreservesIssueIDWhenTrackerIsNil(t *testing.T) {
 	st := newFakeStore()
 	st.projects["mer"] = domain.ProjectRecord{ID: "mer", RepoOriginURL: "https://github.com/acme/repo"}
@@ -1711,8 +1715,8 @@ func TestSpawnPreservesIssueIDWhenTrackerIsNil(t *testing.T) {
 	if _, _, _, err := svc.Spawn(context.Background(), ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, IssueID: "107"}); err != nil {
 		t.Fatalf("Spawn: %v", err)
 	}
-	if fc.spawnedCfg.IssueID != "107" {
-		t.Fatalf("IssueID = %q, want 107 preserved", fc.spawnedCfg.IssueID)
+	if fc.spawnedCfg.IssueID != "github:acme/repo#107" {
+		t.Fatalf("IssueID = %q, want github:acme/repo#107", fc.spawnedCfg.IssueID)
 	}
 	if fc.spawnedCfg.IssueContext != "" {
 		t.Fatalf("IssueContext = %q, want empty (no tracker enrichment)", fc.spawnedCfg.IssueContext)

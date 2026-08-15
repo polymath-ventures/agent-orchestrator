@@ -106,10 +106,11 @@ type reviewerConfig struct {
 
 // trackerIntakeConfig mirrors domain.TrackerIntakeConfig.
 type trackerIntakeConfig struct {
-	Enabled  bool   `json:"enabled,omitempty"`
-	Provider string `json:"provider,omitempty"`
-	Repo     string `json:"repo,omitempty"`
-	Assignee string `json:"assignee,omitempty"`
+	Enabled     bool   `json:"enabled,omitempty"`
+	Provider    string `json:"provider,omitempty"`
+	Repo        string `json:"repo,omitempty"`
+	Assignee    string `json:"assignee,omitempty"`
+	OptOutLabel string `json:"optOutLabel,omitempty"`
 }
 
 // projectConfig mirrors the daemon's typed domain.ProjectConfig for the CLI

@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"net/url"
-	"strconv"
 	"strings"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -59,29 +57,45 @@ func (s *Service) withIssueDetails(ctx context.Context, cfg ports.SpawnConfig, p
 	return cfg
 }
 
-func (s *Service) trackerIDForIssue(cfg ports.SpawnConfig, project domain.ProjectRecord) (domain.TrackerID, bool) {
-	issue := strings.TrimPrefix(strings.TrimSpace(string(cfg.IssueID)), "#")
-	if issue == "" {
-		return domain.TrackerID{}, false
+// withCanonicalIssueID rewrites the request's issue id into the canonical
+// `<provider>:<native>` form before anything persists it.
+//
+// This is the one boundary at which an issue id enters a session record: the
+// CLI, the HTTP API, and tracker intake all reach the store through
+// Service.spawn. Canonicalising here rather than at each reader is what keeps
+// the stored value and intake's dedup key from diverging — the divergence that
+// made intake spawn an unbounded stream of duplicate workers (#298).
+//
+// A reference that names no issue this project's tracker could serve is left
+// exactly as the caller supplied it. Rejecting it would be a new failure mode
+// for ids the daemon has always accepted, and it cannot cause a duplicate
+// spawn: intake only ever dispatches issues its own tracker listed, and those
+// always resolve.
+func (s *Service) withCanonicalIssueID(cfg ports.SpawnConfig, project domain.ProjectRecord) ports.SpawnConfig {
+	if cfg.IssueID == "" {
+		return cfg
 	}
-	// 1. Try GitHub URL or owner/repo#N native form.
-	if native, ok := canonicalGitHubIssueNative(issue); ok {
-		return domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: native}, true
-	}
-	// 2. Try GitLab issue URL (/-/issues/<iid> pattern).
-	if native, host, ok := canonicalGitLabIssueURL(issue); ok {
-		return domain.TrackerID{Provider: domain.TrackerProviderGitLab, Native: native, Host: host}, true
-	}
-	// 3. Plain issue number — resolve repo from SCM origin or tracker-provider hint.
-	n, err := strconv.Atoi(issue)
-	if err != nil || n <= 0 {
-		return domain.TrackerID{}, false
-	}
-	provider, host, repo, ok := s.repoForTracker(project, cfg.TrackerProvider)
+	id, ok := s.trackerIDForIssue(cfg, project)
 	if !ok {
-		return domain.TrackerID{}, false
+		return cfg
 	}
-	return domain.TrackerID{Provider: provider, Native: fmt.Sprintf("%s#%d", repo, n), Host: host}, true
+	cfg.IssueID = domain.CanonicalIssueID(id)
+	return cfg
+}
+
+func (s *Service) trackerIDForIssue(cfg ports.SpawnConfig, project domain.ProjectRecord) (domain.TrackerID, bool) {
+	scope, _ := s.trackerScope(project, cfg.TrackerProvider)
+	return domain.ParseIssueRef(string(cfg.IssueID), scope)
+}
+
+// trackerScope resolves the project's tracker repository, which bare and
+// repo-qualified issue references are interpreted against.
+func (s *Service) trackerScope(project domain.ProjectRecord, fallbackProvider domain.TrackerProvider) (domain.TrackerRepo, bool) {
+	provider, host, repo, ok := s.repoForTracker(project, fallbackProvider)
+	if !ok {
+		return domain.TrackerRepo{}, false
+	}
+	return domain.TrackerRepo{Provider: provider, Native: repo, Host: host}, true
 }
 
 func (s *Service) repoForTracker(project domain.ProjectRecord, fallbackProvider domain.TrackerProvider) (domain.TrackerProvider, string, string, bool) {
@@ -93,7 +107,7 @@ func (s *Service) repoForTracker(project domain.ProjectRecord, fallbackProvider 
 			// correct adapter. The host is resolved from the SCM origin so
 			// self-managed GitLab instances route correctly; gitlab.com and
 			// GitHub always produce "" (zero value).
-			return domain.TrackerProvider(repo.Provider), normalizeTrackerHost(repo.Provider, repo.Host), repo.Repo, true
+			return domain.TrackerProvider(repo.Provider), domain.NormalizeTrackerHost(repo.Provider, repo.Host), repo.Repo, true
 		}
 		// SCM could not classify the origin (ok == false), or classified it
 		// with an empty repo; fall through to the URL-based heuristic below.
@@ -108,124 +122,7 @@ func (s *Service) repoForTracker(project domain.ProjectRecord, fallbackProvider 
 	if provider == "" {
 		provider = domain.TrackerProviderGitHub
 	}
-	return provider, normalizeTrackerHost(string(provider), host), owner + "/" + repo, true
-}
-
-// normalizeTrackerHost returns the host to set on a TrackerID/TrackerRepo.
-// For GitHub, the host is always "" — GitHub tracker IDs don't use Host.
-// For GitLab, "gitlab.com" and "www.gitlab.com" normalize to "" (the zero
-// value meaning gitlab.com) so that callers don't need to special-case the
-// default host. Self-managed hosts pass through unchanged.
-func normalizeTrackerHost(provider, host string) string {
-	if provider != string(domain.TrackerProviderGitLab) {
-		return ""
-	}
-	host = strings.ToLower(strings.TrimSpace(host))
-	if host == "gitlab.com" || host == "www.gitlab.com" {
-		return ""
-	}
-	return host
-}
-
-func canonicalGitHubIssueNative(raw string) (string, bool) {
-	if strings.Contains(raw, "://") {
-		return canonicalGitHubIssueURL(raw)
-	}
-	hash := strings.LastIndexByte(raw, '#')
-	if hash <= 0 || hash == len(raw)-1 {
-		return "", false
-	}
-	repo := strings.Trim(raw[:hash], "/")
-	owner, name, ok := splitIssueOwnerRepo(repo)
-	if !ok {
-		return "", false
-	}
-	n, err := strconv.Atoi(raw[hash+1:])
-	if err != nil || n <= 0 {
-		return "", false
-	}
-	return fmt.Sprintf("%s/%s#%d", owner, name, n), true
-}
-
-func splitIssueOwnerRepo(repo string) (string, string, bool) {
-	parts := strings.Split(strings.Trim(repo, "/"), "/")
-	if len(parts) != 2 {
-		return "", "", false
-	}
-	owner := strings.TrimSpace(parts[0])
-	name := strings.TrimSuffix(strings.TrimSpace(parts[1]), ".git")
-	return owner, name, owner != "" && name != ""
-}
-
-func canonicalGitHubIssueURL(raw string) (string, bool) {
-	u, err := url.Parse(raw)
-	if err != nil || !strings.EqualFold(u.Hostname(), "github.com") {
-		return "", false
-	}
-	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
-	if len(parts) != 4 || parts[2] != "issues" {
-		return "", false
-	}
-	n, err := strconv.Atoi(parts[3])
-	if err != nil || n <= 0 {
-		return "", false
-	}
-	return fmt.Sprintf("%s/%s#%d", parts[0], strings.TrimSuffix(parts[1], ".git"), n), true
-}
-
-// canonicalGitLabIssueURL parses a GitLab issue URL into the native
-// "project-path#iid" form and extracts the host. GitLab issue URLs use
-// the /-/issues/ separator:
-//
-//   - https://gitlab.com/owner/repo/-/issues/123
-//   - https://gitlab.com/group/subgroup/repo/-/issues/123
-//   - https://gitlab.internal/owner/repo/-/issues/123  (self-managed)
-//
-// Any host is accepted because self-managed GitLab instances use arbitrary
-// hostnames; the /-/issues/ path pattern is distinctive to GitLab.
-//
-// The returned host is the URL hostname for self-managed instances (e.g.
-// "gitlab.internal") and "" for gitlab.com (the zero value, meaning the
-// default host) so that callers can set TrackerID.Host without special-casing.
-func canonicalGitLabIssueURL(raw string) (native, host string, ok bool) {
-	u, err := url.Parse(raw)
-	if err != nil || u.Host == "" {
-		return "", "", false
-	}
-	path := strings.Trim(u.Path, "/")
-	if path == "" {
-		return "", "", false
-	}
-	idx := strings.Index(path, "/-/issues/")
-	if idx <= 0 {
-		return "", "", false
-	}
-	projectPath := path[:idx] // "owner/repo" or "group/subgroup/repo"
-	rest := path[idx+len("/-/issues/"):]
-	if rest == "" {
-		return "", "", false
-	}
-	n, err := strconv.Atoi(rest)
-	if err != nil || n <= 0 {
-		return "", "", false
-	}
-	parts := strings.Split(projectPath, "/")
-	for _, p := range parts {
-		if p == "" {
-			return "", "", false
-		}
-	}
-	if len(parts) < 2 {
-		return "", "", false
-	}
-	parts[len(parts)-1] = strings.TrimSuffix(parts[len(parts)-1], ".git")
-	// u.Host preserves the port (e.g. "gitlab.internal:8443") so that
-	// self-managed hosts with non-default ports match AllowedHosts entries.
-	host = u.Host
-	if strings.EqualFold(host, "gitlab.com") || strings.EqualFold(host, "www.gitlab.com") {
-		host = "" // zero value means gitlab.com
-	}
-	return fmt.Sprintf("%s#%d", strings.Join(parts, "/"), n), host, true
+	return provider, domain.NormalizeTrackerHost(string(provider), host), owner + "/" + repo, true
 }
 
 func formatIssueContext(issue domain.Issue) string {

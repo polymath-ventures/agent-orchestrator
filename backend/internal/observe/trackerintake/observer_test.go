@@ -254,7 +254,7 @@ func TestSeenIssueIDsExcludesTerminatedSessions(t *testing.T) {
 		{ID: "demo-1", IssueID: "github:acme/demo#12", IsTerminated: true},
 		{ID: "demo-2", IssueID: "github:acme/demo#12", IsTerminated: false},
 	}
-	seen := seenIssueIDs(sessions)
+	seen := seenIssueIDs(sessions, nil)
 	if !seen["github:acme/demo#12"] {
 		t.Fatal("issue with a live session alongside a terminated one should still be seen")
 	}
@@ -267,7 +267,7 @@ func TestSeenIssueIDsIgnoresOnlyTerminatedSession(t *testing.T) {
 	sessions := []domain.SessionRecord{
 		{ID: "demo-1", IssueID: "github:acme/demo#12", IsTerminated: true},
 	}
-	seen := seenIssueIDs(sessions)
+	seen := seenIssueIDs(sessions, nil)
 	if seen["github:acme/demo#12"] {
 		t.Fatal("issue with only a terminated session should not be marked as seen")
 	}
@@ -874,5 +874,70 @@ func TestPollSkipsIssueCarryingOptOutLabel(t *testing.T) {
 	}
 	if len(spawner.calls) != 1 || spawner.calls[0].IssueID != "github:acme/demo#2" {
 		t.Fatalf("spawn calls = %+v, want only issue #2 — #1 carries the opt-out label", spawner.calls)
+	}
+}
+
+func TestIssueMatchesConfigOptOutLabel(t *testing.T) {
+	cfg := domain.TrackerIntakeConfig{Enabled: true, Assignee: "alice"}
+	assigned := domain.Issue{Assignees: []string{"alice"}}
+	optedOut := domain.Issue{Assignees: []string{"alice"}, Labels: []string{"feature", "No-AO"}}
+
+	if !issueMatchesConfig(assigned, cfg) {
+		t.Fatal("issue without the opt-out label should match")
+	}
+	if issueMatchesConfig(optedOut, cfg) {
+		t.Fatal("the default opt-out label should exclude the issue, case-insensitively")
+	}
+
+	custom := domain.TrackerIntakeConfig{Enabled: true, Assignee: "alice", OptOutLabel: "hands-off"}
+	if issueMatchesConfig(domain.Issue{Assignees: []string{"alice"}, Labels: []string{"hands-off"}}, custom) {
+		t.Fatal("configured opt-out label should exclude the issue")
+	}
+	if !issueMatchesConfig(optedOut, custom) {
+		t.Fatal("a configured label replaces the default rather than adding to it")
+	}
+
+	disabled := domain.TrackerIntakeConfig{Enabled: true, Assignee: "alice", OptOutLabel: "none"}
+	if !issueMatchesConfig(optedOut, disabled) {
+		t.Fatal(`optOutLabel "none" should disable the opt-out`)
+	}
+
+	// The opt-out overrides eligibility rather than joining it: an unassigned
+	// issue matching assignee=none is still excluded when it opts out.
+	if issueMatchesConfig(domain.Issue{Labels: []string{"no-ao"}}, domain.TrackerIntakeConfig{Enabled: true, Assignee: "none"}) {
+		t.Fatal("opt-out should override the assignee=none rule")
+	}
+}
+
+// seenIssueIDs is the dedup key intake looks issues up by; it must accept the
+// non-canonical shapes older sessions hold, but only inside their own project.
+func TestSeenIssueIDsResolvesNonCanonicalSessionsPerProject(t *testing.T) {
+	projects := []domain.ProjectRecord{
+		{ID: "demo", RepoOriginURL: "https://github.com/acme/demo.git"},
+		{ID: "other", RepoOriginURL: "https://github.com/acme/other.git"},
+	}
+	sessions := []domain.SessionRecord{
+		{ID: "demo-1", ProjectID: "demo", IssueID: "12"},
+		{ID: "other-1", ProjectID: "other", IssueID: "#34"},
+		{ID: "demo-2", ProjectID: "demo", IssueID: "56", IsTerminated: true},
+		{ID: "demo-3", ProjectID: "demo", IssueID: "ISS-1"},
+	}
+
+	seen := seenIssueIDs(sessions, projects)
+
+	if !seen["github:acme/demo#12"] {
+		t.Error("a bare id should cover its own project's canonical issue")
+	}
+	if !seen["github:acme/other#34"] {
+		t.Error("a hash-prefixed id should cover its own project's canonical issue")
+	}
+	if seen["github:acme/other#12"] {
+		t.Error("a bare id must not cover another project's issue 12")
+	}
+	if seen["github:acme/demo#56"] {
+		t.Error("a terminated session should not cover its issue")
+	}
+	if !seen["ISS-1"] {
+		t.Error("an unresolvable id should still cover itself verbatim")
 	}
 }

@@ -213,7 +213,7 @@ func newSpawnCommand(ctx *commandContext) *cobra.Command {
 	f.StringVar(&opts.branch, "branch", "", "Branch for git project sessions (default: ao/<namespace-key>/root; workspace projects: ao/<namespace-key>; unsupported for Scratch)")
 	f.StringVar(&opts.mode, "mode", "", "Initial session interface: chat (structured agent connection) or tui (the agent's native terminal). Omitted uses the daemon default; compatible sessions can switch later.")
 	f.StringVar(&opts.prompt, "prompt", "", "Initial prompt for the agent")
-	f.StringVar(&opts.issue, "issue", "", "Issue id to associate with the session")
+	f.StringVar(&opts.issue, "issue", "", "Issue to associate with the session: a bare number, owner/repo#N, or an issue URL")
 	f.StringVar(&opts.trackerProvider, "tracker-provider", "github", "Issue tracker provider for bare issue ids: github or gitlab")
 	f.StringVar(&opts.name, "name", "", "Override the daemon-computed session name (max 20 characters)")
 	f.StringVar(&opts.claimPR, "claim-pr", "", "Immediately claim an existing PR for the spawned session")

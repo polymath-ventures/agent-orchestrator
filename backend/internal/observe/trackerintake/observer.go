@@ -161,7 +161,7 @@ func (o *Observer) Poll(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	seen := seenIssueIDs(sessions)
+	seen := seenIssueIDs(sessions, projects)
 	for _, project := range enabledProjects {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -224,7 +224,7 @@ func (o *Observer) pollProject(ctx context.Context, project domain.ProjectRecord
 		if !issueMatchesConfig(issue, cfg) {
 			continue
 		}
-		issueID := CanonicalIssueID(issue.ID)
+		issueID := domain.CanonicalIssueID(issue.ID)
 		if issueID == "" || seen[issueID] {
 			continue
 		}
@@ -296,6 +296,11 @@ func isWorkerDeferral(err error) bool {
 }
 
 func issueMatchesConfig(issue domain.Issue, cfg domain.TrackerIntakeConfig) bool {
+	// The opt-out label is an operator's explicit "do not auto-work this", so
+	// it overrides every eligibility rule rather than joining them.
+	if cfg.OptedOut(issue.Labels) {
+		return false
+	}
 	assignee := strings.TrimSpace(cfg.Assignee)
 	switch {
 	case assignee == "":
@@ -318,34 +323,47 @@ func containsFold(values []string, needle string) bool {
 	return false
 }
 
-func seenIssueIDs(sessions []domain.SessionRecord) map[domain.IssueID]bool {
+// seenIssueIDs is the set of issues a live session already services, keyed the
+// way the spawn loop looks them up.
+//
+// Sessions created before the spawn boundary canonicalised issue ids (#298), or
+// by an operator typing a bare `--issue 243`, hold whatever was supplied. Those
+// rows are resolved here through the same domain.ParseIssueRef the spawn path
+// canonicalises with, against their own project's tracker scope, so a legacy
+// row covers its issue exactly as a canonical one does. Scoping per project is
+// what keeps project A's bare "12" from suppressing project B's issue 12.
+//
+// This is transitional: it stops covering anything once the last pre-fix
+// session terminates. It is deliberately not a migration, because the rows that
+// matter belong to sessions that are mid-work, and rewriting a running
+// session's issue_id would detach it from the worktree state its owner is
+// holding.
+func seenIssueIDs(sessions []domain.SessionRecord, projects []domain.ProjectRecord) map[domain.IssueID]bool {
+	scopes := make(map[domain.ProjectID]domain.TrackerRepo, len(projects))
+	for _, project := range projects {
+		if repo, ok := trackerRepo(project, project.Config.TrackerIntake.WithDefaults()); ok {
+			scopes[domain.ProjectID(project.ID)] = repo
+		}
+	}
 	seen := make(map[domain.IssueID]bool, len(sessions))
 	for _, sess := range sessions {
-		if sess.IssueID != "" && !sess.IsTerminated {
-			seen[sess.IssueID] = true
+		if sess.IssueID == "" || sess.IsTerminated {
+			continue
+		}
+		seen[sess.IssueID] = true
+		if id, ok := domain.ParseIssueRef(string(sess.IssueID), scopes[sess.ProjectID]); ok {
+			if canonical := domain.CanonicalIssueID(id); canonical != "" {
+				seen[canonical] = true
+			}
 		}
 	}
 	return seen
 }
 
-// CanonicalIssueID stores tracker issue ids in sessions.issue_id with the
-// provider included, so future providers cannot collide on native ids.
-func CanonicalIssueID(id domain.TrackerID) domain.IssueID {
-	provider := id.Provider
-	if provider == "" {
-		provider = domain.TrackerProviderGitHub
-	}
-	native := strings.TrimSpace(id.Native)
-	if native == "" {
-		return ""
-	}
-	return domain.IssueID(string(provider) + ":" + native)
-}
-
 // BuildIssuePrompt turns normalized issue facts into the worker's initial task.
 func BuildIssuePrompt(issue domain.Issue) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "Work on tracker issue %s.\n\n", CanonicalIssueID(issue.ID))
+	fmt.Fprintf(&b, "Work on tracker issue %s.\n\n", domain.CanonicalIssueID(issue.ID))
 	if issue.Title != "" {
 		fmt.Fprintf(&b, "Title: %s\n", issue.Title)
 	}
