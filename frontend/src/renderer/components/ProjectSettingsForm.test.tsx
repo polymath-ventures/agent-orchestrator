@@ -543,11 +543,11 @@ describe("ProjectSettingsForm", () => {
 					// Agents changes applied
 					worker: {
 						agent: "opencode",
-						agentConfig: { modelByHarness: { opencode: { model: "openai/gpt-5.4" } } },
+						agentConfig: { model: "openai/gpt-5.4" },
 					},
 					orchestrator: {
 						agent: "goose",
-						agentConfig: { modelByHarness: { goose: { model: "anthropic/claude-sonnet" } } },
+						agentConfig: { model: "anthropic/claude-sonnet" },
 					},
 					agentConfig: {
 						permissions: "bypass-permissions",
@@ -608,11 +608,11 @@ describe("ProjectSettingsForm", () => {
 					config: expect.objectContaining({
 						worker: {
 							agent: "codex",
-							agentConfig: { modelByHarness: { codex: { model: "gpt-5.4", effort: "medium" } } },
+							agentConfig: { model: "gpt-5.4", effort: "medium" },
 						},
 						orchestrator: {
 							agent: "claude-code",
-							agentConfig: { modelByHarness: { "claude-code": { model: "opus", effort: "high" } } },
+							agentConfig: { model: "opus", effort: "high" },
 						},
 						agentConfig: {
 							permissions: "auto",
@@ -1407,24 +1407,24 @@ describe("ProjectSettingsForm", () => {
 		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
 		expect(putMock).toHaveBeenCalledWith("/api/v1/projects/{id}", {
 			params: { path: { id: "scratch" } },
-			body: expect.objectContaining({
+			body: {
 				displayName: "Scratch",
-				config: expect.objectContaining({
+				config: {
 					env: { FOO: "bar" },
 					sessionPrefix: "ao",
 					symlinks: [".env"],
 					postCreate: ["npm install"],
 					agentRules: "keep work small",
-					worker: { agent: "codex", agentConfig: { modelByHarness: { codex: { model: "gpt-5-codex" } } } },
+					worker: { agent: "codex", agentConfig: { model: "gpt-5-codex" } },
 					orchestrator: {
 						agent: "claude-code",
-						agentConfig: { modelByHarness: { "claude-code": { model: "gpt-5-codex" } } },
+						agentConfig: { model: "gpt-5-codex" },
 					},
 					agentConfig: {
 						permissions: "auto",
 					},
-				}),
-			}),
+				},
+			},
 		});
 		expect(postMock).not.toHaveBeenCalled();
 	});

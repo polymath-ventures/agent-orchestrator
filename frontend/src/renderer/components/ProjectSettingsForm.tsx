@@ -220,7 +220,12 @@ function SettingsBody({
 		mutationFn: async () => {
 			void captureRendererEvent("ao.renderer.settings_save_requested", { project_id: projectId });
 			const displayName = form.displayName.trim();
-			const { model: _legacyModel, mode: _legacyMode, ...sharedAgentConfig } = config.agentConfig ?? {};
+			const {
+				model: _legacyModel,
+				mode: _legacyMode,
+				effort: _legacyEffort,
+				...sharedAgentConfig
+			} = scrubSharedRoleModelPins(config.agentConfig, [form.workerAgent, form.orchestratorAgent]);
 			const next: ProjectConfig = isScratchProject
 				? {
 						...scratchSupportedConfig(config),
@@ -901,7 +906,7 @@ function AgentEffortField({
 	const manualEffort = model.trim() !== "" && shouldUseManualEffort(modelOption);
 	const showEffort = agentId !== "" && (manualEffort || effortOptions.length > 0);
 	if (!showEffort) return null;
-	const label = role === "worker" ? "Worker effort" : "Orchestrator effort";
+	const label = t(`settings.models.${role}Effort`);
 	const id = `${role}-effort`;
 	return (
 		<SettingsRow label={label}>
@@ -1211,24 +1216,31 @@ function buildRoleAgentConfig(
 	effort: string,
 ): components["schemas"]["AgentConfig"] | undefined {
 	const next = { ...existing };
-	delete next.model;
-	delete next.effort;
+	if (model) next.model = model;
+	else delete next.model;
+	if (effort) next.effort = effort;
+	else delete next.effort;
 	if (mode) next.mode = mode;
 	else delete next.mode;
 	const modelByHarness = { ...(next.modelByHarness ?? {}) };
 	if (agentId) {
-		const entry = { ...(modelByHarness[agentId] ?? {}) };
-		if (model) entry.model = model;
-		else delete entry.model;
-		if (effort) entry.effort = effort;
-		else delete entry.effort;
-		if (Object.keys(entry).length > 0) {
-			modelByHarness[agentId] = entry;
-		} else {
-			delete modelByHarness[agentId];
-		}
+		delete modelByHarness[agentId];
 	}
 	if (Object.keys(modelByHarness).length > 0) next.modelByHarness = modelByHarness;
 	else delete next.modelByHarness;
 	return Object.keys(next).length > 0 ? next : undefined;
+}
+
+function scrubSharedRoleModelPins(
+	shared: components["schemas"]["AgentConfig"] | undefined,
+	agentIds: string[],
+): components["schemas"]["AgentConfig"] {
+	const next = { ...(shared ?? {}) };
+	const modelByHarness = { ...(next.modelByHarness ?? {}) };
+	for (const agentId of agentIds) {
+		if (agentId) delete modelByHarness[agentId];
+	}
+	if (Object.keys(modelByHarness).length > 0) next.modelByHarness = modelByHarness;
+	else delete next.modelByHarness;
+	return next;
 }
