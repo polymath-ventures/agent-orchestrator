@@ -266,10 +266,11 @@ func TestNativeIssueRefKeepsCrossRepoQualifiers(t *testing.T) {
 		})
 	}
 
-	// With no scope to compare against, the qualifier is the safe rendering:
-	// a bare number would assert a repo nobody established.
-	if got := NativeIssueRef("github:acme/code#242", TrackerRepo{}); got != "acme/code#242" {
-		t.Fatalf("NativeIssueRef with no scope = %q, want acme/code#242", got)
+	// With no scope to compare against, the fullest qualifier is the safe
+	// rendering: a bare number would assert a repo nobody established, and an
+	// unqualified repo path would assert a tracker nobody established.
+	if got := NativeIssueRef("github:acme/code#242", TrackerRepo{}); got != "github:acme/code#242" {
+		t.Fatalf("NativeIssueRef with no scope = %q, want github:acme/code#242", got)
 	}
 
 	// A nested GitLab project resolves the same way.
@@ -289,9 +290,13 @@ func TestNativeIssueRefKeepsCrossProviderQualifiers(t *testing.T) {
 	if got := NativeIssueRef("gitlab:other/repo#242", scope); got != "gitlab:other/repo#242" {
 		t.Fatalf("NativeIssueRef = %q, want the provider kept", got)
 	}
-	// A scope that names no provider cannot contradict the id, so the plain
-	// native form stays.
-	if got := NativeIssueRef("gitlab:acme/code#242", TrackerRepo{Native: "acme/code"}); got != "242" {
-		t.Fatalf("NativeIssueRef = %q, want 242", got)
+	// An unresolved scope provider is unknown, not a wildcard: a GitHub project
+	// whose scope could not be resolved must not render a GitLab issue — or its
+	// own — as an unqualified path that reads as the other tracker's.
+	if got := NativeIssueRef("gitlab:acme/code#242", TrackerRepo{Native: "acme/code"}); got != "gitlab:acme/code#242" {
+		t.Fatalf("NativeIssueRef = %q, want gitlab:acme/code#242", got)
+	}
+	if got := NativeIssueRef("github:acme/code#242", TrackerRepo{Native: "acme/code"}); got != "github:acme/code#242" {
+		t.Fatalf("NativeIssueRef = %q, want github:acme/code#242", got)
 	}
 }

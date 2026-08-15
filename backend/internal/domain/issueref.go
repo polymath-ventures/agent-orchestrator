@@ -71,7 +71,11 @@ func NativeIssueRef(id IssueID, scope TrackerRepo) string {
 		return strings.TrimPrefix(ref, "#")
 	}
 	repo, number, _ := strings.Cut(native, "#")
-	sameProvider := scope.Provider == "" || scope.Provider == provider
+	// An unset scope provider is unknown, not a match. Reading it as a match
+	// would drop the qualifier for a project whose scope could not be resolved,
+	// which is how an unqualified reference ends up naming the wrong tracker's
+	// issue of that number.
+	sameProvider := scope.Provider != "" && scope.Provider == provider
 	if scopeRepo := strings.TrimSpace(scope.Native); scopeRepo != "" &&
 		sameProvider && strings.EqualFold(repo, scopeRepo) {
 		return number
