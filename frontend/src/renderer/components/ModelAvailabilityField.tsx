@@ -360,7 +360,7 @@ export function catalogProvenanceLabel(
 	}
 }
 
-export function preferredEffort(model?: Pick<AgentModelAvailability, "defaultEffort" | "efforts">): string {
+function preferredEffort(model?: Pick<AgentModelAvailability, "defaultEffort" | "efforts">): string {
 	return model?.defaultEffort ?? model?.efforts?.[0] ?? "";
 }
 
