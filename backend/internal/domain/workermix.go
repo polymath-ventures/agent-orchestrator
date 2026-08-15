@@ -57,14 +57,17 @@ type BucketKey struct {
 
 // WorkerMix is a project's weighted worker mix: worker spawns are distributed
 // across the listed agent/model buckets by weight. When non-empty it drives
-// worker spawns that pass no explicit --agent (deficit-based, see Select); empty
-// means the single Worker.Harness behavior is used unchanged (back-compat).
+// worker spawns that pass no explicit --agent (deficit-based, see Select). When
+// empty, worker spawns use the scalar Worker.Harness if configured; otherwise
+// the session manager builds an even split over installed+authorized worker
+// harnesses.
 type WorkerMix []WorkerMixEntry
 
 // Validate rejects a mix that could not be honored deterministically: an unknown
 // harness, a cross-provider model, an out-of-range weight, a duplicate bucket, or
-// weights that do not sum to 100. An empty mix is valid — the feature is off and
-// spawns fall back to the single worker role harness.
+// weights that do not sum to 100. An empty mix is valid — the project has no
+// explicit mix, so spawn resolution falls through to worker.agent or the default
+// installed+authorized even split.
 //
 // Fable is intentionally NOT rejected here. A user may explicitly weight fable
 // into the mix; the no-default-fable rule (GH #61) constrains only what the

@@ -222,6 +222,10 @@ type lifecycleRecorder interface {
 	MarkTerminated(ctx context.Context, id domain.SessionID) error
 }
 
+type defaultWorkerHarnessResolver interface {
+	DefaultWorkerHarnesses(context.Context) ([]domain.AgentHarness, error)
+}
+
 // ShellTerminalCloser gates a session's scoped shell terminals around every
 // path that releases its worktree (Kill, Cleanup, RetireForReplacement, the
 // reconcile/shutdown save-and-teardown path), so none of them removes a
@@ -424,6 +428,11 @@ type Manager struct {
 	health *candidatehealth.Tracker
 	// modelValidator consumes only previously cached model/catalog verdicts.
 	modelValidator SpawnModelSelectionValidator
+	// defaultWorkerHarnesses supplies the installed+authorized worker harness
+	// catalog for projects that intentionally leave both workerMix and
+	// worker.agent unset. Explicit spawn harness > workerMix > worker.agent >
+	// this default even split.
+	defaultWorkerHarnesses defaultWorkerHarnessResolver
 	// projectDefaults are daemon-wide typed defaults. Per-project values are
 	// resolved over these at each spawn so newly registered projects inherit
 	// them without copied persistence.
@@ -643,6 +652,10 @@ type Deps struct {
 	Health *candidatehealth.Tracker
 	// ModelValidator is the unified agent model service's cache-only spawn view.
 	ModelValidator SpawnModelSelectionValidator
+	// DefaultWorkerHarnesses supplies installed+authorized worker harnesses for
+	// the implicit no-workerMix/no-worker.agent even split. Nil preserves the
+	// old missing-harness error for embedders that have no readiness catalog.
+	DefaultWorkerHarnesses defaultWorkerHarnessResolver
 	// ProjectDefaults are daemon-wide typed defaults for project configuration.
 	ProjectDefaults domain.ProjectConfig
 }
@@ -692,11 +705,19 @@ func New(d Deps) *Manager {
 			idleSettle:     interfaceTransitionIdleSettle,
 			staleIdleLimit: interfaceTransitionStaleIdleLimit,
 		},
-		logger:          d.Logger,
-		health:          d.Health,
-		modelValidator:  d.ModelValidator,
-		projectDefaults: d.ProjectDefaults,
-		spawnLocks:      map[domain.ProjectID]*sync.Mutex{},
+		logger:                 d.Logger,
+		health:                 d.Health,
+		modelValidator:         d.ModelValidator,
+		defaultWorkerHarnesses: d.DefaultWorkerHarnesses,
+		projectDefaults:        d.ProjectDefaults,
+		spawnLocks:             map[domain.ProjectID]*sync.Mutex{},
+	}
+	if m.defaultWorkerHarnesses == nil {
+		if resolver, ok := d.Agents.(defaultWorkerHarnessResolver); ok {
+			m.defaultWorkerHarnesses = resolver
+		} else if resolver, ok := d.ModelValidator.(defaultWorkerHarnessResolver); ok {
+			m.defaultWorkerHarnesses = resolver
+		}
 	}
 	if m.health == nil {
 		// A sink-less Tracker keeps selection narrowing and recovery working in
@@ -1559,11 +1580,12 @@ type resolvedSpawnTarget struct {
 //
 // A request that pins a harness is honored as given and the worker mix is never
 // consulted for it. A request that pins only a model still lets the mix choose
-// the harness, then overlays the explicit model onto that selected bucket. When
-// no harness is pinned and a configured mix owns the choice for worker spawns,
-// the selected bucket supplies the harness/effort and, unless an explicit spawn
-// model overrides it, the model. With no mix configured the resolution is the
-// pre-existing role/project fallback, unchanged.
+// the harness, then overlays the explicit model onto that selected bucket. The
+// worker precedence is: explicit spawn harness, configured workerMix, scalar
+// worker.agent, then the installed+authorized default even split. A configured
+// or default mix supplies the harness/effort and, unless an explicit spawn model
+// overrides it, the model. The scalar worker.agent path pins exactly that one
+// harness.
 //
 // The mixSelected result is returned rather than re-derived downstream because
 // this is the only point where it is knowable: a pin naming exactly a configured
@@ -1595,45 +1617,20 @@ func (m *Manager) resolveSpawnTarget(ctx context.Context, cfg ports.SpawnConfig,
 	}
 	pinnedHarness := cfg.Harness != ""
 	if !pinnedHarness && cfg.Kind == domain.KindWorker && len(project.Config.WorkerMix) > 0 {
-		mix, err := effectiveWorkerMix(project.Config)
-		if err != nil {
-			return resolvedSpawnTarget{}, err
-		}
-		explicitModel := strings.TrimSpace(cfg.Model)
-		if explicitModel != "" {
-			compatible := make(domain.WorkerMix, 0, len(mix))
-			modelProvider := domain.ClassifyModelProvider(explicitModel)
-			for _, candidate := range mix {
-				if modelProvider.CompatibleWith(candidate.Harness.ModelProvider()) {
-					compatible = append(compatible, candidate)
-				}
-			}
-			if len(compatible) == 0 {
-				return resolvedSpawnTarget{}, fmt.Errorf("%w: %q has no compatible harness in the worker mix",
-					agentconfig.ErrModelHarnessMismatch, explicitModel)
-			}
-			mix = compatible
-		}
-		entry, err := m.selectMixBucket(ctx, cfg.ProjectID, mix, explicitModel)
-		if err != nil {
-			return resolvedSpawnTarget{}, err
-		}
-		bucket := entry.BucketKey()
-		model := bucket.Model
-		if explicitModel != "" {
-			model = explicitModel
-		}
-		return resolvedSpawnTarget{
-			harness:        bucket.Harness,
-			model:          model,
-			effort:         bucket.Effort,
-			mixBucketModel: bucket.Model,
-			mixSelected:    true,
-		}, nil
+		return m.resolveWorkerMixTarget(ctx, cfg, project.Config, project.Config.WorkerMix, "worker mix")
 	}
 	// A per-project role override picks the harness when the spawn names none,
 	// so a project can default workers to one agent and orchestrators to another.
 	harness := effectiveHarness(cfg.Harness, cfg.Kind, project.Config)
+	if !pinnedHarness && cfg.Kind == domain.KindWorker && harness == "" {
+		mix, err := m.defaultWorkerMix(ctx)
+		if err != nil {
+			return resolvedSpawnTarget{}, err
+		}
+		if len(mix) > 0 {
+			return m.resolveWorkerMixTarget(ctx, cfg, project.Config, mix, "default worker mix")
+		}
+	}
 	if harness == "" {
 		return resolvedSpawnTarget{}, fmt.Errorf("%w: configure project %s.agent or pass --harness", ErrMissingHarness, roleConfigName(cfg.Kind))
 	}
@@ -1642,6 +1639,85 @@ func (m *Manager) resolveSpawnTarget(ctx context.Context, cfg ports.SpawnConfig,
 		return resolvedSpawnTarget{}, err
 	}
 	return resolvedSpawnTarget{harness: harness, model: strings.TrimSpace(resolved.Model)}, nil
+}
+
+func (m *Manager) resolveWorkerMixTarget(ctx context.Context, cfg ports.SpawnConfig, projectConfig domain.ProjectConfig, rawMix domain.WorkerMix, source string) (resolvedSpawnTarget, error) {
+	mix, err := effectiveWorkerMix(domain.ProjectConfig{
+		AgentConfig: projectConfig.AgentConfig,
+		Worker:      projectConfig.Worker,
+		WorkerMix:   rawMix,
+	})
+	if err != nil {
+		return resolvedSpawnTarget{}, err
+	}
+	explicitModel := strings.TrimSpace(cfg.Model)
+	if explicitModel != "" {
+		compatible := make(domain.WorkerMix, 0, len(mix))
+		modelProvider := domain.ClassifyModelProvider(explicitModel)
+		for _, candidate := range mix {
+			if modelProvider.CompatibleWith(candidate.Harness.ModelProvider()) {
+				compatible = append(compatible, candidate)
+			}
+		}
+		if len(compatible) == 0 {
+			return resolvedSpawnTarget{}, fmt.Errorf("%w: %q has no compatible harness in the %s",
+				agentconfig.ErrModelHarnessMismatch, explicitModel, source)
+		}
+		mix = compatible
+	}
+	entry, err := m.selectMixBucket(ctx, cfg.ProjectID, mix, explicitModel)
+	if err != nil {
+		return resolvedSpawnTarget{}, err
+	}
+	bucket := entry.BucketKey()
+	model := bucket.Model
+	if explicitModel != "" {
+		model = explicitModel
+	}
+	return resolvedSpawnTarget{
+		harness:        bucket.Harness,
+		model:          model,
+		effort:         bucket.Effort,
+		mixBucketModel: bucket.Model,
+		mixSelected:    true,
+	}, nil
+}
+
+func (m *Manager) defaultWorkerMix(ctx context.Context) (domain.WorkerMix, error) {
+	if m.defaultWorkerHarnesses == nil {
+		return nil, nil
+	}
+	harnesses, err := m.defaultWorkerHarnesses.DefaultWorkerHarnesses(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("default worker harnesses: %w", err)
+	}
+	seen := make(map[domain.AgentHarness]struct{}, len(harnesses))
+	unique := make([]domain.AgentHarness, 0, len(harnesses))
+	for _, harness := range harnesses {
+		if harness == "" {
+			continue
+		}
+		if _, ok := seen[harness]; ok {
+			continue
+		}
+		seen[harness] = struct{}{}
+		unique = append(unique, harness)
+	}
+	sort.Slice(unique, func(i, j int) bool { return unique[i] < unique[j] })
+	if len(unique) == 0 {
+		return nil, nil
+	}
+	weight := 100 / len(unique)
+	remainder := 100 % len(unique)
+	mix := make(domain.WorkerMix, 0, len(unique))
+	for i, harness := range unique {
+		entryWeight := weight
+		if i < remainder {
+			entryWeight++
+		}
+		mix = append(mix, domain.WorkerMixEntry{Harness: harness, Weight: entryWeight})
+	}
+	return mix, nil
 }
 
 // effectiveWorkerMix resolves blank effort through the same worker/project

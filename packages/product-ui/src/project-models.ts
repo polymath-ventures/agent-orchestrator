@@ -32,7 +32,7 @@ export function validateProjectSettings(
 	>,
 	options: { validateIntake?: boolean } = {},
 ): ProjectSettingsValidationCode | null {
-	if (values.workerAgent === "" || values.orchestratorAgent === "") return "agents_required";
+	if (values.orchestratorAgent === "") return "agents_required";
 	if (values.displayName.trim() === "") return "name_required";
 	if (options.validateIntake !== false && values.intakeEnabled && values.intakeAssignee.trim() === "") {
 		return "intake_assignee_required";

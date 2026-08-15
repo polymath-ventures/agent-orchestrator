@@ -589,7 +589,7 @@
 	"settings.options.searchPlaceholder": "Buscar opciones…",
 	"settings.field.edit": "Editar {{label}}",
 	"settings.project.agents": "Agentes",
-	"settings.project.agentsRequired": "Se requieren agentes de trabajo y orquestador.",
+	"settings.project.agentsRequired": "Orchestrator agent is required.",
 	"settings.project.agentDefault": "(predeterminado del agente)",
 	"settings.project.childReposEmpty": "No hay repositorios secundarios registrados.",
 	"settings.project.default": "Predeterminado del proyecto",
@@ -1168,5 +1168,6 @@
 	"chat.edit.image": "Imagen",
 	"chat.edit.cancel": "Cancelar edición",
 	"chat.edit.send": "Enviar mensaje editado",
-	"chat.edit.sendShortcut": "Enviar mensaje editado (⌘/Ctrl+Enter)"
+	"chat.edit.sendShortcut": "Enviar mensaje editado (⌘/Ctrl+Enter)",
+	"settings.project.defaultWorkerEvenSplit": "Automatic even split"
 }

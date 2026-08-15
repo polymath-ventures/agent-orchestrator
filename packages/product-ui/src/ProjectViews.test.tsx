@@ -27,12 +27,21 @@ describe("project models", () => {
 		expect(
 			validateProjectSettings({
 				displayName: "",
-				workerAgent: "",
+				workerAgent: "codex",
 				orchestratorAgent: "",
 				intakeEnabled: true,
 				intakeAssignee: "",
 			}),
 		).toBe("agents_required");
+		expect(
+			validateProjectSettings({
+				displayName: "Project",
+				workerAgent: "",
+				orchestratorAgent: "claude-code",
+				intakeEnabled: false,
+				intakeAssignee: "",
+			}),
+		).toBeNull();
 		expect(
 			validateProjectSettings({
 				displayName: "Project",

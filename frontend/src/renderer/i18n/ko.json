@@ -579,7 +579,7 @@
 	"settings.options.searchPlaceholder": "옵션 검색…",
 	"settings.field.edit": "{{label}} 편집",
 	"settings.project.agents": "에이전트",
-	"settings.project.agentsRequired": "워커 및 오케스트레이터 에이전트는 필수입니다.",
+	"settings.project.agentsRequired": "Orchestrator agent is required.",
 	"settings.project.agentDefault": "(에이전트 기본값)",
 	"settings.project.childReposEmpty": "등록된 하위 저장소가 없습니다.",
 	"settings.project.default": "프로젝트 기본값",
@@ -1152,5 +1152,6 @@
 	"chat.edit.image": "이미지",
 	"chat.edit.cancel": "편집 취소",
 	"chat.edit.send": "편집한 메시지 보내기",
-	"chat.edit.sendShortcut": "편집한 메시지 보내기(⌘/Ctrl+Enter)"
+	"chat.edit.sendShortcut": "편집한 메시지 보내기(⌘/Ctrl+Enter)",
+	"settings.project.defaultWorkerEvenSplit": "Automatic even split"
 }

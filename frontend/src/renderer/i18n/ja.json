@@ -579,7 +579,7 @@
 	"settings.options.searchPlaceholder": "オプションを検索…",
 	"settings.field.edit": "{{label}}を編集",
 	"settings.project.agents": "エージェント",
-	"settings.project.agentsRequired": "ワーカーとオーケストレーターのエージェントは必須です。",
+	"settings.project.agentsRequired": "Orchestrator agent is required.",
 	"settings.project.agentDefault": "（エージェントのデフォルト）",
 	"settings.project.childReposEmpty": "子リポジトリは登録されていません。",
 	"settings.project.default": "プロジェクトのデフォルト",
@@ -1152,5 +1152,6 @@
 	"chat.edit.image": "画像",
 	"chat.edit.cancel": "編集をキャンセル",
 	"chat.edit.send": "編集したメッセージを送信",
-	"chat.edit.sendShortcut": "編集したメッセージを送信（⌘/Ctrl+Enter）"
+	"chat.edit.sendShortcut": "編集したメッセージを送信（⌘/Ctrl+Enter）",
+	"settings.project.defaultWorkerEvenSplit": "Automatic even split"
 }

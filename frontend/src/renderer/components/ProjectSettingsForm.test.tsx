@@ -782,7 +782,7 @@ describe("ProjectSettingsForm", () => {
 		expect(putMock).not.toHaveBeenCalled();
 	});
 
-	it("requires worker and orchestrator agents for existing projects missing role config", async () => {
+	it("allows automatic worker split but still requires orchestrator agents for existing projects missing role config", async () => {
 		mockProject({
 			id: "proj-1",
 			name: "Project One",
@@ -795,15 +795,15 @@ describe("ProjectSettingsForm", () => {
 
 		renderSettings("proj-1", undefined, "agents");
 
-		expect(await screen.findByText("Worker and orchestrator agents are required.")).toBeInTheDocument();
-		expect(screen.getByRole("button", { name: "Default worker agent" })).toHaveTextContent("Select worker agent");
+		expect(await screen.findByText("Orchestrator agent is required.")).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Default worker agent" })).toHaveTextContent("Automatic even split");
 		expect(screen.getByRole("button", { name: "Default orchestrator agent" })).toHaveTextContent(
 			"Select orchestrator agent",
 		);
 
 		submitSettings();
 
-		expect(await screen.findAllByText("Worker and orchestrator agents are required.")).toHaveLength(2);
+		expect(await screen.findAllByText("Orchestrator agent is required.")).toHaveLength(2);
 		expect(putMock).not.toHaveBeenCalled();
 	});
 
@@ -1097,6 +1097,7 @@ describe("ProjectSettingsForm", () => {
 		await userEvent.click(workerAgent);
 		const options = await screen.findAllByRole("menuitem");
 		expect(options.map((option) => option.textContent)).toEqual([
+			"Automatic even split",
 			"Claude Code",
 			"Codex",
 			"Cursor",
@@ -1107,7 +1108,7 @@ describe("ProjectSettingsForm", () => {
 			"Pi",
 			"KiroAuth unknown",
 		]);
-		expect(options[8]).not.toHaveAttribute("aria-disabled", "true");
+		expect(options[9]).not.toHaveAttribute("aria-disabled", "true");
 	});
 
 	it("shows Copilot as a reviewer option and saves it in the reviewers payload", async () => {

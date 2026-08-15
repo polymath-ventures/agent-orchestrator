@@ -151,7 +151,7 @@ const deferredLocalizationLiterals: Record<string, readonly string[]> = {
 	],
 	"components/Sidebar.tsx": ["Open", "Open Prime", "Prime", "Down"],
 	"components/WorkerMixFields.tsx": [
-		"Distribute unpinned worker spawns across agent buckets by weight. Weights must sum to 100; an empty mix leaves the feature off.",
+		"Worker spawn precedence is explicit mix, default worker agent, then an automatic even split over installed+authorized agents. Mix weights must sum to 100.",
 		"No worker mix configured.",
 		"Bucket",
 		"Remove bucket",
