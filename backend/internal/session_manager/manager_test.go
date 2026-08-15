@@ -4102,6 +4102,52 @@ func TestSpawnWorker_IssueWithoutPromptGetsFallbackTaskPrompt(t *testing.T) {
 	}
 }
 
+func TestSpawnWorker_AttachmentsKeepTaskSegmentAttribution(t *testing.T) {
+	workspacePath := t.TempDir()
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+	agent := &recordingAgent{}
+	lookPath := func(string) (string, error) { return "/bin/true", nil }
+	m := New(Deps{Runtime: &fakeRuntime{}, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{path: workspacePath}, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
+
+	s, _, _, err := m.Spawn(ctx, ports.SpawnConfig{
+		ProjectID:   "mer",
+		Kind:        domain.KindWorker,
+		IssueID:     "2272",
+		Attachments: []ports.SpawnAttachment{{Ext: ".txt", Data: []byte("attachment")}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	doc, ok := st.initialContexts[s.ID]
+	if !ok {
+		t.Fatalf("initial context for %s was not persisted", s.ID)
+	}
+	var taskConcat string
+	var sawInstructions, sawAttachments bool
+	for _, seg := range doc.Segments {
+		if seg.Channel == "task" && seg.Contributed {
+			taskConcat += seg.Content
+		}
+		if seg.Source == "spawn.issueInstructions" {
+			sawInstructions = true
+		}
+		if seg.Source == "spawn.attachmentReferences" {
+			sawAttachments = true
+			if !strings.Contains(seg.Content, ".ao/attachments/attachment-1.txt") {
+				t.Fatalf("attachment segment content = %q", seg.Content)
+			}
+		}
+	}
+	if !sawInstructions || !sawAttachments {
+		t.Fatalf("task segments saw instructions=%t attachments=%t", sawInstructions, sawAttachments)
+	}
+	if taskConcat != agent.lastLaunch.Prompt {
+		t.Fatalf("task segments do not reconstruct task prompt")
+	}
+}
+
 func TestSpawnWorker_ProjectRulesInSystemPrompt(t *testing.T) {
 	projectDir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(projectDir, "docs"), 0o755); err != nil {
@@ -4113,6 +4159,7 @@ func TestSpawnWorker_ProjectRulesInSystemPrompt(t *testing.T) {
 	cfg := testRoleAgents()
 	cfg.AgentRules = "Inline rule."
 	cfg.AgentRulesFile = "docs/rules.md"
+	cfg.Env = map[string]string{"TOKEN": "secret"}
 	st := newFakeStore()
 	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Path: projectDir, Config: cfg}
 	agent := &recordingAgent{}
@@ -4153,7 +4200,7 @@ func TestSpawnWorker_ProjectRulesInSystemPrompt(t *testing.T) {
 		if seg.Channel == "system" && seg.Contributed && !seg.Redacted {
 			systemConcat += seg.Content
 		}
-		if seg.Source == "projectConfig.agentRules" {
+		if seg.Source == "projectConfig.agentRules.file" {
 			sawRules = true
 			if seg.Path != filepath.Join(projectDir, "docs", "rules.md") {
 				t.Fatalf("project rules path = %q", seg.Path)

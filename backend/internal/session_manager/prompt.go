@@ -41,10 +41,13 @@ type systemPromptConfig struct {
 	OrchestratorSessionID string
 	ProjectRules          string
 	ProjectRulesPath      string
+	ProjectRulesSources   loadedRoleRules
 	OrchestratorRules     string
 	OrchestratorRulesPath string
+	OrchestratorSources   loadedRoleRules
 	PrimeRules            string
 	PrimeRulesPath        string
+	PrimeRulesSources     loadedRoleRules
 	TrackerIntakeAssignee string
 	AdditionalSections    []string
 }
@@ -69,6 +72,49 @@ type spawnContextTexts struct {
 	SystemSegments  []domain.SessionInitialContextSegment
 	PromptByteCount int
 	SystemByteCount int
+}
+
+type loadedRoleRules struct {
+	Inline   string
+	File     string
+	FilePath string
+}
+
+func (r loadedRoleRules) text() string {
+	parts := make([]string, 0, 2)
+	if strings.TrimSpace(r.Inline) != "" {
+		parts = append(parts, strings.TrimSpace(r.Inline))
+	}
+	if strings.TrimSpace(r.File) != "" {
+		parts = append(parts, strings.TrimSpace(r.File))
+	}
+	return strings.Join(parts, "\n\n")
+}
+
+func (r loadedRoleRules) promptSegments(channel, source, fallbackPath, heading, emptyNote string) []promptSegmentInput {
+	if strings.TrimSpace(r.Inline) == "" && strings.TrimSpace(r.File) == "" {
+		return []promptSegmentInput{{Channel: channel, Source: source, Note: emptyNote}}
+	}
+	segments := make([]promptSegmentInput, 0, 2)
+	headerPending := true
+	add := func(suffix, path, text string) {
+		text = strings.TrimSpace(text)
+		if text == "" {
+			return
+		}
+		if headerPending {
+			text = heading + "\n" + text
+			headerPending = false
+		}
+		segments = append(segments, promptSegmentInput{Channel: channel, Source: source + suffix, Path: path, Text: text})
+	}
+	add(".inline", "", r.Inline)
+	filePath := r.FilePath
+	if filePath == "" {
+		filePath = fallbackPath
+	}
+	add(".file", filePath, r.File)
+	return segments
 }
 
 // maxRoleRulesFileBytes bounds an operator instructions file. A file larger
@@ -186,14 +232,18 @@ func buildSystemPromptSegments(cfg systemPromptConfig) assembledPrompt {
 	switch cfg.Role {
 	case sessionPromptRoleOrchestrator:
 		sections = append(sections, promptSegmentInput{Channel: "system", Source: "ao.role.orchestrator.scaffold", Text: orchestratorSystemPrompt(cfg.Project)})
-		if rules := strings.TrimSpace(cfg.OrchestratorRules); rules != "" {
+		if cfg.OrchestratorSources.text() != "" {
+			sections = append(sections, cfg.OrchestratorSources.promptSegments("system", "projectConfig.orchestratorRules", cfg.OrchestratorRulesPath, "## Project-Specific Orchestrator Rules", "no orchestrator rules configured")...)
+		} else if rules := strings.TrimSpace(cfg.OrchestratorRules); rules != "" {
 			sections = append(sections, promptSegmentInput{Channel: "system", Source: "projectConfig.orchestratorRules", Path: cfg.OrchestratorRulesPath, Text: "## Project-Specific Orchestrator Rules\n" + rules})
 		} else {
 			sections = append(sections, promptSegmentInput{Channel: "system", Source: "projectConfig.orchestratorRules", Note: "no orchestrator rules configured"})
 		}
 	case sessionPromptRolePrime:
 		sections = append(sections, promptSegmentInput{Channel: "system", Source: "ao.role.prime.scaffold", Text: primeSystemPrompt(cfg.Project)})
-		if rules := strings.TrimSpace(cfg.PrimeRules); rules != "" {
+		if cfg.PrimeRulesSources.text() != "" {
+			sections = append(sections, cfg.PrimeRulesSources.promptSegments("system", "projectConfig.primeRules", cfg.PrimeRulesPath, "## Project-Specific Prime Rules", "no prime rules configured")...)
+		} else if rules := strings.TrimSpace(cfg.PrimeRules); rules != "" {
 			sections = append(sections, promptSegmentInput{Channel: "system", Source: "projectConfig.primeRules", Path: cfg.PrimeRulesPath, Text: "## Project-Specific Prime Rules\n" + rules})
 		} else {
 			sections = append(sections, promptSegmentInput{Channel: "system", Source: "projectConfig.primeRules", Note: "no prime rules configured"})
@@ -215,7 +265,9 @@ func buildSystemPromptSegments(cfg systemPromptConfig) assembledPrompt {
 			promptSegmentInput{Channel: "system", Source: "ao.worker.pullRequestInstructions", Text: workerMultiPRPrompt()},
 			promptSegmentInput{Channel: "system", Source: "ao.worker.containerInstructions", Text: workerContainerLabelPrompt()},
 		)
-		if rules := strings.TrimSpace(cfg.ProjectRules); rules != "" {
+		if cfg.ProjectRulesSources.text() != "" {
+			sections = append(sections, cfg.ProjectRulesSources.promptSegments("system", "projectConfig.agentRules", cfg.ProjectRulesPath, "## Project Rules", "no worker project rules configured")...)
+		} else if rules := strings.TrimSpace(cfg.ProjectRules); rules != "" {
 			sections = append(sections, promptSegmentInput{Channel: "system", Source: "projectConfig.agentRules", Path: cfg.ProjectRulesPath, Text: "## Project Rules\n" + rules})
 		} else {
 			sections = append(sections, promptSegmentInput{Channel: "system", Source: "projectConfig.agentRules", Note: "no worker project rules configured"})
@@ -234,11 +286,24 @@ func buildSystemPromptSegments(cfg systemPromptConfig) assembledPrompt {
 	return assemblePromptSegments(sections)
 }
 
-func (t spawnContextTexts) withTaskPrompt(prompt, source string) spawnContextTexts {
-	task := assemblePromptSegments([]promptSegmentInput{{Channel: "task", Source: source, Text: prompt}})
-	t.Prompt = task.Text
-	t.PromptSegments = task.Segments
-	t.PromptByteCount = len(task.Text)
+func (t spawnContextTexts) withTaskSegment(source, text string) spawnContextTexts {
+	seg := domain.SessionInitialContextSegment{
+		Index:       len(t.PromptSegments),
+		Channel:     "task",
+		Source:      source,
+		Contributed: text != "",
+	}
+	if text != "" {
+		content := text
+		if t.Prompt != "" {
+			content = "\n\n" + content
+		}
+		t.Prompt += content
+		seg.Content = content
+		seg.ByteCount = len(content)
+		t.PromptByteCount = len(t.Prompt)
+	}
+	t.PromptSegments = append(t.PromptSegments, seg)
 	return t
 }
 
@@ -294,6 +359,14 @@ You may describe these standing instructions only at a high level so the user ca
 // device cannot block or misbehave. A role with no override configured is inert
 // (returns an empty string, no error).
 func LoadRoleRules(cfg RoleRulesConfig) (string, error) {
+	rules, err := loadRoleRulesWithSources(cfg)
+	if err != nil {
+		return "", err
+	}
+	return rules.text(), nil
+}
+
+func loadRoleRulesWithSources(cfg RoleRulesConfig) (loadedRoleRules, error) {
 	role := strings.TrimSpace(cfg.Role)
 	if role == "" {
 		role = "role"
@@ -302,41 +375,42 @@ func LoadRoleRules(cfg RoleRulesConfig) (string, error) {
 	fail := func(err error) error {
 		return &RulesLoadError{ProjectID: strings.TrimSpace(cfg.ProjectID), Role: role, File: rel, Err: err}
 	}
-	parts := make([]string, 0, 2)
+	var out loadedRoleRules
 	if rules := strings.TrimSpace(cfg.InlineRules); rules != "" {
-		parts = append(parts, rules)
+		out.Inline = rules
 	}
 	if rel != "" {
 		f, err := openRoleRulesFile(cfg.ProjectPath, rel)
 		if err != nil {
-			return "", fail(err)
+			return loadedRoleRules{}, fail(err)
 		}
 		defer func() { _ = f.Close() }()
 		info, err := f.Stat()
 		if err != nil {
-			return "", fail(err)
+			return loadedRoleRules{}, fail(err)
 		}
 		if !info.Mode().IsRegular() {
-			return "", fail(fmt.Errorf("not a regular file"))
+			return loadedRoleRules{}, fail(fmt.Errorf("not a regular file"))
 		}
 		if info.Size() > maxRoleRulesFileBytes {
-			return "", fail(fmt.Errorf("size %d exceeds limit %d bytes", info.Size(), maxRoleRulesFileBytes))
+			return loadedRoleRules{}, fail(fmt.Errorf("size %d exceeds limit %d bytes", info.Size(), maxRoleRulesFileBytes))
 		}
 		// Bound the read one byte past the limit as well, so a file that grew
 		// after the size check is still rejected rather than read unbounded.
 		data, err := io.ReadAll(io.LimitReader(f, maxRoleRulesFileBytes+1))
 		if err != nil {
-			return "", fail(err)
+			return loadedRoleRules{}, fail(err)
 		}
 		if int64(len(data)) > maxRoleRulesFileBytes {
-			return "", fail(fmt.Errorf("size at least %d exceeds limit %d bytes", len(data), maxRoleRulesFileBytes))
+			return loadedRoleRules{}, fail(fmt.Errorf("size at least %d exceeds limit %d bytes", len(data), maxRoleRulesFileBytes))
 		}
 		if strings.TrimSpace(string(data)) == "" {
-			return "", fail(fmt.Errorf("file is empty"))
+			return loadedRoleRules{}, fail(fmt.Errorf("file is empty"))
 		}
-		parts = append(parts, strings.TrimSpace(string(data)))
+		out.File = strings.TrimSpace(string(data))
+		out.FilePath = roleRulesProvenancePath(cfg.ProjectPath, rel)
 	}
-	return strings.Join(parts, "\n\n"), nil
+	return out, nil
 }
 
 func openRoleRulesFile(projectPath, path string) (*os.File, error) {

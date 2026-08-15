@@ -1058,8 +1058,9 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		if err := m.workspace.AddExclude(ctx, ws, "/"+attachmentsDir+"/"); err != nil {
 			m.logger.Warn("spawn: exclude attachments dir", "sessionID", id, "error", err)
 		}
-		prompt = appendAttachmentReferences(prompt, refs)
-		contextTexts = contextTexts.withTaskPrompt(prompt, "spawn.promptWithAttachments")
+		attachmentPrompt := attachmentReferencesPrompt(refs)
+		prompt = appendPromptBlock(prompt, attachmentPrompt)
+		contextTexts = contextTexts.withTaskSegment("spawn.attachmentReferences", attachmentPrompt)
 	}
 
 	// Everything above is shared: project, harness, prompts, seed row, worktree,
@@ -1193,11 +1194,8 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	if projectKind == domain.ProjectKindSingleRepo {
 		metadata.DiffBaseSHA, metadata.DiffBaseRef = resolveSpawnDiffBase(ctx, ws.Path, project.Config.WithDefaults().DefaultBranch)
 	}
-	if err := m.store.UpsertSessionInitialContext(ctx, m.sessionInitialContextDocument(rec, cfg, agentConfig, mode, contextTexts)); err != nil {
-		runtimeDestroyed := m.destroyFailedLaunchRuntime(ctx, handle)
-		m.rollbackPreparedSpawnWorkspace(ctx, rec, ws, workspaceProject, runtimeDestroyed)
-		m.markSpawnFailedTerminated(ctx, id)
-		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: initial context: %w", id, err)
+	if err := m.store.UpsertSessionInitialContext(ctx, m.sessionInitialContextDocument(rec, cfg, agentConfig, mode, contextTexts, len(project.Config.Env) > 0)); err != nil {
+		m.logger.Warn("spawn: persist initial context snapshot", "sessionID", id, "error", err)
 	}
 	if err := m.lcm.MarkSpawned(ctx, id, metadata); err != nil {
 		runtimeDestroyed := m.destroyFailedLaunchRuntime(ctx, handle)
@@ -1244,28 +1242,30 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	return rec, promptBytes, systemPromptBytes, nil
 }
 
-func (m *Manager) sessionInitialContextDocument(rec domain.SessionRecord, cfg ports.SpawnConfig, agentConfig domain.AgentConfig, mode domain.SessionMode, texts spawnContextTexts) domain.SessionInitialContextDocument {
+func (m *Manager) sessionInitialContextDocument(rec domain.SessionRecord, cfg ports.SpawnConfig, agentConfig domain.AgentConfig, mode domain.SessionMode, texts spawnContextTexts, envConfigured bool) domain.SessionInitialContextDocument {
 	segments := make([]domain.SessionInitialContextSegment, 0, len(texts.SystemSegments)+len(texts.PromptSegments))
 	for _, seg := range append(append([]domain.SessionInitialContextSegment{}, texts.SystemSegments...), texts.PromptSegments...) {
 		seg.Index = len(segments)
 		segments = append(segments, seg)
 	}
-	segments = append(segments, domain.SessionInitialContextSegment{
-		Index:           len(segments),
-		Channel:         "launch",
-		Source:          "projectConfig.env",
-		Contributed:     false,
-		Redacted:        true,
-		RedactionReason: "runtime environment values may contain secrets and are not exposed",
-		Note:            "environment values are delivered to the runtime separately from prompt text",
-	})
+	if envConfigured {
+		segments = append(segments, domain.SessionInitialContextSegment{
+			Index:           len(segments),
+			Channel:         "launch",
+			Source:          "projectConfig.env",
+			Contributed:     false,
+			Redacted:        true,
+			RedactionReason: "runtime environment values may contain secrets and are not exposed",
+			Note:            "environment values are delivered to the runtime separately from prompt text",
+		})
+	}
 	return domain.SessionInitialContextDocument{
 		SessionID:       rec.ID,
 		ProjectID:       cfg.ProjectID,
 		IssueID:         cfg.IssueID,
 		Kind:            cfg.Kind,
 		Harness:         cfg.Harness,
-		Model:           agentConfig.Model,
+		Model:           rec.Model,
 		Effort:          agentConfig.Effort,
 		Mode:            domain.NormalizeSessionMode(mode),
 		DisplayName:     cfg.DisplayName,
@@ -4246,7 +4246,11 @@ func writeSpawnAttachments(workspacePath string, attachments []ports.SpawnAttach
 // appendAttachmentReferences appends a block listing the attached file paths so
 // the agent knows to read them. Placed after the human's brief.
 func appendAttachmentReferences(prompt string, refs []string) string {
-	if len(refs) == 0 {
+	return appendPromptBlock(prompt, attachmentReferencesPrompt(refs))
+}
+
+func appendPromptBlock(prompt, block string) string {
+	if block == "" {
 		return prompt
 	}
 	var b strings.Builder
@@ -4254,6 +4258,15 @@ func appendAttachmentReferences(prompt string, refs []string) string {
 	if strings.TrimSpace(prompt) != "" {
 		b.WriteString("\n\n")
 	}
+	b.WriteString(block)
+	return b.String()
+}
+
+func attachmentReferencesPrompt(refs []string) string {
+	if len(refs) == 0 {
+		return ""
+	}
+	var b strings.Builder
 	b.WriteString("Attached files (read these files in the workspace for context):")
 	for _, ref := range refs {
 		b.WriteString("\n- ")
@@ -4352,7 +4365,7 @@ func (m *Manager) buildSystemPromptSegments(ctx context.Context, kind domain.Ses
 			Role:    sessionPromptRolePrime,
 			Project: promptProject{ID: "fleet", Name: "AO Fleet"},
 		}
-		rules, err := LoadRoleRules(RoleRulesConfig{
+		rules, err := loadRoleRulesWithSources(RoleRulesConfig{
 			Role:        "prime",
 			ProjectID:   "",
 			ProjectPath: "",
@@ -4362,7 +4375,8 @@ func (m *Manager) buildSystemPromptSegments(ctx context.Context, kind domain.Ses
 		if err != nil {
 			return assembledPrompt{}, err
 		}
-		cfg.PrimeRules = rules
+		cfg.PrimeRules = rules.text()
+		cfg.PrimeRulesSources = rules
 		cfg.PrimeRulesPath = roleRulesProvenancePath("", settings.RulesFile)
 		return buildSystemPromptSegments(cfg), nil
 	}
@@ -4377,7 +4391,7 @@ func (m *Manager) buildSystemPromptSegments(ctx context.Context, kind domain.Ses
 
 	switch kind {
 	case domain.KindOrchestrator:
-		rules, err := LoadRoleRules(RoleRulesConfig{
+		rules, err := loadRoleRulesWithSources(RoleRulesConfig{
 			Role:        "orchestrator",
 			ProjectID:   string(projectID),
 			ProjectPath: project.Path,
@@ -4387,10 +4401,11 @@ func (m *Manager) buildSystemPromptSegments(ctx context.Context, kind domain.Ses
 		if err != nil {
 			return assembledPrompt{}, err
 		}
-		cfg.OrchestratorRules = rules
+		cfg.OrchestratorRules = rules.text()
+		cfg.OrchestratorSources = rules
 		cfg.OrchestratorRulesPath = roleRulesProvenancePath(project.Path, project.Config.OrchestratorRulesFile)
 	case domain.KindPrime:
-		rules, err := LoadRoleRules(RoleRulesConfig{
+		rules, err := loadRoleRulesWithSources(RoleRulesConfig{
 			Role:        "prime",
 			ProjectID:   string(projectID),
 			ProjectPath: project.Path,
@@ -4400,7 +4415,9 @@ func (m *Manager) buildSystemPromptSegments(ctx context.Context, kind domain.Ses
 		if err != nil {
 			return assembledPrompt{}, err
 		}
-		cfg.PrimeRules = rules
+		cfg.PrimeRules = rules.text()
+		cfg.PrimeRulesSources = rules
+		cfg.PrimeRulesPath = roleRulesProvenancePath(project.Path, project.Config.PrimeRulesFile)
 	case domain.KindWorker:
 		intake := project.Config.TrackerIntake.WithDefaults()
 		if intake.Enabled {
@@ -4413,7 +4430,7 @@ func (m *Manager) buildSystemPromptSegments(ctx context.Context, kind domain.Ses
 		if ok {
 			cfg.OrchestratorSessionID = string(orchestratorID)
 		}
-		rules, err := LoadRoleRules(RoleRulesConfig{
+		rules, err := loadRoleRulesWithSources(RoleRulesConfig{
 			Role:        "worker",
 			ProjectID:   string(projectID),
 			ProjectPath: project.Path,
@@ -4423,7 +4440,8 @@ func (m *Manager) buildSystemPromptSegments(ctx context.Context, kind domain.Ses
 		if err != nil {
 			return assembledPrompt{}, err
 		}
-		cfg.ProjectRules = rules
+		cfg.ProjectRules = rules.text()
+		cfg.ProjectRulesSources = rules
 		cfg.ProjectRulesPath = roleRulesProvenancePath(project.Path, project.Config.AgentRulesFile)
 	default:
 		return assembledPrompt{}, nil

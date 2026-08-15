@@ -150,9 +150,8 @@ func (m *Manager) launchChatController(ctx context.Context, in chatSpawn) (domai
 				ProviderConversationID: started.ProviderConversationID,
 				ControllerGeneration:   started.ControllerGeneration,
 			}
-			if err := m.store.UpsertSessionInitialContext(ctx, m.sessionInitialContextDocument(in.record, in.cfg, agentConfig, domain.SessionModeChat, in.contextTexts)); err != nil {
-				completionErr = err
-				return err
+			if err := m.store.UpsertSessionInitialContext(ctx, m.sessionInitialContextDocument(in.record, in.cfg, agentConfig, domain.SessionModeChat, in.contextTexts, len(in.project.Config.Env) > 0)); err != nil {
+				m.logger.Warn("spawn: persist initial context snapshot", "sessionID", id, "error", err)
 			}
 			completionErr = m.lcm.MarkSpawned(ctx, id, metadata)
 			controllerCommitted = completionErr == nil

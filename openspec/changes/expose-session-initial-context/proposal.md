@@ -13,9 +13,11 @@ Operators cannot currently inspect the complete starting context that a specific
 ## Capabilities
 
 ### New Capabilities
+
 - `session-initial-context`: Inspect the fully assembled initial context that a specific AO session was launched with, decomposed by ordered source segments.
 
 ### Modified Capabilities
+
 <!-- None. -->
 
 ## Impact

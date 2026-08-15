@@ -32,6 +32,8 @@ The feature spans prompt assembly, session persistence, HTTP/API schema, CLI out
 
 5. Return a best-effort reconstructed context for legacy sessions that predate the snapshot. The response marks the context and affected segments as reconstructed so callers do not confuse it with launch-time proof. Returning 404 for existing historical sessions was rejected because operators still need diagnosis help for sessions whose runtime is gone.
 
+6. Return delivered prompt content to the local operator inspection surface. Metadata-only output was rejected because the issue requires concatenating segments to reproduce the assembled context exactly and because the operator needs to identify the exact paragraph to edit; the daemon remains a local operator surface, while secret-bearing runtime environment values remain redacted and non-contributing.
+
 ## Risks / Trade-offs
 
 - Snapshot size increases session metadata storage. Mitigation: the captured prompt/system context is already bounded by existing prompt sizes, byte counts make oversized sources visible, and storage avoids a new runtime dependency.
