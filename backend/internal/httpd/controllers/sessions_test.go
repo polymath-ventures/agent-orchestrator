@@ -181,6 +181,30 @@ func (f *fakeSessionService) Get(_ context.Context, id domain.SessionID) (domain
 	return s, nil
 }
 
+func (f *fakeSessionService) InitialContext(_ context.Context, id domain.SessionID) (domain.SessionInitialContextDocument, error) {
+	s, ok := f.sessions[id]
+	if !ok {
+		return domain.SessionInitialContextDocument{}, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
+	}
+	return domain.SessionInitialContextDocument{
+		SessionID:       s.ID,
+		ProjectID:       s.ProjectID,
+		Kind:            s.Kind,
+		Mode:            domain.NormalizeSessionMode(s.Mode),
+		CapturedAt:      s.CreatedAt,
+		Exact:           true,
+		SystemByteCount: 4,
+		TotalByteCount:  4,
+		Segments: []domain.SessionInitialContextSegment{{
+			Channel:     "system",
+			Source:      "test.source",
+			Content:     "test",
+			ByteCount:   4,
+			Contributed: true,
+		}},
+	}, nil
+}
+
 func (f *fakeSessionService) SetPreview(_ context.Context, id domain.SessionID, previewURL string) (domain.Session, error) {
 	s, ok := f.sessions[id]
 	if !ok {
@@ -2452,5 +2476,23 @@ func TestSessionsAPI_ClaimPRErrors(t *testing.T) {
 			body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions/ao-1/pr/claim", tc.body)
 			assertErrorCode(t, body, status, tc.code, tc.want)
 		})
+	}
+}
+
+func TestSessionsAPI_GetInitialContext(t *testing.T) {
+	svc := newFakeSessionService()
+	svc.sessions["ao-1"] = domain.Session{SessionRecord: domain.SessionRecord{ID: "ao-1", ProjectID: "ao", Kind: domain.KindWorker, Mode: domain.SessionModeTUI}}
+	srv := newSessionTestServer(t, svc)
+
+	body, status, _ := doRequest(t, srv, http.MethodGet, "/api/v1/sessions/ao-1/context", "")
+	if status != http.StatusOK {
+		t.Fatalf("GET context = %d, body=%s", status, body)
+	}
+	var got controllers.SessionInitialContextResponse
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.Context.SessionID != "ao-1" || len(got.Context.Segments) != 1 || got.Context.Segments[0].Source != "test.source" {
+		t.Fatalf("context response = %+v", got.Context)
 	}
 }

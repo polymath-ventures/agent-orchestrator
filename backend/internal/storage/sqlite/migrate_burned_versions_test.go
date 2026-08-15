@@ -110,6 +110,7 @@ var shippedMigrations = map[int64]string{
 	89: "0089_review_agent_session_id.sql",
 	90: "0090_review_per_harness.sql",
 	91: "0091_browser_capability_verifier.sql",
+	92: "0092_session_initial_context.sql",
 }
 
 // burnedVersion reports version numbers that must never be (re)used: they

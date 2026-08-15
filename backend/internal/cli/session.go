@@ -68,6 +68,44 @@ type sessionResponse struct {
 	Session sessionDTO `json:"session"`
 }
 
+type sessionInitialContextResponse struct {
+	Context sessionInitialContextDTO `json:"context"`
+}
+
+type sessionInitialContextDTO struct {
+	SessionID       string                         `json:"sessionId"`
+	ProjectID       string                         `json:"projectId,omitempty"`
+	IssueID         string                         `json:"issueId,omitempty"`
+	Kind            string                         `json:"kind"`
+	Harness         string                         `json:"harness,omitempty"`
+	Model           string                         `json:"model,omitempty"`
+	Effort          string                         `json:"effort,omitempty"`
+	Mode            string                         `json:"mode"`
+	DisplayName     string                         `json:"displayName,omitempty"`
+	CapturedAt      time.Time                      `json:"capturedAt"`
+	Exact           bool                           `json:"exact"`
+	Reconstructed   bool                           `json:"reconstructed"`
+	SystemByteCount int                            `json:"systemByteCount"`
+	PromptByteCount int                            `json:"promptByteCount"`
+	TotalByteCount  int                            `json:"totalByteCount"`
+	Segments        []sessionInitialContextSegment `json:"segments"`
+	Warnings        []string                       `json:"warnings"`
+}
+
+type sessionInitialContextSegment struct {
+	Index           int    `json:"index"`
+	Channel         string `json:"channel"`
+	Source          string `json:"source"`
+	Path            string `json:"path,omitempty"`
+	Content         string `json:"content,omitempty"`
+	ByteCount       int    `json:"byteCount"`
+	Contributed     bool   `json:"contributed"`
+	Redacted        bool   `json:"redacted"`
+	Reconstructed   bool   `json:"reconstructed"`
+	Note            string `json:"note,omitempty"`
+	RedactionReason string `json:"redactionReason,omitempty"`
+}
+
 type killSessionResponse struct {
 	SessionID string `json:"sessionId"`
 	Freed     bool   `json:"freed"`
@@ -145,6 +183,7 @@ func newSessionCommand(ctx *commandContext) *cobra.Command {
 	}
 	cmd.AddCommand(newSessionListCommand(ctx))
 	cmd.AddCommand(newSessionGetCommand(ctx))
+	cmd.AddCommand(newSessionContextCommand(ctx))
 	cmd.AddCommand(newSessionKillCommand(ctx))
 	cmd.AddCommand(newSessionRestoreCommand(ctx))
 	cmd.AddCommand(newSessionRenameCommand(ctx))
@@ -186,6 +225,26 @@ func newSessionGetCommand(ctx *commandContext) *cobra.Command {
 				return err
 			}
 			return ctx.getSession(cmd.Context(), cmd, id, opts)
+		},
+	}
+	f := cmd.Flags()
+	addSessionProjectFlag(f, &opts.project, "Project id to scope the lookup")
+	f.BoolVar(&opts.json, "json", false, "Output as JSON")
+	return cmd
+}
+
+func newSessionContextCommand(ctx *commandContext) *cobra.Command {
+	var opts sessionOptions
+	cmd := &cobra.Command{
+		Use:   "context <id>",
+		Short: "Inspect a session's launch context by source",
+		Args:  oneSessionIDArg,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			id, err := normalizeSessionID(args[0])
+			if err != nil {
+				return err
+			}
+			return ctx.getSessionContext(cmd.Context(), cmd, id, opts)
 		},
 	}
 	f := cmd.Flags()
@@ -453,6 +512,22 @@ func (c *commandContext) getSession(ctx context.Context, cmd *cobra.Command, id 
 	return writeSessionDetails(cmd, sess)
 }
 
+func (c *commandContext) getSessionContext(ctx context.Context, cmd *cobra.Command, id string, opts sessionOptions) error {
+	if opts.project != "" {
+		if _, err := c.fetchScopedSession(ctx, id, opts.project); err != nil {
+			return err
+		}
+	}
+	var res sessionInitialContextResponse
+	if err := c.getJSON(ctx, "sessions/"+url.PathEscape(id)+"/context", &res); err != nil {
+		return err
+	}
+	if opts.json {
+		return writeJSON(cmd.OutOrStdout(), res)
+	}
+	return writeSessionContext(cmd, res.Context)
+}
+
 func (c *commandContext) killSession(ctx context.Context, cmd *cobra.Command, id string, opts sessionOptions) error {
 	if opts.project != "" {
 		if _, err := c.fetchScopedSession(ctx, id, opts.project); err != nil {
@@ -675,6 +750,90 @@ func cleanupLabel(sess sessionDTO, scopedProject string) string {
 		return sess.ProjectID + ":" + sess.ID
 	}
 	return sess.ID
+}
+
+func writeSessionContext(cmd *cobra.Command, ctx sessionInitialContextDTO) error {
+	out := cmd.OutOrStdout()
+	if _, err := fmt.Fprintf(out, "session %s context\n", ctx.SessionID); err != nil {
+		return err
+	}
+	fields := [][2]string{
+		{"project", ctx.ProjectID},
+		{"role", ctx.Kind},
+		{"mode", ctx.Mode},
+		{"harness", ctx.Harness},
+		{"model", ctx.Model},
+		{"effort", ctx.Effort},
+		{"issue", ctx.IssueID},
+		{"exact", fmt.Sprintf("%t", ctx.Exact)},
+		{"reconstructed", fmt.Sprintf("%t", ctx.Reconstructed)},
+		{"bytes", fmt.Sprintf("system=%d prompt=%d total=%d", ctx.SystemByteCount, ctx.PromptByteCount, ctx.TotalByteCount)},
+	}
+	for _, field := range fields {
+		if field[1] == "" {
+			continue
+		}
+		if _, err := fmt.Fprintf(out, "  %-14s %s\n", field[0]+":", field[1]); err != nil {
+			return err
+		}
+	}
+	for _, warning := range ctx.Warnings {
+		if _, err := fmt.Fprintf(out, "  warning:       %s\n", warning); err != nil {
+			return err
+		}
+	}
+	if _, err := fmt.Fprintln(out, "\nsegments:"); err != nil {
+		return err
+	}
+	for _, seg := range ctx.Segments {
+		if _, err := fmt.Fprintf(out, "  %d. [%s] %s (%d B", seg.Index+1, seg.Channel, seg.Source, seg.ByteCount); err != nil {
+			return err
+		}
+		if seg.Path != "" {
+			if _, err := fmt.Fprintf(out, ", path=%s", seg.Path); err != nil {
+				return err
+			}
+		}
+		if !seg.Contributed {
+			if _, err := fmt.Fprint(out, ", empty"); err != nil {
+				return err
+			}
+		}
+		if seg.Redacted {
+			if _, err := fmt.Fprint(out, ", redacted"); err != nil {
+				return err
+			}
+		}
+		if seg.Reconstructed {
+			if _, err := fmt.Fprint(out, ", reconstructed"); err != nil {
+				return err
+			}
+		}
+		if _, err := fmt.Fprintln(out, ")"); err != nil {
+			return err
+		}
+		if seg.Note != "" {
+			if _, err := fmt.Fprintf(out, "     note: %s\n", seg.Note); err != nil {
+				return err
+			}
+		}
+		if seg.Redacted {
+			reason := seg.RedactionReason
+			if reason == "" {
+				reason = "content redacted"
+			}
+			if _, err := fmt.Fprintf(out, "     %s\n", reason); err != nil {
+				return err
+			}
+			continue
+		}
+		if seg.Content != "" {
+			if _, err := fmt.Fprintf(out, "     %s\n", strings.ReplaceAll(seg.Content, "\n", "\n     ")); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func writeSessionList(cmd *cobra.Command, sessions []sessionDTO, hiddenTerminatedCount, hiddenOrchestratorCount int) error {

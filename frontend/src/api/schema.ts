@@ -948,6 +948,23 @@ export interface paths {
         patch: operations["setSessionAutoInjectReview"];
         trace?: never;
     };
+    "/api/v1/sessions/{sessionId}/context": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Inspect a session's launch context by source */
+        get: operations["getSessionInitialContext"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/sessions/{sessionId}/conversation": {
         parameters: {
             query?: never;
@@ -2931,6 +2948,42 @@ export interface components {
             message: string;
             ok: boolean;
             sessionId: string;
+        };
+        SessionInitialContextDocument: {
+            /** Format: date-time */
+            capturedAt: string;
+            displayName?: string;
+            effort?: string;
+            exact: boolean;
+            harness?: string;
+            issueId?: string;
+            kind: string;
+            mode: string;
+            model?: string;
+            projectId?: string;
+            promptByteCount: number;
+            reconstructed: boolean;
+            segments: components["schemas"]["SessionInitialContextSegment"][];
+            sessionId: string;
+            systemByteCount: number;
+            totalByteCount: number;
+            warnings: string[];
+        };
+        SessionInitialContextResponse: {
+            context: components["schemas"]["SessionInitialContextDocument"];
+        };
+        SessionInitialContextSegment: {
+            byteCount: number;
+            channel: string;
+            content?: string;
+            contributed: boolean;
+            index: number;
+            note?: string;
+            path?: string;
+            reconstructed: boolean;
+            redacted: boolean;
+            redactionReason?: string;
+            source: string;
         };
         SessionInterfaceTransition: {
             /** Format: date-time */
@@ -6474,6 +6527,56 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SetSessionAutoInjectReviewResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    getSessionInitialContext: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Session identifier, e.g. project-1. */
+                sessionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionInitialContextResponse"];
                 };
             };
             /** @description Not Found */

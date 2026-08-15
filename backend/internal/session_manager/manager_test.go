@@ -32,6 +32,7 @@ type fakeStore struct {
 	pr                map[domain.SessionID]domain.PRFacts
 	projects          map[string]domain.ProjectRecord
 	workspaceRepo     map[string][]domain.WorkspaceRepoRecord
+	initialContexts   map[domain.SessionID]domain.SessionInitialContextDocument
 	fleetPaused       bool
 	fleetPausedErr    error
 	prime             domain.PrimeSettings
@@ -65,12 +66,13 @@ type fakeStore struct {
 
 func newFakeStore() *fakeStore {
 	return &fakeStore{
-		sessions:      map[domain.SessionID]domain.SessionRecord{},
-		pr:            map[domain.SessionID]domain.PRFacts{},
-		projects:      map[string]domain.ProjectRecord{},
-		workspaceRepo: map[string][]domain.WorkspaceRepoRecord{},
-		prime:         domain.DefaultPrimeSettings(),
-		worktrees:     map[domain.SessionID][]domain.SessionWorktreeRecord{},
+		sessions:        map[domain.SessionID]domain.SessionRecord{},
+		pr:              map[domain.SessionID]domain.PRFacts{},
+		projects:        map[string]domain.ProjectRecord{},
+		workspaceRepo:   map[string][]domain.WorkspaceRepoRecord{},
+		initialContexts: map[domain.SessionID]domain.SessionInitialContextDocument{},
+		prime:           domain.DefaultPrimeSettings(),
+		worktrees:       map[domain.SessionID][]domain.SessionWorktreeRecord{},
 	}
 }
 func (f *fakeStore) GetProject(_ context.Context, id string) (domain.ProjectRecord, bool, error) {
@@ -109,6 +111,21 @@ func (f *fakeStore) CreateSession(_ context.Context, rec domain.SessionRecord) (
 	f.sessions[rec.ID] = rec
 	return rec, nil
 }
+
+func (f *fakeStore) UpsertSessionInitialContext(_ context.Context, doc domain.SessionInitialContextDocument) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.initialContexts[doc.SessionID] = doc
+	return nil
+}
+
+func (f *fakeStore) GetSessionInitialContext(_ context.Context, id domain.SessionID) (domain.SessionInitialContextDocument, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	doc, ok := f.initialContexts[id]
+	return doc, ok, nil
+}
+
 func (f *fakeStore) UpdateSession(_ context.Context, rec domain.SessionRecord) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -4118,6 +4135,42 @@ func TestSpawnWorker_ProjectRulesInSystemPrompt(t *testing.T) {
 	}
 	if got, want := st.sessions[s.ID].Metadata.PromptPolicyHash, promptPolicyHash(systemPrompt); got != want {
 		t.Fatalf("prompt policy hash = %q, want %q", got, want)
+	}
+	doc, ok := st.initialContexts[s.ID]
+	if !ok {
+		t.Fatalf("initial context for %s was not persisted", s.ID)
+	}
+	if !doc.Exact || doc.Reconstructed {
+		t.Fatalf("initial context exact/reconstructed = %t/%t, want true/false", doc.Exact, doc.Reconstructed)
+	}
+	if doc.SystemByteCount != len(systemPrompt) || doc.PromptByteCount != len(agent.lastLaunch.Prompt) {
+		t.Fatalf("byte counts = system %d prompt %d, want %d/%d", doc.SystemByteCount, doc.PromptByteCount, len(systemPrompt), len(agent.lastLaunch.Prompt))
+	}
+	var systemConcat string
+	var sawRules bool
+	var sawRedactedEnv bool
+	for _, seg := range doc.Segments {
+		if seg.Channel == "system" && seg.Contributed && !seg.Redacted {
+			systemConcat += seg.Content
+		}
+		if seg.Source == "projectConfig.agentRules" {
+			sawRules = true
+			if seg.Path != filepath.Join(projectDir, "docs", "rules.md") {
+				t.Fatalf("project rules path = %q", seg.Path)
+			}
+		}
+		if seg.Source == "projectConfig.env" && seg.Redacted && !seg.Contributed {
+			sawRedactedEnv = true
+		}
+	}
+	if !sawRules {
+		t.Fatal("initial context omitted projectConfig.agentRules segment")
+	}
+	if !sawRedactedEnv {
+		t.Fatal("initial context omitted redacted projectConfig.env segment")
+	}
+	if systemConcat != systemPrompt {
+		t.Fatalf("system segments do not reconstruct system prompt")
 	}
 }
 

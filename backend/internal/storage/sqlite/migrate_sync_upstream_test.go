@@ -42,6 +42,7 @@ var syncUpstreamMigrationLedger = map[int64]string{
 	89: "0089_review_agent_session_id.sql",
 	90: "0090_review_per_harness.sql",
 	91: "0091_browser_capability_verifier.sql",
+	92: "0092_session_initial_context.sql",
 }
 
 func TestSyncUpstreamMigrationLedger(t *testing.T) {
@@ -132,19 +133,19 @@ INSERT INTO sessions (
 	if err := db.QueryRow(`SELECT MAX(version_id) FROM goose_db_version WHERE is_applied = 1`).Scan(&currentVersion); err != nil {
 		t.Fatalf("read current migration version: %v", err)
 	}
-	if currentVersion != 91 {
-		t.Fatalf("current migration version = %d, want 91", currentVersion)
+	if currentVersion != 92 {
+		t.Fatalf("current migration version = %d, want 92", currentVersion)
 	}
 	var newVersions int
 	if err := db.QueryRow(`
 SELECT COUNT(DISTINCT version_id)
 FROM goose_db_version
-WHERE is_applied = 1 AND version_id BETWEEN 61 AND 91
+WHERE is_applied = 1 AND version_id BETWEEN 61 AND 92
 `).Scan(&newVersions); err != nil {
 		t.Fatalf("count new migration versions: %v", err)
 	}
-	if newVersions != 31 {
-		t.Fatalf("applied migration versions 61..91 = %d, want 31", newVersions)
+	if newVersions != 32 {
+		t.Fatalf("applied migration versions 61..92 = %d, want 32", newVersions)
 	}
 
 	schema := tableSchema(t, db, "sessions")

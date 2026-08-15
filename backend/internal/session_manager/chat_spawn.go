@@ -96,6 +96,7 @@ type chatSpawn struct {
 	agentConfig      ports.AgentConfig
 	prompt           string
 	systemPrompt     string
+	contextTexts     spawnContextTexts
 }
 
 // launchChatController starts the provider controller for a chat session and
@@ -148,6 +149,10 @@ func (m *Manager) launchChatController(ctx context.Context, in chatSpawn) (domai
 				// a terminal that was never created.
 				ProviderConversationID: started.ProviderConversationID,
 				ControllerGeneration:   started.ControllerGeneration,
+			}
+			if err := m.store.UpsertSessionInitialContext(ctx, m.sessionInitialContextDocument(in.record, in.cfg, agentConfig, domain.SessionModeChat, in.contextTexts)); err != nil {
+				completionErr = err
+				return err
 			}
 			completionErr = m.lcm.MarkSpawned(ctx, id, metadata)
 			controllerCommitted = completionErr == nil

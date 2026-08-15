@@ -40,10 +40,35 @@ type systemPromptConfig struct {
 	Project               promptProject
 	OrchestratorSessionID string
 	ProjectRules          string
+	ProjectRulesPath      string
 	OrchestratorRules     string
+	OrchestratorRulesPath string
 	PrimeRules            string
+	PrimeRulesPath        string
 	TrackerIntakeAssignee string
 	AdditionalSections    []string
+}
+
+type promptSegmentInput struct {
+	Channel string
+	Source  string
+	Path    string
+	Text    string
+	Note    string
+}
+
+type assembledPrompt struct {
+	Text     string
+	Segments []domain.SessionInitialContextSegment
+}
+
+type spawnContextTexts struct {
+	Prompt          string
+	SystemPrompt    string
+	PromptSegments  []domain.SessionInitialContextSegment
+	SystemSegments  []domain.SessionInitialContextSegment
+	PromptByteCount int
+	SystemByteCount int
 }
 
 // maxRoleRulesFileBytes bounds an operator instructions file. A file larger
@@ -129,61 +154,121 @@ func RenderWorkerTaskPrompt(template string, issueID domain.IssueID) (string, er
 }
 
 func buildTaskPrompt(cfg taskPromptConfig) string {
+	return buildTaskPromptSegments(cfg).Text
+}
+
+func buildTaskPromptSegments(cfg taskPromptConfig) assembledPrompt {
 	issueContext := strings.TrimSpace(cfg.IssueContext)
 	if cfg.Prompt != "" {
-		return cfg.Prompt
+		return assemblePromptSegments([]promptSegmentInput{{Channel: "task", Source: "spawn.prompt", Text: cfg.Prompt}})
 	}
 	if cfg.IssueID == "" {
-		return ""
+		return assemblePromptSegments([]promptSegmentInput{{Channel: "task", Source: "spawn.prompt", Note: "no initial task prompt was provided"}})
 	}
 	if cfg.Role == sessionPromptRoleWorker && issueContext != "" {
-		return fmt.Sprintf(`Work on issue %s.
+		return assemblePromptSegments([]promptSegmentInput{
+			{Channel: "task", Source: "spawn.issueInstructions", Text: fmt.Sprintf(`Work on issue %s.
 
-Use the issue context below as task context. It is current, so start implementing without re-fetching the issue. First inspect the relevant code and tests, then implement the smallest appropriate fix. Run focused verification. When complete, push the branch. If this issue comes from GitHub, GitLab, or another provider, create or update a PR/MR when a remote/provider is configured and the change is ready, and link the issue.
-
-%s
-
-The issue context above is current. Fetch comments or linked issues only if you need additional context beyond what is provided here.`, cfg.IssueID, issueContextSection(issueContext))
+Use the issue context below as task context. It is current, so start implementing without re-fetching the issue. First inspect the relevant code and tests, then implement the smallest appropriate fix. Run focused verification. When complete, push the branch. If this issue comes from GitHub, GitLab, or another provider, create or update a PR/MR when a remote/provider is configured and the change is ready, and link the issue.`, cfg.IssueID)},
+			{Channel: "task", Source: "spawn.issueContext", Text: issueContextSection(issueContext)},
+			{Channel: "task", Source: "spawn.issueInstructions.footer", Text: "The issue context above is current. Fetch comments or linked issues only if you need additional context beyond what is provided here."},
+		})
 	}
-	return fmt.Sprintf("Work on issue %s.\n\nIssue details were not pre-fetched. Start by reading the issue from the tracker, then inspect the relevant code and tests. Implement the smallest appropriate fix and run focused verification. When complete, push the branch. If this issue comes from GitHub, GitLab, or another provider, create or update a PR/MR when a remote/provider is configured and the change is ready, and link the issue.", cfg.IssueID)
+	return assemblePromptSegments([]promptSegmentInput{{Channel: "task", Source: "spawn.issueInstructions", Text: fmt.Sprintf("Work on issue %s.\n\nIssue details were not pre-fetched. Start by reading the issue from the tracker, then inspect the relevant code and tests. Implement the smallest appropriate fix and run focused verification. When complete, push the branch. If this issue comes from GitHub, GitLab, or another provider, create or update a PR/MR when a remote/provider is configured and the change is ready, and link the issue.", cfg.IssueID)}})
 }
 
 func buildSystemPromptText(cfg systemPromptConfig) string {
-	sections := make([]string, 0, 6)
+	return buildSystemPromptSegments(cfg).Text
+}
+
+func buildSystemPromptSegments(cfg systemPromptConfig) assembledPrompt {
+	sections := make([]promptSegmentInput, 0, 10)
 	switch cfg.Role {
 	case sessionPromptRoleOrchestrator:
-		sections = append(sections, orchestratorSystemPrompt(cfg.Project))
+		sections = append(sections, promptSegmentInput{Channel: "system", Source: "ao.role.orchestrator.scaffold", Text: orchestratorSystemPrompt(cfg.Project)})
 		if rules := strings.TrimSpace(cfg.OrchestratorRules); rules != "" {
-			sections = append(sections, "## Project-Specific Orchestrator Rules\n"+rules)
+			sections = append(sections, promptSegmentInput{Channel: "system", Source: "projectConfig.orchestratorRules", Path: cfg.OrchestratorRulesPath, Text: "## Project-Specific Orchestrator Rules\n" + rules})
+		} else {
+			sections = append(sections, promptSegmentInput{Channel: "system", Source: "projectConfig.orchestratorRules", Note: "no orchestrator rules configured"})
 		}
 	case sessionPromptRolePrime:
-		sections = append(sections, primeSystemPrompt(cfg.Project))
+		sections = append(sections, promptSegmentInput{Channel: "system", Source: "ao.role.prime.scaffold", Text: primeSystemPrompt(cfg.Project)})
 		if rules := strings.TrimSpace(cfg.PrimeRules); rules != "" {
-			sections = append(sections, "## Project-Specific Prime Rules\n"+rules)
+			sections = append(sections, promptSegmentInput{Channel: "system", Source: "projectConfig.primeRules", Path: cfg.PrimeRulesPath, Text: "## Project-Specific Prime Rules\n" + rules})
+		} else {
+			sections = append(sections, promptSegmentInput{Channel: "system", Source: "projectConfig.primeRules", Note: "no prime rules configured"})
 		}
 	case sessionPromptRoleWorker:
 		orchestratorID := strings.TrimSpace(cfg.OrchestratorSessionID)
-		sections = append(sections, workerSystemPrompt(cfg.Project))
+		sections = append(sections, promptSegmentInput{Channel: "system", Source: "ao.role.worker.scaffold", Text: workerSystemPrompt(cfg.Project)})
 		if claimPrompt := trackerIntakeClaimPrompt(cfg.TrackerIntakeAssignee); claimPrompt != "" {
-			sections = append(sections, claimPrompt)
+			sections = append(sections, promptSegmentInput{Channel: "system", Source: "projectConfig.trackerIntake.assignee", Text: claimPrompt})
+		} else {
+			sections = append(sections, promptSegmentInput{Channel: "system", Source: "projectConfig.trackerIntake.assignee", Note: "no tracker-intake assignee contribution"})
 		}
 		if orchestratorID != "" {
-			sections = append(sections, workerOrchestratorPrompt(orchestratorID))
+			sections = append(sections, promptSegmentInput{Channel: "system", Source: "session.activeOrchestrator", Text: workerOrchestratorPrompt(orchestratorID)})
+		} else {
+			sections = append(sections, promptSegmentInput{Channel: "system", Source: "session.activeOrchestrator", Note: "no active orchestrator session at launch"})
 		}
-		sections = append(sections, workerMultiPRPrompt(), workerContainerLabelPrompt())
+		sections = append(sections,
+			promptSegmentInput{Channel: "system", Source: "ao.worker.pullRequestInstructions", Text: workerMultiPRPrompt()},
+			promptSegmentInput{Channel: "system", Source: "ao.worker.containerInstructions", Text: workerContainerLabelPrompt()},
+		)
 		if rules := strings.TrimSpace(cfg.ProjectRules); rules != "" {
-			sections = append(sections, "## Project Rules\n"+rules)
+			sections = append(sections, promptSegmentInput{Channel: "system", Source: "projectConfig.agentRules", Path: cfg.ProjectRulesPath, Text: "## Project Rules\n" + rules})
+		} else {
+			sections = append(sections, promptSegmentInput{Channel: "system", Source: "projectConfig.agentRules", Note: "no worker project rules configured"})
 		}
 	default:
-		return ""
+		return assembledPrompt{}
 	}
-	sections = append(sections, systemPromptGuard())
-	for _, section := range cfg.AdditionalSections {
-		if section := strings.TrimSpace(section); section != "" {
-			sections = append(sections, section)
+	sections = append(sections, promptSegmentInput{Channel: "system", Source: "ao.standingInstructionConfidentiality", Text: systemPromptGuard()})
+	for i, section := range cfg.AdditionalSections {
+		if text := strings.TrimSpace(section); text != "" {
+			sections = append(sections, promptSegmentInput{Channel: "system", Source: fmt.Sprintf("ao.additionalSection.%d", i), Text: text})
+		} else {
+			sections = append(sections, promptSegmentInput{Channel: "system", Source: fmt.Sprintf("ao.additionalSection.%d", i), Note: "additional section was empty"})
 		}
 	}
-	return strings.Join(sections, "\n\n")
+	return assemblePromptSegments(sections)
+}
+
+func (t spawnContextTexts) withTaskPrompt(prompt, source string) spawnContextTexts {
+	task := assemblePromptSegments([]promptSegmentInput{{Channel: "task", Source: source, Text: prompt}})
+	t.Prompt = task.Text
+	t.PromptSegments = task.Segments
+	t.PromptByteCount = len(task.Text)
+	return t
+}
+
+func assemblePromptSegments(inputs []promptSegmentInput) assembledPrompt {
+	var b strings.Builder
+	segments := make([]domain.SessionInitialContextSegment, 0, len(inputs))
+	contributed := false
+	for _, in := range inputs {
+		text := in.Text
+		seg := domain.SessionInitialContextSegment{
+			Index:       len(segments),
+			Channel:     in.Channel,
+			Source:      in.Source,
+			Path:        in.Path,
+			Note:        in.Note,
+			Contributed: text != "",
+		}
+		if text != "" {
+			content := text
+			if contributed {
+				content = "\n\n" + content
+			}
+			b.WriteString(content)
+			seg.Content = content
+			seg.ByteCount = len(content)
+			contributed = true
+		}
+		segments = append(segments, seg)
+	}
+	return assembledPrompt{Text: b.String(), Segments: segments}
 }
 
 // systemPromptGuard is appended to every agent system prompt. The role,

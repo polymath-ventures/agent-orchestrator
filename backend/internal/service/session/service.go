@@ -22,6 +22,7 @@ import (
 // Store is the read-only persistence surface needed to assemble controller-facing session read models.
 type Store interface {
 	GetSession(ctx context.Context, id domain.SessionID) (domain.SessionRecord, bool, error)
+	GetSessionInitialContext(ctx context.Context, id domain.SessionID) (domain.SessionInitialContextDocument, bool, error)
 	ListSessions(ctx context.Context, project domain.ProjectID) ([]domain.SessionRecord, error)
 	ListAllSessions(ctx context.Context) ([]domain.SessionRecord, error)
 	RenameSession(ctx context.Context, id domain.SessionID, displayName string, updatedAt time.Time) (bool, error)
@@ -1257,6 +1258,54 @@ func (s *Service) Get(ctx context.Context, id domain.SessionID) (domain.Session,
 		return domain.Session{}, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
 	}
 	return s.toSession(ctx, rec)
+}
+
+// InitialContext returns the stored launch-time context snapshot for a session,
+// or a clearly-marked best-effort reconstruction for legacy rows that predate
+// snapshot capture.
+func (s *Service) InitialContext(ctx context.Context, id domain.SessionID) (domain.SessionInitialContextDocument, error) {
+	rec, ok, err := s.store.GetSession(ctx, id)
+	if err != nil {
+		return domain.SessionInitialContextDocument{}, fmt.Errorf("get %s: %w", id, err)
+	}
+	if !ok {
+		return domain.SessionInitialContextDocument{}, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
+	}
+	if doc, ok, err := s.store.GetSessionInitialContext(ctx, id); err != nil {
+		return domain.SessionInitialContextDocument{}, fmt.Errorf("get initial context %s: %w", id, err)
+	} else if ok {
+		return doc, nil
+	}
+	prompt := rec.Metadata.Prompt
+	seg := domain.SessionInitialContextSegment{
+		Index:         0,
+		Channel:       "task",
+		Source:        "session.metadata.prompt",
+		Content:       prompt,
+		ByteCount:     len(prompt),
+		Contributed:   prompt != "",
+		Reconstructed: true,
+		Note:          "legacy session has no recorded launch-time context snapshot",
+	}
+	return domain.SessionInitialContextDocument{
+		SessionID:       rec.ID,
+		ProjectID:       rec.ProjectID,
+		IssueID:         rec.IssueID,
+		Kind:            rec.Kind,
+		Harness:         rec.Harness,
+		Model:           rec.Model,
+		Effort:          rec.Effort,
+		Mode:            domain.NormalizeSessionMode(rec.Mode),
+		DisplayName:     rec.DisplayName,
+		CapturedAt:      rec.CreatedAt,
+		Exact:           false,
+		Reconstructed:   true,
+		SystemByteCount: 0,
+		PromptByteCount: len(prompt),
+		TotalByteCount:  len(prompt),
+		Segments:        []domain.SessionInitialContextSegment{seg},
+		Warnings:        []string{"legacy session has no recorded launch-time context snapshot; reconstructed from durable session metadata"},
+	}, nil
 }
 
 // toAPIError maps the session engine's sentinel errors to their REST API

@@ -1904,3 +1904,51 @@ func TestUpsertSessionWorktreeEmptyStateDefaultsToActive(t *testing.T) {
 		t.Fatalf("State = %q, want %q", got.State, "active")
 	}
 }
+
+func TestSessionInitialContextRoundTrip(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "ctx")
+	rec, err := s.CreateSession(ctx, sampleRecord("ctx"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 8, 15, 12, 0, 0, 0, time.UTC)
+	doc := domain.SessionInitialContextDocument{
+		SessionID:       rec.ID,
+		ProjectID:       rec.ProjectID,
+		Kind:            rec.Kind,
+		Harness:         rec.Harness,
+		Mode:            domain.SessionModeTUI,
+		CapturedAt:      now,
+		Exact:           true,
+		SystemByteCount: 7,
+		TotalByteCount:  7,
+		Segments: []domain.SessionInitialContextSegment{{
+			Index:       0,
+			Channel:     "system",
+			Source:      "projectConfig.agentRules",
+			Path:        "/repo/AGENTS.md",
+			Content:     "context",
+			ByteCount:   7,
+			Contributed: true,
+		}},
+	}
+	if err := s.UpsertSessionInitialContext(ctx, doc); err != nil {
+		t.Fatalf("UpsertSessionInitialContext: %v", err)
+	}
+	got, ok, err := s.GetSessionInitialContext(ctx, rec.ID)
+	if err != nil {
+		t.Fatalf("GetSessionInitialContext: %v", err)
+	}
+	if !ok {
+		t.Fatal("GetSessionInitialContext ok=false")
+	}
+	if !reflect.DeepEqual(got, doc) {
+		t.Fatalf("round trip mismatch:\n got: %#v\nwant: %#v", got, doc)
+	}
+	missing, ok, err := s.GetSessionInitialContext(ctx, "missing")
+	if err != nil || ok || missing.SessionID != "" {
+		t.Fatalf("missing context = (%+v, %t, %v)", missing, ok, err)
+	}
+}

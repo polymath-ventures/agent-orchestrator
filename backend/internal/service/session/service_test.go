@@ -33,6 +33,7 @@ type fakeStore struct {
 	prs       map[domain.SessionID][]domain.PullRequest
 	projects  map[string]domain.ProjectRecord
 	worktrees map[domain.SessionID][]domain.SessionWorktreeRecord
+	contexts  map[domain.SessionID]domain.SessionInitialContextDocument
 	prime     domain.PrimeSettings
 	checks    map[string][]domain.PullRequestCheck
 	reviews   map[string][]domain.PullRequestReview
@@ -48,6 +49,7 @@ func newFakeStore() *fakeStore {
 		prs:       map[domain.SessionID][]domain.PullRequest{},
 		projects:  map[string]domain.ProjectRecord{},
 		worktrees: map[domain.SessionID][]domain.SessionWorktreeRecord{},
+		contexts:  map[domain.SessionID]domain.SessionInitialContextDocument{},
 		prime:     domain.DefaultPrimeSettings(),
 		checks:    map[string][]domain.PullRequestCheck{},
 		reviews:   map[string][]domain.PullRequestReview{},
@@ -115,6 +117,11 @@ func (f *fakeStore) CreateSession(_ context.Context, rec domain.SessionRecord) (
 func (f *fakeStore) GetSession(_ context.Context, id domain.SessionID) (domain.SessionRecord, bool, error) {
 	r, ok := f.sessions[id]
 	return r, ok, nil
+}
+
+func (f *fakeStore) GetSessionInitialContext(_ context.Context, id domain.SessionID) (domain.SessionInitialContextDocument, bool, error) {
+	doc, ok := f.contexts[id]
+	return doc, ok, nil
 }
 
 func (f *fakeStore) ListSessions(_ context.Context, p domain.ProjectID) ([]domain.SessionRecord, error) {
@@ -3571,4 +3578,57 @@ func sameStrings(got, want []string) bool {
 		}
 	}
 	return true
+}
+
+func TestInitialContext_ReturnsStoredSnapshot(t *testing.T) {
+	st := newFakeStore()
+	now := time.Date(2026, 8, 15, 12, 0, 0, 0, time.UTC)
+	rec := domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker, Harness: domain.HarnessCodex, Mode: domain.SessionModeTUI, CreatedAt: now}
+	st.sessions[rec.ID] = rec
+	st.contexts[rec.ID] = domain.SessionInitialContextDocument{
+		SessionID:       rec.ID,
+		ProjectID:       rec.ProjectID,
+		Kind:            rec.Kind,
+		Harness:         rec.Harness,
+		Mode:            domain.SessionModeTUI,
+		CapturedAt:      now,
+		Exact:           true,
+		SystemByteCount: 6,
+		TotalByteCount:  6,
+		Segments: []domain.SessionInitialContextSegment{{
+			Channel:     "system",
+			Source:      "ao.test",
+			Content:     "system",
+			ByteCount:   6,
+			Contributed: true,
+		}},
+	}
+	svc := NewWithDeps(Deps{Store: st})
+
+	doc, err := svc.InitialContext(context.Background(), rec.ID)
+	if err != nil {
+		t.Fatalf("InitialContext: %v", err)
+	}
+	if !doc.Exact || doc.Reconstructed || doc.Segments[0].Source != "ao.test" {
+		t.Fatalf("InitialContext returned wrong document: %+v", doc)
+	}
+}
+
+func TestInitialContext_LegacySessionIsReconstructed(t *testing.T) {
+	st := newFakeStore()
+	now := time.Date(2026, 8, 15, 12, 0, 0, 0, time.UTC)
+	rec := domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker, Harness: domain.HarnessCodex, Mode: domain.SessionModeChat, CreatedAt: now, Metadata: domain.SessionMetadata{Prompt: "legacy prompt"}}
+	st.sessions[rec.ID] = rec
+	svc := NewWithDeps(Deps{Store: st})
+
+	doc, err := svc.InitialContext(context.Background(), rec.ID)
+	if err != nil {
+		t.Fatalf("InitialContext: %v", err)
+	}
+	if doc.Exact || !doc.Reconstructed || doc.Mode != domain.SessionModeChat {
+		t.Fatalf("legacy flags/mode = exact %t reconstructed %t mode %q", doc.Exact, doc.Reconstructed, doc.Mode)
+	}
+	if len(doc.Warnings) == 0 || len(doc.Segments) != 1 || doc.Segments[0].Content != "legacy prompt" || !doc.Segments[0].Reconstructed {
+		t.Fatalf("legacy document = %+v", doc)
+	}
 }

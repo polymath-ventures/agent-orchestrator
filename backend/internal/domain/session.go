@@ -75,6 +75,48 @@ type SessionMetadata struct {
 	BrowserCapabilityVerifier string `json:"-"`
 }
 
+// SessionInitialContextDocument is the read model for the immutable launch-time
+// context AO delivered to a session. System and task prompts are distinct
+// delivery channels, so byte counts are reported per channel while segments
+// preserve the complete assembly order within those channels.
+type SessionInitialContextDocument struct {
+	SessionID       SessionID                      `json:"sessionId"`
+	ProjectID       ProjectID                      `json:"projectId,omitempty"`
+	IssueID         IssueID                        `json:"issueId,omitempty"`
+	Kind            SessionKind                    `json:"kind"`
+	Harness         AgentHarness                   `json:"harness,omitempty"`
+	Model           string                         `json:"model,omitempty"`
+	Effort          Effort                         `json:"effort,omitempty"`
+	Mode            SessionMode                    `json:"mode"`
+	DisplayName     string                         `json:"displayName,omitempty"`
+	CapturedAt      time.Time                      `json:"capturedAt"`
+	Exact           bool                           `json:"exact"`
+	Reconstructed   bool                           `json:"reconstructed"`
+	SystemByteCount int                            `json:"systemByteCount"`
+	PromptByteCount int                            `json:"promptByteCount"`
+	TotalByteCount  int                            `json:"totalByteCount"`
+	Segments        []SessionInitialContextSegment `json:"segments"`
+	Warnings        []string                       `json:"warnings"`
+}
+
+// SessionInitialContextSegment is one attributed source considered during
+// launch-context assembly. Content is the exact byte contribution for
+// contributing, non-redacted segments; when needed it includes the separator
+// bytes that made concatenation reproduce the delivered channel exactly.
+type SessionInitialContextSegment struct {
+	Index           int    `json:"index"`
+	Channel         string `json:"channel"`
+	Source          string `json:"source"`
+	Path            string `json:"path,omitempty"`
+	Content         string `json:"content,omitempty"`
+	ByteCount       int    `json:"byteCount"`
+	Contributed     bool   `json:"contributed"`
+	Redacted        bool   `json:"redacted"`
+	Reconstructed   bool   `json:"reconstructed"`
+	Note            string `json:"note,omitempty"`
+	RedactionReason string `json:"redactionReason,omitempty"`
+}
+
 // SessionRecord is the persistence shape. It intentionally stores only durable
 // facts: identity, agent harness, activity_state, is_terminated, and operational
 // metadata. The user-facing Status is derived from these facts plus PR facts.

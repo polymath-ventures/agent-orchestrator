@@ -446,6 +446,12 @@ type SessionCleanupFact struct {
 	FailureCode          string
 }
 
+type SessionInitialContext struct {
+	SessionID    string
+	SnapshotJson string
+	CreatedAt    time.Time
+}
+
 type SessionInterfaceTransition struct {
 	ID                   string
 	SessionID            domain.SessionID
