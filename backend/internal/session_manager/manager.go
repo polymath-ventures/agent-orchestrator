@@ -916,7 +916,7 @@ func (m *Manager) preflightSpawn(ctx context.Context, cfg ports.SpawnConfig, pas
 		}
 	}
 
-	contextTexts, err := m.buildSpawnContextTexts(ctx, cfg, projectTrackerScope(project))
+	contextTexts, err := m.buildSpawnContextTexts(ctx, cfg, projectTrackerScope(project, cfg.IssueID))
 	if err != nil {
 		return spawnPlan{}, fmt.Errorf("spawn: prompt: %w", err)
 	}
@@ -4283,8 +4283,19 @@ func buildPrompt(cfg ports.SpawnConfig, scope domain.TrackerRepo) string {
 // projectTrackerScope resolves the repository a project's issue references are
 // written against, through the same resolver the spawn boundary and tracker
 // intake use.
-func projectTrackerScope(project domain.ProjectRecord) domain.TrackerRepo {
-	scope, _ := domain.TrackerScope(project.RepoOriginURL, project.Config.TrackerIntake.WithDefaults(), "")
+//
+// The manager has no SCM port to classify the origin with, so a project that
+// has not configured intake would fall back to GitHub and fail to parse a
+// GitLab origin at all. The canonical id already names its provider — the
+// session service resolved it on the way in — so it supplies the hint instead,
+// and a reference to the session's own repo still renders as a bare number
+// rather than as a storage key no tracker CLI accepts.
+func projectTrackerScope(project domain.ProjectRecord, issueID domain.IssueID) domain.TrackerRepo {
+	var fallback domain.TrackerProvider
+	if provider, _, ok := domain.SplitCanonicalIssueID(issueID); ok {
+		fallback = provider
+	}
+	scope, _ := domain.TrackerScope(project.RepoOriginURL, project.Config.TrackerIntake.WithDefaults(), fallback)
 	return scope
 }
 

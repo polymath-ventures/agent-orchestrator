@@ -427,3 +427,36 @@ func TestBuildTaskPromptAddressesTheIssueByItsNativeReference(t *testing.T) {
 		})
 	}
 }
+
+// The manager has no SCM port, so a project that has not configured intake
+// cannot classify a GitLab origin on its own. Without the provider hint the
+// canonical id carries, the scope resolves to nothing and the prompt hands the
+// agent "gitlab:group/project#7" — unambiguous, and unusable by any tracker CLI.
+func TestProjectTrackerScopeTakesItsProviderHintFromTheIssueID(t *testing.T) {
+	project := domain.ProjectRecord{ID: "demo", RepoOriginURL: "https://gitlab.internal/group/project.git"}
+
+	scope := projectTrackerScope(project, "gitlab:group/project#7")
+	if scope.Provider != domain.TrackerProviderGitLab || scope.Native != "group/project" {
+		t.Fatalf("scope = %+v, want the gitlab group/project scope", scope)
+	}
+	if got := domain.NativeIssueRef("gitlab:group/project#7", scope); got != "7" {
+		t.Fatalf("issue ref = %q, want 7", got)
+	}
+
+	// A project whose intake names a provider keeps that provider, so a
+	// cross-provider id still renders qualified rather than being adopted.
+	configured := domain.ProjectRecord{
+		ID:            "demo",
+		RepoOriginURL: "https://github.com/acme/code.git",
+		Config: domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{
+			Enabled: true, Assignee: "alice", Provider: domain.TrackerProviderGitHub,
+		}},
+	}
+	crossScope := projectTrackerScope(configured, "gitlab:acme/code#242")
+	if crossScope.Provider != domain.TrackerProviderGitHub {
+		t.Fatalf("scope provider = %q, want github from the intake config", crossScope.Provider)
+	}
+	if got := domain.NativeIssueRef("gitlab:acme/code#242", crossScope); got != "gitlab:acme/code#242" {
+		t.Fatalf("issue ref = %q, want the provider qualifier kept", got)
+	}
+}
