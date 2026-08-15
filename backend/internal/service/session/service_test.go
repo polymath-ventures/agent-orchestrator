@@ -3612,6 +3612,9 @@ func TestInitialContext_ReturnsStoredSnapshot(t *testing.T) {
 	if !doc.Exact || doc.Reconstructed || doc.Segments[0].Source != "ao.test" {
 		t.Fatalf("InitialContext returned wrong document: %+v", doc)
 	}
+	if doc.Warnings == nil {
+		t.Fatalf("InitialContext returned nil warnings slice")
+	}
 }
 
 func TestInitialContext_LegacySessionIsReconstructed(t *testing.T) {

@@ -221,6 +221,7 @@ func (s *Store) UpsertSessionInitialContext(ctx context.Context, doc domain.Sess
 	if doc.SessionID == "" {
 		return errors.New("session initial context session id is required")
 	}
+	normalizeSessionInitialContext(&doc)
 	data, err := json.Marshal(doc)
 	if err != nil {
 		return fmt.Errorf("marshal session initial context %s: %w", doc.SessionID, err)
@@ -252,7 +253,17 @@ func (s *Store) GetSessionInitialContext(ctx context.Context, id domain.SessionI
 	if err := json.Unmarshal([]byte(data), &doc); err != nil {
 		return domain.SessionInitialContextDocument{}, false, fmt.Errorf("decode session initial context %s: %w", id, err)
 	}
+	normalizeSessionInitialContext(&doc)
 	return doc, true, nil
+}
+
+func normalizeSessionInitialContext(doc *domain.SessionInitialContextDocument) {
+	if doc.Segments == nil {
+		doc.Segments = []domain.SessionInitialContextSegment{}
+	}
+	if doc.Warnings == nil {
+		doc.Warnings = []string{}
+	}
 }
 
 // RenameSession updates only the user-facing display name for an existing

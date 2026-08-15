@@ -33,6 +33,7 @@ type fakeStore struct {
 	projects          map[string]domain.ProjectRecord
 	workspaceRepo     map[string][]domain.WorkspaceRepoRecord
 	initialContexts   map[domain.SessionID]domain.SessionInitialContextDocument
+	initialContextErr error
 	fleetPaused       bool
 	fleetPausedErr    error
 	prime             domain.PrimeSettings
@@ -113,6 +114,9 @@ func (f *fakeStore) CreateSession(_ context.Context, rec domain.SessionRecord) (
 }
 
 func (f *fakeStore) UpsertSessionInitialContext(_ context.Context, doc domain.SessionInitialContextDocument) error {
+	if f.initialContextErr != nil {
+		return f.initialContextErr
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.initialContexts[doc.SessionID] = doc
@@ -4148,6 +4152,62 @@ func TestSpawnWorker_AttachmentsKeepTaskSegmentAttribution(t *testing.T) {
 	}
 }
 
+func TestSpawnWorker_AttachmentsPreserveWhitespacePromptByteExactness(t *testing.T) {
+	workspacePath := t.TempDir()
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+	agent := &recordingAgent{}
+	lookPath := func(string) (string, error) { return "/bin/true", nil }
+	m := New(Deps{Runtime: &fakeRuntime{}, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{path: workspacePath}, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
+
+	s, _, _, err := m.Spawn(ctx, ports.SpawnConfig{
+		ProjectID:   "mer",
+		Kind:        domain.KindWorker,
+		Prompt:      "   ",
+		Attachments: []ports.SpawnAttachment{{Ext: ".txt", Data: []byte("attachment")}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	doc := st.initialContexts[s.ID]
+	var taskConcat string
+	for _, seg := range doc.Segments {
+		if seg.Channel == "task" && seg.Contributed {
+			taskConcat += seg.Content
+		}
+	}
+	if taskConcat != agent.lastLaunch.Prompt {
+		t.Fatalf("task segments = %q, launch prompt = %q", taskConcat, agent.lastLaunch.Prompt)
+	}
+}
+
+func TestSpawnWorker_InitialContextPersistFailureDoesNotFailSpawn(t *testing.T) {
+	st := newFakeStore()
+	st.initialContextErr = errors.New("snapshot unavailable")
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
+	agent := &recordingAgent{}
+	lookPath := func(string) (string, error) { return "/bin/true", nil }
+	m := New(Deps{Runtime: &fakeRuntime{}, Agents: singleAgent{agent: agent}, Workspace: &fakeWorkspace{}, Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st}, LookPath: lookPath})
+
+	s, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Prompt: "keep working"})
+	if err != nil {
+		t.Fatalf("Spawn returned error for initial context persistence failure: %v", err)
+	}
+	if s.ID == "" {
+		t.Fatal("Spawn returned empty session id")
+	}
+	if st.sessions[s.ID].IsTerminated {
+		t.Fatalf("session %s was marked terminated", s.ID)
+	}
+	if got := agent.lastLaunch.Prompt; got != "keep working" {
+		t.Fatalf("launch prompt = %q", got)
+	}
+	if _, ok := st.initialContexts[s.ID]; ok {
+		t.Fatalf("initial context unexpectedly persisted despite configured error")
+	}
+}
+
 func TestSpawnWorker_ProjectRulesInSystemPrompt(t *testing.T) {
 	projectDir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(projectDir, "docs"), 0o755); err != nil {
@@ -4897,6 +4957,45 @@ func TestSpawn_ProjectlessPrimeUsesFleetWorkspaceAndSettings(t *testing.T) {
 	if rt.lastCfg.Env[EnvProjectID] != "" {
 		t.Fatalf("runtime AO_PROJECT_ID = %q, want empty for projectless Prime", rt.lastCfg.Env[EnvProjectID])
 	}
+}
+
+func TestSpawn_ProjectlessPrimeRulesFileUsesDataDirProvenance(t *testing.T) {
+	dataDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dataDir, "prime-rules.md"), []byte("read the fleet\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	st := newFakeStore()
+	st.prime = domain.PrimeSettings{
+		Enabled:   true,
+		Harness:   domain.HarnessCodex,
+		RulesFile: "prime-rules.md",
+	}.WithDefaults()
+	agent := &recordingAgent{}
+	m := New(Deps{
+		Runtime:   &fakeRuntime{},
+		Agents:    singleAgent{agent: agent},
+		Workspace: &fakeWorkspace{},
+		Store:     st,
+		Messenger: &fakeMessenger{},
+		Lifecycle: &fakeLCM{store: st},
+		DataDir:   dataDir,
+		LookPath:  func(string) (string, error) { return "/bin/true", nil },
+	})
+
+	rec, _, _, err := m.Spawn(ctx, ports.SpawnConfig{Kind: domain.KindPrime, Harness: domain.HarnessCodex})
+	if err != nil {
+		t.Fatalf("Spawn projectless Prime: %v", err)
+	}
+	doc := st.initialContexts[rec.ID]
+	for _, seg := range doc.Segments {
+		if seg.Source == "projectConfig.primeRules.file" {
+			if got, want := seg.Path, filepath.Join(dataDir, "prime-rules.md"); got != want {
+				t.Fatalf("prime rules path = %q, want %q", got, want)
+			}
+			return
+		}
+	}
+	t.Fatalf("initial context omitted projectConfig.primeRules.file segment: %+v", doc.Segments)
 }
 
 // TestRestore_OrchestratorRederivesSystemPrompt: the system prompt is derived,

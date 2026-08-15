@@ -39,14 +39,8 @@ type systemPromptConfig struct {
 	Role                  sessionPromptRole
 	Project               promptProject
 	OrchestratorSessionID string
-	ProjectRules          string
-	ProjectRulesPath      string
 	ProjectRulesSources   loadedRoleRules
-	OrchestratorRules     string
-	OrchestratorRulesPath string
 	OrchestratorSources   loadedRoleRules
-	PrimeRules            string
-	PrimeRulesPath        string
 	PrimeRulesSources     loadedRoleRules
 	TrackerIntakeAssignee string
 	AdditionalSections    []string
@@ -91,7 +85,7 @@ func (r loadedRoleRules) text() string {
 	return strings.Join(parts, "\n\n")
 }
 
-func (r loadedRoleRules) promptSegments(channel, source, fallbackPath, heading, emptyNote string) []promptSegmentInput {
+func (r loadedRoleRules) promptSegments(channel, source, heading, emptyNote string) []promptSegmentInput {
 	if strings.TrimSpace(r.Inline) == "" && strings.TrimSpace(r.File) == "" {
 		return []promptSegmentInput{{Channel: channel, Source: source, Note: emptyNote}}
 	}
@@ -109,11 +103,7 @@ func (r loadedRoleRules) promptSegments(channel, source, fallbackPath, heading, 
 		segments = append(segments, promptSegmentInput{Channel: channel, Source: source + suffix, Path: path, Text: text})
 	}
 	add(".inline", "", r.Inline)
-	filePath := r.FilePath
-	if filePath == "" {
-		filePath = fallbackPath
-	}
-	add(".file", filePath, r.File)
+	add(".file", r.FilePath, r.File)
 	return segments
 }
 
@@ -232,22 +222,10 @@ func buildSystemPromptSegments(cfg systemPromptConfig) assembledPrompt {
 	switch cfg.Role {
 	case sessionPromptRoleOrchestrator:
 		sections = append(sections, promptSegmentInput{Channel: "system", Source: "ao.role.orchestrator.scaffold", Text: orchestratorSystemPrompt(cfg.Project)})
-		if cfg.OrchestratorSources.text() != "" {
-			sections = append(sections, cfg.OrchestratorSources.promptSegments("system", "projectConfig.orchestratorRules", cfg.OrchestratorRulesPath, "## Project-Specific Orchestrator Rules", "no orchestrator rules configured")...)
-		} else if rules := strings.TrimSpace(cfg.OrchestratorRules); rules != "" {
-			sections = append(sections, promptSegmentInput{Channel: "system", Source: "projectConfig.orchestratorRules", Path: cfg.OrchestratorRulesPath, Text: "## Project-Specific Orchestrator Rules\n" + rules})
-		} else {
-			sections = append(sections, promptSegmentInput{Channel: "system", Source: "projectConfig.orchestratorRules", Note: "no orchestrator rules configured"})
-		}
+		sections = append(sections, cfg.OrchestratorSources.promptSegments("system", "projectConfig.orchestratorRules", "## Project-Specific Orchestrator Rules", "no orchestrator rules configured")...)
 	case sessionPromptRolePrime:
 		sections = append(sections, promptSegmentInput{Channel: "system", Source: "ao.role.prime.scaffold", Text: primeSystemPrompt(cfg.Project)})
-		if cfg.PrimeRulesSources.text() != "" {
-			sections = append(sections, cfg.PrimeRulesSources.promptSegments("system", "projectConfig.primeRules", cfg.PrimeRulesPath, "## Project-Specific Prime Rules", "no prime rules configured")...)
-		} else if rules := strings.TrimSpace(cfg.PrimeRules); rules != "" {
-			sections = append(sections, promptSegmentInput{Channel: "system", Source: "projectConfig.primeRules", Path: cfg.PrimeRulesPath, Text: "## Project-Specific Prime Rules\n" + rules})
-		} else {
-			sections = append(sections, promptSegmentInput{Channel: "system", Source: "projectConfig.primeRules", Note: "no prime rules configured"})
-		}
+		sections = append(sections, cfg.PrimeRulesSources.promptSegments("system", "projectConfig.primeRules", "## Project-Specific Prime Rules", "no prime rules configured")...)
 	case sessionPromptRoleWorker:
 		orchestratorID := strings.TrimSpace(cfg.OrchestratorSessionID)
 		sections = append(sections, promptSegmentInput{Channel: "system", Source: "ao.role.worker.scaffold", Text: workerSystemPrompt(cfg.Project)})
@@ -265,13 +243,7 @@ func buildSystemPromptSegments(cfg systemPromptConfig) assembledPrompt {
 			promptSegmentInput{Channel: "system", Source: "ao.worker.pullRequestInstructions", Text: workerMultiPRPrompt()},
 			promptSegmentInput{Channel: "system", Source: "ao.worker.containerInstructions", Text: workerContainerLabelPrompt()},
 		)
-		if cfg.ProjectRulesSources.text() != "" {
-			sections = append(sections, cfg.ProjectRulesSources.promptSegments("system", "projectConfig.agentRules", cfg.ProjectRulesPath, "## Project Rules", "no worker project rules configured")...)
-		} else if rules := strings.TrimSpace(cfg.ProjectRules); rules != "" {
-			sections = append(sections, promptSegmentInput{Channel: "system", Source: "projectConfig.agentRules", Path: cfg.ProjectRulesPath, Text: "## Project Rules\n" + rules})
-		} else {
-			sections = append(sections, promptSegmentInput{Channel: "system", Source: "projectConfig.agentRules", Note: "no worker project rules configured"})
-		}
+		sections = append(sections, cfg.ProjectRulesSources.promptSegments("system", "projectConfig.agentRules", "## Project Rules", "no worker project rules configured")...)
 	default:
 		return assembledPrompt{}
 	}
@@ -294,11 +266,8 @@ func (t spawnContextTexts) withTaskSegment(source, text string) spawnContextText
 		Contributed: text != "",
 	}
 	if text != "" {
-		content := text
-		if t.Prompt != "" {
-			content = "\n\n" + content
-		}
-		t.Prompt += content
+		nextPrompt, content := appendPromptSegmentContent(t.Prompt, text)
+		t.Prompt = nextPrompt
 		seg.Content = content
 		seg.ByteCount = len(content)
 		t.PromptByteCount = len(t.Prompt)

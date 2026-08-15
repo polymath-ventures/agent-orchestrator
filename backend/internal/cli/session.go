@@ -759,7 +759,7 @@ func writeSessionContext(cmd *cobra.Command, ctx sessionInitialContextDTO) error
 	}
 	fields := [][2]string{
 		{"project", ctx.ProjectID},
-		{"role", ctx.Kind},
+		{"kind", ctx.Kind},
 		{"mode", ctx.Mode},
 		{"harness", ctx.Harness},
 		{"model", ctx.Model},

@@ -1924,6 +1924,7 @@ func TestSessionInitialContextRoundTrip(t *testing.T) {
 		Exact:           true,
 		SystemByteCount: 7,
 		TotalByteCount:  7,
+		Warnings:        []string{},
 		Segments: []domain.SessionInitialContextSegment{{
 			Index:       0,
 			Channel:     "system",

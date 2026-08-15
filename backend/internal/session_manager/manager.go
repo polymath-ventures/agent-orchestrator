@@ -1248,6 +1248,15 @@ func (m *Manager) sessionInitialContextDocument(rec domain.SessionRecord, cfg po
 		seg.Index = len(segments)
 		segments = append(segments, seg)
 	}
+	segments = append(segments, domain.SessionInitialContextSegment{
+		Index:           len(segments),
+		Channel:         "launch",
+		Source:          "ao.runtime.env",
+		Contributed:     false,
+		Redacted:        true,
+		RedactionReason: "runtime environment values may contain secrets and are not exposed",
+		Note:            "AO runtime environment variables are delivered to the runtime separately from prompt text",
+	})
 	if envConfigured {
 		segments = append(segments, domain.SessionInitialContextSegment{
 			Index:           len(segments),
@@ -4253,13 +4262,18 @@ func appendPromptBlock(prompt, block string) string {
 	if block == "" {
 		return prompt
 	}
-	var b strings.Builder
-	b.WriteString(prompt)
-	if strings.TrimSpace(prompt) != "" {
-		b.WriteString("\n\n")
+	next, _ := appendPromptSegmentContent(prompt, block)
+	return next
+}
+
+func appendPromptSegmentContent(prompt, block string) (nextPrompt, segmentContent string) {
+	if prompt == "" {
+		return block, block
 	}
-	b.WriteString(block)
-	return b.String()
+	if strings.TrimSpace(prompt) == "" {
+		return prompt + block, block
+	}
+	return prompt + "\n\n" + block, "\n\n" + block
 }
 
 func attachmentReferencesPrompt(refs []string) string {
@@ -4368,16 +4382,14 @@ func (m *Manager) buildSystemPromptSegments(ctx context.Context, kind domain.Ses
 		rules, err := loadRoleRulesWithSources(RoleRulesConfig{
 			Role:        "prime",
 			ProjectID:   "",
-			ProjectPath: "",
+			ProjectPath: m.dataDir,
 			InlineRules: settings.Rules,
 			RulesFile:   settings.RulesFile,
 		})
 		if err != nil {
 			return assembledPrompt{}, err
 		}
-		cfg.PrimeRules = rules.text()
 		cfg.PrimeRulesSources = rules
-		cfg.PrimeRulesPath = roleRulesProvenancePath("", settings.RulesFile)
 		return buildSystemPromptSegments(cfg), nil
 	}
 	project, err := m.loadProject(ctx, projectID)
@@ -4401,9 +4413,7 @@ func (m *Manager) buildSystemPromptSegments(ctx context.Context, kind domain.Ses
 		if err != nil {
 			return assembledPrompt{}, err
 		}
-		cfg.OrchestratorRules = rules.text()
 		cfg.OrchestratorSources = rules
-		cfg.OrchestratorRulesPath = roleRulesProvenancePath(project.Path, project.Config.OrchestratorRulesFile)
 	case domain.KindPrime:
 		rules, err := loadRoleRulesWithSources(RoleRulesConfig{
 			Role:        "prime",
@@ -4415,9 +4425,7 @@ func (m *Manager) buildSystemPromptSegments(ctx context.Context, kind domain.Ses
 		if err != nil {
 			return assembledPrompt{}, err
 		}
-		cfg.PrimeRules = rules.text()
 		cfg.PrimeRulesSources = rules
-		cfg.PrimeRulesPath = roleRulesProvenancePath(project.Path, project.Config.PrimeRulesFile)
 	case domain.KindWorker:
 		intake := project.Config.TrackerIntake.WithDefaults()
 		if intake.Enabled {
@@ -4440,9 +4448,7 @@ func (m *Manager) buildSystemPromptSegments(ctx context.Context, kind domain.Ses
 		if err != nil {
 			return assembledPrompt{}, err
 		}
-		cfg.ProjectRules = rules.text()
 		cfg.ProjectRulesSources = rules
-		cfg.ProjectRulesPath = roleRulesProvenancePath(project.Path, project.Config.AgentRulesFile)
 	default:
 		return assembledPrompt{}, nil
 	}
