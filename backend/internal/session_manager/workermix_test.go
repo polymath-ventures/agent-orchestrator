@@ -1,6 +1,7 @@
 package sessionmanager
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
@@ -27,6 +28,31 @@ func mixManager(cfg domain.ProjectConfig) (*Manager, *fakeStore) {
 	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: cfg}
 	m := New(Deps{
 		Runtime: &fakeRuntime{}, Agents: fakeAgents{}, Workspace: &fakeWorkspace{}, Store: st,
+		Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st},
+		LookPath: func(string) (string, error) { return "/bin/true", nil },
+	})
+	return m, st
+}
+
+type defaultWorkerHarnessAgents struct {
+	available []domain.AgentHarness
+}
+
+func (a defaultWorkerHarnessAgents) Agent(domain.AgentHarness) (ports.Agent, bool) {
+	return fakeAgent{}, true
+}
+
+func (a defaultWorkerHarnessAgents) DefaultWorkerHarnesses(context.Context) ([]domain.AgentHarness, error) {
+	out := make([]domain.AgentHarness, len(a.available))
+	copy(out, a.available)
+	return out, nil
+}
+
+func defaultWorkerMixManager(cfg domain.ProjectConfig, available []domain.AgentHarness) (*Manager, *fakeStore) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: cfg}
+	m := New(Deps{
+		Runtime: &fakeRuntime{}, Agents: defaultWorkerHarnessAgents{available: available}, Workspace: &fakeWorkspace{}, Store: st,
 		Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st},
 		LookPath: func(string) (string, error) { return "/bin/true", nil },
 	})
@@ -450,5 +476,52 @@ func TestSpawn_NoMixLeavesResolutionUnchanged(t *testing.T) {
 	rec := spawnUnpinnedWorker(t, m)
 	if rec.Harness != domain.HarnessCodex || rec.Model != "gpt-5" {
 		t.Fatalf("no-mix spawn = (%q, %q), want the role override (codex, gpt-5)", rec.Harness, rec.Model)
+	}
+}
+
+func TestSpawn_NoMixDefaultsToEvenAvailableWorkerHarnesses(t *testing.T) {
+	m, _ := defaultWorkerMixManager(domain.ProjectConfig{}, []domain.AgentHarness{
+		domain.HarnessClaudeCode,
+		domain.HarnessCodex,
+		domain.HarnessCodexFugu,
+	})
+
+	counts := map[domain.AgentHarness]int{}
+	for i := 0; i < 3; i++ {
+		rec := spawnUnpinnedWorker(t, m)
+		counts[rec.Harness]++
+		if !rec.MixSelected {
+			t.Fatalf("spawn %d mixSelected = false, want default worker mix selection recorded", i+1)
+		}
+	}
+	want := map[domain.AgentHarness]int{
+		domain.HarnessClaudeCode: 1,
+		domain.HarnessCodex:      1,
+		domain.HarnessCodexFugu:  1,
+	}
+	for harness, n := range want {
+		if counts[harness] != n {
+			t.Fatalf("after 3 default-mix spawns %s = %d, want %d (full distribution %v)", harness, counts[harness], n, counts)
+		}
+	}
+}
+
+func TestSpawn_NoMixHonorsExplicitWorkerHarnessOverDefaultEvenSplit(t *testing.T) {
+	m, _ := defaultWorkerMixManager(domain.ProjectConfig{
+		Worker: domain.RoleOverride{Harness: domain.HarnessCodex},
+	}, []domain.AgentHarness{
+		domain.HarnessClaudeCode,
+		domain.HarnessCodex,
+		domain.HarnessCodexFugu,
+	})
+
+	for i := 0; i < 3; i++ {
+		rec := spawnUnpinnedWorker(t, m)
+		if rec.Harness != domain.HarnessCodex {
+			t.Fatalf("spawn %d harness = %q, want explicit worker harness codex", i+1, rec.Harness)
+		}
+		if rec.MixSelected {
+			t.Fatalf("spawn %d mixSelected = true, want explicit scalar worker.agent to bypass default mix", i+1)
+		}
 	}
 }
