@@ -29,9 +29,12 @@ type promptProject struct {
 }
 
 type taskPromptConfig struct {
-	Role         sessionPromptRole
-	Prompt       string
-	IssueID      string
+	Role   sessionPromptRole
+	Prompt string
+	// IssueRef is the issue as the prompt addresses it: a bare number for the
+	// session's own repo, repo-qualified otherwise. It is domain.NativeIssueRef
+	// of the stored id, never the storage key itself.
+	IssueRef     string
 	IssueContext string
 }
 
@@ -174,11 +177,12 @@ func (e *WorkerTaskPromptConfigError) Error() string {
 func (e *WorkerTaskPromptConfigError) Unwrap() error { return e.Err }
 
 // RenderWorkerTaskPrompt substitutes every literal {issue} token and otherwise
-// preserves the configured template byte-for-byte. Canonical tracker references
-// ending in #<native> use only that native suffix, so github:owner/repo#242 and
-// a manual 242 render identically. Unknown shapes remain unchanged.
-func RenderWorkerTaskPrompt(template string, issueID domain.IssueID) (string, error) {
-	rendered := strings.ReplaceAll(template, "{issue}", domain.NativeIssueRef(issueID))
+// preserves the configured template byte-for-byte. The issue is rendered
+// relative to scope, so a canonical github:owner/repo#242 and a manual 242 for
+// that same repo render identically, while a cross-repo reference keeps its
+// owner/repo qualifier. Unknown shapes remain unchanged.
+func RenderWorkerTaskPrompt(template string, issueID domain.IssueID, scope domain.TrackerRepo) (string, error) {
+	rendered := strings.ReplaceAll(template, "{issue}", domain.NativeIssueRef(issueID, scope))
 	if strings.TrimSpace(rendered) == "" {
 		return "", ErrInvalidWorkerTaskPromptTemplate
 	}
@@ -194,13 +198,10 @@ func buildTaskPromptSegments(cfg taskPromptConfig) assembledPrompt {
 	if cfg.Prompt != "" {
 		return assemblePromptSegments([]promptSegmentInput{{Channel: "task", Source: "spawn.prompt", Text: cfg.Prompt}})
 	}
-	if cfg.IssueID == "" {
+	issueRef := cfg.IssueRef
+	if issueRef == "" {
 		return assemblePromptSegments([]promptSegmentInput{{Channel: "task", Source: "spawn.prompt", Note: "no initial task prompt was provided"}})
 	}
-	// The prompt addresses the issue; it is not the storage key. Rendering the
-	// canonical id here would hand the agent "github:owner/repo#42", which no
-	// tracker CLI accepts.
-	issueRef := domain.NativeIssueRef(domain.IssueID(cfg.IssueID))
 	if cfg.Role == sessionPromptRoleWorker && issueContext != "" {
 		return assemblePromptSegments([]promptSegmentInput{
 			{Channel: "task", Source: "spawn.issueInstructions", Text: fmt.Sprintf(`Work on issue %s.

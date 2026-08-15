@@ -90,12 +90,15 @@ func (s *Service) trackerIDForIssue(cfg ports.SpawnConfig, project domain.Projec
 // trackerScope resolves the project's tracker repository, which bare and
 // repo-qualified issue references are interpreted against.
 //
-// It defers to domain.TrackerScope — the same resolver tracker intake uses — so
-// the id this service stores and the id intake looks it up by are computed from
-// one answer rather than two that have to agree. The SCM port only supplies a
-// provider hint: it classifies the origin (github vs gitlab) more precisely
-// than a URL heuristic can, and a project that configured trackerIntake.repo
-// still overrides the origin entirely.
+// It defers to domain.TrackerScope — the same resolver tracker intake uses —
+// with the same inputs intake passes: the intake config after WithDefaults. A
+// shared function reached with different arguments is still two answers, and
+// two answers is what #298 was.
+//
+// The SCM port only breaks the tie intake cannot have: when the project has no
+// intake config to name a provider, the SCM classifies the origin more
+// precisely than a URL heuristic can. Once intake is enabled its configured
+// provider wins, because that is the provider intake itself will use.
 func (s *Service) trackerScope(project domain.ProjectRecord, fallbackProvider domain.TrackerProvider) domain.TrackerRepo {
 	provider := fallbackProvider
 	if s.scm != nil {
@@ -103,7 +106,7 @@ func (s *Service) trackerScope(project domain.ProjectRecord, fallbackProvider do
 			provider = domain.TrackerProvider(repo.Provider)
 		}
 	}
-	scope, _ := domain.TrackerScope(project.RepoOriginURL, project.Config.TrackerIntake, provider)
+	scope, _ := domain.TrackerScope(project.RepoOriginURL, project.Config.TrackerIntake.WithDefaults(), provider)
 	return scope
 }
 

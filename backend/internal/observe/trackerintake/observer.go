@@ -234,7 +234,7 @@ func (o *Observer) pollProject(ctx context.Context, project domain.ProjectRecord
 		var prompt string
 		if taskTemplate != "" {
 			var renderErr error
-			prompt, renderErr = sessionmanager.RenderWorkerTaskPrompt(taskTemplate, issueID)
+			prompt, renderErr = sessionmanager.RenderWorkerTaskPrompt(taskTemplate, issueID, repo)
 			if renderErr != nil {
 				o.logger.Error("tracker intake: invalid worker task prompt configuration", "project", project.ID, "source", taskSource, "issue", issueID, "err", renderErr)
 				return true

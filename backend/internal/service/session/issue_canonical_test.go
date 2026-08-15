@@ -182,3 +182,70 @@ func TestSpawnResolvesTheSameScopeTrackerIntakeDoes(t *testing.T) {
 		})
 	}
 }
+
+// A shared resolver reached with different arguments is still two answers.
+// These are the configurations where the spawn boundary and tracker intake
+// previously normalised the intake config differently.
+func TestSpawnScopeMatchesIntakeWhenTheProviderIsUnset(t *testing.T) {
+	cases := []struct {
+		name            string
+		origin          string
+		intake          domain.TrackerIntakeConfig
+		scm             ports.SCMRepo
+		trackerProvider domain.TrackerProvider
+	}{
+		{
+			name:   "gitlab origin, intake provider unset",
+			origin: "https://gitlab.com/group/proj.git",
+			intake: domain.TrackerIntakeConfig{Enabled: true, Assignee: "me", Repo: "acme/tracker"},
+			scm:    ports.SCMRepo{Provider: "gitlab", Host: "gitlab.com", Owner: "group", Name: "proj", Repo: "group/proj"},
+		},
+		{
+			name:            "unclassifiable origin with a CLI provider hint",
+			origin:          "https://git.corp.example.com/acme/code.git",
+			intake:          domain.TrackerIntakeConfig{Enabled: true, Assignee: "me", Repo: "acme/tracker"},
+			trackerProvider: domain.TrackerProviderGitLab,
+		},
+		{
+			name:            "non-github ssh origin with a CLI provider hint",
+			origin:          "git@bitbucket.org:acme/code.git",
+			intake:          domain.TrackerIntakeConfig{Enabled: true, Assignee: "me"},
+			trackerProvider: domain.TrackerProviderGitLab,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			project := domain.ProjectRecord{
+				ID:            "demo",
+				RepoOriginURL: tc.origin,
+				Config:        domain.ProjectConfig{TrackerIntake: tc.intake},
+			}
+			st := newFakeStore()
+			st.projects["demo"] = project
+			fc := &fakeCommander{}
+			svc := NewWithDeps(Deps{Manager: fc, Store: st, SCM: staticSCM{repo: tc.scm}})
+
+			if _, _, _, err := svc.Spawn(context.Background(), ports.SpawnConfig{
+				ProjectID:       "demo",
+				Kind:            domain.KindWorker,
+				IssueID:         "42",
+				TrackerProvider: tc.trackerProvider,
+			}); err != nil {
+				t.Fatalf("Spawn: %v", err)
+			}
+
+			scope, ok := domain.TrackerScope(tc.origin, tc.intake.WithDefaults(), "")
+			if !ok {
+				t.Fatal("intake-side TrackerScope not ok")
+			}
+			id, ok := domain.ParseIssueRef("42", scope)
+			if !ok {
+				t.Fatal("intake-side ParseIssueRef not ok")
+			}
+			want := domain.CanonicalIssueID(id)
+			if fc.spawnedCfg.IssueID != want {
+				t.Fatalf("persisted %q but intake looks up %q — the two scopes disagree", fc.spawnedCfg.IssueID, want)
+			}
+		})
+	}
+}

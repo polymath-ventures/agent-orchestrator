@@ -13,7 +13,7 @@ import (
 func TestBuildTaskPrompt_IssueContextStaysInTaskPrompt(t *testing.T) {
 	got := buildTaskPrompt(taskPromptConfig{
 		Role:         sessionPromptRoleWorker,
-		IssueID:      "2272",
+		IssueRef:     "2272",
 		IssueContext: "Title: Enrich prompts\nBody: Include issue context.",
 	})
 	wantExact := `Work on issue 2272.
@@ -51,7 +51,7 @@ func TestBuildTaskPrompt_ExplicitPromptIsAuthoritative(t *testing.T) {
 	got := buildTaskPrompt(taskPromptConfig{
 		Role:         sessionPromptRoleWorker,
 		Prompt:       "/address-issue 242\n",
-		IssueID:      "242",
+		IssueRef:     "242",
 		IssueContext: "untrusted issue body",
 	})
 	if got != "/address-issue 242\n" {
@@ -60,6 +60,7 @@ func TestBuildTaskPrompt_ExplicitPromptIsAuthoritative(t *testing.T) {
 }
 
 func TestRenderWorkerTaskPrompt(t *testing.T) {
+	scope := domain.TrackerRepo{Provider: domain.TrackerProviderGitHub, Native: "acme/demo"}
 	tests := []struct {
 		name     string
 		template string
@@ -68,6 +69,7 @@ func TestRenderWorkerTaskPrompt(t *testing.T) {
 		wantErr  bool
 	}{
 		{name: "canonical github", template: "/address-issue {issue}", issue: "github:acme/demo#242", want: "/address-issue 242"},
+		{name: "canonical cross-repo keeps its qualifier", template: "/address-issue {issue}", issue: "github:acme/other#242", want: "/address-issue acme/other#242"},
 		{name: "manual native", template: "/address-issue {issue}", issue: "242", want: "/address-issue 242"},
 		{name: "manual hash prefix", template: "/address-issue {issue}", issue: "#242", want: "/address-issue 242"},
 		{name: "repeated and exact bytes", template: " {issue}\n{issue}\t", issue: "github:acme/demo#242", want: " 242\n242\t"},
@@ -78,7 +80,7 @@ func TestRenderWorkerTaskPrompt(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := RenderWorkerTaskPrompt(tt.template, domain.IssueID(tt.issue))
+			got, err := RenderWorkerTaskPrompt(tt.template, domain.IssueID(tt.issue), scope)
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("RenderWorkerTaskPrompt error = %v, wantErr %v", err, tt.wantErr)
 			}
@@ -401,15 +403,22 @@ func TestProjectRelativeFileRejectsTraversal(t *testing.T) {
 // reference any tracker CLI accepts. A promptless manual spawn keeps rendering
 // exactly what it rendered before the ids became canonical.
 func TestBuildTaskPromptAddressesTheIssueByItsNativeReference(t *testing.T) {
+	scopes := map[string]domain.TrackerRepo{
+		"2272":                       {},
+		"#2272":                      {},
+		"github:acme/demo#2272":      {Provider: domain.TrackerProviderGitHub, Native: "acme/demo"},
+		"gitlab:group/sub/proj#2272": {Provider: domain.TrackerProviderGitLab, Native: "group/sub/proj"},
+	}
 	for _, issueID := range []string{"2272", "#2272", "github:acme/demo#2272", "gitlab:group/sub/proj#2272"} {
+		scope := scopes[issueID]
 		t.Run(issueID, func(t *testing.T) {
-			bare := buildTaskPrompt(taskPromptConfig{Role: sessionPromptRoleWorker, IssueID: issueID})
+			bare := buildTaskPrompt(taskPromptConfig{Role: sessionPromptRoleWorker, IssueRef: domain.NativeIssueRef(domain.IssueID(issueID), scope)})
 			if !strings.HasPrefix(bare, "Work on issue 2272.") {
 				t.Fatalf("prompt = %q, want it to open with \"Work on issue 2272.\"", bare)
 			}
 			withContext := buildTaskPrompt(taskPromptConfig{
 				Role:         sessionPromptRoleWorker,
-				IssueID:      issueID,
+				IssueRef:     domain.NativeIssueRef(domain.IssueID(issueID), scope),
 				IssueContext: "Title: Enrich prompts",
 			})
 			if !strings.HasPrefix(withContext, "Work on issue 2272.") {

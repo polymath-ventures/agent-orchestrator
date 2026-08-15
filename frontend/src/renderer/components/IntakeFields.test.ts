@@ -24,11 +24,7 @@ describe("buildIntake", () => {
 	// the CLI has to survive a settings save rather than be silently wiped —
 	// wiping optOutLabel would quietly re-enable intake on opted-out issues.
 	it("preserves CLI-only fields through a save", () => {
-		expect(
-			buildIntake(
-				form({ enabled: true, assignee: "alice", repo: "acme/tracker", optOutLabel: "none" }),
-			),
-		).toEqual({
+		expect(buildIntake(form({ enabled: true, assignee: "alice", repo: "acme/tracker", optOutLabel: "none" }))).toEqual({
 			enabled: true,
 			provider: "github",
 			repo: "acme/tracker",

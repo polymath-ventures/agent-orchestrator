@@ -48,19 +48,36 @@ func SplitCanonicalIssueID(id IssueID) (TrackerProvider, string, bool) {
 	return provider, native, true
 }
 
-// NativeIssueRef reduces an issue id to the reference a person or a tracker CLI
-// would use: "github:owner/repo#242" and a manually typed "242" both yield
-// "242". Shapes it does not recognise are returned unchanged.
+// NativeIssueRef renders an issue id the way a person or a tracker CLI would
+// write it, relative to the repository the session works in:
 //
-// Prompts address the issue, they do not key storage, so they use this rather
-// than the canonical id — canonicalising at the spawn boundary must not put a
-// token no `gh` or `glab` invocation accepts into an agent's task message.
-func NativeIssueRef(id IssueID) string {
-	ref := strings.TrimPrefix(string(id), "#")
-	if hash := strings.LastIndexByte(ref, '#'); hash >= 0 && hash < len(ref)-1 && strings.IndexByte(ref[:hash], ':') >= 0 {
-		return ref[hash+1:]
+//	github:acme/code#242, scope acme/code   -> "242"
+//	github:acme/other#242, scope acme/code  -> "acme/other#242"
+//
+// The qualifier is what keeps a cross-repo reference addressing the right
+// issue. Dropping it would tell a worker to work on issue 242 of its own repo,
+// which is a different ticket and a silent one — so the number alone is only
+// ever used when the issue does belong to the session's own repo, which is also
+// the case for everything tracker intake dispatches.
+//
+// Prompts address the issue; they do not key storage. Canonicalising ids at the
+// spawn boundary must not put "github:acme/code#242" — a token no gh or glab
+// invocation accepts — into an agent's task message. Shapes this does not
+// recognise are returned unchanged.
+func NativeIssueRef(id IssueID, scope TrackerRepo) string {
+	ref := strings.TrimSpace(string(id))
+	provider, native, ok := SplitCanonicalIssueID(IssueID(ref))
+	if !ok {
+		return strings.TrimPrefix(ref, "#")
 	}
-	return ref
+	repo, _, _ := strings.Cut(native, "#")
+	if scopeRepo := strings.TrimSpace(scope.Native); scopeRepo != "" &&
+		strings.EqualFold(repo, scopeRepo) &&
+		(scope.Provider == "" || scope.Provider == provider) {
+		_, number, _ := strings.Cut(native, "#")
+		return number
+	}
+	return native
 }
 
 // ParseIssueRef resolves an operator-supplied issue reference into the

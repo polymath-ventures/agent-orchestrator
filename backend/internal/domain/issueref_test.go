@@ -238,3 +238,43 @@ func TestTrackerIntakeOptOutLabel(t *testing.T) {
 		t.Error(`optOutLabel "none" should disable the opt-out`)
 	}
 }
+
+// Canonicalising ids at the spawn boundary must not change which issue a prompt
+// names. Reducing a cross-repo reference to a bare number would silently point
+// the worker at a different ticket in its own repo.
+func TestNativeIssueRefKeepsCrossRepoQualifiers(t *testing.T) {
+	scope := TrackerRepo{Provider: TrackerProviderGitHub, Native: "acme/code"}
+	tests := []struct {
+		name string
+		id   IssueID
+		want string
+	}{
+		{name: "own repo renders the number alone", id: "github:acme/code#242", want: "242"},
+		{name: "own repo case-insensitively", id: "github:Acme/Code#242", want: "242"},
+		{name: "other repo keeps its qualifier", id: "github:acme/other#242", want: "acme/other#242"},
+		{name: "other provider keeps its qualifier", id: "gitlab:acme/code#242", want: "acme/code#242"},
+		{name: "manual bare number is unchanged", id: "242", want: "242"},
+		{name: "manual hash prefix is trimmed", id: "#242", want: "242"},
+		{name: "unrecognised shape is unchanged", id: "ISS-1", want: "ISS-1"},
+		{name: "non-canonical repo form is unchanged", id: "acme/other#242", want: "acme/other#242"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := NativeIssueRef(tt.id, scope); got != tt.want {
+				t.Fatalf("NativeIssueRef(%q) = %q, want %q", tt.id, got, tt.want)
+			}
+		})
+	}
+
+	// With no scope to compare against, the qualifier is the safe rendering:
+	// a bare number would assert a repo nobody established.
+	if got := NativeIssueRef("github:acme/code#242", TrackerRepo{}); got != "acme/code#242" {
+		t.Fatalf("NativeIssueRef with no scope = %q, want acme/code#242", got)
+	}
+
+	// A nested GitLab project resolves the same way.
+	gitlab := TrackerRepo{Provider: TrackerProviderGitLab, Native: "group/sub/proj"}
+	if got := NativeIssueRef("gitlab:group/sub/proj#7", gitlab); got != "7" {
+		t.Fatalf("NativeIssueRef = %q, want 7", got)
+	}
+}

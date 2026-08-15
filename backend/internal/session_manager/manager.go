@@ -916,7 +916,7 @@ func (m *Manager) preflightSpawn(ctx context.Context, cfg ports.SpawnConfig, pas
 		}
 	}
 
-	contextTexts, err := m.buildSpawnContextTexts(ctx, cfg)
+	contextTexts, err := m.buildSpawnContextTexts(ctx, cfg, projectTrackerScope(project))
 	if err != nil {
 		return spawnPlan{}, fmt.Errorf("spawn: prompt: %w", err)
 	}
@@ -4271,6 +4271,23 @@ func isDefaultDevDataDir(dataDir string) bool {
 	return filepath.Clean(got) == filepath.Clean(want)
 }
 
+func buildPrompt(cfg ports.SpawnConfig, scope domain.TrackerRepo) string {
+	return buildTaskPrompt(taskPromptConfig{
+		Role:         promptRoleForKind(cfg.Kind),
+		Prompt:       cfg.Prompt,
+		IssueRef:     domain.NativeIssueRef(cfg.IssueID, scope),
+		IssueContext: cfg.IssueContext,
+	})
+}
+
+// projectTrackerScope resolves the repository a project's issue references are
+// written against, through the same resolver the spawn boundary and tracker
+// intake use.
+func projectTrackerScope(project domain.ProjectRecord) domain.TrackerRepo {
+	scope, _ := domain.TrackerScope(project.RepoOriginURL, project.Config.TrackerIntake.WithDefaults(), "")
+	return scope
+}
+
 func promptRoleForKind(kind domain.SessionKind) sessionPromptRole {
 	switch kind {
 	case domain.KindOrchestrator:
@@ -4376,15 +4393,15 @@ func attachmentReferencesPrompt(refs []string) string {
 // standing instructions rather than part of the human's task request. A
 // promptless spawn delivers no user prompt at all: the agent simply lands at an
 // empty input box rather than receiving an auto-generated kickoff turn.
-func (m *Manager) buildSpawnTexts(ctx context.Context, cfg ports.SpawnConfig) (prompt, systemPrompt string, err error) {
-	texts, err := m.buildSpawnContextTexts(ctx, cfg)
+func (m *Manager) buildSpawnTexts(ctx context.Context, cfg ports.SpawnConfig, scope domain.TrackerRepo) (prompt, systemPrompt string, err error) {
+	texts, err := m.buildSpawnContextTexts(ctx, cfg, scope)
 	if err != nil {
 		return "", "", err
 	}
 	return texts.Prompt, texts.SystemPrompt, nil
 }
 
-func (m *Manager) buildSpawnContextTexts(ctx context.Context, cfg ports.SpawnConfig) (spawnContextTexts, error) {
+func (m *Manager) buildSpawnContextTexts(ctx context.Context, cfg ports.SpawnConfig, scope domain.TrackerRepo) (spawnContextTexts, error) {
 	var task assembledPrompt
 	if cfg.Prompt == "" && cfg.Kind == domain.KindWorker && cfg.IssueID != "" {
 		template, source, resolveErr := m.EffectiveWorkerTaskPrompt(ctx, cfg.ProjectID)
@@ -4392,16 +4409,16 @@ func (m *Manager) buildSpawnContextTexts(ctx context.Context, cfg ports.SpawnCon
 			return spawnContextTexts{}, resolveErr
 		}
 		if template != "" {
-			prompt, resolveErr := RenderWorkerTaskPrompt(template, cfg.IssueID)
+			prompt, resolveErr := RenderWorkerTaskPrompt(template, cfg.IssueID, scope)
 			if resolveErr != nil {
 				return spawnContextTexts{}, &WorkerTaskPromptConfigError{ProjectID: string(cfg.ProjectID), Source: source, Err: resolveErr}
 			}
 			task = assemblePromptSegments([]promptSegmentInput{{Channel: "task", Source: "projectConfig.workerTaskPrompt." + source, Text: prompt}})
 		} else {
-			task = buildTaskPromptSegments(taskPromptConfig{Role: promptRoleForKind(cfg.Kind), Prompt: cfg.Prompt, IssueID: string(cfg.IssueID), IssueContext: cfg.IssueContext})
+			task = buildTaskPromptSegments(taskPromptConfig{Role: promptRoleForKind(cfg.Kind), Prompt: cfg.Prompt, IssueRef: domain.NativeIssueRef(cfg.IssueID, scope), IssueContext: cfg.IssueContext})
 		}
 	} else {
-		task = buildTaskPromptSegments(taskPromptConfig{Role: promptRoleForKind(cfg.Kind), Prompt: cfg.Prompt, IssueID: string(cfg.IssueID), IssueContext: cfg.IssueContext})
+		task = buildTaskPromptSegments(taskPromptConfig{Role: promptRoleForKind(cfg.Kind), Prompt: cfg.Prompt, IssueRef: domain.NativeIssueRef(cfg.IssueID, scope), IssueContext: cfg.IssueContext})
 	}
 	system, err := m.buildSystemPromptSegments(ctx, cfg.Kind, cfg.ProjectID)
 	if err != nil {
