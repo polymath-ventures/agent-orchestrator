@@ -522,7 +522,9 @@ describe("ProjectSettingsForm", () => {
 
 		await chooseOption(workerAgent, "OpenCode");
 		await chooseOption(orchestratorAgent, "Goose");
+		await userEvent.clear(screen.getByLabelText("Worker model"));
 		await userEvent.type(screen.getByLabelText("Worker model"), "openai/gpt-5.4");
+		await userEvent.clear(screen.getByLabelText("Orchestrator model"));
 		await userEvent.type(screen.getByLabelText("Orchestrator model"), "anthropic/claude-sonnet");
 		await userEvent.click(permissionMode);
 		await userEvent.click(await screen.findByRole("menuitem", { name: "Bypass permissions" }));
@@ -701,7 +703,7 @@ describe("ProjectSettingsForm", () => {
 						orchestrator: { agent: "claude-code", agentConfig: { effort: "high" } },
 						prime: { agentConfig: { effort: "high" } },
 						reviewers: [{ harness: "codex", agentConfig: { effort: "high" } }],
-						workerMix: [{ agent: "codex", weight: 100 }],
+						workerMix: [{ agent: "codex", weight: 100, effort: "high" }],
 						agentConfig: { permissions: "auto" },
 					}),
 				},
@@ -751,7 +753,84 @@ describe("ProjectSettingsForm", () => {
 								agentConfig: { effort: "low", modelByHarness: { codex: { effort: "high" } } },
 							},
 						],
-						workerMix: [{ agent: "codex", weight: 100 }],
+						workerMix: [{ agent: "codex", weight: 100, effort: "high" }],
+						agentConfig: { permissions: "auto" },
+					}),
+				},
+			}),
+		);
+	});
+
+	it("clears harness-scoped effort without exposing a role scalar fallback", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "git@github.com:acme/project-one.git",
+			defaultBranch: "main",
+			config: {
+				worker: { agent: "codex", agentConfig: { effort: "high" } },
+				orchestrator: { agent: "claude-code" },
+				agentConfig: { modelByHarness: { codex: { effort: "low" } }, permissions: "auto" },
+			},
+		});
+
+		renderSettings("proj-1", undefined, "agents");
+
+		expect(await screen.findByLabelText("Worker effort")).toHaveValue("low");
+		await userEvent.selectOptions(screen.getByLabelText("Worker effort"), "");
+		submitSettings();
+
+		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
+		expect(putMock).toHaveBeenCalledWith(
+			"/api/v1/projects/{id}",
+			expect.objectContaining({
+				body: {
+					displayName: "Project One",
+					config: expect.objectContaining({
+						worker: { agent: "codex", agentConfig: undefined },
+						agentConfig: { permissions: "auto" },
+					}),
+				},
+			}),
+		);
+	});
+
+	it("clears a shared harness effort without falling back to the shared scalar", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "git@github.com:acme/project-one.git",
+			defaultBranch: "main",
+			config: {
+				worker: { agent: "codex" },
+				orchestrator: { agent: "claude-code" },
+				agentConfig: {
+					effort: "high",
+					modelByHarness: { codex: { effort: "high" } },
+					permissions: "auto",
+				},
+			},
+		});
+
+		renderSettings("proj-1", undefined, "agents");
+
+		expect(await screen.findByLabelText("Worker effort")).toHaveValue("high");
+		await userEvent.selectOptions(screen.getByLabelText("Worker effort"), "");
+		submitSettings();
+
+		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
+		expect(putMock).toHaveBeenCalledWith(
+			"/api/v1/projects/{id}",
+			expect.objectContaining({
+				body: {
+					displayName: "Project One",
+					config: expect.objectContaining({
+						worker: { agent: "codex", agentConfig: undefined },
+						orchestrator: { agent: "claude-code", agentConfig: { effort: "high" } },
 						agentConfig: { permissions: "auto" },
 					}),
 				},
@@ -787,10 +866,288 @@ describe("ProjectSettingsForm", () => {
 				body: {
 					displayName: "Project One",
 					config: expect.objectContaining({
-						worker: { agent: "codex", agentConfig: { model: "gpt-5.4" } },
-						orchestrator: { agent: "codex", agentConfig: { model: "gpt-5.4" } },
+						worker: { agent: "codex", agentConfig: undefined },
+						orchestrator: { agent: "codex", agentConfig: undefined },
 						prime: {},
 						agentConfig: { model: "gpt-5.4", permissions: "auto" },
+					}),
+				},
+			}),
+		);
+	});
+
+	it("preserves shared scalar model that is incompatible with the selected harness", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "git@github.com:acme/project-one.git",
+			defaultBranch: "main",
+			config: {
+				worker: { agent: "codex" },
+				orchestrator: { agent: "claude-code" },
+				agentConfig: { model: "claude-opus-4-5", permissions: "auto" },
+			},
+		});
+
+		renderSettings("proj-1", undefined, "agents");
+
+		expect(await screen.findByLabelText("Worker model")).toHaveValue("");
+		submitSettings();
+
+		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
+		expect(putMock).toHaveBeenCalledWith(
+			"/api/v1/projects/{id}",
+			expect.objectContaining({
+				body: {
+					displayName: "Project One",
+					config: expect.objectContaining({
+						worker: { agent: "codex", agentConfig: undefined },
+						orchestrator: { agent: "claude-code", agentConfig: undefined },
+						agentConfig: { model: "claude-opus-4-5", permissions: "auto" },
+					}),
+				},
+			}),
+		);
+	});
+
+	it("keeps new effort scoped to the selected harness when another field inherits a harness pin", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "git@github.com:acme/project-one.git",
+			defaultBranch: "main",
+			config: {
+				worker: { agent: "codex" },
+				orchestrator: { agent: "claude-code" },
+				workerMix: [
+					{ agent: "claude-code", weight: 55 },
+					{ agent: "codex", weight: 27 },
+					{ agent: "codex-fugu", weight: 18 },
+				],
+				agentConfig: { modelByHarness: { codex: { model: "gpt-5.4" } }, permissions: "auto" },
+			},
+		});
+
+		renderSettings("proj-1", undefined, "agents");
+
+		expect(await screen.findByLabelText("Worker model")).toHaveValue("gpt-5.4");
+		fireEvent.change(screen.getByLabelText("Worker effort"), { target: { value: "medium" } });
+		submitSettings();
+
+		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
+		expect(putMock).toHaveBeenCalledWith(
+			"/api/v1/projects/{id}",
+			expect.objectContaining({
+				body: {
+					displayName: "Project One",
+					config: expect.objectContaining({
+						worker: {
+							agent: "codex",
+							agentConfig: { modelByHarness: { codex: { effort: "medium" } } },
+						},
+						workerMix: [
+							{ agent: "claude-code", weight: 55 },
+							{ agent: "codex", weight: 27 },
+							{ agent: "codex-fugu", weight: 18 },
+						],
+						agentConfig: { modelByHarness: { codex: { model: "gpt-5.4" } }, permissions: "auto" },
+					}),
+				},
+			}),
+		);
+	});
+
+	it("preserves a hidden role model that is incompatible with the selected harness", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "git@github.com:acme/project-one.git",
+			defaultBranch: "main",
+			config: {
+				worker: { agent: "codex", agentConfig: { model: "claude-opus-4-5" } },
+				orchestrator: { agent: "claude-code" },
+				agentConfig: { permissions: "auto" },
+			},
+		});
+
+		renderSettings("proj-1", undefined, "agents");
+
+		expect(await screen.findByLabelText("Worker model")).toHaveValue("");
+		submitSettings();
+
+		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
+		expect(putMock).toHaveBeenCalledWith(
+			"/api/v1/projects/{id}",
+			expect.objectContaining({
+				body: {
+					displayName: "Project One",
+					config: expect.objectContaining({
+						worker: { agent: "codex", agentConfig: { model: "claude-opus-4-5" } },
+						agentConfig: { permissions: "auto" },
+					}),
+				},
+			}),
+		);
+	});
+
+	it("preserves a hidden incompatible role model while inheriting a compatible shared model", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "git@github.com:acme/project-one.git",
+			defaultBranch: "main",
+			config: {
+				worker: { agent: "codex", agentConfig: { model: "claude-opus-4-5" } },
+				orchestrator: { agent: "claude-code" },
+				agentConfig: { model: "gpt-5.4", permissions: "auto" },
+			},
+		});
+
+		renderSettings("proj-1", undefined, "agents");
+
+		expect(await screen.findByLabelText("Worker model")).toHaveValue("gpt-5.4");
+		submitSettings();
+
+		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
+		expect(putMock).toHaveBeenCalledWith(
+			"/api/v1/projects/{id}",
+			expect.objectContaining({
+				body: {
+					displayName: "Project One",
+					config: expect.objectContaining({
+						worker: { agent: "codex", agentConfig: { model: "claude-opus-4-5" } },
+						agentConfig: { model: "gpt-5.4", permissions: "auto" },
+					}),
+				},
+			}),
+		);
+	});
+
+	it("keeps shared scalar agents settings when switching worker harnesses", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "git@github.com:acme/project-one.git",
+			defaultBranch: "main",
+			config: {
+				worker: { agent: "codex" },
+				orchestrator: { agent: "claude-code" },
+				agentConfig: { model: "gpt-5.4", effort: "high", mode: "auto", permissions: "bypass-permissions" },
+			},
+		});
+
+		renderSettings("proj-1", undefined, "agents");
+
+		const workerAgent = await screen.findByRole("button", { name: "Default worker agent" });
+		await chooseOption(workerAgent, "OpenCode");
+		submitSettings();
+
+		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
+		expect(putMock).toHaveBeenCalledWith(
+			"/api/v1/projects/{id}",
+			expect.objectContaining({
+				body: {
+					displayName: "Project One",
+					config: expect.objectContaining({
+						worker: { agent: "opencode", agentConfig: undefined },
+						orchestrator: { agent: "claude-code", agentConfig: undefined },
+						agentConfig: {
+							model: "gpt-5.4",
+							effort: "high",
+							mode: "auto",
+							permissions: "bypass-permissions",
+						},
+					}),
+				},
+			}),
+		);
+	});
+
+	it("drops stale role model pins that do not match a newly selected harness", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "git@github.com:acme/project-one.git",
+			defaultBranch: "main",
+			config: {
+				worker: { agent: "codex", agentConfig: { model: "gpt-5.4" } },
+				orchestrator: { agent: "claude-code" },
+				agentConfig: { model: "claude-opus-4-5", permissions: "auto" },
+			},
+		});
+
+		renderSettings("proj-1", undefined, "agents");
+
+		const workerAgent = await screen.findByRole("button", { name: "Default worker agent" });
+		await chooseOption(workerAgent, "Claude Code");
+		submitSettings();
+
+		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
+		expect(putMock).toHaveBeenCalledWith(
+			"/api/v1/projects/{id}",
+			expect.objectContaining({
+				body: {
+					displayName: "Project One",
+					config: expect.objectContaining({
+						worker: { agent: "claude-code", agentConfig: undefined },
+						agentConfig: { model: "claude-opus-4-5", permissions: "auto" },
+					}),
+				},
+			}),
+		);
+	});
+
+	it("materializes removed shared scalar effort into worker mix buckets", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "git@github.com:acme/project-one.git",
+			defaultBranch: "main",
+			config: {
+				worker: { agent: "claude-code" },
+				orchestrator: { agent: "claude-code" },
+				workerMix: [
+					{ agent: "codex", weight: 60 },
+					{ agent: "codex-fugu", weight: 40 },
+				],
+				agentConfig: { effort: "high", permissions: "auto" },
+			},
+		});
+
+		renderSettings("proj-1", undefined, "agents");
+
+		expect(await screen.findByLabelText("Worker effort")).toHaveValue("high");
+		await userEvent.selectOptions(screen.getByLabelText("Worker effort"), "");
+		submitSettings();
+
+		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
+		expect(putMock).toHaveBeenCalledWith(
+			"/api/v1/projects/{id}",
+			expect.objectContaining({
+				body: {
+					displayName: "Project One",
+					config: expect.objectContaining({
+						worker: { agent: "claude-code", agentConfig: undefined },
+						orchestrator: { agent: "claude-code", agentConfig: { effort: "high" } },
+						workerMix: [
+							{ agent: "codex", weight: 60, effort: "high" },
+							{ agent: "codex-fugu", weight: 40, effort: "high" },
+						],
+						agentConfig: { permissions: "auto" },
 					}),
 				},
 			}),
@@ -921,7 +1278,7 @@ describe("ProjectSettingsForm", () => {
 					config: expect.objectContaining({
 						worker: {
 							agent: "codex",
-							agentConfig: { effort: "high", modelByHarness: { codex: { effort: "low" } } },
+							agentConfig: { effort: "high" },
 						},
 						workerMix: [
 							{ agent: "claude-code", weight: 55 },
@@ -1716,28 +2073,38 @@ describe("ProjectSettingsForm", () => {
 		submitSettings();
 
 		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
-		expect(putMock).toHaveBeenCalledWith("/api/v1/projects/{id}", {
-			params: { path: { id: "scratch" } },
-			body: {
-				displayName: "Scratch",
-				config: {
-					env: { FOO: "bar" },
-					sessionPrefix: "ao",
-					symlinks: [".env"],
-					postCreate: ["npm install"],
-					agentRules: "keep work small",
-					worker: { agent: "codex", agentConfig: { model: "gpt-5-codex" } },
-					orchestrator: {
-						agent: "claude-code",
-						agentConfig: { model: "gpt-5-codex" },
-					},
-					agentConfig: {
-						model: "gpt-5-codex",
-						permissions: "auto",
-					},
+		expect(putMock).toHaveBeenCalledWith(
+			"/api/v1/projects/{id}",
+			expect.objectContaining({
+				params: { path: { id: "scratch" } },
+				body: {
+					displayName: "Scratch",
+					config: expect.objectContaining({
+						worker: { agent: "codex", agentConfig: undefined },
+						orchestrator: {
+							agent: "claude-code",
+							agentConfig: undefined,
+						},
+						agentConfig: {
+							model: "gpt-5-codex",
+							permissions: "auto",
+						},
+					}),
 				},
-			},
-		});
+			}),
+		);
+		expect(putMock.mock.calls[0]?.[1]?.body.config).toEqual(
+			expect.objectContaining({
+				env: { FOO: "bar" },
+				sessionPrefix: "ao",
+				symlinks: [".env"],
+				postCreate: ["npm install"],
+				agentRules: "keep work small",
+			}),
+		);
+		expect(putMock.mock.calls[0]?.[1]?.body.config).not.toHaveProperty("defaultBranch");
+		expect(putMock.mock.calls[0]?.[1]?.body.config).not.toHaveProperty("reviewers");
+		expect(putMock.mock.calls[0]?.[1]?.body.config).not.toHaveProperty("trackerIntake");
 		expect(postMock).not.toHaveBeenCalled();
 	});
 

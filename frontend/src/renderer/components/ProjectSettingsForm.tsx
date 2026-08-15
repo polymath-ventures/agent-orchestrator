@@ -49,6 +49,7 @@ import {
 	buildWorkerMix,
 	parseMaxLiveWorkers,
 	toWorkerMixForm,
+	type WorkerMixBucket,
 	WorkerMixFields,
 	workerMixInvalid,
 	workerMixRowError,
@@ -61,6 +62,7 @@ type TrackerIntakeConfig = components["schemas"]["TrackerIntakeConfig"];
 type AgentConfig = components["schemas"]["AgentConfig"];
 type RoleOverride = components["schemas"]["RoleOverride"];
 type ReviewerConfig = components["schemas"]["DomainReviewerConfig"];
+type WorkerMixEntry = components["schemas"]["WorkerMixEntry"];
 
 const PERMISSION_MODE_VALUES = ["default", "accept-edits", "auto", "bypass-permissions"] as const;
 
@@ -154,7 +156,8 @@ function SettingsBody({
 		config.agentConfig,
 		config.orchestrator?.agent ?? "",
 	);
-	const [form, setForm] = useState({
+	const [initialWorkerMix] = useState(() => toWorkerMixForm(config.workerMix));
+	const [form, setForm] = useState(() => ({
 		displayName: project.name,
 		defaultBranch: config.defaultBranch ?? project.defaultBranch ?? "",
 		sessionPrefix: config.sessionPrefix ?? "",
@@ -164,8 +167,8 @@ function SettingsBody({
 		workerEffort: workerModelSelection.effort,
 		orchestratorModel: orchestratorModelSelection.model,
 		orchestratorEffort: orchestratorModelSelection.effort,
-		workerMode: config.worker?.agentConfig?.mode ?? config.agentConfig?.mode ?? "",
-		orchestratorMode: config.orchestrator?.agentConfig?.mode ?? config.agentConfig?.mode ?? "",
+		workerMode: config.worker?.agentConfig?.mode || config.agentConfig?.mode || "",
+		orchestratorMode: config.orchestrator?.agentConfig?.mode || config.agentConfig?.mode || "",
 		permissions: config.agentConfig?.permissions ?? "",
 		reviewerHarness: firstReviewer?.harness ?? "",
 		workerTaskPrompt: config.workerTaskPrompt ?? "",
@@ -175,14 +178,14 @@ function SettingsBody({
 		orchestratorRulesFile: config.orchestratorRulesFile ?? "",
 		reviewerRules: config.reviewerRules ?? "",
 		reviewerRulesFile: config.reviewerRulesFile ?? "",
-		workerMix: toWorkerMixForm(config.workerMix),
+		workerMix: initialWorkerMix,
 		maxLiveWorkers: config.maxLiveWorkers ? String(config.maxLiveWorkers) : "",
 		intakeEnabled: intake.enabled ?? false,
 		intakeProvider: intake.provider ?? "",
 		intakeRepo: intake.repo ?? "",
 		intakeAssignee: intake.assignee ?? "",
 		intakeOptOutLabel: intake.optOutLabel ?? "",
-	});
+	}));
 	const [savedAt, setSavedAt] = useState<number | null>(null);
 	const [showSaving, setShowSaving] = useState(false);
 	const [replacementError, setReplacementError] = useState<string | null>(null);
@@ -218,6 +221,32 @@ function SettingsBody({
 	const derivedIntakeRepo = deriveIntakeRepo(project.repo, form.intakeProvider);
 	const effectiveIntakeRepo = form.intakeRepo.trim() || derivedIntakeRepo?.path;
 	const reviewerWarning = reviewerTrustWarning(form.reviewerHarness);
+	const resetWorkerAgent = (workerAgent: string) =>
+		setForm((f) => ({
+			...f,
+			workerAgent,
+			workerModel: roleModelValue(config.worker?.agentConfig, config.agentConfig, workerAgent, "model"),
+			workerEffort: roleModelValue(config.worker?.agentConfig, config.agentConfig, workerAgent, "effort"),
+			workerMode: config.worker?.agentConfig?.mode || config.agentConfig?.mode || "",
+		}));
+	const resetOrchestratorAgent = (orchestratorAgent: string) =>
+		setForm((f) => ({
+			...f,
+			orchestratorAgent,
+			orchestratorModel: roleModelValue(
+				config.orchestrator?.agentConfig,
+				config.agentConfig,
+				orchestratorAgent,
+				"model",
+			),
+			orchestratorEffort: roleModelValue(
+				config.orchestrator?.agentConfig,
+				config.agentConfig,
+				orchestratorAgent,
+				"effort",
+			),
+			orchestratorMode: config.orchestrator?.agentConfig?.mode || config.agentConfig?.mode || "",
+		}));
 
 	const mutation = useMutation({
 		mutationFn: async () => {
@@ -248,6 +277,13 @@ function SettingsBody({
 						: [{ harness: form.reviewerHarness }]
 					: undefined;
 			const preservedConsumers = preserveSharedAgentConsumers(config, sharedAgentConfig.removals, reviewers);
+			const workerMix = preserveWorkerMixSharedConsumers(
+				buildWorkerMix(form.workerMix),
+				form.workerMix,
+				initialWorkerMix,
+				config.agentConfig,
+				sharedAgentConfig.removals,
+			);
 			const next: ProjectConfig = isScratchProject
 				? {
 						...scratchSupportedConfig(config),
@@ -257,10 +293,12 @@ function SettingsBody({
 							agentConfig: buildRoleAgentConfig(
 								config.worker?.agentConfig,
 								config.agentConfig,
+								config.worker?.agent ?? "",
 								form.workerAgent,
 								form.workerModel,
 								form.workerMode,
 								form.workerEffort,
+								sharedAgentConfig.removals,
 							),
 						},
 						orchestrator: {
@@ -269,10 +307,12 @@ function SettingsBody({
 							agentConfig: buildRoleAgentConfig(
 								config.orchestrator?.agentConfig,
 								config.agentConfig,
+								config.orchestrator?.agent ?? "",
 								form.orchestratorAgent,
 								form.orchestratorModel,
 								form.orchestratorMode,
 								form.orchestratorEffort,
+								sharedAgentConfig.removals,
 							),
 						},
 						agentConfig: blankToUndefined({
@@ -287,7 +327,7 @@ function SettingsBody({
 						orchestratorRulesFile: form.orchestratorRulesFile.trim() || undefined,
 						reviewerRules: form.reviewerRules.trim() || undefined,
 						reviewerRulesFile: form.reviewerRulesFile.trim() || undefined,
-						workerMix: buildWorkerMix(form.workerMix),
+						workerMix,
 						maxLiveWorkers: parseMaxLiveWorkers(form.maxLiveWorkers),
 					}
 				: {
@@ -300,10 +340,12 @@ function SettingsBody({
 							agentConfig: buildRoleAgentConfig(
 								config.worker?.agentConfig,
 								config.agentConfig,
+								config.worker?.agent ?? "",
 								form.workerAgent,
 								form.workerModel,
 								form.workerMode,
 								form.workerEffort,
+								sharedAgentConfig.removals,
 							),
 						},
 						orchestrator: {
@@ -312,10 +354,12 @@ function SettingsBody({
 							agentConfig: buildRoleAgentConfig(
 								config.orchestrator?.agentConfig,
 								config.agentConfig,
+								config.orchestrator?.agent ?? "",
 								form.orchestratorAgent,
 								form.orchestratorModel,
 								form.orchestratorMode,
 								form.orchestratorEffort,
+								sharedAgentConfig.removals,
 							),
 						},
 						agentConfig: blankToUndefined({
@@ -330,7 +374,7 @@ function SettingsBody({
 						orchestratorRulesFile: form.orchestratorRulesFile.trim() || undefined,
 						reviewerRules: form.reviewerRules.trim() || undefined,
 						reviewerRulesFile: form.reviewerRulesFile.trim() || undefined,
-						workerMix: buildWorkerMix(form.workerMix),
+						workerMix,
 						maxLiveWorkers: parseMaxLiveWorkers(form.maxLiveWorkers),
 						reviewers: preservedConsumers.reviewers,
 						trackerIntake: buildIntake(intakeForm),
@@ -487,9 +531,7 @@ function SettingsBody({
 								supported={agentCatalog?.supported}
 								disabled={agentsQuery.isFetching && agentCatalog === undefined}
 								invalid={validationError !== null && form.workerAgent === ""}
-								onChange={(v) =>
-									setForm((f) => ({ ...f, workerAgent: v, workerModel: "", workerEffort: "", workerMode: "" }))
-								}
+								onChange={resetWorkerAgent}
 							/>
 						}
 						workerModelArea={
@@ -518,15 +560,7 @@ function SettingsBody({
 								supported={agentCatalog?.supported}
 								disabled={agentsQuery.isFetching && agentCatalog === undefined}
 								invalid={validationError !== null && form.orchestratorAgent === ""}
-								onChange={(v) =>
-									setForm((f) => ({
-										...f,
-										orchestratorAgent: v,
-										orchestratorModel: "",
-										orchestratorEffort: "",
-										orchestratorMode: "",
-									}))
-								}
+								onChange={resetOrchestratorAgent}
 							/>
 						}
 						orchestratorModelArea={
@@ -812,7 +846,6 @@ function AgentModelField({
 					model={model}
 					effort={effort}
 					availability={availability}
-					disabled={agentId === ""}
 					onChange={onEffortChange}
 				/>
 				{warning && <p className="px-1 text-xs leading-row text-warning">{warning}</p>}
@@ -889,7 +922,6 @@ function AgentModelField({
 				model={model}
 				effort={effort}
 				availability={availability}
-				disabled={agentId === ""}
 				onChange={onEffortChange}
 			/>
 			{warning && <p className="px-1 text-xs leading-row text-warning">{warning}</p>}
@@ -903,7 +935,6 @@ function AgentEffortField({
 	model,
 	effort,
 	availability,
-	disabled,
 	onChange,
 }: {
 	role: "worker" | "orchestrator";
@@ -911,7 +942,6 @@ function AgentEffortField({
 	model: string;
 	effort: string;
 	availability?: AgentModelAvailabilityResponse;
-	disabled: boolean;
 	onChange: (value: string) => void;
 }) {
 	const { t } = useTranslation();
@@ -946,7 +976,6 @@ function AgentEffortField({
 						className="settings-inline-input settings-model-control"
 						value={effort}
 						list={`${id}-options`}
-						disabled={disabled}
 						placeholder={t("settings.models.agentDefault")}
 						onChange={(event) => onChange(event.target.value)}
 					/>
@@ -962,7 +991,6 @@ function AgentEffortField({
 					aria-label={label}
 					className="settings-inline-input settings-model-control"
 					value={effort}
-					disabled={disabled}
 					onChange={(event) => onChange(event.target.value)}
 				>
 					<option value="">{t("settings.models.agentDefault")}</option>
@@ -1225,15 +1253,76 @@ function roleModelValue(
 	harness: string,
 	field: "model" | "effort",
 ): string {
-	let value = sharedConfig?.[field] ?? "";
-	if (roleConfig?.[field]) value = roleConfig[field] ?? "";
+	let value = "";
+	const assign = (next: string | undefined) => {
+		if (!next) return;
+		if (field === "model" && !modelCompatibleWithHarness(next, harness)) return;
+		value = next;
+	};
+	assign(sharedConfig?.[field]);
+	assign(roleConfig?.[field]);
 	if (harness) {
-		const sharedHarnessValue = sharedConfig?.modelByHarness?.[harness]?.[field];
-		if (sharedHarnessValue) value = sharedHarnessValue;
-		const roleHarnessValue = roleConfig?.modelByHarness?.[harness]?.[field];
-		if (roleHarnessValue) value = roleHarnessValue;
+		assign(sharedConfig?.modelByHarness?.[harness]?.[field]);
+		assign(roleConfig?.modelByHarness?.[harness]?.[field]);
 	}
 	return value;
+}
+
+type ModelProvider = "" | "anthropic" | "openai" | "fugu";
+
+function modelCompatibleWithHarness(model: string, harness: string): boolean {
+	const modelProvider = classifyModelProvider(model);
+	const harnessProvider = harnessModelProvider(harness);
+	return modelProvider === "" || harnessProvider === "" || modelProvider === harnessProvider;
+}
+
+function harnessModelProvider(harness: string): ModelProvider {
+	switch (harness) {
+		case "claude-code":
+			return "anthropic";
+		case "codex":
+			return "openai";
+		case "codex-fugu":
+			return "fugu";
+		default:
+			return "";
+	}
+}
+
+function classifyModelProvider(model: string): ModelProvider {
+	const normalized = model.toLowerCase().trim();
+	if (!normalized) return "";
+	if (hasModelFamily(normalized, "fugu")) return "fugu";
+	if (
+		hasModelFamily(normalized, "claude") ||
+		hasModelFamily(normalized, "opus") ||
+		hasModelFamily(normalized, "sonnet") ||
+		hasModelFamily(normalized, "haiku") ||
+		hasModelFamily(normalized, "fable")
+	) {
+		return "anthropic";
+	}
+	if (
+		hasModelFamily(normalized, "gpt") ||
+		hasModelFamily(normalized, "codex") ||
+		normalized.startsWith("o1") ||
+		normalized.startsWith("o3") ||
+		normalized.startsWith("o4")
+	) {
+		return "openai";
+	}
+	return "";
+}
+
+function hasModelFamily(model: string, fragment: string): boolean {
+	const index = model.indexOf(fragment);
+	if (index === -1) return false;
+	for (let start = index; start >= 0; start = model.indexOf(fragment, start + 1)) {
+		const before = start === 0 ? "" : model[start - 1];
+		const after = start + fragment.length >= model.length ? "" : model[start + fragment.length];
+		if (!/\p{L}/u.test(before) && !/\p{L}/u.test(after)) return true;
+	}
+	return false;
 }
 
 type AgentConfigField = "model" | "effort" | "mode";
@@ -1253,11 +1342,13 @@ function roleFieldSource(
 	harness: string,
 	field: AgentConfigField,
 ): AgentConfigFieldSource {
-	let source: AgentConfigFieldSource = sharedConfig?.[field] ? "shared-scalar" : "none";
-	if (roleConfig?.[field]) source = "role-scalar";
+	const fieldApplies = (value: string | undefined) =>
+		Boolean(value) && (field !== "model" || modelCompatibleWithHarness(value ?? "", harness));
+	let source: AgentConfigFieldSource = fieldApplies(sharedConfig?.[field]) ? "shared-scalar" : "none";
+	if (fieldApplies(roleConfig?.[field])) source = "role-scalar";
 	if (harness && field !== "mode") {
-		if (sharedConfig?.modelByHarness?.[harness]?.[field]) source = "shared-harness";
-		if (roleConfig?.modelByHarness?.[harness]?.[field]) source = "role-harness";
+		if (fieldApplies(sharedConfig?.modelByHarness?.[harness]?.[field])) source = "shared-harness";
+		if (fieldApplies(roleConfig?.modelByHarness?.[harness]?.[field])) source = "role-harness";
 	}
 	return source;
 }
@@ -1265,46 +1356,87 @@ function roleFieldSource(
 function buildRoleAgentConfig(
 	existing: AgentConfig | undefined,
 	shared: AgentConfig | undefined,
+	originalAgentId: string,
 	agentId: string,
 	model: string,
 	mode: string,
 	effort: string,
+	sharedRemovals: SharedAgentRemoval[],
 ): AgentConfig | undefined {
 	const next = { ...existing };
 	const trimmedModel = model.trim();
 	const trimmedEffort = effort.trim();
-	if (mode) next.mode = mode;
-	else delete next.mode;
+	const trimmedMode = mode.trim();
 	const modelByHarness = { ...(next.modelByHarness ?? {}) };
 	const existingEntry = agentId ? existing?.modelByHarness?.[agentId] : undefined;
 	const sharedEntry = agentId ? shared?.modelByHarness?.[agentId] : undefined;
-	const scopeModelToHarness = Boolean(existingEntry?.model || sharedEntry?.model);
-	const scopeEffort = Boolean(existingEntry?.effort || sharedEntry?.effort);
-	if (agentId && (scopeModelToHarness || scopeEffort)) {
-		const entry = { ...(modelByHarness[agentId] ?? {}) };
-		if (scopeModelToHarness) {
-			if (trimmedModel) entry.model = trimmedModel;
-			else delete entry.model;
-		} else if (trimmedModel) {
-			next.model = trimmedModel;
-		} else {
-			delete next.model;
+	const scopeToHarness = Boolean(
+		existingEntry?.model || existingEntry?.effort || sharedEntry?.model || sharedEntry?.effort,
+	);
+	const entry = agentId ? { ...(modelByHarness[agentId] ?? {}) } : {};
+	const shouldMaterializeShared = (field: AgentConfigField, source: AgentConfigFieldSource, value: string) =>
+		source.startsWith("shared-") &&
+		sharedRemovals.some((removal) => {
+			if (removal.field !== field || removal.value !== value) return false;
+			if (removal.harness) return source === "shared-harness" && removal.harness === agentId;
+			return source === "shared-scalar";
+		});
+	const writeScalarField = (field: AgentConfigField, value: string) => {
+		if (value) next[field] = value;
+		else delete next[field];
+	};
+	const writeHarnessField = (field: "model" | "effort", value: string) => {
+		if (value) entry[field] = value;
+		else delete entry[field];
+	};
+	const applyField = (field: "model" | "effort", value: string) => {
+		const source = roleFieldSource(existing, shared, agentId, field);
+		const effectiveValue = roleModelValue(existing, shared, agentId, field).trim();
+		if (
+			source.startsWith("shared-") &&
+			value === effectiveValue &&
+			!shouldMaterializeShared(field, source, effectiveValue)
+		) {
+			if (field === "model") {
+				const agentChanged = originalAgentId !== agentId;
+				if (agentChanged && next.model && !modelCompatibleWithHarness(next.model, agentId)) delete next.model;
+				if (agentChanged && entry.model && !modelCompatibleWithHarness(entry.model, agentId)) delete entry.model;
+			}
+			return;
 		}
-		if (scopeEffort) {
-			if (trimmedEffort) entry.effort = trimmedEffort;
-			else delete entry.effort;
-		} else if (trimmedEffort) {
-			next.effort = trimmedEffort;
-		} else {
-			delete next.effort;
+		if (!value) {
+			if (field === "model") {
+				if (source === "role-harness") delete entry.model;
+				else if (source === "role-scalar") delete next.model;
+				return;
+			}
+			delete next[field];
+			delete entry[field];
+			return;
 		}
+		if (
+			agentId &&
+			(source === "role-harness" || source === "shared-harness" || (scopeToHarness && source !== "role-scalar"))
+		) {
+			writeHarnessField(field, value);
+		} else {
+			writeScalarField(field, value);
+		}
+	};
+	const modeSource = roleFieldSource(existing, shared, agentId, "mode");
+	const effectiveMode = (existing?.mode || shared?.mode || "").trim();
+	if (!(
+		modeSource === "shared-scalar" &&
+		trimmedMode === effectiveMode &&
+		!shouldMaterializeShared("mode", modeSource, effectiveMode)
+	)) {
+		writeScalarField("mode", trimmedMode);
+	}
+	applyField("model", trimmedModel);
+	applyField("effort", trimmedEffort);
+	if (agentId) {
 		if (Object.keys(entry).length > 0) modelByHarness[agentId] = entry;
 		else delete modelByHarness[agentId];
-	} else {
-		if (trimmedModel) next.model = trimmedModel;
-		else delete next.model;
-		if (trimmedEffort) next.effort = trimmedEffort;
-		else delete next.effort;
 	}
 	if (Object.keys(modelByHarness).length > 0) next.modelByHarness = modelByHarness;
 	else delete next.modelByHarness;
@@ -1339,6 +1471,13 @@ function buildSharedAgentConfig(
 		const entry = modelByHarness[selection.agentId];
 		if (!entry) continue;
 		const nextEntry = { ...entry };
+		const removeSharedScalarFallback = (field: "model" | "effort") => {
+			const scalarValue = shared?.[field];
+			if (!scalarValue || next[field] === undefined) return;
+			if (field === "model" && !modelCompatibleWithHarness(scalarValue, selection.agentId)) return;
+			delete next[field];
+			removals.push({ field, value: scalarValue });
+		};
 		if (
 			!selection.model.trim() &&
 			entry.model &&
@@ -1346,6 +1485,7 @@ function buildSharedAgentConfig(
 		) {
 			delete nextEntry.model;
 			removals.push({ field: "model", harness: selection.agentId, value: entry.model });
+			removeSharedScalarFallback("model");
 		}
 		if (
 			!selection.effort.trim() &&
@@ -1354,6 +1494,7 @@ function buildSharedAgentConfig(
 		) {
 			delete nextEntry.effort;
 			removals.push({ field: "effort", harness: selection.agentId, value: entry.effort });
+			removeSharedScalarFallback("effort");
 		}
 		if (Object.keys(nextEntry).length > 0) modelByHarness[selection.agentId] = nextEntry;
 		else delete modelByHarness[selection.agentId];
@@ -1366,6 +1507,7 @@ function buildSharedAgentConfig(
 function setAgentConfigField(config: AgentConfig | undefined, removal: SharedAgentRemoval): AgentConfig {
 	const next = { ...(config ?? {}) };
 	if (removal.harness) {
+		if (removal.field === "mode") return next;
 		const modelByHarness = { ...(next.modelByHarness ?? {}) };
 		modelByHarness[removal.harness] = {
 			...(modelByHarness[removal.harness] ?? {}),
@@ -1415,4 +1557,37 @@ function preserveSharedAgentConsumers(
 		);
 	}
 	return { prime, reviewers: nextReviewers };
+}
+
+function preserveWorkerMixSharedConsumers(
+	workerMix: WorkerMixEntry[] | undefined,
+	formWorkerMix: WorkerMixBucket[],
+	initialWorkerMix: WorkerMixBucket[],
+	shared: AgentConfig | undefined,
+	removals: SharedAgentRemoval[],
+): WorkerMixEntry[] | undefined {
+	if (!workerMix || removals.length === 0) return workerMix;
+	return workerMix.map((bucket, index) => {
+		let next = bucket;
+		for (const removal of removals) {
+			if (removal.field !== "model" && removal.field !== "effort") continue;
+			if (next[removal.field]) continue;
+			if (workerMixFieldWasCleared(formWorkerMix, initialWorkerMix, index, bucket, removal.field)) continue;
+			if (!consumerUsesRemovedSharedField(undefined, shared, next.agent, removal)) continue;
+			next = { ...next, [removal.field]: removal.value };
+		}
+		return next;
+	});
+}
+
+function workerMixFieldWasCleared(
+	formWorkerMix: WorkerMixBucket[],
+	initialWorkerMix: WorkerMixBucket[],
+	index: number,
+	bucket: WorkerMixEntry,
+	field: "model" | "effort",
+): boolean {
+	const formBucket = formWorkerMix[index];
+	const initialBucket = initialWorkerMix.find((candidate) => candidate.id === formBucket?.id);
+	return Boolean(initialBucket?.[field] && initialBucket[field] !== bucket[field]);
 }
