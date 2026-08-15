@@ -26,8 +26,9 @@ func CanonicalIssueID(id TrackerID) IssueID {
 }
 
 // SplitCanonicalIssueID reverses CanonicalIssueID. It reports false for
-// anything that is not already in canonical form, including issue URLs, whose
-// scheme separator would otherwise read as a provider prefix.
+// anything that is not already in canonical form: issue URLs, whose scheme
+// separator would otherwise read as a provider prefix, and a known prefix
+// carrying a native part no adapter could fetch ("github:12").
 func SplitCanonicalIssueID(id IssueID) (TrackerProvider, string, bool) {
 	prefix, native, ok := strings.Cut(strings.TrimSpace(string(id)), ":")
 	if !ok {
@@ -41,7 +42,25 @@ func SplitCanonicalIssueID(id IssueID) (TrackerProvider, string, bool) {
 	if native == "" || strings.HasPrefix(native, "//") {
 		return "", "", false
 	}
+	if repoQualifiedIssueNative(native, provider) != native {
+		return "", "", false
+	}
 	return provider, native, true
+}
+
+// NativeIssueRef reduces an issue id to the reference a person or a tracker CLI
+// would use: "github:owner/repo#242" and a manually typed "242" both yield
+// "242". Shapes it does not recognise are returned unchanged.
+//
+// Prompts address the issue, they do not key storage, so they use this rather
+// than the canonical id — canonicalising at the spawn boundary must not put a
+// token no `gh` or `glab` invocation accepts into an agent's task message.
+func NativeIssueRef(id IssueID) string {
+	ref := strings.TrimPrefix(string(id), "#")
+	if hash := strings.LastIndexByte(ref, '#'); hash >= 0 && hash < len(ref)-1 && strings.IndexByte(ref[:hash], ':') >= 0 {
+		return ref[hash+1:]
+	}
+	return ref
 }
 
 // ParseIssueRef resolves an operator-supplied issue reference into the
@@ -86,7 +105,7 @@ func ParseIssueRef(raw string, scope TrackerRepo) (TrackerID, bool) {
 	if provider == "" {
 		provider = TrackerProviderGitHub
 	}
-	if native, ok := repoQualifiedIssueNative(ref, provider); ok {
+	if native := repoQualifiedIssueNative(ref, provider); native != "" {
 		host := ""
 		if provider == TrackerProviderGitLab {
 			host = scope.Host
@@ -121,23 +140,26 @@ func NormalizeTrackerHost(provider, host string) string {
 
 // repoQualifiedIssueNative parses the "<repo-path>#<number>" form. GitHub
 // repo paths are exactly owner/repo; GitLab project paths may nest groups.
-func repoQualifiedIssueNative(raw string, provider TrackerProvider) (string, bool) {
+// It returns "" when raw does not name an issue in that shape. A caller can
+// also compare the result against its input to test whether raw was already
+// exactly the provider's native form.
+func repoQualifiedIssueNative(raw string, provider TrackerProvider) string {
 	if strings.Contains(raw, "://") {
-		return "", false
+		return ""
 	}
 	hash := strings.LastIndexByte(raw, '#')
 	if hash <= 0 || hash == len(raw)-1 {
-		return "", false
+		return ""
 	}
 	n, err := strconv.Atoi(raw[hash+1:])
 	if err != nil || n <= 0 {
-		return "", false
+		return ""
 	}
 	path, ok := cleanRepoPathSegments(raw[:hash], provider)
 	if !ok {
-		return "", false
+		return ""
 	}
-	return fmt.Sprintf("%s#%d", path, n), true
+	return fmt.Sprintf("%s#%d", path, n)
 }
 
 // cleanRepoPathSegments trims and validates a repository path. GitHub requires

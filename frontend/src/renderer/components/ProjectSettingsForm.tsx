@@ -155,6 +155,7 @@ function SettingsBody({
 		intakeEnabled: intake.enabled ?? false,
 		intakeRepo: intake.repo ?? "",
 		intakeAssignee: intake.assignee ?? "",
+		intakeOptOutLabel: intake.optOutLabel ?? "",
 	});
 	const [savedAt, setSavedAt] = useState<number | null>(null);
 	const [showSaving, setShowSaving] = useState(false);
@@ -176,6 +177,7 @@ function SettingsBody({
 		enabled: form.intakeEnabled,
 		repo: form.intakeRepo,
 		assignee: form.intakeAssignee,
+		optOutLabel: form.intakeOptOutLabel,
 	};
 	const patchIntake = (patch: Partial<IntakeForm>) =>
 		setForm((f) => ({
@@ -183,6 +185,7 @@ function SettingsBody({
 			intakeEnabled: patch.enabled ?? f.intakeEnabled,
 			intakeRepo: patch.repo ?? f.intakeRepo,
 			intakeAssignee: patch.assignee ?? f.intakeAssignee,
+			intakeOptOutLabel: patch.optOutLabel ?? f.intakeOptOutLabel,
 		}));
 	const effectiveIntakeRepo = form.intakeRepo.trim() || deriveGitHubRepo(project.repo);
 	const reviewerWarning = reviewerTrustWarning(form.reviewerHarness);

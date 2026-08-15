@@ -10,13 +10,15 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/t
 type TrackerIntakeConfig = components["schemas"]["TrackerIntakeConfig"];
 
 // IntakeForm is the flat, string-backed shape both the create sheet and the
-// project settings form edit. repo has no input today (it's derived from the
-// git origin server-side) but is plumbed so a value set via the CLI
-// (--tracker-repo) survives a UI save instead of being wiped.
+// project settings form edit. repo and optOutLabel have no input today (repo is
+// derived from the git origin server-side; optOutLabel defaults to "no-ao") but
+// both are plumbed so a value set via the CLI survives a UI save instead of
+// being wiped.
 export type IntakeForm = {
 	enabled: boolean;
 	repo: string;
 	assignee: string;
+	optOutLabel: string;
 };
 
 // Only "github" is a valid TrackerIntakeConfig["provider"] today (see the
@@ -40,6 +42,7 @@ export function buildIntake(form: IntakeForm): TrackerIntakeConfig | undefined {
 		provider: form.enabled ? "github" : undefined,
 		repo: form.repo.trim() || undefined,
 		assignee: form.assignee.trim() || undefined,
+		optOutLabel: form.optOutLabel.trim() || undefined,
 	};
 	return Object.values(next).some((v) => v !== undefined) ? next : undefined;
 }

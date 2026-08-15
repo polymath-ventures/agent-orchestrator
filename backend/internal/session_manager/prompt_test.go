@@ -395,3 +395,26 @@ func TestProjectRelativeFileRejectsTraversal(t *testing.T) {
 		t.Fatal("expected traversal path to be rejected")
 	}
 }
+
+// Canonicalising issue ids at the spawn boundary (#298) must not leak the
+// storage key into an agent's task message: "github:acme/demo#2272" is not a
+// reference any tracker CLI accepts. A promptless manual spawn keeps rendering
+// exactly what it rendered before the ids became canonical.
+func TestBuildTaskPromptAddressesTheIssueByItsNativeReference(t *testing.T) {
+	for _, issueID := range []string{"2272", "#2272", "github:acme/demo#2272", "gitlab:group/sub/proj#2272"} {
+		t.Run(issueID, func(t *testing.T) {
+			bare := buildTaskPrompt(taskPromptConfig{Role: sessionPromptRoleWorker, IssueID: issueID})
+			if !strings.HasPrefix(bare, "Work on issue 2272.") {
+				t.Fatalf("prompt = %q, want it to open with \"Work on issue 2272.\"", bare)
+			}
+			withContext := buildTaskPrompt(taskPromptConfig{
+				Role:         sessionPromptRoleWorker,
+				IssueID:      issueID,
+				IssueContext: "Title: Enrich prompts",
+			})
+			if !strings.HasPrefix(withContext, "Work on issue 2272.") {
+				t.Fatalf("prompt = %q, want it to open with \"Work on issue 2272.\"", withContext)
+			}
+		})
+	}
+}

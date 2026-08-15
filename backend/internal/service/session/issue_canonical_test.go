@@ -121,3 +121,64 @@ func TestSpawnCanonicalGitLabIssueIDKeepsSelfManagedHost(t *testing.T) {
 		t.Fatalf("persisted IssueID = %q, want gitlab:group/project#7", fc.spawnedCfg.IssueID)
 	}
 }
+
+// The stored id and intake's lookup key must be computed from ONE scope answer.
+// These two cases are where the two resolvers disagreed: a project that points
+// intake at a different repo than its own origin, and a GitLab project under a
+// nested group. Either disagreement puts the duplicate-spawn loop back.
+func TestSpawnResolvesTheSameScopeTrackerIntakeDoes(t *testing.T) {
+	cases := []struct {
+		name   string
+		origin string
+		intake domain.TrackerIntakeConfig
+		scm    ports.SCMRepo
+		want   domain.IssueID
+	}{
+		{
+			name:   "configured tracker repo overrides the origin",
+			origin: "https://github.com/acme/code.git",
+			intake: domain.TrackerIntakeConfig{Enabled: true, Assignee: "alice", Repo: "acme/tracker"},
+			scm:    ports.SCMRepo{Provider: "github", Host: "github.com", Owner: "acme", Name: "code", Repo: "acme/code"},
+			want:   "github:acme/tracker#12",
+		},
+		{
+			name:   "nested gitlab group keeps its full namespace",
+			origin: "https://gitlab.com/group/sub/proj.git",
+			intake: domain.TrackerIntakeConfig{Enabled: true, Assignee: "alice", Provider: domain.TrackerProviderGitLab},
+			scm:    ports.SCMRepo{Provider: "gitlab", Host: "gitlab.com", Owner: "sub", Name: "proj", Repo: "group/sub/proj"},
+			want:   "gitlab:group/sub/proj#12",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			project := domain.ProjectRecord{
+				ID:            "demo",
+				RepoOriginURL: tc.origin,
+				Config:        domain.ProjectConfig{TrackerIntake: tc.intake},
+			}
+			st := newFakeStore()
+			st.projects["demo"] = project
+			fc := &fakeCommander{}
+			svc := NewWithDeps(Deps{Manager: fc, Store: st, SCM: staticSCM{repo: tc.scm}})
+
+			if _, _, _, err := svc.Spawn(context.Background(), ports.SpawnConfig{ProjectID: "demo", Kind: domain.KindWorker, IssueID: "12"}); err != nil {
+				t.Fatalf("Spawn: %v", err)
+			}
+			if fc.spawnedCfg.IssueID != tc.want {
+				t.Fatalf("persisted IssueID = %q, want %q", fc.spawnedCfg.IssueID, tc.want)
+			}
+			// The same scope, resolved the way tracker intake resolves it.
+			scope, ok := domain.TrackerScope(tc.origin, tc.intake.WithDefaults(), "")
+			if !ok {
+				t.Fatal("domain.TrackerScope not ok")
+			}
+			id, ok := domain.ParseIssueRef("12", scope)
+			if !ok {
+				t.Fatal("intake-side ParseIssueRef not ok")
+			}
+			if got := domain.CanonicalIssueID(id); got != tc.want {
+				t.Fatalf("intake lookup key = %q, want %q — the two scopes disagree", got, tc.want)
+			}
+		})
+	}
+}

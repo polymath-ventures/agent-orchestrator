@@ -84,45 +84,27 @@ func (s *Service) withCanonicalIssueID(cfg ports.SpawnConfig, project domain.Pro
 }
 
 func (s *Service) trackerIDForIssue(cfg ports.SpawnConfig, project domain.ProjectRecord) (domain.TrackerID, bool) {
-	scope, _ := s.trackerScope(project, cfg.TrackerProvider)
-	return domain.ParseIssueRef(string(cfg.IssueID), scope)
+	return domain.ParseIssueRef(string(cfg.IssueID), s.trackerScope(project, cfg.TrackerProvider))
 }
 
 // trackerScope resolves the project's tracker repository, which bare and
 // repo-qualified issue references are interpreted against.
-func (s *Service) trackerScope(project domain.ProjectRecord, fallbackProvider domain.TrackerProvider) (domain.TrackerRepo, bool) {
-	provider, host, repo, ok := s.repoForTracker(project, fallbackProvider)
-	if !ok {
-		return domain.TrackerRepo{}, false
-	}
-	return domain.TrackerRepo{Provider: provider, Native: repo, Host: host}, true
-}
-
-func (s *Service) repoForTracker(project domain.ProjectRecord, fallbackProvider domain.TrackerProvider) (domain.TrackerProvider, string, string, bool) {
-	if s.scm != nil {
-		repo, ok := s.scm.ParseRepository(project.RepoOriginURL)
-		if ok && repo.Provider != "" && repo.Repo != "" {
-			// SCM classified the origin (e.g. "github" or "gitlab"). Use the
-			// resolved provider so the multi-tracker dispatches to the
-			// correct adapter. The host is resolved from the SCM origin so
-			// self-managed GitLab instances route correctly; gitlab.com and
-			// GitHub always produce "" (zero value).
-			return domain.TrackerProvider(repo.Provider), domain.NormalizeTrackerHost(repo.Provider, repo.Host), repo.Repo, true
-		}
-		// SCM could not classify the origin (ok == false), or classified it
-		// with an empty repo; fall through to the URL-based heuristic below.
-	}
-	// SCM not available or couldn't resolve — use the tracker-provider hint
-	// from the CLI flag (defaults to "github" for backward compat).
-	host, owner, repo, err := repoFromURL(project.RepoOriginURL)
-	if err != nil {
-		return "", "", "", false
-	}
+//
+// It defers to domain.TrackerScope — the same resolver tracker intake uses — so
+// the id this service stores and the id intake looks it up by are computed from
+// one answer rather than two that have to agree. The SCM port only supplies a
+// provider hint: it classifies the origin (github vs gitlab) more precisely
+// than a URL heuristic can, and a project that configured trackerIntake.repo
+// still overrides the origin entirely.
+func (s *Service) trackerScope(project domain.ProjectRecord, fallbackProvider domain.TrackerProvider) domain.TrackerRepo {
 	provider := fallbackProvider
-	if provider == "" {
-		provider = domain.TrackerProviderGitHub
+	if s.scm != nil {
+		if repo, ok := s.scm.ParseRepository(project.RepoOriginURL); ok && repo.Provider != "" {
+			provider = domain.TrackerProvider(repo.Provider)
+		}
 	}
-	return provider, domain.NormalizeTrackerHost(string(provider), host), owner + "/" + repo, true
+	scope, _ := domain.TrackerScope(project.RepoOriginURL, project.Config.TrackerIntake, provider)
+	return scope
 }
 
 func formatIssueContext(issue domain.Issue) string {
