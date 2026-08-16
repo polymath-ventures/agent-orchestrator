@@ -124,3 +124,13 @@ pnpm-lock.yaml
 /CLAUDE-ASSEMBLED.md*
 /AGENTS-ASSEMBLED.md*
 /GEMINI-ASSEMBLED.md*
+
+# Canonical sx shape: these vault-managed instruction assets are regenerated
+# locally by the user-level polyscribe hook, not tracked in this repository.
+/agent-instructions/README.md
+/agent-instructions/standard-set.json
+/agent-instructions/agent-overrides/*.md
+/agent-instructions/source/30-polypowers.md
+/agent-instructions/source/35-worktree-recipe.ref.md
+/agent-instructions/source/40-operating-principles.md
+/agent-instructions/source/65-agent-identity.md

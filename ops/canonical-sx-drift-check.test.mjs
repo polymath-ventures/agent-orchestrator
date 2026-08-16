@@ -1,0 +1,102 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const scriptPath = fileURLToPath(new URL("./canonical-sx-drift-check.mjs", import.meta.url));
+const repoRoot = fileURLToPath(new URL("..", import.meta.url));
+const formerVaultSlug = ["agent", "vault"].join("-");
+const currentVaultSlug = ["polymath", "agent", "assets"].join("-");
+const managedMarker = ["@sx", "managed"].join("-");
+
+function git(cwd, ...args) {
+	const result = spawnSync("git", args, { cwd, encoding: "utf8" });
+	if (result.status !== 0) throw new Error(`git ${args.join(" ")} failed: ${result.stderr}`);
+	return result.stdout;
+}
+
+function write(root, rel, contents) {
+	const full = join(root, rel);
+	mkdirSync(full.slice(0, full.lastIndexOf("/")), { recursive: true });
+	writeFileSync(full, contents);
+}
+
+function setupRepo(files) {
+	const root = mkdtempSync(join(tmpdir(), "sx-drift-"));
+	git(root, "init", "-q");
+	git(root, "config", "user.email", "gate@example.com");
+	git(root, "config", "user.name", "gate");
+	git(root, "config", "commit.gpgsign", "false");
+	for (const [rel, contents] of Object.entries(files)) write(root, rel, contents);
+	git(root, "add", "--", ...Object.keys(files));
+	git(root, "commit", "-qm", "fixture");
+	return root;
+}
+
+function runGuard(cwd) {
+	return spawnSync("node", [scriptPath], { cwd, encoding: "utf8" });
+}
+
+test("canonical sx guard allows only .github managed contract files", () => {
+	const root = setupRepo({
+		".github/workflows/one-closing-issue.yml": `# ${managedMarker}: polypowers-init-one-closing-issue\n`,
+		".github/scripts/valid-final-review.cjs": `// ${managedMarker}: polypowers-init-valid-final-review\n`,
+		"agent-instructions/source/00-product.md": "# Repo-owned product guidance\n",
+	});
+	try {
+		const result = runGuard(root);
+		assert.equal(result.status, 0, `expected pass\nstdout:${result.stdout}\nstderr:${result.stderr}`);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("canonical sx guard rejects tracked managed files outside .github", () => {
+	const root = setupRepo({
+		"agent-instructions/README.md": `<!--\n${managedMarker}: agent-instructions-readme\n-->\n`,
+	});
+	try {
+		const result = runGuard(root);
+		assert.notEqual(result.status, 0, `expected failure\nstdout:${result.stdout}\nstderr:${result.stderr}`);
+		assert.match(result.stderr, /tracked sx-managed marker outside \.github/);
+		assert.match(result.stderr, /agent-instructions\/README\.md/);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("canonical sx guard rejects former and current vault slug references", () => {
+	const root = setupRepo({
+		"docs/old.md": `legacy clone URL mentions ${formerVaultSlug}\n`,
+		"docs/current.md": `current slug ${currentVaultSlug} must stay out of repos\n`,
+	});
+	try {
+		const result = runGuard(root);
+		assert.notEqual(result.status, 0, `expected failure\nstdout:${result.stdout}\nstderr:${result.stderr}`);
+		assert.match(result.stderr, /vault slug reference outside bootstrap allowlist/);
+		assert.match(result.stderr, /docs\/old\.md/);
+		assert.match(result.stderr, /docs\/current\.md/);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("canonical sx guard rejects repo-local polyscribe copies even when untracked", () => {
+	const root = setupRepo({ "package.json": '{"private":true}\n' });
+	try {
+		write(root, "scripts/polyscribe.sh", "#!/usr/bin/env bash\n");
+		const result = runGuard(root);
+		assert.notEqual(result.status, 0, `expected failure\nstdout:${result.stdout}\nstderr:${result.stderr}`);
+		assert.match(result.stderr, /repo-local polyscribe copy is forbidden/);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("current repository conforms to the canonical sx guard", () => {
+	const result = runGuard(repoRoot);
+	assert.equal(result.status, 0, `expected pass\nstdout:${result.stdout}\nstderr:${result.stderr}`);
+});

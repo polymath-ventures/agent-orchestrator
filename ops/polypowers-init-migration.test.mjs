@@ -43,18 +43,11 @@ test("canonical receipt preserves historical runs and records polypowers-init", 
 	assert.match(receipt.runs.at(-1).state_sha256, /^[0-9a-f]{64}$/);
 });
 
-test("polyscribe and instruction docs name polypowers-init as the recovery path", () => {
-	const polyscribe = read("scripts/polyscribe.sh");
-	assert.match(polyscribe, /polypowers\.json/);
-	assert.doesNotMatch(polyscribe, /nickify\.json/);
-	assert.match(polyscribe, /polypowers-init/);
-	assert.doesNotMatch(polyscribe, /re-run nickify/);
+test("polyscribe callers use the user-level hook, not a repo-local managed copy", () => {
+	assert.equal(exists("scripts/polyscribe.sh"), false);
 
-	const readme = read("agent-instructions/README.md");
-	assert.match(readme, /polypowers-init/);
-	assert.match(readme, /polypowers\.json/);
-	assert.match(readme, /\.polypowers-init\.json/);
-	assert.doesNotMatch(readme, /One skill, one entrypoint \(`\/nickify`\)/);
-	assert.doesNotMatch(readme, /`nickify\.json` is the source of truth/);
-	assert.doesNotMatch(readme, /`\.nickified\.json` remains the receipt/);
+	const packageJson = readJson("package.json");
+	assert.equal(packageJson.scripts.agents, 'bash "$HOME/.claude/hooks/polyscribe/polyscribe.sh"');
+	assert.equal(packageJson.scripts["agents:check"], 'bash "$HOME/.claude/hooks/polyscribe/polyscribe.sh" --check');
+	assert.equal(packageJson.scripts["agents:system"], 'bash "$HOME/.claude/hooks/polyscribe/polyscribe.sh" --system');
 });
