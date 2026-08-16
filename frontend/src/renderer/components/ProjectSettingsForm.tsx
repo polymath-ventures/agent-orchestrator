@@ -222,6 +222,7 @@ function SettingsBody({
 								config.worker?.agentConfig,
 								form.workerModel,
 								form.workerMode,
+								config.agentConfig,
 								form.workerAgent,
 								form.workerEffort,
 								form.workerEffortDirty,
@@ -234,6 +235,7 @@ function SettingsBody({
 								config.orchestrator?.agentConfig,
 								form.orchestratorModel,
 								form.orchestratorMode,
+								config.agentConfig,
 								form.orchestratorAgent,
 								form.orchestratorEffort,
 								form.orchestratorEffortDirty,
@@ -264,6 +266,7 @@ function SettingsBody({
 								config.worker?.agentConfig,
 								form.workerModel,
 								form.workerMode,
+								config.agentConfig,
 								form.workerAgent,
 								form.workerEffort,
 								form.workerEffortDirty,
@@ -276,6 +279,7 @@ function SettingsBody({
 								config.orchestrator?.agentConfig,
 								form.orchestratorModel,
 								form.orchestratorMode,
+								config.agentConfig,
 								form.orchestratorAgent,
 								form.orchestratorEffort,
 								form.orchestratorEffortDirty,
@@ -1155,6 +1159,7 @@ function buildRoleAgentConfig(
 	existing: components["schemas"]["AgentConfig"] | undefined,
 	model: string,
 	mode: string,
+	shared: components["schemas"]["AgentConfig"] | undefined,
 	agentId: string,
 	effort: string,
 	effortDirty: boolean,
@@ -1170,6 +1175,9 @@ function buildRoleAgentConfig(
 		const entry = { ...(modelByHarness[agentId] ?? {}) };
 		if (trimmedEffort) entry.effort = trimmedEffort;
 		else {
+			if (!existing?.modelByHarness?.[agentId]?.effort && !shared?.modelByHarness?.[agentId]?.effort) {
+				delete next.effort;
+			}
 			delete entry.effort;
 		}
 		if (Object.keys(entry).length > 0) modelByHarness[agentId] = entry;

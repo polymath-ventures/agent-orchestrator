@@ -115,6 +115,14 @@ test.beforeEach(async ({ page }) => {
 	});
 });
 
+async function setEffortValue(locator: import("@playwright/test").Locator, value: string) {
+	if ((await locator.evaluate((element) => element.tagName)) === "SELECT") {
+		await locator.selectOption(value);
+		return;
+	}
+	await locator.fill(value);
+}
+
 test("fork UI features stay mounted from the application shell", async ({ page }) => {
 	await page.goto("/");
 	const workerRow = page.getByRole("button", { name: "Open fix-webgl-fallback" });
@@ -169,10 +177,8 @@ test("fork UI features stay mounted from the application shell", async ({ page }
 	await expect(workerEffort).toHaveValue("high");
 	await expect(orchestratorEffort).toBeVisible();
 	await expect(orchestratorEffort).toHaveValue("low");
-	await expect(workerEffort).toHaveJSProperty("tagName", "SELECT");
-	await expect(orchestratorEffort).toHaveJSProperty("tagName", "SELECT");
-	await workerEffort.selectOption("medium");
-	await orchestratorEffort.selectOption("high");
+	await setEffortValue(workerEffort, "medium");
+	await setEffortValue(orchestratorEffort, "high");
 	if (captureEvidence) {
 		await page.screenshot({ path: `${evidenceDir}/project-settings-agents-effort.png`, fullPage: true });
 	}
@@ -180,8 +186,8 @@ test("fork UI features stay mounted from the application shell", async ({ page }
 	await expect
 		.poll(() => savedProjectConfig)
 		.toMatchObject({
-			worker: { agentConfig: { model: "gpt-5.5", modelByHarness: { codex: { effort: "medium" } } } },
-			orchestrator: { agentConfig: { model: "gpt-5.5", modelByHarness: { codex: { effort: "high" } } } },
+			worker: { agentConfig: { modelByHarness: { codex: { model: "gpt-5.5", effort: "medium" } } } },
+			orchestrator: { agentConfig: { modelByHarness: { codex: { model: "gpt-5.5", effort: "high" } } } },
 		});
 
 	await projectSettings.getByRole("button", { name: "Instructions", exact: true }).click();

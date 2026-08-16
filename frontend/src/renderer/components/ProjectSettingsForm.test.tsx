@@ -714,6 +714,43 @@ describe("ProjectSettingsForm", () => {
 		);
 	});
 
+	it("clears a role-wide effort when it is the displayed pin", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "git@github.com:acme/project-one.git",
+			defaultBranch: "main",
+			config: {
+				worker: { agent: "codex", agentConfig: { model: "gpt-5.4", effort: "high" } },
+				orchestrator: { agent: "claude-code" },
+				agentConfig: { effort: "low" },
+			},
+		});
+
+		renderSettings("proj-1", undefined, "agents");
+
+		expect(await screen.findByLabelText("Worker effort")).toHaveValue("high");
+		await waitFor(() => expect(screen.getByLabelText("Worker effort").tagName).toBe("SELECT"));
+		await userEvent.selectOptions(screen.getByLabelText("Worker effort"), "");
+		submitSettings();
+
+		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
+		expect(putMock).toHaveBeenCalledWith(
+			"/api/v1/projects/{id}",
+			expect.objectContaining({
+				body: {
+					displayName: "Project One",
+					config: expect.objectContaining({
+						worker: { agent: "codex", agentConfig: { model: "gpt-5.4" } },
+						agentConfig: { effort: "low" },
+					}),
+				},
+			}),
+		);
+	});
+
 	it("does not materialize an inherited effort on an ordinary save", async () => {
 		mockProject({
 			id: "proj-1",
