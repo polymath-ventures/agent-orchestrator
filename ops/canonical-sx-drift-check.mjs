@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 
 // Keep these needles constructed so the guard and its tests do not become
@@ -8,6 +8,12 @@ const SX_MANAGED = ["@sx", "managed"].join("-");
 const VAULT_SLUGS = [["agent", "vault"].join("-"), ["polymath", "agent", "assets"].join("-")];
 const FORBIDDEN_TRACKED_PATHS = ["AGENTS.shared.md"];
 const FORBIDDEN_BASENAMES = ["polyscribe.sh"];
+const GENERATED_BANNER =
+	"<!-- GENERATED — DO NOT EDIT. Edit agent-instructions/{source,agent-overrides,system}/, then rebuild with polyscribe (system scope adds --system) -->";
+const FAIL_OPEN_STUBS = {
+	"AGENTS.md": renderFailOpenStub("Codex", "codex"),
+	"CLAUDE.md": renderFailOpenStub("Claude", "claude"),
+};
 
 function git(args, options = {}) {
 	const result = spawnSync("git", args, { encoding: "utf8", ...options });
@@ -27,6 +33,11 @@ function trackedFiles() {
 	return result.stdout.split("\0").filter(Boolean).sort();
 }
 
+function untrackedFiles() {
+	const result = git(["ls-files", "-o", "--exclude-standard", "-z"]);
+	return result.stdout.split("\0").filter(Boolean).sort();
+}
+
 function grepTracked(pattern, pathspecs = []) {
 	const result = git(["grep", "--cached", "-Il", "-e", pattern, "--", ...pathspecs], {
 		allowNoMatches: true,
@@ -36,10 +47,36 @@ function grepTracked(pattern, pathspecs = []) {
 	return result.stdout.split("\n").filter(Boolean).sort();
 }
 
+function renderFailOpenStub(client, override) {
+	return `${GENERATED_BANNER}
+
+# Agent instructions — fail-open baseline (${client})
+
+SessionStart normally injects the current vault rules plus this repository’s local context. If that context is absent, use this safety baseline only.
+
+Before acting, read the ordered Markdown fragments under \`agent-instructions/source/\` and \`agent-instructions/agent-overrides/${override}.md\`.
+
+1. GitHub Issues are the sole durable tracker.
+2. Make every mutation in an agent-owned worktree, never the shared checkout.
+3. For behavior changes, write a failing test first, then implement and verify the fix.
+4. Verify the result with the repository’s real checks before claiming success.
+5. Use an independent reviewer; do not self-review merge readiness.
+6. Never merge without explicit authorization from the user. In autonomous mode, merge only after final-review is clean, CI is green, and all current-head review threads are resolved.
+`;
+}
+
+function staleFailOpenOutputs(files) {
+	return Object.entries(FAIL_OPEN_STUBS)
+		.filter(([path, expected]) => files.includes(path) && readFileSync(path, "utf8") !== expected)
+		.map(([path]) => path)
+		.sort();
+}
+
 function main() {
 	process.chdir(repoRoot());
 
 	const files = trackedFiles();
+	const looseFiles = untrackedFiles();
 	const managedOutsideGithub = grepTracked(SX_MANAGED, [":!.github"]);
 	const vaultSlugReferences = VAULT_SLUGS.flatMap((slug) =>
 		grepTracked(slug).map((path) => `${path} (${slug})`),
@@ -48,18 +85,29 @@ function main() {
 	const trackedPolyscribeCopies = files.filter((path) =>
 		FORBIDDEN_BASENAMES.some((name) => path === name || path.endsWith(`/${name}`)),
 	);
+	const untrackedPolyscribeCopies = looseFiles.filter((path) =>
+		FORBIDDEN_BASENAMES.some((name) => path === name || path.endsWith(`/${name}`)),
+	);
+	const explicitScriptsCopy = existsSync("scripts/polyscribe.sh") ? ["scripts/polyscribe.sh"] : [];
+	const staleOutputs = staleFailOpenOutputs(files);
 
 	const failures = [];
+	if (staleOutputs.length > 0) {
+		failures.push({
+			title: "tracked fail-open instruction output is stale",
+			items: staleOutputs,
+		});
+	}
 	if (forbiddenTrackedPaths.length > 0) {
 		failures.push({
 			title: "generated agent instruction output is tracked",
 			items: forbiddenTrackedPaths,
 		});
 	}
-	if (trackedPolyscribeCopies.length > 0 || existsSync("scripts/polyscribe.sh")) {
+	if (trackedPolyscribeCopies.length > 0 || untrackedPolyscribeCopies.length > 0 || explicitScriptsCopy.length > 0) {
 		failures.push({
 			title: "repo-local polyscribe copy is forbidden",
-			items: [...new Set([...trackedPolyscribeCopies, "scripts/polyscribe.sh"].filter(Boolean))],
+			items: [...new Set([...trackedPolyscribeCopies, ...untrackedPolyscribeCopies, ...explicitScriptsCopy])],
 		});
 	}
 	if (managedOutsideGithub.length > 0) {

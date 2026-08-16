@@ -112,6 +112,20 @@ test("canonical sx guard rejects tracked generated shared instructions", () => {
 	}
 });
 
+test("canonical sx guard rejects stale tracked fail-open instruction outputs", () => {
+	const root = setupRepo({
+		"AGENTS.md": "# hand edited\n",
+	});
+	try {
+		const result = runGuard(root);
+		assert.notEqual(result.status, 0, `expected failure\nstdout:${result.stdout}\nstderr:${result.stderr}`);
+		assert.match(result.stderr, /tracked fail-open instruction output is stale/);
+		assert.match(result.stderr, /AGENTS\.md/);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
 test("canonical sx guard rejects tracked polyscribe copies anywhere", () => {
 	const root = setupRepo({
 		"tools/polyscribe.sh": "#!/usr/bin/env bash\n",
@@ -133,6 +147,20 @@ test("canonical sx guard rejects repo-local polyscribe copies even when untracke
 		const result = runGuard(root);
 		assert.notEqual(result.status, 0, `expected failure\nstdout:${result.stdout}\nstderr:${result.stderr}`);
 		assert.match(result.stderr, /repo-local polyscribe copy is forbidden/);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("canonical sx guard rejects untracked polyscribe copies outside scripts", () => {
+	const root = setupRepo({ "package.json": '{"private":true}\n' });
+	try {
+		write(root, "tools/polyscribe.sh", "#!/usr/bin/env bash\n");
+		const result = runGuard(root);
+		assert.notEqual(result.status, 0, `expected failure\nstdout:${result.stdout}\nstderr:${result.stderr}`);
+		assert.match(result.stderr, /repo-local polyscribe copy is forbidden/);
+		assert.match(result.stderr, /tools\/polyscribe\.sh/);
+		assert.doesNotMatch(result.stderr, /scripts\/polyscribe\.sh/);
 	} finally {
 		rmSync(root, { recursive: true, force: true });
 	}

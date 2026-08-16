@@ -15,9 +15,9 @@
 		"api:spec": "cd backend && go generate ./internal/httpd/apispec/...",
 		"api:ts": "openapi-typescript backend/internal/httpd/apispec/openapi.yaml -o frontend/src/api/schema.ts",
 		"api": "npm run api:spec && npm run api:ts",
-		"agents": "bash \"$HOME/.claude/hooks/polyscribe/polyscribe.sh\"",
+		"agents": "bash -c 'hook=\"$HOME/.claude/hooks/polyscribe/polyscribe.sh\"; if [ ! -x \"$hook\" ]; then echo \"polyscribe hook not installed; run polypowers-init\" >&2; exit 127; fi; exec bash \"$hook\"'",
 		"agents:check": "node ops/canonical-sx-drift-check.mjs",
-		"agents:system": "bash \"$HOME/.claude/hooks/polyscribe/polyscribe.sh\" --system"
+		"agents:system": "bash -c 'hook=\"$HOME/.claude/hooks/polyscribe/polyscribe.sh\"; if [ ! -x \"$hook\" ]; then echo \"polyscribe hook not installed; run polypowers-init\" >&2; exit 127; fi; exec bash \"$hook\" --system'"
 	},
 	"devDependencies": {
 		"openapi-typescript": "7.4.4"
