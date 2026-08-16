@@ -60,3 +60,8 @@ and the old sx source URL are recognized only for bounded adoption. See the poly
 Polypowers governing module, operating principles, worktree reference, identity
 contract, and client identity overrides. Repository-local product fragments are
 owned by the repository and are never replaced by the standard set.
+
+In this repository, assets#255 keeps the standard-set manifest at version 3 while
+using it only as a local pin for tracked marker-free instruction inputs: `marker`
+fields, the deleted repo-local Polyscribe script entry, and untracked client-only
+overrides are intentionally absent until the upstream regeneration path is fixed.

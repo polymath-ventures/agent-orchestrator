@@ -163,6 +163,8 @@ function main() {
 	process.chdir(repoRoot());
 
 	const files = trackedFiles();
+	// `.github/` PR-contract files remain the allowed managed exception; all other
+	// tracked markers are stale sx-installed content owned outside this repo.
 	const managedOutsideGithub = grepTracked(SX_MANAGED, [":!.github"]);
 	const vaultSlugReferences = VAULT_SLUGS.flatMap((slug) =>
 		grepTracked(slug).map((path) => `${path} (${slug})`),

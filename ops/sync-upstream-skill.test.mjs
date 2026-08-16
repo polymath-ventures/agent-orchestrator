@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
@@ -12,6 +12,24 @@ test("sync-upstream client copies stay tracked for fresh-clone skill discovery",
 		const tracked = execFileSync("git", ["ls-files", rel], { encoding: "utf8" });
 		assert.equal(tracked.trim(), rel);
 		assert.equal(await readFile(new URL(`../${rel}`, import.meta.url), "utf8"), canonical);
+	}
+
+	const metadataPaths = [".claude/skills/sync-upstream/metadata.toml", ".agents/skills/sync-upstream/metadata.toml"];
+	for (const rel of metadataPaths) {
+		const tracked = execFileSync("git", ["ls-files", rel], { encoding: "utf8" });
+		assert.equal(tracked.trim(), rel);
+	}
+	assert.equal(
+		await readFile(new URL(`../${metadataPaths[0]}`, import.meta.url), "utf8"),
+		await readFile(new URL(`../${metadataPaths[1]}`, import.meta.url), "utf8"),
+	);
+
+	for (const rel of [
+		".claude/skills/sync-upstream/references/new.md",
+		".agents/skills/sync-upstream/references/new.md",
+	]) {
+		const ignore = spawnSync("git", ["check-ignore", "-q", rel]);
+		assert.equal(ignore.status, 1, `${rel} remains addable for future sync-upstream assets`);
 	}
 });
 

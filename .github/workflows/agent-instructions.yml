@@ -5,7 +5,8 @@ on:
 
 jobs:
   # Run unconditionally: the guard owns both canonical sx shape and tracked
-  # fail-open/manifest drift, including instruction-only PRs.
+  # fail-open/manifest drift, including instruction-only PRs. Keep the legacy job
+  # id because branch protection already requires this check name.
   generated-files-match-sources:
     runs-on: ubuntu-latest
     permissions:

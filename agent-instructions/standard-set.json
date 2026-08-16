@@ -7,6 +7,6 @@
     {"source": "65-agent-identity.md","path": "agent-instructions/source/65-agent-identity.md","sha256": "9b39ef859c41dc5a0df11424a64ad1d8abd32ae274316f59b11318f5c9107830"},
     {"source": "agent-overrides/claude.md","path": "agent-instructions/agent-overrides/claude.md","sha256": "0775da2609143ab08ca593502da5b38c26d49971f12c166b5c2a312a0f2d772d"},
     {"source": "agent-overrides/codex.md","path": "agent-instructions/agent-overrides/codex.md","sha256": "32ebbe649b27f8a614b4342fa577017de0f074cb7169d2e25e539628ae4aab84"},
-    {"source": "README.md","path": "agent-instructions/README.md","sha256": "60e5e931a808d8793bfb7c00f1ce6dbbd68a53bbfaaf1864b738123096b50d9d"}
+    {"source": "README.md","path": "agent-instructions/README.md","sha256": "0c6a7cd82f861ccebce115a634e30a16ca469b55b4763f6d3573f3c11bb3cbe0"}
   ]
 }
