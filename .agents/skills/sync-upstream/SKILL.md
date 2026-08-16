@@ -103,7 +103,7 @@ part of the local CI-parity gate: `frontend/e2e/browser-mode.spec.ts`,
 ```bash
 set -euo pipefail
 npm run ci-local
-npm run agents:check
+npm run agents:check   # canonical sx shape guard; generated roots are pinned by ops/canonical-sx-drift-check.mjs
 (
 	cd frontend
 	AO_E2E_PORT="${AO_E2E_PORT:-5174}" npm run test:e2e -- \

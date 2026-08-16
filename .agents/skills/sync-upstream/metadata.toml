@@ -1,0 +1,11 @@
+metadata-version = "1.0"
+
+[asset]
+  name = "sync-upstream"
+  version = "2"
+  type = "skill"
+  description = "Merge the upstream repo (AgentWrapper/agent-orchestrator) into the fork's main through the repo's standard merge gate, parking a draft PR with findings when judgment is needed. Safe to run daily/idempotently; no-ops when already up to date. Use when the user says \"sync upstream\", \"pull upstream\", or on a scheduled routine."
+  clients = ["claude-code", "codex"]
+
+[skill]
+  prompt-file = "SKILL.md"

@@ -1,0 +1,241 @@
+#!/usr/bin/env node
+import { createHash } from "node:crypto";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { pathToFileURL } from "node:url";
+
+// Keep these needles constructed so the guard and its tests do not become
+// the tracked drift they are meant to forbid.
+const SX_MANAGED = ["@sx", "managed"].join("-");
+const VAULT_SLUGS = [["agent", "vault"].join("-"), ["polymath", "agent", "assets"].join("-")];
+const FORBIDDEN_TRACKED_PATHS = ["AGENTS.shared.md"];
+const FORBIDDEN_BASENAMES = ["polyscribe.sh"];
+const GENERATED_BANNER =
+	"<!-- GENERATED — DO NOT EDIT. Edit agent-instructions/{source,agent-overrides,system}/, then rebuild with polyscribe (system scope adds --system) -->";
+export const FAIL_OPEN_STUBS = {
+	"AGENTS.md": renderFailOpenStub("Codex", "codex"),
+	"CLAUDE.md": renderFailOpenStub("Claude", "claude"),
+};
+
+function git(args, options = {}) {
+	const result = spawnSync("git", args, { encoding: "utf8", ...options });
+	if (result.status !== 0 && !options.allowNoMatches) {
+		throw new Error(`git ${args.join(" ")} failed: ${result.stderr || result.stdout}`);
+	}
+	return result;
+}
+
+function repoRoot() {
+	const result = git(["rev-parse", "--show-toplevel"]);
+	return result.stdout.trim();
+}
+
+function trackedFiles() {
+	const result = git(["ls-files", "-z"]);
+	return result.stdout.split("\0").filter(Boolean).sort();
+}
+
+function gitBlob(path) {
+	const result = git(["show", `:${path}`], { allowNoMatches: true });
+	if (result.status !== 0) return null;
+	return result.stdout;
+}
+
+function workingTreeBasenameMatches(names) {
+	const result = spawnSync(
+		"find",
+		[
+			".",
+			"(",
+			"-name",
+			"node_modules",
+			"-o",
+			"-path",
+			"./.claude/worktrees",
+			"-o",
+			"-path",
+			"./frontend/dist",
+			"-o",
+			"-path",
+			"./frontend/dist-electron",
+			"-o",
+			"-path",
+			"./frontend/release",
+			"-o",
+			"-path",
+			"./backend/bin",
+			"-o",
+			"-path",
+			"./.venv",
+			"-o",
+			"-path",
+			"./.git",
+			")",
+			"-prune",
+			"-o",
+			"-type",
+			"f",
+			"(",
+			...names.flatMap((name, index) => (index === 0 ? ["-name", name] : ["-o", "-name", name])),
+			")",
+			"-print",
+		],
+		{ encoding: "utf8" },
+	);
+	if (result.status !== 0) throw new Error(`find forbidden basenames failed: ${result.stderr || result.stdout}`);
+	return result.stdout
+		.split("\n")
+		.filter(Boolean)
+		.map((path) => path.replace(/^\.\//, ""))
+		.sort();
+}
+
+function grepTracked(pattern, pathspecs = []) {
+	const result = git(["grep", "--cached", "-Il", "-e", pattern, "--", ...pathspecs], {
+		allowNoMatches: true,
+	});
+	if (result.status === 1) return [];
+	if (result.status !== 0) throw new Error(result.stderr || result.stdout);
+	return result.stdout.split("\n").filter(Boolean).sort();
+}
+
+function renderFailOpenStub(client, override) {
+	return `${GENERATED_BANNER}
+
+# Agent instructions — fail-open baseline (${client})
+
+SessionStart normally injects the current vault rules plus this repository’s local context. If that context is absent, use this safety baseline only.
+
+Before acting, read the ordered Markdown fragments under \`agent-instructions/source/\` and \`agent-instructions/agent-overrides/${override}.md\`.
+
+1. GitHub Issues are the sole durable tracker.
+2. Make every mutation in an agent-owned worktree, never the shared checkout.
+3. For behavior changes, write a failing test first, then implement and verify the fix.
+4. Verify the result with the repository’s real checks before claiming success.
+5. Use an independent reviewer; do not self-review merge readiness.
+6. Never merge without explicit authorization from the user. In autonomous mode, merge only after final-review is clean, CI is green, and all current-head review threads are resolved.
+`;
+}
+
+function staleFailOpenOutputs(files) {
+	const repoUsesPolyscribe =
+		files.includes("agent-instructions/standard-set.json") ||
+		Object.keys(FAIL_OPEN_STUBS).some((path) => files.includes(path) || existsSync(path));
+	if (!repoUsesPolyscribe) return [];
+
+	return Object.entries(FAIL_OPEN_STUBS)
+		.flatMap(([path, expected]) => {
+			if (!files.includes(path)) return [`${path} (not tracked)`];
+			const actual = gitBlob(path);
+			const worktreeActual = existsSync(path) ? readFileSync(path, "utf8") : null;
+			if (actual !== expected) return [path];
+			if (worktreeActual !== expected) return [`${path} (working tree)`];
+			return [];
+		})
+		.sort();
+}
+
+function sha256(text) {
+	return createHash("sha256").update(text).digest("hex");
+}
+
+function instructionManifestDrift(files) {
+	const manifestPath = "agent-instructions/standard-set.json";
+	if (!files.includes(manifestPath)) return [];
+	const manifestBlob = gitBlob(manifestPath);
+	if (manifestBlob === null) return [`${manifestPath} (not readable)`];
+	const manifest = JSON.parse(manifestBlob);
+	return manifest.modules
+		.flatMap((module) => {
+			if (!files.includes(module.path)) return [`${module.path} (not tracked)`];
+			const blob = gitBlob(module.path);
+			if (blob === null) return [`${module.path} (not readable)`];
+			const worktree = existsSync(module.path) ? readFileSync(module.path, "utf8") : null;
+			const items = [];
+			if (sha256(blob) !== module.sha256) items.push(`${module.path} (sha256 mismatch)`);
+			if (sha256(worktree ?? "") !== module.sha256) items.push(`${module.path} (working tree sha256 mismatch)`);
+			return items;
+		})
+		.sort();
+}
+
+function main() {
+	process.chdir(repoRoot());
+
+	const files = trackedFiles();
+	// `.github/` PR-contract files remain the allowed managed exception; all other
+	// tracked markers are stale sx-installed content owned outside this repo.
+	const managedOutsideGithub = grepTracked(SX_MANAGED, [":!.github"]);
+	const vaultSlugReferences = VAULT_SLUGS.flatMap((slug) =>
+		grepTracked(slug).map((path) => `${path} (${slug})`),
+	).sort();
+	const forbiddenTrackedPaths = files.filter((path) => FORBIDDEN_TRACKED_PATHS.includes(path));
+	const trackedPolyscribeCopies = files.filter((path) =>
+		FORBIDDEN_BASENAMES.some((name) => path === name || path.endsWith(`/${name}`)),
+	);
+	const workingTreePolyscribeCopies = workingTreeBasenameMatches(FORBIDDEN_BASENAMES);
+	const staleOutputs = staleFailOpenOutputs(files);
+	const manifestDrift = instructionManifestDrift(files);
+
+	const failures = [];
+	if (staleOutputs.length > 0) {
+		failures.push({
+			title: "tracked fail-open instruction output is stale",
+			items: staleOutputs,
+		});
+	}
+	if (manifestDrift.length > 0) {
+		failures.push({
+			title: "agent-instruction manifest hash drift",
+			items: manifestDrift,
+		});
+	}
+	if (forbiddenTrackedPaths.length > 0) {
+		failures.push({
+			title: "generated agent instruction output is tracked",
+			items: forbiddenTrackedPaths,
+		});
+	}
+	if (trackedPolyscribeCopies.length > 0 || workingTreePolyscribeCopies.length > 0) {
+		failures.push({
+			title: "repo-local polyscribe copy is forbidden",
+			items: [...new Set([...trackedPolyscribeCopies, ...workingTreePolyscribeCopies])],
+		});
+	}
+	if (managedOutsideGithub.length > 0) {
+		failures.push({
+			title: "tracked sx-managed marker outside .github",
+			items: managedOutsideGithub,
+		});
+	}
+	if (vaultSlugReferences.length > 0) {
+		failures.push({
+			title: "vault slug reference in tracked file",
+			items: vaultSlugReferences,
+		});
+	}
+
+	if (failures.length > 0) {
+		for (const failure of failures) {
+			console.error(`canonical sx drift: ${failure.title}`);
+			for (const item of failure.items) console.error(`  ${item}`);
+		}
+		process.exit(1);
+	}
+
+	console.log("canonical sx drift: clean");
+}
+
+const invokedAsScript = () => {
+	if (!process.argv[1] || !existsSync(process.argv[1])) return false;
+	return import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href;
+};
+
+if (invokedAsScript()) {
+	try {
+		main();
+	} catch (error) {
+		console.error(`canonical sx drift: ${error.message}`);
+		process.exit(1);
+	}
+}

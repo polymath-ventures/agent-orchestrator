@@ -1,10 +1,3 @@
-<!--
-@sx-managed: operating-principles (polypowers-init refreshes marked copies; remove this line to own the file)
-Generic operator principles for every repo instruction context. Keep this
-Orc-free and role-free: role-specific escalation policy belongs in the
-orchestrator product, not in shared repo context.
--->
-
 ## Operating Principles
 
 Quality and speed are both non-negotiable. The Polymath agent system produces high-quality work quickly by using the full workflow: tracked work, fresh worktrees, focused planning, subagents where they help, real verification, and independent review. Do not trade quality for speed. The most reliable way to have both is to build less, because the smallest correct change is the fastest to write, the fastest to review, and the least likely to break something later.

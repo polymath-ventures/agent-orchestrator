@@ -11,4 +11,4 @@ Before acting, read the ordered Markdown fragments under `agent-instructions/sou
 3. For behavior changes, write a failing test first, then implement and verify the fix.
 4. Verify the result with the repository’s real checks before claiming success.
 5. Use an independent reviewer; do not self-review merge readiness.
-6. Never merge without explicit authorization from the user or configured autonomous mode.
+6. Never merge without explicit authorization from the user. In autonomous mode, merge only after final-review is clean, CI is green, and all current-head review threads are resolved.

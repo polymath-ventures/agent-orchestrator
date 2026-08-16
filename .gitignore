@@ -92,13 +92,16 @@ frontend/agent-browser/
 !.agents/skills/ao-desktop-dev/**
 !.agents/skills/bug-triage/
 !.agents/skills/bug-triage/**
+!.agents/skills/sync-upstream/
+!.agents/skills/sync-upstream/**
 skills-lock.json
 
 # Agent worktrees and generated local agent assets
 .claude/worktrees/
-.claude/skills/
+.claude/skills/*
+!.claude/skills/sync-upstream/
+!.claude/skills/sync-upstream/**
 .claude/commands/
-.agents/skills/
 .agents/commands/
 .codex/skills/
 .codex/commands/
@@ -124,3 +127,6 @@ pnpm-lock.yaml
 /CLAUDE-ASSEMBLED.md*
 /AGENTS-ASSEMBLED.md*
 /GEMINI-ASSEMBLED.md*
+
+# Local/generated agent instruction outputs.
+/AGENTS.shared.md

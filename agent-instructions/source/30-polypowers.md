@@ -1,19 +1,3 @@
-<!--
-@sx-managed: polypowers-module (polypowers-init refreshes marked copies; remove this line to own the file)
-polypowers governing module.
-
-Assembled by polyscribe into a repo's CLAUDE.md / AGENTS.md / GEMINI.md. This is
-the generic SDLC constitution: how work is tracked, the rules, and the identity
-contract the shared skills defer to. Skills are not listed here — every harness
-injects its own listing of what is actually installed. It is
-repo-agnostic — no product, repo, or host names. Repo- or product-specific
-rules (sensitive paths, deploy targets, and reviewer rosters)
-belong in sibling fragments assembled alongside this one.
-
-Response formatting rules are NOT here — they ship as their own vault rule
-asset (nhod-response-structure). Don't duplicate them in repo fragments.
--->
-
 ## Tracking: GitHub Issues are the sole tracker
 
 The GitHub issue is the durable record and collaboration surface for humans,

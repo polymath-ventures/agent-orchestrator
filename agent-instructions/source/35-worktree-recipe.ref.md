@@ -1,12 +1,3 @@
-<!--
-@sx-managed: polypowers-worktree-recipe (polypowers-init refreshes marked copies; remove this line to own the file)
-polypowers worktree recipe — referenced, not inlined.
-
-Rule 2 in the governing module states the invariant that must bind before you
-act. This file carries the mechanics you need only at the moment you create a
-worktree. Read it then; you do not need it in context the rest of the time.
--->
-
 # Worktree recipe
 
 Rule 2 states the invariant: every change you make — issue-tracked or ad-hoc,

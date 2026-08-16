@@ -1,7 +1,3 @@
-<!--
-@sx-managed: claude-identity (polypowers-init refreshes marked copies; remove this line to own the file)
--->
-
 ## Agent Identity (Claude)
 
 Resolve "spawn a subagent" and "run your review pool" here. This is the
