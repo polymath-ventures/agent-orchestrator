@@ -1,5 +1,5 @@
 <!--
-@sx-managed: polypowers-worktree-recipe (nickify refreshes marked copies; remove this line to own the file)
+@sx-managed: polypowers-worktree-recipe (polypowers-init refreshes marked copies; remove this line to own the file)
 polypowers worktree recipe — referenced, not inlined.
 
 Rule 2 in the governing module states the invariant that must bind before you

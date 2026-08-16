@@ -31,7 +31,7 @@
 # HTML comments are AUTHORING-ONLY. Any <!-- ... --> block in a source primitive
 # or override (multi-line included) is stripped during assembly and never reaches
 # the generated AGENTS.shared.md or injected session context. Use them for provenance, refresh
-# markers (e.g. "@sx-managed: <module>", which only nickify reads off the SOURCE
+# markers (e.g. "@sx-managed: <module>", which only polypowers-init reads off the SOURCE
 # file), and notes to whoever edits the fragment — none of that authoring metadata
 # is agent-facing, and inlining it verbatim is worse than useless to a reading LLM.
 # The one HTML comment that DOES survive is the generated banner below, because it
@@ -46,7 +46,7 @@
 #   bash <installed>/polyscribe.sh --session <client> <record>     # hook-internal: JSON additionalContext
 #                                                                  #   honors AGENTS_SYSTEM_HOME to retarget for testing
 #   (Node repos MAY alias these as `npm run agents[:check|:system]` — optional convenience,
-#    added by nickify only when a package.json already exists. Not required.)
+#    added by polypowers-init only when a package.json already exists. Not required.)
 
 set -euo pipefail
 
@@ -125,8 +125,8 @@ REPO_SHARED="AGENTS.shared.md"         # shared body ONLY (no agent identity) �
 REPO_CLIENTS=(CLAUDE.md GEMINI.md)     # minimal fail-open stubs
 REPO_CLIENT_OVERRIDES=(claude agy)
 
-# Build only the client outputs whose identity overrides are configured. Nickify
-# intentionally scaffolds overrides for the clients listed in nickify.json, so
+# Build only the client outputs whose identity overrides are configured. Polypowers-init
+# intentionally scaffolds overrides for the clients listed in polypowers.json, so
 # requiring every supported client would make the default Claude + Codex setup
 # fail merely because Agy/Gemini was not selected.
 REPO_ACTIVE_CLIENTS=()
@@ -267,7 +267,7 @@ sha256_file() {
 }
 
 standard_opted_out() {
-  local rel="$1" cfg="${REPO_ROOT}/nickify.json"
+  local rel="$1" cfg="${REPO_ROOT}/polypowers.json"
   [[ -f "$cfg" ]] || return 1
   # The opt-out schema is intentionally scoped: only
   # subsystems.agent_instructions.opt_outs[<path>] counts.
@@ -312,7 +312,7 @@ check_standard_set() {
         printf 'polyscribe: standard-set opt-out: missing %s\n' "$rel" >&2
         continue
       fi
-      die "standard-set module missing: $rel (add it via nickify or record an explicit opt-out in nickify.json)"
+      die "standard-set module missing: $rel (add it via polypowers-init or record an explicit opt-out in polypowers.json)"
     fi
     if [[ -n "$marker" ]] && ! grep -F "$marker" "$path" >/dev/null 2>&1; then
       if standard_opted_out "$rel"; then
@@ -701,7 +701,7 @@ run_session_mode() {
     "${REPO_ROOT}/"*)
       if ! git -C "$REPO_ROOT" check-ignore -q -- "$record" || \
          ! git -C "$REPO_ROOT" check-ignore -q -- "${record}.tmp.probe"; then
-        printf 'polyscribe: assembled record path is not ignored; re-run nickify to enable %s\n' "$record" >&2
+        printf 'polyscribe: assembled record path is not ignored; re-run polypowers-init to enable %s\n' "$record" >&2
         publish_record=false
       fi
       ;;

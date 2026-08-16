@@ -1,5 +1,5 @@
 <!--
-@sx-managed: agent-identity-contract (nickify refreshes marked copies; remove this line to own the file)
+@sx-managed: agent-identity-contract (polypowers-init refreshes marked copies; remove this line to own the file)
 Shared contract for what the client-specific identity bodies must define.
 -->
 

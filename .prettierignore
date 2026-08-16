@@ -21,7 +21,7 @@ agent-instructions/agent-overrides/*.md
 AGENTS.md
 AGENTS.shared.md
 CLAUDE.md
-.nickified.json
+.polypowers-init.json
 
 # Build outputs
 frontend/dist

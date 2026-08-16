@@ -1,5 +1,5 @@
 <!--
-@sx-managed: polypowers-module (nickify refreshes marked copies; remove this line to own the file)
+@sx-managed: polypowers-module (polypowers-init refreshes marked copies; remove this line to own the file)
 polypowers governing module.
 
 Assembled by polyscribe into a repo's CLAUDE.md / AGENTS.md / GEMINI.md. This is

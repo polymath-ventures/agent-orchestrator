@@ -1,6 +1,5 @@
 {
 	"schema": 1,
-	"repo": "polymath-ventures/agent-orchestrator",
 	"clients": ["claude-code", "codex"],
 	"subsystems": {
 		"openspec": {
@@ -18,11 +17,16 @@
 				}
 			}
 		},
+		"github_contract": {
+			"enabled": true
+		},
 		"tools": {
 			"enabled": true
 		},
 		"hooks": {
 			"enabled": true
 		}
-	}
+	},
+	"repository": "polymath-ventures/agent-orchestrator",
+	"repo": "polymath-ventures/agent-orchestrator"
 }
