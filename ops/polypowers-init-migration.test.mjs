@@ -53,3 +53,30 @@ test("polyscribe callers use the user-level hook, not a repo-local managed copy"
 	}
 	assert.equal(packageJson.scripts["agents:check"], "node ops/canonical-sx-drift-check.mjs");
 });
+
+test("agent-instruction inputs stay tracked but marker-free until hook regeneration is fixed", () => {
+	const trackedInputs = [
+		"agent-instructions/README.md",
+		"agent-instructions/standard-set.json",
+		"agent-instructions/source/30-polypowers.md",
+		"agent-instructions/source/35-worktree-recipe.ref.md",
+		"agent-instructions/source/40-operating-principles.md",
+		"agent-instructions/source/65-agent-identity.md",
+		"agent-instructions/agent-overrides/claude.md",
+		"agent-instructions/agent-overrides/codex.md",
+	];
+	for (const path of trackedInputs) {
+		assert.equal(exists(path), true, `${path} should remain available in a clean checkout`);
+		assert.doesNotMatch(read(path), new RegExp(["@sx", "managed"].join("-")));
+	}
+
+	const manifest = readJson("agent-instructions/standard-set.json");
+	assert.equal(
+		manifest.modules.some((module) => "marker" in module),
+		false,
+	);
+	assert.equal(
+		manifest.modules.some((module) => module.path === "scripts/polyscribe.sh"),
+		false,
+	);
+});
