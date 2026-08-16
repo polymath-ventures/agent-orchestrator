@@ -2,6 +2,8 @@
 import { existsSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 
+// Keep these needles constructed so the guard and its tests do not become
+// the tracked drift they are meant to forbid.
 const SX_MANAGED = ["@sx", "managed"].join("-");
 const VAULT_SLUGS = [["agent", "vault"].join("-"), ["polymath", "agent", "assets"].join("-")];
 const REPO_LOCAL_POLYSCRIBE = "scripts/polyscribe.sh";

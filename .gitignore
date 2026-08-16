@@ -130,10 +130,9 @@ pnpm-lock.yaml
 /agent-instructions/README.md
 /agent-instructions/standard-set.json
 /agent-instructions/agent-overrides/*.md
-/agent-instructions/source/30-polypowers.md
-/agent-instructions/source/35-worktree-recipe.ref.md
-/agent-instructions/source/40-operating-principles.md
-/agent-instructions/source/65-agent-identity.md
+/agent-instructions/source/*
+!/agent-instructions/source/00-product.md
+!/agent-instructions/source/55-extensions.md
 
 # Local/generated agent instruction outputs.
 /AGENTS.shared.md

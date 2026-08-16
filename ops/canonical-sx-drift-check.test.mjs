@@ -40,7 +40,7 @@ function runGuard(cwd) {
 	return spawnSync("node", [scriptPath], { cwd, encoding: "utf8" });
 }
 
-test("canonical sx guard allows only .github managed contract files", () => {
+test("canonical sx guard allows managed markers under .github", () => {
 	const root = setupRepo({
 		".github/workflows/one-closing-issue.yml": `# ${managedMarker}: polypowers-init-one-closing-issue\n`,
 		".github/scripts/valid-final-review.cjs": `// ${managedMarker}: polypowers-init-valid-final-review\n`,
@@ -79,6 +79,20 @@ test("canonical sx guard rejects former and current vault slug references", () =
 		assert.match(result.stderr, /vault slug reference in tracked file/);
 		assert.match(result.stderr, /docs\/old\.md/);
 		assert.match(result.stderr, /docs\/current\.md/);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("canonical sx guard checks the repository root when invoked from a subdirectory", () => {
+	const root = setupRepo({
+		"docs/readme.md": "# Docs\n",
+		"agent-instructions/README.md": `${managedMarker}: agent-instructions-readme\n`,
+	});
+	try {
+		const result = runGuard(join(root, "docs"));
+		assert.notEqual(result.status, 0, `expected failure\nstdout:${result.stdout}\nstderr:${result.stderr}`);
+		assert.match(result.stderr, /agent-instructions\/README\.md/);
 	} finally {
 		rmSync(root, { recursive: true, force: true });
 	}
