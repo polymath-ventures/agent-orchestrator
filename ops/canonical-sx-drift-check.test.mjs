@@ -183,6 +183,33 @@ test("canonical sx guard rejects instruction manifest hash drift", () => {
 	}
 });
 
+test("canonical sx guard rejects unstaged instruction manifest drift", () => {
+	const source = "# Source\n";
+	const root = setupRepo({
+		"agent-instructions/source/30-polypowers.md": source,
+		"agent-instructions/standard-set.json": JSON.stringify({
+			version: 3,
+			modules: [
+				{
+					source: "30-polypowers.md",
+					path: "agent-instructions/source/30-polypowers.md",
+					sha256: sha256(source),
+				},
+			],
+		}),
+		"AGENTS.md": FAIL_OPEN_STUBS["AGENTS.md"],
+		"CLAUDE.md": FAIL_OPEN_STUBS["CLAUDE.md"],
+	});
+	try {
+		write(root, "agent-instructions/source/30-polypowers.md", `${source}unstaged\n`);
+		const result = runGuard(root);
+		assert.notEqual(result.status, 0, `expected failure\nstdout:${result.stdout}\nstderr:${result.stderr}`);
+		assert.match(result.stderr, /working tree sha256 mismatch/);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
 test("canonical sx guard rejects tracked polyscribe copies anywhere", () => {
 	const root = setupRepo({
 		"tools/polyscribe.sh": "#!/usr/bin/env bash\n",

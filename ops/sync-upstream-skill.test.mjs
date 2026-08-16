@@ -6,11 +6,13 @@ import test from "node:test";
 const skillPath = new URL("../skills/sync-upstream/SKILL.md", import.meta.url);
 const forkDocPath = new URL("../docs/fork.md", import.meta.url);
 
-test("sync-upstream client install copies are not tracked", () => {
-	const tracked = execFileSync("git", ["ls-files", ".claude/skills/sync-upstream", ".agents/skills/sync-upstream"], {
-		encoding: "utf8",
-	});
-	assert.equal(tracked, "");
+test("sync-upstream client copies stay tracked for fresh-clone skill discovery", async () => {
+	const canonical = await readFile(skillPath, "utf8");
+	for (const rel of [".claude/skills/sync-upstream/SKILL.md", ".agents/skills/sync-upstream/SKILL.md"]) {
+		const tracked = execFileSync("git", ["ls-files", rel], { encoding: "utf8" });
+		assert.equal(tracked.trim(), rel);
+		assert.equal(await readFile(new URL(`../${rel}`, import.meta.url), "utf8"), canonical);
+	}
 });
 
 test("sync-upstream treats migration collisions as routine reconciliation", async () => {

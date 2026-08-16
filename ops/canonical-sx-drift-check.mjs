@@ -47,14 +47,8 @@ function workingTreeBasenameMatches(names) {
 		[
 			".",
 			"(",
-			"-path",
-			"./.git",
-			"-o",
-			"-path",
-			"./frontend/node_modules",
-			"-o",
-			"-path",
-			"./node_modules",
+			"-name",
+			"node_modules",
 			"-o",
 			"-path",
 			"./.claude/worktrees",
@@ -70,6 +64,12 @@ function workingTreeBasenameMatches(names) {
 			"-o",
 			"-path",
 			"./backend/bin",
+			"-o",
+			"-path",
+			"./.venv",
+			"-o",
+			"-path",
+			"./.git",
 			")",
 			"-prune",
 			"-o",
@@ -150,7 +150,11 @@ function instructionManifestDrift(files) {
 			if (!files.includes(module.path)) return [`${module.path} (not tracked)`];
 			const blob = gitBlob(module.path);
 			if (blob === null) return [`${module.path} (not readable)`];
-			return sha256(blob) === module.sha256 ? [] : [`${module.path} (sha256 mismatch)`];
+			const worktree = existsSync(module.path) ? readFileSync(module.path, "utf8") : null;
+			const items = [];
+			if (sha256(blob) !== module.sha256) items.push(`${module.path} (sha256 mismatch)`);
+			if (sha256(worktree ?? "") !== module.sha256) items.push(`${module.path} (working tree sha256 mismatch)`);
+			return items;
 		})
 		.sort();
 }
@@ -220,7 +224,12 @@ function main() {
 	console.log("canonical sx drift: clean");
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) {
+const invokedAsScript = () => {
+	if (!process.argv[1] || !existsSync(process.argv[1])) return false;
+	return import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href;
+};
+
+if (invokedAsScript()) {
 	try {
 		main();
 	} catch (error) {

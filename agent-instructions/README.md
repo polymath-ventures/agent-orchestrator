@@ -37,12 +37,12 @@ repo-owned files and disabled subsystems remain untouched.
 
 ```json
 {
-	"schema": 1,
-	"repository": "owner/name",
-	"clients": ["claude-code", "codex", "gemini"],
-	"subsystems": {
-		"agent_instructions": { "enabled": true, "standard_version": 3 }
-	}
+  "schema": 1,
+  "repository": "owner/name",
+  "clients": ["claude-code", "codex", "gemini"],
+  "subsystems": {
+    "agent_instructions": { "enabled": true, "standard_version": 3 }
+  }
 }
 ```
 

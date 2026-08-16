@@ -4,6 +4,8 @@ on:
   pull_request:
 
 jobs:
+  # Run unconditionally: the guard owns both canonical sx shape and tracked
+  # fail-open/manifest drift, including instruction-only PRs.
   generated-files-match-sources:
     runs-on: ubuntu-latest
     permissions:
