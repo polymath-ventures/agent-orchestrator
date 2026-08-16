@@ -339,10 +339,16 @@ func dedupKey(id domain.TrackerID) string {
 	if canonical == "" {
 		return ""
 	}
-	if id.Host == "" {
-		return string(canonical)
+	key := string(canonical)
+	if id.Host != "" {
+		key += "@" + id.Host
 	}
-	return string(canonical) + "@" + id.Host
+	// Repository paths and hostnames are case-insensitive on both providers,
+	// but this key is compared byte for byte. Folding case here — rather than
+	// in the stored id — keeps `--issue Acme/Demo#12` covering the same issue
+	// intake lists as `acme/demo#12`, without rewriting a repository whose real
+	// name has capitals into one the adapter would not recognise.
+	return strings.ToLower(key)
 }
 
 // seenIssueIDs is the set of issues a live session already services, keyed the

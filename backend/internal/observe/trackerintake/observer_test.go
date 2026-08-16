@@ -1037,3 +1037,18 @@ func TestSeenIssueIDsResolvesAProjectWithoutIntakeConfig(t *testing.T) {
 		t.Fatal("a resolvable session should not be parked as unscoped")
 	}
 }
+
+// GitHub and GitLab both treat repository paths case-insensitively, so a
+// session spawned with `--issue Acme/Demo#12` must cover the issue intake
+// lists as `acme/demo#12`.
+func TestSeenIssueIDsFoldsRepositoryPathCase(t *testing.T) {
+	projects := []domain.ProjectRecord{{ID: "demo", RepoOriginURL: "https://github.com/acme/demo.git"}}
+	sessions := []domain.SessionRecord{{ID: "demo-1", ProjectID: "demo", IssueID: "github:Acme/Demo#12"}}
+
+	seen := seenIssueIDs(sessions, projects)
+
+	want := dedupKey(domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#12"})
+	if !seen[want] {
+		t.Fatalf("seen = %+v, want coverage under %q", seen, want)
+	}
+}
