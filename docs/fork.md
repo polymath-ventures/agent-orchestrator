@@ -315,7 +315,12 @@ product, and a sync is not complete until every named behavioral guard passes.
    their `ops/*.test.mjs` guards, of which `ops/ao-systemd-units.test.mjs` is the
    one that pins unit invariants; the pre-push gate is `scripts/ci/`; the Prettier
    CI is `.github/workflows/prettier.yml`; and the final-review status contract
-   helper is `ops/final-review-status.mjs`. **Beads is retired (issue #262 →
+   helper is `ops/final-review-status.mjs`. Canonical sx shape is part of this
+   SDLC surface: vault-managed runtime output such as `agent-instructions/`,
+   `AGENTS.shared.md`, and client-installed skill copies stays untracked, while
+   repo-owned fragments such as `agent-instructions/source/00-product.md`,
+   `agent-instructions/source/55-extensions.md`, and `skills/` stay tracked.
+   **Beads is retired (issue #262 →
    #263) and must stay retired**: GitHub issues are the sole tracker, and the `.beads/`,
    `.beads-credential-key`, and `.beads.gate.lock` entries in `.gitignore` must
    survive any blend of that file. They look like dead weight for a removed

@@ -6,7 +6,8 @@ import { spawnSync } from "node:child_process";
 // the tracked drift they are meant to forbid.
 const SX_MANAGED = ["@sx", "managed"].join("-");
 const VAULT_SLUGS = [["agent", "vault"].join("-"), ["polymath", "agent", "assets"].join("-")];
-const REPO_LOCAL_POLYSCRIBE = "scripts/polyscribe.sh";
+const FORBIDDEN_TRACKED_PATHS = ["AGENTS.shared.md"];
+const FORBIDDEN_BASENAMES = ["polyscribe.sh"];
 
 function git(args, options = {}) {
 	const result = spawnSync("git", args, { encoding: "utf8", ...options });
@@ -21,6 +22,11 @@ function repoRoot() {
 	return result.stdout.trim();
 }
 
+function trackedFiles() {
+	const result = git(["ls-files", "-z"]);
+	return result.stdout.split("\0").filter(Boolean).sort();
+}
+
 function grepTracked(pattern, pathspecs = []) {
 	const result = git(["grep", "--cached", "-Il", "-e", pattern, "--", ...pathspecs], {
 		allowNoMatches: true,
@@ -33,16 +39,27 @@ function grepTracked(pattern, pathspecs = []) {
 function main() {
 	process.chdir(repoRoot());
 
+	const files = trackedFiles();
 	const managedOutsideGithub = grepTracked(SX_MANAGED, [":!.github"]);
 	const vaultSlugReferences = VAULT_SLUGS.flatMap((slug) =>
 		grepTracked(slug).map((path) => `${path} (${slug})`),
 	).sort();
+	const forbiddenTrackedPaths = files.filter((path) => FORBIDDEN_TRACKED_PATHS.includes(path));
+	const trackedPolyscribeCopies = files.filter((path) =>
+		FORBIDDEN_BASENAMES.some((name) => path === name || path.endsWith(`/${name}`)),
+	);
 
 	const failures = [];
-	if (existsSync(REPO_LOCAL_POLYSCRIBE)) {
+	if (forbiddenTrackedPaths.length > 0) {
+		failures.push({
+			title: "generated agent instruction output is tracked",
+			items: forbiddenTrackedPaths,
+		});
+	}
+	if (trackedPolyscribeCopies.length > 0 || existsSync("scripts/polyscribe.sh")) {
 		failures.push({
 			title: "repo-local polyscribe copy is forbidden",
-			items: [REPO_LOCAL_POLYSCRIBE],
+			items: [...new Set([...trackedPolyscribeCopies, "scripts/polyscribe.sh"].filter(Boolean))],
 		});
 	}
 	if (managedOutsideGithub.length > 0) {

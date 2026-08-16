@@ -98,6 +98,34 @@ test("canonical sx guard checks the repository root when invoked from a subdirec
 	}
 });
 
+test("canonical sx guard rejects tracked generated shared instructions", () => {
+	const root = setupRepo({
+		"AGENTS.shared.md": "generated output\n",
+	});
+	try {
+		const result = runGuard(root);
+		assert.notEqual(result.status, 0, `expected failure\nstdout:${result.stdout}\nstderr:${result.stderr}`);
+		assert.match(result.stderr, /generated agent instruction output is tracked/);
+		assert.match(result.stderr, /AGENTS\.shared\.md/);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("canonical sx guard rejects tracked polyscribe copies anywhere", () => {
+	const root = setupRepo({
+		"tools/polyscribe.sh": "#!/usr/bin/env bash\n",
+	});
+	try {
+		const result = runGuard(root);
+		assert.notEqual(result.status, 0, `expected failure\nstdout:${result.stdout}\nstderr:${result.stderr}`);
+		assert.match(result.stderr, /repo-local polyscribe copy is forbidden/);
+		assert.match(result.stderr, /tools\/polyscribe\.sh/);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
 test("canonical sx guard rejects repo-local polyscribe copies even when untracked", () => {
 	const root = setupRepo({ "package.json": '{"private":true}\n' });
 	try {
