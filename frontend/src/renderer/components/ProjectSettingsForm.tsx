@@ -9,7 +9,7 @@ import {
 } from "@aoagents/product-ui";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Pencil, RefreshCw } from "lucide-react";
 import type { components } from "../../api/schema";
 import {
@@ -20,7 +20,11 @@ import {
 	type AgentModelCatalog,
 } from "../hooks/useAgentModelsQuery";
 import { agentsQueryKey, agentsQueryOptions, refreshAgents } from "../hooks/useAgentsQuery";
-import { useModelAvailabilityQuery, useRefreshModelAvailability } from "../hooks/useModelAvailabilityQuery";
+import {
+	type AgentModelAvailabilityResponse,
+	useModelAvailabilityQuery,
+	useRefreshModelAvailability,
+} from "../hooks/useModelAvailabilityQuery";
 import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { modelAvailabilityFromAgentInventory } from "../lib/agent-selection";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
@@ -30,6 +34,7 @@ import { cn } from "../lib/utils";
 import { newestActiveOrchestrator } from "../types/workspace";
 import { RequiredAgentField } from "./CreateProjectAgentSheet";
 import { buildIntake, deriveIntakeRepo, IntakeFields, type IntakeForm } from "./IntakeFields";
+import { buildEffortControlState, buildModelCatalogView, EffortControl } from "./ModelAvailabilityField";
 import { ProductExternalLink } from "./ProductExternalLink";
 import { ReviewerSelect, reviewerTrustWarning } from "./ReviewerSelect";
 import { AgentModelCombobox } from "./settings/AgentModelCombobox";
@@ -138,7 +143,15 @@ function SettingsBody({
 		workerAgent: config.worker?.agent ?? "",
 		orchestratorAgent: config.orchestrator?.agent ?? "",
 		workerModel: config.worker?.agentConfig?.model ?? config.agentConfig?.model ?? "",
+		workerEffort: resolvedRoleEffort(config.worker?.agentConfig, config.agentConfig, config.worker?.agent ?? ""),
+		workerEffortDirty: false,
 		orchestratorModel: config.orchestrator?.agentConfig?.model ?? config.agentConfig?.model ?? "",
+		orchestratorEffort: resolvedRoleEffort(
+			config.orchestrator?.agentConfig,
+			config.agentConfig,
+			config.orchestrator?.agent ?? "",
+		),
+		orchestratorEffortDirty: false,
 		workerMode: config.worker?.agentConfig?.mode ?? config.agentConfig?.mode ?? "",
 		orchestratorMode: config.orchestrator?.agentConfig?.mode ?? config.agentConfig?.mode ?? "",
 		permissions: config.agentConfig?.permissions ?? "",
@@ -205,7 +218,15 @@ function SettingsBody({
 						worker: {
 							...config.worker,
 							agent: form.workerAgent,
-							agentConfig: buildRoleAgentConfig(config.worker?.agentConfig, form.workerModel, form.workerMode),
+							agentConfig: buildRoleAgentConfig(
+								config.worker?.agentConfig,
+								form.workerModel,
+								form.workerMode,
+								config.agentConfig,
+								form.workerAgent,
+								form.workerEffort,
+								form.workerEffortDirty,
+							),
 						},
 						orchestrator: {
 							...config.orchestrator,
@@ -214,6 +235,10 @@ function SettingsBody({
 								config.orchestrator?.agentConfig,
 								form.orchestratorModel,
 								form.orchestratorMode,
+								config.agentConfig,
+								form.orchestratorAgent,
+								form.orchestratorEffort,
+								form.orchestratorEffortDirty,
 							),
 						},
 						agentConfig: blankToUndefined({
@@ -237,7 +262,15 @@ function SettingsBody({
 						worker: {
 							...config.worker,
 							agent: form.workerAgent,
-							agentConfig: buildRoleAgentConfig(config.worker?.agentConfig, form.workerModel, form.workerMode),
+							agentConfig: buildRoleAgentConfig(
+								config.worker?.agentConfig,
+								form.workerModel,
+								form.workerMode,
+								config.agentConfig,
+								form.workerAgent,
+								form.workerEffort,
+								form.workerEffortDirty,
+							),
 						},
 						orchestrator: {
 							...config.orchestrator,
@@ -246,6 +279,10 @@ function SettingsBody({
 								config.orchestrator?.agentConfig,
 								form.orchestratorModel,
 								form.orchestratorMode,
+								config.agentConfig,
+								form.orchestratorAgent,
+								form.orchestratorEffort,
+								form.orchestratorEffortDirty,
 							),
 						},
 						agentConfig: blankToUndefined({
@@ -415,7 +452,16 @@ function SettingsBody({
 								installed={agentCatalog?.installed}
 								supported={agentCatalog?.supported}
 								disabled={agentsQuery.isFetching && agentCatalog === undefined}
-								onChange={(v) => setForm((f) => ({ ...f, workerAgent: v, workerModel: "", workerMode: "" }))}
+								onChange={(v) =>
+									setForm((f) => ({
+										...f,
+										workerAgent: v,
+										workerModel: "",
+										workerEffort: resolvedRoleEffort(config.worker?.agentConfig, config.agentConfig, v),
+										workerEffortDirty: false,
+										workerMode: "",
+									}))
+								}
 							/>
 						}
 						workerModelArea={
@@ -424,8 +470,11 @@ function SettingsBody({
 								agentId={form.workerAgent}
 								projectId={projectId}
 								model={form.workerModel}
+								effort={form.workerEffort}
 								mode={form.workerMode}
+								availability={effectiveModelAvailability}
 								onModelChange={(workerModel) => setForm((f) => ({ ...f, workerModel }))}
+								onEffortChange={(workerEffort) => setForm((f) => ({ ...f, workerEffort, workerEffortDirty: true }))}
 								onModeChange={(workerMode) => setForm((f) => ({ ...f, workerMode }))}
 							/>
 						}
@@ -446,6 +495,8 @@ function SettingsBody({
 										...f,
 										orchestratorAgent: v,
 										orchestratorModel: "",
+										orchestratorEffort: resolvedRoleEffort(config.orchestrator?.agentConfig, config.agentConfig, v),
+										orchestratorEffortDirty: false,
 										orchestratorMode: "",
 									}))
 								}
@@ -457,8 +508,13 @@ function SettingsBody({
 								agentId={form.orchestratorAgent}
 								projectId={projectId}
 								model={form.orchestratorModel}
+								effort={form.orchestratorEffort}
 								mode={form.orchestratorMode}
+								availability={effectiveModelAvailability}
 								onModelChange={(orchestratorModel) => setForm((f) => ({ ...f, orchestratorModel }))}
+								onEffortChange={(orchestratorEffort) =>
+									setForm((f) => ({ ...f, orchestratorEffort, orchestratorEffortDirty: true }))
+								}
 								onModeChange={(orchestratorMode) => setForm((f) => ({ ...f, orchestratorMode }))}
 							/>
 						}
@@ -638,16 +694,22 @@ function AgentModelField({
 	agentId,
 	projectId,
 	model,
+	effort,
 	mode,
+	availability,
 	onModelChange,
+	onEffortChange,
 	onModeChange,
 }: {
 	role: "worker" | "orchestrator";
 	agentId: string;
 	projectId: string;
 	model: string;
+	effort: string;
 	mode: string;
+	availability?: AgentModelAvailabilityResponse;
 	onModelChange: (value: string) => void;
+	onEffortChange: (value: string) => void;
 	onModeChange: (value: string) => void;
 }) {
 	const { t } = useTranslation();
@@ -719,6 +781,14 @@ function AgentModelField({
 						/>
 					</div>
 				</SettingsRow>
+				<AgentEffortField
+					role={role}
+					agentId={agentId}
+					model={model}
+					effort={effort}
+					availability={availability}
+					onChange={onEffortChange}
+				/>
 				{warning && <p className="px-1 text-xs leading-row text-warning">{warning}</p>}
 			</>
 		);
@@ -787,8 +857,54 @@ function AgentModelField({
 					)}
 				</div>
 			</SettingsRow>
+			<AgentEffortField
+				role={role}
+				agentId={agentId}
+				model={model}
+				effort={effort}
+				availability={availability}
+				onChange={onEffortChange}
+			/>
 			{warning && <p className="px-1 text-xs leading-row text-warning">{warning}</p>}
 		</>
+	);
+}
+
+function AgentEffortField({
+	role,
+	agentId,
+	model,
+	effort,
+	availability,
+	onChange,
+}: {
+	role: "worker" | "orchestrator";
+	agentId: string;
+	model: string;
+	effort: string;
+	availability?: AgentModelAvailabilityResponse;
+	onChange: (value: string) => void;
+}) {
+	const { t } = useTranslation();
+	const catalogValue = useMemo(() => ({ harness: agentId, model, effort }), [agentId, effort, model]);
+	const harnesses = useMemo(() => buildModelCatalogView(availability, catalogValue), [availability, catalogValue]);
+	const harness = harnesses.find((option) => option.id === agentId);
+	const control = buildEffortControlState(harness, model);
+	if (agentId === "") return null;
+	const label = t(`settings.models.${role}Effort`);
+	return (
+		<SettingsRow label={label}>
+			<EffortControl
+				id={`${role}-effort`}
+				value={effort}
+				options={control.options}
+				manual={control.manual}
+				className="settings-inline-input settings-model-control"
+				emptyLabel={t("settings.models.agentDefault")}
+				ariaLabel={label}
+				onChange={onChange}
+			/>
+		</SettingsRow>
 	);
 }
 
@@ -1023,15 +1139,51 @@ function blankToUndefined<T extends object>(obj: T): T | undefined {
 	return Object.values(obj).some((v) => v !== undefined) ? obj : undefined;
 }
 
+function resolvedRoleEffort(
+	roleConfig: components["schemas"]["AgentConfig"] | undefined,
+	sharedConfig: components["schemas"]["AgentConfig"] | undefined,
+	harness: string,
+): string {
+	let value = sharedConfig?.effort ?? "";
+	if (roleConfig?.effort) value = roleConfig.effort;
+	if (harness) {
+		const sharedHarnessValue = sharedConfig?.modelByHarness?.[harness]?.effort;
+		if (sharedHarnessValue) value = sharedHarnessValue;
+		const roleHarnessValue = roleConfig?.modelByHarness?.[harness]?.effort;
+		if (roleHarnessValue) value = roleHarnessValue;
+	}
+	return value;
+}
+
 function buildRoleAgentConfig(
 	existing: components["schemas"]["AgentConfig"] | undefined,
 	model: string,
 	mode: string,
+	shared: components["schemas"]["AgentConfig"] | undefined,
+	agentId: string,
+	effort: string,
+	effortDirty: boolean,
 ): components["schemas"]["AgentConfig"] | undefined {
 	const next = { ...existing };
 	if (model) next.model = model;
 	else delete next.model;
 	if (mode) next.mode = mode;
 	else delete next.mode;
+	if (effortDirty) {
+		const trimmedEffort = effort.trim();
+		const modelByHarness = { ...(next.modelByHarness ?? {}) };
+		const entry = { ...(modelByHarness[agentId] ?? {}) };
+		if (trimmedEffort) entry.effort = trimmedEffort;
+		else {
+			if (!existing?.modelByHarness?.[agentId]?.effort && !shared?.modelByHarness?.[agentId]?.effort) {
+				delete next.effort;
+			}
+			delete entry.effort;
+		}
+		if (Object.keys(entry).length > 0) modelByHarness[agentId] = entry;
+		else delete modelByHarness[agentId];
+		if (Object.keys(modelByHarness).length > 0) next.modelByHarness = modelByHarness;
+		else delete next.modelByHarness;
+	}
 	return Object.keys(next).length > 0 ? next : undefined;
 }

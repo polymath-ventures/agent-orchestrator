@@ -4,8 +4,10 @@ import { installBrowserModeApiFixtures } from "./fixtures";
 
 const captureEvidence = process.env.CAPTURE_FORK_SCREENSHOTS === "1";
 const evidenceDir = "../docs/screenshots/fork-features";
+let savedProjectConfig: unknown;
 
 test.beforeEach(async ({ page }) => {
+	savedProjectConfig = undefined;
 	await installBrowserModeApiFixtures(page, { includePrimeSession: true });
 	const agents = [
 		{ id: "claude-code", label: "Claude Code", authStatus: "authorized", reviewerCapable: true },
@@ -16,7 +18,30 @@ test.beforeEach(async ({ page }) => {
 		route.fulfill({ json: { supported: agents, installed: agents, authorized: agents } }),
 	);
 	await page.route("**/api/v1/agents/models**", (route) =>
-		route.fulfill({ json: { checkedAt: "2026-08-14T00:00:00Z", harnesses: [] } }),
+		route.fulfill({
+			json: {
+				checkedAt: "2026-08-14T00:00:00Z",
+				harnesses: [
+					{
+						id: "codex",
+						label: "Codex",
+						reviewerCapable: true,
+						catalogSource: "adapter",
+						catalogVerified: true,
+						models: [
+							{
+								model: "gpt-5.5",
+								label: "GPT-5.5",
+								efforts: ["low", "medium", "high"],
+								defaultEffort: "medium",
+								verified: true,
+								status: "reachable",
+							},
+						],
+					},
+				],
+			},
+		}),
 	);
 	await page.route("**/api/v1/fleet", (route) => route.fulfill({ json: { paused: false } }));
 	await page.route("**/api/v1/metrics", (route) =>
@@ -54,8 +79,13 @@ test.beforeEach(async ({ page }) => {
 			},
 		}),
 	);
-	await page.route("**/api/v1/projects/api-gateway", (route) =>
-		route.fulfill({
+	await page.route("**/api/v1/projects/api-gateway", async (route) => {
+		if (route.request().method() === "PUT") {
+			const body = route.request().postDataJSON() as { config?: unknown };
+			savedProjectConfig = body.config;
+			return route.fulfill({ json: { status: "ok" } });
+		}
+		return route.fulfill({
 			json: {
 				status: "ok",
 				project: {
@@ -67,17 +97,31 @@ test.beforeEach(async ({ page }) => {
 					defaultBranch: "main",
 					sessionPrefix: "ao",
 					config: {
-						orchestrator: { agent: "codex" },
-						worker: { agent: "codex" },
+						orchestrator: {
+							agent: "codex",
+							agentConfig: { modelByHarness: { codex: { model: "gpt-5.5", effort: "low" } } },
+						},
+						worker: {
+							agent: "codex",
+							agentConfig: { modelByHarness: { codex: { model: "gpt-5.5", effort: "high" } } },
+						},
 						reviewers: [{ harness: "codex-fugu" }],
 						workerMix: [{ agent: "codex", model: "gpt-5.5", effort: "high", weight: 100 }],
 						workerTaskPrompt: "/address-issue {issue}",
 					},
 				},
 			},
-		}),
-	);
+		});
+	});
 });
+
+async function setEffortValue(locator: import("@playwright/test").Locator, value: string) {
+	if ((await locator.evaluate((element) => element.tagName)) === "SELECT") {
+		await locator.selectOption(value);
+		return;
+	}
+	await locator.fill(value);
+}
 
 test("fork UI features stay mounted from the application shell", async ({ page }) => {
 	await page.goto("/");
@@ -125,6 +169,26 @@ test("fork UI features stay mounted from the application shell", async ({ page }
 		await page.screenshot({ path: `${evidenceDir}/harness-selection.png`, fullPage: true });
 	}
 	await page.keyboard.press("Escape");
+
+	await projectSettings.getByRole("button", { name: "Agents", exact: true }).click();
+	const workerEffort = projectSettings.getByLabel("Worker effort");
+	const orchestratorEffort = projectSettings.getByLabel("Orchestrator effort");
+	await expect(workerEffort).toBeVisible();
+	await expect(workerEffort).toHaveValue("high");
+	await expect(orchestratorEffort).toBeVisible();
+	await expect(orchestratorEffort).toHaveValue("low");
+	await setEffortValue(workerEffort, "medium");
+	await setEffortValue(orchestratorEffort, "high");
+	if (captureEvidence) {
+		await page.screenshot({ path: `${evidenceDir}/project-settings-agents-effort.png`, fullPage: true });
+	}
+	await projectSettings.getByRole("button", { name: "Save changes" }).click();
+	await expect
+		.poll(() => savedProjectConfig)
+		.toMatchObject({
+			worker: { agentConfig: { modelByHarness: { codex: { model: "gpt-5.5", effort: "medium" } } } },
+			orchestrator: { agentConfig: { modelByHarness: { codex: { model: "gpt-5.5", effort: "high" } } } },
+		});
 
 	await projectSettings.getByRole("button", { name: "Instructions", exact: true }).click();
 	await expect(projectSettings.getByRole("textbox", { name: "Worker task prompt template" })).toHaveValue(
