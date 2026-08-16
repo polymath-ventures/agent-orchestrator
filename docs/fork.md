@@ -319,7 +319,8 @@ product, and a sync is not complete until every named behavioral guard passes.
    SDLC surface: repo-local polyscribe copies are forbidden entirely,
    `AGENTS.shared.md` and client-installed sx skill copies stay untracked, while
    root fail-open outputs and marker-free `agent-instructions/` inputs stay tracked
-   until the upstream hook-regeneration gap recorded on assets#255 is closed.
+   until the upstream hook-regeneration gap recorded on assets#255 is closed. Fresh
+   clones restore untracked sx client skill copies by running `/polypowers-init`.
    **Beads is retired (issue #262 →
    #263) and must stay retired**: GitHub issues are the sole tracker, and the `.beads/`,
    `.beads-credential-key`, and `.beads.gate.lock` entries in `.gitignore` must

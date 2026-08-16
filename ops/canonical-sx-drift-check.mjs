@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-import { existsSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 
@@ -57,6 +58,18 @@ function workingTreeBasenameMatches(names) {
 			"-o",
 			"-path",
 			"./.claude/worktrees",
+			"-o",
+			"-path",
+			"./frontend/dist",
+			"-o",
+			"-path",
+			"./frontend/dist-electron",
+			"-o",
+			"-path",
+			"./frontend/release",
+			"-o",
+			"-path",
+			"./backend/bin",
 			")",
 			"-prune",
 			"-o",
@@ -114,8 +127,30 @@ function staleFailOpenOutputs(files) {
 		.flatMap(([path, expected]) => {
 			if (!files.includes(path)) return [`${path} (not tracked)`];
 			const actual = gitBlob(path);
+			const worktreeActual = existsSync(path) ? readFileSync(path, "utf8") : null;
 			if (actual !== expected) return [path];
+			if (worktreeActual !== expected) return [`${path} (working tree)`];
 			return [];
+		})
+		.sort();
+}
+
+function sha256(text) {
+	return createHash("sha256").update(text).digest("hex");
+}
+
+function instructionManifestDrift(files) {
+	const manifestPath = "agent-instructions/standard-set.json";
+	if (!files.includes(manifestPath)) return [];
+	const manifestBlob = gitBlob(manifestPath);
+	if (manifestBlob === null) return [`${manifestPath} (not readable)`];
+	const manifest = JSON.parse(manifestBlob);
+	return manifest.modules
+		.flatMap((module) => {
+			if (!files.includes(module.path)) return [`${module.path} (not tracked)`];
+			const blob = gitBlob(module.path);
+			if (blob === null) return [`${module.path} (not readable)`];
+			return sha256(blob) === module.sha256 ? [] : [`${module.path} (sha256 mismatch)`];
 		})
 		.sort();
 }
@@ -134,12 +169,19 @@ function main() {
 	);
 	const workingTreePolyscribeCopies = workingTreeBasenameMatches(FORBIDDEN_BASENAMES);
 	const staleOutputs = staleFailOpenOutputs(files);
+	const manifestDrift = instructionManifestDrift(files);
 
 	const failures = [];
 	if (staleOutputs.length > 0) {
 		failures.push({
 			title: "tracked fail-open instruction output is stale",
 			items: staleOutputs,
+		});
+	}
+	if (manifestDrift.length > 0) {
+		failures.push({
+			title: "agent-instruction manifest hash drift",
+			items: manifestDrift,
 		});
 	}
 	if (forbiddenTrackedPaths.length > 0) {
@@ -178,7 +220,7 @@ function main() {
 	console.log("canonical sx drift: clean");
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) {
 	try {
 		main();
 	} catch (error) {

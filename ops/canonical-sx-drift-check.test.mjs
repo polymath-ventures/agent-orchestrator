@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -12,6 +13,7 @@ const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 const formerVaultSlug = ["agent", "vault"].join("-");
 const currentVaultSlug = ["polymath", "agent", "assets"].join("-");
 const managedMarker = ["@sx", "managed"].join("-");
+const sha256 = (text) => createHash("sha256").update(text).digest("hex");
 function git(cwd, ...args) {
 	const result = spawnSync("git", args, { cwd, encoding: "utf8" });
 	if (result.status !== 0) throw new Error(`git ${args.join(" ")} failed: ${result.stderr}`);
@@ -149,6 +151,33 @@ test("canonical sx guard rejects missing tracked fail-open instruction outputs",
 		assert.notEqual(result.status, 0, `expected failure\nstdout:${result.stdout}\nstderr:${result.stderr}`);
 		assert.match(result.stderr, /tracked fail-open instruction output is stale/);
 		assert.match(result.stderr, /AGENTS\.md \(not tracked\)/);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("canonical sx guard rejects instruction manifest hash drift", () => {
+	const source = "# Source\n";
+	const root = setupRepo({
+		"agent-instructions/source/30-polypowers.md": source,
+		"agent-instructions/standard-set.json": JSON.stringify({
+			version: 3,
+			modules: [
+				{
+					source: "30-polypowers.md",
+					path: "agent-instructions/source/30-polypowers.md",
+					sha256: sha256(`${source}changed\n`),
+				},
+			],
+		}),
+		"AGENTS.md": FAIL_OPEN_STUBS["AGENTS.md"],
+		"CLAUDE.md": FAIL_OPEN_STUBS["CLAUDE.md"],
+	});
+	try {
+		const result = runGuard(root);
+		assert.notEqual(result.status, 0, `expected failure\nstdout:${result.stdout}\nstderr:${result.stderr}`);
+		assert.match(result.stderr, /agent-instruction manifest hash drift/);
+		assert.match(result.stderr, /agent-instructions\/source\/30-polypowers\.md/);
 	} finally {
 		rmSync(root, { recursive: true, force: true });
 	}
