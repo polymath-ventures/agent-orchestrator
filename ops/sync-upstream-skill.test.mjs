@@ -1,18 +1,16 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const skillPath = new URL("../skills/sync-upstream/SKILL.md", import.meta.url);
-const claudeSkillPath = new URL("../.claude/skills/sync-upstream/SKILL.md", import.meta.url);
-const codexSkillPath = new URL("../.agents/skills/sync-upstream/SKILL.md", import.meta.url);
 const forkDocPath = new URL("../docs/fork.md", import.meta.url);
 
-test("sync-upstream client copies match the canonical skill", async () => {
-	const canonical = await readFile(skillPath, "utf8");
-	const [claude, codex] = await Promise.all([readFile(claudeSkillPath, "utf8"), readFile(codexSkillPath, "utf8")]);
-
-	assert.equal(claude, canonical);
-	assert.equal(codex, canonical);
+test("sync-upstream client install copies are not tracked", () => {
+	const tracked = execFileSync("git", ["ls-files", ".claude/skills/sync-upstream", ".agents/skills/sync-upstream"], {
+		encoding: "utf8",
+	});
+	assert.equal(tracked, "");
 });
 
 test("sync-upstream treats migration collisions as routine reconciliation", async () => {
