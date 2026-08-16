@@ -11,6 +11,26 @@ const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 const formerVaultSlug = ["agent", "vault"].join("-");
 const currentVaultSlug = ["polymath", "agent", "assets"].join("-");
 const managedMarker = ["@sx", "managed"].join("-");
+const generatedBanner =
+	"<!-- GENERATED — DO NOT EDIT. Edit agent-instructions/{source,agent-overrides,system}/, then rebuild with polyscribe (system scope adds --system) -->";
+
+function failOpenStub(client, override) {
+	return `${generatedBanner}
+
+# Agent instructions — fail-open baseline (${client})
+
+SessionStart normally injects the current vault rules plus this repository’s local context. If that context is absent, use this safety baseline only.
+
+Before acting, read the ordered Markdown fragments under \`agent-instructions/source/\` and \`agent-instructions/agent-overrides/${override}.md\`.
+
+1. GitHub Issues are the sole durable tracker.
+2. Make every mutation in an agent-owned worktree, never the shared checkout.
+3. For behavior changes, write a failing test first, then implement and verify the fix.
+4. Verify the result with the repository’s real checks before claiming success.
+5. Use an independent reviewer; do not self-review merge readiness.
+6. Never merge without explicit authorization from the user. In autonomous mode, merge only after final-review is clean, CI is green, and all current-head review threads are resolved.
+`;
+}
 
 function git(cwd, ...args) {
 	const result = spawnSync("git", args, { cwd, encoding: "utf8" });
@@ -126,6 +146,34 @@ test("canonical sx guard rejects stale tracked fail-open instruction outputs", (
 	}
 });
 
+test("canonical sx guard accepts current tracked fail-open instruction outputs", () => {
+	const root = setupRepo({
+		"AGENTS.md": failOpenStub("Codex", "codex"),
+		"CLAUDE.md": failOpenStub("Claude", "claude"),
+	});
+	try {
+		const result = runGuard(root);
+		assert.equal(result.status, 0, `expected pass\nstdout:${result.stdout}\nstderr:${result.stderr}`);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("canonical sx guard rejects missing tracked fail-open instruction outputs", () => {
+	const root = setupRepo({
+		"AGENTS.md": failOpenStub("Codex", "codex"),
+	});
+	try {
+		git(root, "rm", "-q", "--cached", "AGENTS.md");
+		const result = runGuard(root);
+		assert.notEqual(result.status, 0, `expected failure\nstdout:${result.stdout}\nstderr:${result.stderr}`);
+		assert.match(result.stderr, /tracked fail-open instruction output is stale/);
+		assert.match(result.stderr, /AGENTS\.md \(not tracked\)/);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
 test("canonical sx guard rejects tracked polyscribe copies anywhere", () => {
 	const root = setupRepo({
 		"tools/polyscribe.sh": "#!/usr/bin/env bash\n",
@@ -161,6 +209,22 @@ test("canonical sx guard rejects untracked polyscribe copies outside scripts", (
 		assert.match(result.stderr, /repo-local polyscribe copy is forbidden/);
 		assert.match(result.stderr, /tools\/polyscribe\.sh/);
 		assert.doesNotMatch(result.stderr, /scripts\/polyscribe\.sh/);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("canonical sx guard rejects ignored polyscribe copies", () => {
+	const root = setupRepo({
+		".gitignore": ".claude/\n",
+		"package.json": '{"private":true}\n',
+	});
+	try {
+		write(root, ".claude/hooks/polyscribe.sh", "#!/usr/bin/env bash\n");
+		const result = runGuard(root);
+		assert.notEqual(result.status, 0, `expected failure\nstdout:${result.stdout}\nstderr:${result.stderr}`);
+		assert.match(result.stderr, /repo-local polyscribe copy is forbidden/);
+		assert.match(result.stderr, /\.claude\/hooks\/polyscribe\.sh/);
 	} finally {
 		rmSync(root, { recursive: true, force: true });
 	}

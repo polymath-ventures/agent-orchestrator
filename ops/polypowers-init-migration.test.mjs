@@ -1,10 +1,31 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 const read = (rel) => readFileSync(fileURLToPath(new URL(`../${rel}`, import.meta.url)), "utf8");
 const readJson = (rel) => JSON.parse(read(rel));
 const exists = (rel) => existsSync(fileURLToPath(new URL(`../${rel}`, import.meta.url)));
+const stripHtmlComments = (text) => text.replace(/<!--[\s\S]*?-->/g, "");
+const trimBlankRuns = (text) => {
+	const out = [];
+	let started = false;
+	let pending = 0;
+	for (const line of text.split(/\r?\n/)) {
+		if (/^\s*$/.test(line)) {
+			if (started) pending += 1;
+			continue;
+		}
+		while (pending > 0) {
+			out.push("");
+			pending -= 1;
+		}
+		out.push(line);
+		started = true;
+	}
+	return `${out.join("\n")}\n`;
+};
+const sha256 = (text) => createHash("sha256").update(text).digest("hex");
 
 test("repo state is canonical polypowers-init, not legacy nickify", () => {
 	assert.equal(exists("polypowers.json"), true);
@@ -79,4 +100,7 @@ test("agent-instruction inputs stay tracked but marker-free until hook regenerat
 		manifest.modules.some((module) => module.path === "scripts/polyscribe.sh"),
 		false,
 	);
+	for (const module of manifest.modules.filter((entry) => exists(entry.path))) {
+		assert.equal(sha256(trimBlankRuns(stripHtmlComments(read(module.path)))), module.sha256, module.path);
+	}
 });

@@ -1,10 +1,10 @@
-name: Agent instructions
+name: Canonical sx drift
 
 on:
   pull_request:
 
 jobs:
-  generated-files-match-sources:
+  canonical-sx-shape:
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -13,5 +13,5 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-      - name: Agent instructions guard
+      - name: Canonical sx drift guard
         run: node ops/canonical-sx-drift-check.mjs
