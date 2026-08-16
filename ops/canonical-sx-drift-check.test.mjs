@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const scriptPath = fileURLToPath(new URL("./canonical-sx-drift-check.mjs", import.meta.url));
@@ -20,7 +20,7 @@ function git(cwd, ...args) {
 
 function write(root, rel, contents) {
 	const full = join(root, rel);
-	mkdirSync(full.slice(0, full.lastIndexOf("/")), { recursive: true });
+	mkdirSync(dirname(full), { recursive: true });
 	writeFileSync(full, contents);
 }
 
