@@ -249,12 +249,16 @@ func TestPollRespawnsIssueAfterTerminatedSession(t *testing.T) {
 	}
 }
 
+func demoProjects() []domain.ProjectRecord {
+	return []domain.ProjectRecord{{ID: "demo", RepoOriginURL: "https://github.com/acme/demo.git"}}
+}
+
 func TestSeenIssueIDsExcludesTerminatedSessions(t *testing.T) {
 	sessions := []domain.SessionRecord{
-		{ID: "demo-1", IssueID: "github:acme/demo#12", IsTerminated: true},
-		{ID: "demo-2", IssueID: "github:acme/demo#12", IsTerminated: false},
+		{ID: "demo-1", ProjectID: "demo", IssueID: "github:acme/demo#12", IsTerminated: true},
+		{ID: "demo-2", ProjectID: "demo", IssueID: "github:acme/demo#12", IsTerminated: false},
 	}
-	seen := seenIssueIDs(sessions)
+	seen := seenIssueIDs(sessions, demoProjects())
 	if !seen["github:acme/demo#12"] {
 		t.Fatal("issue with a live session alongside a terminated one should still be seen")
 	}
@@ -265,11 +269,36 @@ func TestSeenIssueIDsExcludesTerminatedSessions(t *testing.T) {
 
 func TestSeenIssueIDsIgnoresOnlyTerminatedSession(t *testing.T) {
 	sessions := []domain.SessionRecord{
-		{ID: "demo-1", IssueID: "github:acme/demo#12", IsTerminated: true},
+		{ID: "demo-1", ProjectID: "demo", IssueID: "github:acme/demo#12", IsTerminated: true},
 	}
-	seen := seenIssueIDs(sessions)
+	seen := seenIssueIDs(sessions, demoProjects())
 	if seen["github:acme/demo#12"] {
 		t.Fatal("issue with only a terminated session should not be marked as seen")
+	}
+}
+
+// A session whose project scope cannot be resolved must suppress nothing: its
+// stored id cannot say which instance it belongs to, so reading it as coverage
+// would block an unrelated project's issue while still missing its own.
+func TestSeenIssueIDsParksSessionsWithoutAResolvableScope(t *testing.T) {
+	sessions := []domain.SessionRecord{
+		{ID: "orphan-1", ProjectID: "vanished", IssueID: "gitlab:group/proj#7"},
+		{ID: "orphan-2", ProjectID: "vanished", IssueID: "ISS-1"},
+	}
+
+	seen := seenIssueIDs(sessions, demoProjects())
+
+	if seen["gitlab:group/proj#7"] {
+		t.Fatal("an orphaned session must not suppress the gitlab.com issue of that path")
+	}
+	if seen[dedupKey(domain.TrackerID{Provider: domain.TrackerProviderGitLab, Native: "group/proj#7", Host: "gitlab.example"})] {
+		t.Fatal("an orphaned session must not suppress a self-managed issue either")
+	}
+	if seen["ISS-1"] {
+		t.Fatal("an unresolvable id must not occupy a bare coverage key")
+	}
+	if !seen[unscopedKey("gitlab:group/proj#7")] || !seen[unscopedKey("ISS-1")] {
+		t.Fatal("orphaned sessions should still be recorded, in the namespace that matches nothing")
 	}
 }
 
@@ -458,7 +487,7 @@ func TestBuildIssuePromptCapsLargeIssueBody(t *testing.T) {
 		Title: "Large issue",
 		URL:   "https://github.com/acme/demo/issues/99",
 		Body:  strings.Repeat("body ", 2000),
-	})
+	}, domain.TrackerRepo{Provider: domain.TrackerProviderGitHub, Native: "acme/demo"})
 	if len(prompt) > maxIntakePromptLen {
 		t.Fatalf("prompt length = %d, want <= %d", len(prompt), maxIntakePromptLen)
 	}
@@ -482,7 +511,11 @@ func TestBuildIssuePromptPreservesLegacyBytes(t *testing.T) {
 		Assignees: []string{"alice"},
 		Body:      "The login form submits twice.\n",
 	}
-	want := `Work on tracker issue github:acme/demo#12.
+	// The opening line deliberately changed with #298: it addresses the issue
+	// (`12`) instead of naming the storage key (`github:acme/demo#12`), which no
+	// tracker CLI accepts and which the configured-template path never emitted.
+	// Every other byte of this legacy prompt is unchanged.
+	want := `Work on tracker issue 12.
 
 Title: Fix login
 URL: https://github.com/acme/demo/issues/12
@@ -493,7 +526,8 @@ Body:
 The login form submits twice.
 
 Implement the requested change in this repository, run the relevant checks, and open or update a pull request when ready.`
-	if got := BuildIssuePrompt(issue); got != want {
+	scope := domain.TrackerRepo{Provider: domain.TrackerProviderGitHub, Native: "acme/demo"}
+	if got := BuildIssuePrompt(issue, scope); got != want {
 		t.Fatalf("intake prompt changed from legacy bytes:\ngot:  %q\nwant: %q", got, want)
 	}
 }
@@ -784,5 +818,237 @@ func TestPollDefersWorkerMixCapacityWithoutBackoff(t *testing.T) {
 				t.Fatalf("retried issue = %q, want github:acme/demo#12", spawner.calls[1].IssueID)
 			}
 		})
+	}
+}
+
+// Regression for #298 defect 1. Intake writes `github:owner/repo#N` but the
+// dedup set was built from the raw stored value, so a session spawned with the
+// bare native id the CLI and docs advertise never matched the lookup key and
+// intake spawned a fresh duplicate worker on every tick, indefinitely.
+func TestPollDoesNotRespawnIssueHeldByNonCanonicalSession(t *testing.T) {
+	cases := []struct {
+		name    string
+		issueID domain.IssueID
+	}{
+		{name: "bare number", issueID: "12"},
+		{name: "hash prefixed", issueID: "#12"},
+		{name: "provider native", issueID: "acme/demo#12"},
+		{name: "issue url", issueID: "https://github.com/acme/demo/issues/12"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			store := &fakeStore{
+				projects: []domain.ProjectRecord{{
+					ID:            "demo",
+					RepoOriginURL: "https://github.com/acme/demo.git",
+					Config:        domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, Assignee: "alice"}},
+				}},
+				sessions: []domain.SessionRecord{{ID: "demo-1", ProjectID: "demo", IssueID: tc.issueID}},
+			}
+			tracker := &fakeTracker{issues: []domain.Issue{{
+				ID:        domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#12"},
+				State:     domain.IssueOpen,
+				Assignees: []string{"alice"},
+			}}}
+			spawner := &fakeSpawner{}
+
+			if err := New(singleResolver(tracker), store, spawner, Config{Logger: discardLogger()}).Poll(context.Background()); err != nil {
+				t.Fatalf("Poll() error = %v", err)
+			}
+			if len(spawner.calls) != 0 {
+				t.Fatalf("spawn calls = %+v, want 0 — session %q already services acme/demo#12", spawner.calls, tc.issueID)
+			}
+		})
+	}
+}
+
+// A non-canonical id belonging to a different project must not suppress intake:
+// bare ids are only equivalent to a canonical id within their own project's
+// tracker scope.
+func TestPollRespawnsWhenNonCanonicalSessionBelongsToAnotherProject(t *testing.T) {
+	store := &fakeStore{
+		projects: []domain.ProjectRecord{{
+			ID:            "demo",
+			RepoOriginURL: "https://github.com/acme/demo.git",
+			Config:        domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, Assignee: "alice"}},
+		}},
+		sessions: []domain.SessionRecord{{ID: "other-1", ProjectID: "other", IssueID: "12"}},
+	}
+	tracker := &fakeTracker{issues: []domain.Issue{{
+		ID:        domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#12"},
+		State:     domain.IssueOpen,
+		Assignees: []string{"alice"},
+	}}}
+	spawner := &fakeSpawner{}
+
+	if err := New(singleResolver(tracker), store, spawner, Config{Logger: discardLogger()}).Poll(context.Background()); err != nil {
+		t.Fatalf("Poll() error = %v", err)
+	}
+	if len(spawner.calls) != 1 || spawner.calls[0].IssueID != "github:acme/demo#12" {
+		t.Fatalf("spawn calls = %+v, want one spawn: project \"other\"'s bare 12 is a different issue", spawner.calls)
+	}
+}
+
+// Regression for #298 defect 2. The `no-ao` label documents itself as
+// "Opt-out: ao must not auto-work this issue" and was read by nothing.
+func TestPollSkipsIssueCarryingOptOutLabel(t *testing.T) {
+	store := &fakeStore{projects: []domain.ProjectRecord{{
+		ID:            "demo",
+		RepoOriginURL: "https://github.com/acme/demo.git",
+		Config:        domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, Assignee: "alice"}},
+	}}}
+	tracker := &fakeTracker{issues: []domain.Issue{
+		{ID: domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#1"}, Title: "opted out", State: domain.IssueOpen, Labels: []string{"no-ao", "feature"}, Assignees: []string{"alice"}},
+		{ID: domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#2"}, Title: "eligible", State: domain.IssueOpen, Labels: []string{"feature"}, Assignees: []string{"alice"}},
+	}}
+	spawner := &fakeSpawner{}
+
+	if err := New(singleResolver(tracker), store, spawner, Config{Logger: discardLogger()}).Poll(context.Background()); err != nil {
+		t.Fatalf("Poll() error = %v", err)
+	}
+	if len(spawner.calls) != 1 || spawner.calls[0].IssueID != "github:acme/demo#2" {
+		t.Fatalf("spawn calls = %+v, want only issue #2 — #1 carries the opt-out label", spawner.calls)
+	}
+}
+
+func TestIssueMatchesConfigOptOutLabel(t *testing.T) {
+	cfg := domain.TrackerIntakeConfig{Enabled: true, Assignee: "alice"}
+	assigned := domain.Issue{Assignees: []string{"alice"}}
+	optedOut := domain.Issue{Assignees: []string{"alice"}, Labels: []string{"feature", "No-AO"}}
+
+	if !issueMatchesConfig(assigned, cfg) {
+		t.Fatal("issue without the opt-out label should match")
+	}
+	if issueMatchesConfig(optedOut, cfg) {
+		t.Fatal("the default opt-out label should exclude the issue, case-insensitively")
+	}
+
+	custom := domain.TrackerIntakeConfig{Enabled: true, Assignee: "alice", OptOutLabel: "hands-off"}
+	if issueMatchesConfig(domain.Issue{Assignees: []string{"alice"}, Labels: []string{"hands-off"}}, custom) {
+		t.Fatal("configured opt-out label should exclude the issue")
+	}
+	if !issueMatchesConfig(optedOut, custom) {
+		t.Fatal("a configured label replaces the default rather than adding to it")
+	}
+
+	disabled := domain.TrackerIntakeConfig{Enabled: true, Assignee: "alice", OptOutLabel: "none"}
+	if !issueMatchesConfig(optedOut, disabled) {
+		t.Fatal(`optOutLabel "none" should disable the opt-out`)
+	}
+
+	// The opt-out overrides eligibility rather than joining it: an unassigned
+	// issue matching assignee=none is still excluded when it opts out.
+	if issueMatchesConfig(domain.Issue{Labels: []string{"no-ao"}}, domain.TrackerIntakeConfig{Enabled: true, Assignee: "none"}) {
+		t.Fatal("opt-out should override the assignee=none rule")
+	}
+}
+
+// seenIssueIDs is the dedup key intake looks issues up by; it must accept the
+// non-canonical shapes older sessions hold, but only inside their own project.
+func TestSeenIssueIDsResolvesNonCanonicalSessionsPerProject(t *testing.T) {
+	projects := []domain.ProjectRecord{
+		{ID: "demo", RepoOriginURL: "https://github.com/acme/demo.git"},
+		{ID: "other", RepoOriginURL: "https://github.com/acme/other.git"},
+	}
+	sessions := []domain.SessionRecord{
+		{ID: "demo-1", ProjectID: "demo", IssueID: "12"},
+		{ID: "other-1", ProjectID: "other", IssueID: "#34"},
+		{ID: "demo-2", ProjectID: "demo", IssueID: "56", IsTerminated: true},
+		{ID: "demo-3", ProjectID: "demo", IssueID: "ISS-1"},
+	}
+
+	seen := seenIssueIDs(sessions, projects)
+
+	if !seen["github:acme/demo#12"] {
+		t.Error("a bare id should cover its own project's canonical issue")
+	}
+	if !seen["github:acme/other#34"] {
+		t.Error("a hash-prefixed id should cover its own project's canonical issue")
+	}
+	if seen["github:acme/other#12"] {
+		t.Error("a bare id must not cover another project's issue 12")
+	}
+	if seen["github:acme/demo#56"] {
+		t.Error("a terminated session should not cover its issue")
+	}
+	if seen["ISS-1"] || !seen[unscopedKey("ISS-1")] {
+		t.Error("an id no scope can resolve belongs in the namespace that matches nothing")
+	}
+}
+
+// An issue outside the polled repository keeps its qualifier, so the legacy
+// prompt cannot tell a worker to work on its own repo's issue of that number.
+func TestBuildIssuePromptQualifiesAnIssueOutsideTheScope(t *testing.T) {
+	issue := domain.Issue{
+		ID:    domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/other#12"},
+		Title: "Elsewhere",
+	}
+	scope := domain.TrackerRepo{Provider: domain.TrackerProviderGitHub, Native: "acme/demo"}
+	if got := BuildIssuePrompt(issue, scope); !strings.HasPrefix(got, "Work on tracker issue acme/other#12.") {
+		t.Fatalf("prompt = %q, want it to open with the qualified reference", got)
+	}
+}
+
+// Two self-managed GitLab instances can share a project path. The stored
+// canonical id cannot tell them apart, so coverage must not either — a live
+// session on one instance must not suppress intake for the other's issue.
+func TestSeenIssueIDsSeparatesSelfManagedGitLabInstances(t *testing.T) {
+	projects := []domain.ProjectRecord{
+		{
+			ID:            "alpha",
+			RepoOriginURL: "https://gitlab.alpha.example/group/proj.git",
+			Config:        domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, Assignee: "alice", Provider: domain.TrackerProviderGitLab}},
+		},
+		{
+			ID:            "beta",
+			RepoOriginURL: "https://gitlab.beta.example/group/proj.git",
+			Config:        domain.ProjectConfig{TrackerIntake: domain.TrackerIntakeConfig{Enabled: true, Assignee: "alice", Provider: domain.TrackerProviderGitLab}},
+		},
+	}
+	sessions := []domain.SessionRecord{{ID: "alpha-1", ProjectID: "alpha", IssueID: "gitlab:group/proj#7"}}
+
+	seen := seenIssueIDs(sessions, projects)
+
+	alpha := dedupKey(domain.TrackerID{Provider: domain.TrackerProviderGitLab, Native: "group/proj#7", Host: "gitlab.alpha.example"})
+	beta := dedupKey(domain.TrackerID{Provider: domain.TrackerProviderGitLab, Native: "group/proj#7", Host: "gitlab.beta.example"})
+	if !seen[alpha] {
+		t.Fatal("the instance that has a live session should be covered")
+	}
+	if seen[beta] {
+		t.Fatal("a different instance sharing the project path must not be suppressed")
+	}
+}
+
+// A project with a usable GitLab origin but no intake config names no provider,
+// so the shared resolver would default to GitHub and fail to parse the origin.
+// The stored canonical id names the provider, so the session still resolves —
+// otherwise another project polling that repository spawns a duplicate.
+func TestSeenIssueIDsResolvesAProjectWithoutIntakeConfig(t *testing.T) {
+	projects := []domain.ProjectRecord{{ID: "alpha", RepoOriginURL: "https://gitlab.alpha.example/group/proj.git"}}
+	sessions := []domain.SessionRecord{{ID: "alpha-1", ProjectID: "alpha", IssueID: "gitlab:group/proj#7"}}
+
+	seen := seenIssueIDs(sessions, projects)
+
+	want := dedupKey(domain.TrackerID{Provider: domain.TrackerProviderGitLab, Native: "group/proj#7", Host: "gitlab.alpha.example"})
+	if !seen[want] {
+		t.Fatalf("seen = %+v, want coverage under %q", seen, want)
+	}
+	if seen[unscopedKey("gitlab:group/proj#7")] {
+		t.Fatal("a resolvable session should not be parked as unscoped")
+	}
+}
+
+// GitHub and GitLab both treat repository paths case-insensitively, so a
+// session spawned with `--issue Acme/Demo#12` must cover the issue intake
+// lists as `acme/demo#12`.
+func TestSeenIssueIDsFoldsRepositoryPathCase(t *testing.T) {
+	projects := []domain.ProjectRecord{{ID: "demo", RepoOriginURL: "https://github.com/acme/demo.git"}}
+	sessions := []domain.SessionRecord{{ID: "demo-1", ProjectID: "demo", IssueID: "github:Acme/Demo#12"}}
+
+	seen := seenIssueIDs(sessions, projects)
+
+	want := dedupKey(domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/demo#12"})
+	if !seen[want] {
+		t.Fatalf("seen = %+v, want coverage under %q", seen, want)
 	}
 }

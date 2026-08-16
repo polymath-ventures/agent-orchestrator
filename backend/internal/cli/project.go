@@ -106,10 +106,11 @@ type reviewerConfig struct {
 
 // trackerIntakeConfig mirrors domain.TrackerIntakeConfig.
 type trackerIntakeConfig struct {
-	Enabled  bool   `json:"enabled,omitempty"`
-	Provider string `json:"provider,omitempty"`
-	Repo     string `json:"repo,omitempty"`
-	Assignee string `json:"assignee,omitempty"`
+	Enabled     bool   `json:"enabled,omitempty"`
+	Provider    string `json:"provider,omitempty"`
+	Repo        string `json:"repo,omitempty"`
+	Assignee    string `json:"assignee,omitempty"`
+	OptOutLabel string `json:"optOutLabel,omitempty"`
 }
 
 // projectConfig mirrors the daemon's typed domain.ProjectConfig for the CLI
@@ -167,6 +168,7 @@ type projectSetConfigOptions struct {
 	trackerIntake         bool
 	trackerRepo           string
 	trackerAssignee       string
+	trackerOptOutLabel    string
 	configJSON            string
 	clear                 bool
 	json                  bool
@@ -363,9 +365,10 @@ func newProjectSetConfigCommand(ctx *commandContext) *cobra.Command {
 	f.StringArrayVar(&opts.env, "env", nil, "Env var KEY=VALUE forwarded into sessions (repeatable)")
 	f.StringArrayVar(&opts.symlink, "symlink", nil, "Repo-relative path to symlink into workspaces (repeatable)")
 	f.StringArrayVar(&opts.postCreate, "post-create", nil, "Command to run after workspace creation (repeatable)")
-	f.BoolVar(&opts.trackerIntake, "tracker-intake", false, "Enable GitHub issue intake for matching issues")
-	f.StringVar(&opts.trackerRepo, "tracker-repo", "", "GitHub repo for issue intake (owner/repo; default: derive from git origin)")
-	f.StringVar(&opts.trackerAssignee, "tracker-assignee", "", "GitHub issue assignee required for intake eligibility")
+	f.BoolVar(&opts.trackerIntake, "tracker-intake", false, "Enable tracker issue intake for matching issues")
+	f.StringVar(&opts.trackerRepo, "tracker-repo", "", "Tracker repo for issue intake (owner/repo, or a GitLab group/project path; default: derive from git origin)")
+	f.StringVar(&opts.trackerAssignee, "tracker-assignee", "", "Tracker issue assignee required for intake eligibility")
+	f.StringVar(&opts.trackerOptOutLabel, "tracker-opt-out-label", "", "Issue label that suppresses intake (default: no-ao; \"none\" disables the opt-out)")
 	f.StringVar(&opts.configJSON, "config-json", "", "Full config as a JSON object (overrides field flags)")
 	f.BoolVar(&opts.clear, "clear", false, "Clear all config")
 	f.BoolVar(&opts.json, "json", false, "Output the updated project as JSON")
@@ -412,10 +415,11 @@ func buildProjectConfig(opts projectSetConfigOptions) (projectConfig, error) {
 		Orchestrator:          roleOverride{Agent: opts.orchestratorAgent},
 		Prime:                 roleOverride{Agent: opts.primeAgent},
 		TrackerIntake: trackerIntakeConfig{
-			Enabled:  opts.trackerIntake,
-			Provider: trackerProviderForFlags(opts),
-			Repo:     opts.trackerRepo,
-			Assignee: opts.trackerAssignee,
+			Enabled:     opts.trackerIntake,
+			Provider:    trackerProviderForFlags(opts),
+			Repo:        opts.trackerRepo,
+			Assignee:    opts.trackerAssignee,
+			OptOutLabel: opts.trackerOptOutLabel,
 		},
 	}
 	if reflect.DeepEqual(cfg, projectConfig{}) {
@@ -425,7 +429,7 @@ func buildProjectConfig(opts projectSetConfigOptions) (projectConfig, error) {
 }
 
 func trackerProviderForFlags(opts projectSetConfigOptions) string {
-	if opts.trackerIntake || opts.trackerRepo != "" || opts.trackerAssignee != "" {
+	if opts.trackerIntake || opts.trackerRepo != "" || opts.trackerAssignee != "" || opts.trackerOptOutLabel != "" {
 		return "github"
 	}
 	return ""

@@ -110,6 +110,45 @@ type TrackerIntakeConfig struct {
 	// Assignee narrows eligible issues to one assignee. Provider-specific values
 	// such as "*" are passed through unchanged.
 	Assignee string `json:"assignee,omitempty"`
+	// OptOutLabel names the issue label that suppresses intake even when the
+	// assignee rule matches. Empty means DefaultTrackerOptOutLabel; "none"
+	// disables the opt-out entirely, mirroring how Assignee spells its
+	// sentinels.
+	OptOutLabel string `json:"optOutLabel,omitempty"`
+}
+
+// DefaultTrackerOptOutLabel is the issue label intake honors when a project
+// does not name its own. It matches the label operators already apply.
+const DefaultTrackerOptOutLabel = "no-ao"
+
+// OptOutLabelName resolves the effective opt-out label. It returns "" when the
+// project disabled the opt-out.
+func (c TrackerIntakeConfig) OptOutLabelName() string {
+	label := strings.TrimSpace(c.OptOutLabel)
+	switch {
+	case label == "":
+		return DefaultTrackerOptOutLabel
+	case strings.EqualFold(label, "none"):
+		return ""
+	default:
+		return label
+	}
+}
+
+// OptedOut reports whether an issue's labels carry the configured opt-out.
+// Comparison is case-insensitive because tracker labels are displayed as
+// authored but matched loosely everywhere else in this config.
+func (c TrackerIntakeConfig) OptedOut(labels []string) bool {
+	label := c.OptOutLabelName()
+	if label == "" {
+		return false
+	}
+	for _, candidate := range labels {
+		if strings.EqualFold(strings.TrimSpace(candidate), label) {
+			return true
+		}
+	}
+	return false
 }
 
 // WithDefaults fills the provider only when intake is enabled. Disabled intake

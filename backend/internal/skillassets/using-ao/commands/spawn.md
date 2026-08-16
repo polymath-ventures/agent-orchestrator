@@ -15,7 +15,7 @@ aong spawn [flags]
 | `--branch string` | Branch for the session worktree | `ao/<namespace-key>/root` (single repo) or `ao/<namespace-key>` (workspace project) |
 | `--claim-pr string` | Immediately claim an existing PR for the spawned session | - |
 | `--harness string` | Agent harness to use (see list below) | Project `worker.agent`; required if the project has none |
-| `--issue string` | Issue id to associate with the session | - |
+| `--issue string` | Issue to associate with the session — a bare number (`142`), `owner/repo#142`, or an issue URL | - |
 | `--model string` | Model pin for this one session | Project/role/harness model config |
 | `--name string` | Override the sidebar name for a session with no work item (max 20 characters) | Daemon-computed |
 | `--no-takeover` | Refuse if another active session owns the claimed PR (requires `--claim-pr`) | - |
@@ -23,6 +23,12 @@ aong spawn [flags]
 | `--prompt string` | Initial prompt for the agent | - |
 
 `--agent` is an alias for `--harness`.
+
+A bare `--issue 142` is resolved against the project's tracker repository and
+stored as `<provider>:<repo>#142` — `github:owner/repo#142` for a GitHub
+project, `gitlab:group/project#142` for a GitLab one. That is the same form
+tracker intake writes, so intake sees the issue as covered and does not spawn a
+second worker on it.
 
 AO computes the immutable namespace key once from the creation-time work label
 and the complete session identity. Passing `--branch` opts out of that generated

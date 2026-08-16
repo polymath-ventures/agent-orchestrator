@@ -85,3 +85,32 @@ func TestSCMWiring_ObserverConfigHasScopedResolver(t *testing.T) {
 func testGitLabConfig() config.GitLabConfig {
 	return config.GitLabConfig{}
 }
+
+// A nil *multi.Provider must not reach the session service as a non-nil
+// interface value: `scm != nil` would pass and the first ParseRepository call
+// would panic on a nil receiver, which spawning with an issue id reaches on
+// every worker spawn.
+func TestSessionSCMProviderKeepsAnUnavailableProviderNil(t *testing.T) {
+	cases := []struct {
+		name      string
+		available bool
+	}{
+		{name: "no usable credentials", available: false},
+		{name: "credentialed", available: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var provider *scmmulti.Provider
+			if tc.available {
+				provider = scmmulti.New()
+			}
+			got := sessionSCMProvider(provider)
+			if tc.available && got == nil {
+				t.Fatal("a usable provider must reach the session service")
+			}
+			if !tc.available && got != nil {
+				t.Fatal("a nil *multi.Provider became a non-nil interface value")
+			}
+		})
+	}
+}

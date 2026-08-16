@@ -235,7 +235,7 @@ func startSession(ctx context.Context, cfg config.Config, runtime runtimeselect.
 		DefaultWorkerHarnesses: defaultWorkerHarnesses,
 		ProjectDefaults:        cfg.ProjectDefaults,
 	})
-	scmProvider := newMultiSCMProvider(cfg.GitLab, log)
+	scmProvider := sessionSCMProvider(newMultiSCMProvider(cfg.GitLab, log))
 	tracker := newMultiTracker(cfg.GitLab, log)
 	sessionSvc := sessionsvc.NewWithDeps(sessionsvc.Deps{
 		Manager:           mgr,

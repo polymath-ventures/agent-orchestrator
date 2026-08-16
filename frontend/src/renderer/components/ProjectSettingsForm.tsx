@@ -29,7 +29,7 @@ import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { cn } from "../lib/utils";
 import { newestActiveOrchestrator } from "../types/workspace";
 import { RequiredAgentField } from "./CreateProjectAgentSheet";
-import { buildIntake, deriveGitHubRepo, IntakeFields, type IntakeForm } from "./IntakeFields";
+import { buildIntake, deriveIntakeRepo, IntakeFields, type IntakeForm } from "./IntakeFields";
 import { ProductExternalLink } from "./ProductExternalLink";
 import { ReviewerSelect, reviewerTrustWarning } from "./ReviewerSelect";
 import { AgentModelCombobox } from "./settings/AgentModelCombobox";
@@ -153,8 +153,10 @@ function SettingsBody({
 		workerMix: toWorkerMixForm(config.workerMix),
 		maxLiveWorkers: config.maxLiveWorkers ? String(config.maxLiveWorkers) : "",
 		intakeEnabled: intake.enabled ?? false,
+		intakeProvider: intake.provider ?? "",
 		intakeRepo: intake.repo ?? "",
 		intakeAssignee: intake.assignee ?? "",
+		intakeOptOutLabel: intake.optOutLabel ?? "",
 	});
 	const [savedAt, setSavedAt] = useState<number | null>(null);
 	const [showSaving, setShowSaving] = useState(false);
@@ -174,17 +176,22 @@ function SettingsBody({
 
 	const intakeForm: IntakeForm = {
 		enabled: form.intakeEnabled,
+		provider: form.intakeProvider,
 		repo: form.intakeRepo,
 		assignee: form.intakeAssignee,
+		optOutLabel: form.intakeOptOutLabel,
 	};
 	const patchIntake = (patch: Partial<IntakeForm>) =>
 		setForm((f) => ({
 			...f,
 			intakeEnabled: patch.enabled ?? f.intakeEnabled,
+			intakeProvider: patch.provider ?? f.intakeProvider,
 			intakeRepo: patch.repo ?? f.intakeRepo,
 			intakeAssignee: patch.assignee ?? f.intakeAssignee,
+			intakeOptOutLabel: patch.optOutLabel ?? f.intakeOptOutLabel,
 		}));
-	const effectiveIntakeRepo = form.intakeRepo.trim() || deriveGitHubRepo(project.repo);
+	const derivedIntakeRepo = deriveIntakeRepo(project.repo, form.intakeProvider);
+	const effectiveIntakeRepo = form.intakeRepo.trim() || derivedIntakeRepo?.path;
 	const reviewerWarning = reviewerTrustWarning(form.reviewerHarness);
 
 	const mutation = useMutation({
@@ -611,7 +618,10 @@ function SettingsBody({
 								variant="settings"
 								form={intakeForm}
 								onChange={patchIntake}
-								repoPreview={{ value: effectiveIntakeRepo }}
+								repoPreview={{
+									value: effectiveIntakeRepo,
+									href: effectiveIntakeRepo === derivedIntakeRepo?.path ? derivedIntakeRepo?.url : undefined,
+								}}
 							/>
 						</ProjectSettingsSection>
 					) : (

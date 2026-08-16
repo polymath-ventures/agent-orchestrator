@@ -79,6 +79,21 @@ func logSCMProviderDisabled(logger *slog.Logger, provider string, err error) {
 	}
 }
 
+// sessionSCMProvider adapts newMultiSCMProvider's nil-means-unavailable
+// contract to an interface field.
+//
+// Assigning the concrete pointer straight into the interface is the typed-nil
+// trap: the interface is then non-nil, every `scm != nil` guard passes, and the
+// first call dereferences a nil receiver. The session service reaches its SCM
+// port on every issue-bearing spawn, so on a host with no SCM credentials that
+// is a daemon panic rather than a degraded lookup.
+func sessionSCMProvider(p *scmmulti.Provider) scmobserve.Provider {
+	if p == nil {
+		return nil
+	}
+	return p
+}
+
 // newMultiSCMProvider builds a multi-provider for use outside the polling
 // observer (e.g. session service PR claiming). Returns nil when no provider
 // has usable credentials — callers must tolerate a nil SCM.

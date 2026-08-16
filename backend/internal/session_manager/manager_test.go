@@ -1840,7 +1840,7 @@ func TestSpawn_AssignsIDAndGoesIdle(t *testing.T) {
 func TestSpawn_ReturnsFinalPromptByteMetrics(t *testing.T) {
 	m, _, _, _ := newManager()
 	cfg := ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Harness: domain.HarnessClaudeCode}
-	wantPrompt, wantSystemPrompt, err := m.buildSpawnTexts(ctx, cfg)
+	wantPrompt, wantSystemPrompt, err := m.buildSpawnTexts(ctx, cfg, domain.TrackerRepo{})
 	if err != nil {
 		t.Fatalf("buildSpawnTexts: %v", err)
 	}
@@ -4359,7 +4359,7 @@ func TestBuildSpawnTexts_ConfiguredWorkerTaskPromptPrecedence(t *testing.T) {
 		Kind:         domain.KindWorker,
 		IssueID:      "github:acme/mer#242",
 		IssueContext: "must not be appended",
-	})
+	}, domain.TrackerRepo{Provider: domain.TrackerProviderGitHub, Native: "acme/mer"})
 	if err != nil {
 		t.Fatalf("buildSpawnTexts: %v", err)
 	}
@@ -4381,7 +4381,7 @@ func TestBuildSpawnTexts_GlobalWorkerTaskPromptForProjectWithoutOverride(t *test
 	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{}}
 	m := New(Deps{Store: st, ProjectDefaults: domain.ProjectConfig{WorkerTaskPrompt: "/global {issue}\n"}})
 
-	prompt, _, err := m.buildSpawnTexts(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, IssueID: "242"})
+	prompt, _, err := m.buildSpawnTexts(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, IssueID: "242"}, domain.TrackerRepo{})
 	if err != nil {
 		t.Fatalf("buildSpawnTexts: %v", err)
 	}

@@ -3324,6 +3324,7 @@ export interface components {
         TrackerIntakeConfig: {
             assignee?: string;
             enabled?: boolean;
+            optOutLabel?: string;
             /** @enum {string} */
             provider?: "github" | "gitlab";
             repo?: string;

@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net/url"
 	"strings"
 	"time"
 
@@ -161,7 +160,7 @@ func (o *Observer) Poll(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	seen := seenIssueIDs(sessions)
+	seen := seenIssueIDs(sessions, projects)
 	for _, project := range enabledProjects {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -181,7 +180,7 @@ func (o *Observer) Poll(ctx context.Context) error {
 
 // pollProject returns failed=true for conditions that should be retried after a
 // backoff window rather than logged on every poll.
-func (o *Observer) pollProject(ctx context.Context, project domain.ProjectRecord, seen map[domain.IssueID]bool) (failed bool) {
+func (o *Observer) pollProject(ctx context.Context, project domain.ProjectRecord, seen map[string]bool) (failed bool) {
 	cfg := project.Config.TrackerIntake.WithDefaults()
 	if !cfg.Enabled {
 		return false
@@ -224,8 +223,12 @@ func (o *Observer) pollProject(ctx context.Context, project domain.ProjectRecord
 		if !issueMatchesConfig(issue, cfg) {
 			continue
 		}
-		issueID := CanonicalIssueID(issue.ID)
-		if issueID == "" || seen[issueID] {
+		issueID := domain.CanonicalIssueID(issue.ID)
+		// Intake lists one repository at a time, so that repo's host is the
+		// host of every issue in this pass — the adapter does not stamp it on
+		// each issue.
+		coverage := dedupKey(domain.TrackerID{Provider: issue.ID.Provider, Native: issue.ID.Native, Host: repo.Host})
+		if issueID == "" || coverage == "" || seen[coverage] {
 			continue
 		}
 		if workerPoolFull {
@@ -235,13 +238,13 @@ func (o *Observer) pollProject(ctx context.Context, project domain.ProjectRecord
 		var prompt string
 		if taskTemplate != "" {
 			var renderErr error
-			prompt, renderErr = sessionmanager.RenderWorkerTaskPrompt(taskTemplate, issueID)
+			prompt, renderErr = sessionmanager.RenderWorkerTaskPrompt(taskTemplate, issueID, repo)
 			if renderErr != nil {
 				o.logger.Error("tracker intake: invalid worker task prompt configuration", "project", project.ID, "source", taskSource, "issue", issueID, "err", renderErr)
 				return true
 			}
 		} else {
-			prompt = BuildIssuePrompt(issue)
+			prompt = BuildIssuePrompt(issue, repo)
 		}
 		if _, _, _, err := o.spawner.Spawn(ctx, ports.SpawnConfig{
 			ProjectID: domain.ProjectID(project.ID),
@@ -263,7 +266,7 @@ func (o *Observer) pollProject(ctx context.Context, project domain.ProjectRecord
 			spawnFailed = true
 			continue
 		}
-		seen[issueID] = true
+		seen[coverage] = true
 	}
 	return spawnFailed
 }
@@ -296,6 +299,11 @@ func isWorkerDeferral(err error) bool {
 }
 
 func issueMatchesConfig(issue domain.Issue, cfg domain.TrackerIntakeConfig) bool {
+	// The opt-out label is an operator's explicit "do not auto-work this", so
+	// it overrides every eligibility rule rather than joining them.
+	if cfg.OptedOut(issue.Labels) {
+		return false
+	}
 	assignee := strings.TrimSpace(cfg.Assignee)
 	switch {
 	case assignee == "":
@@ -318,34 +326,110 @@ func containsFold(values []string, needle string) bool {
 	return false
 }
 
-func seenIssueIDs(sessions []domain.SessionRecord) map[domain.IssueID]bool {
-	seen := make(map[domain.IssueID]bool, len(sessions))
+// dedupKey identifies an issue for coverage purposes.
+//
+// The canonical id stored in sessions.issue_id carries no GitLab instance host,
+// so two self-managed instances that share a project path produce the same
+// stored value and would collide in this fleet-wide set — one instance's live
+// session suppressing intake for a different issue on the other. The host is
+// recovered from the owning project's tracker scope and folded in here, at read
+// time, so coverage is host-accurate without changing what is stored.
+func dedupKey(id domain.TrackerID) string {
+	canonical := domain.CanonicalIssueID(id)
+	if canonical == "" {
+		return ""
+	}
+	key := string(canonical)
+	if id.Host != "" {
+		key += "@" + id.Host
+	}
+	// Repository paths and hostnames are case-insensitive on both providers,
+	// but this key is compared byte for byte. Folding case here — rather than
+	// in the stored id — keeps `--issue Acme/Demo#12` covering the same issue
+	// intake lists as `acme/demo#12`, without rewriting a repository whose real
+	// name has capitals into one the adapter would not recognise.
+	return strings.ToLower(key)
+}
+
+// seenIssueIDs is the set of issues a live session already services, keyed the
+// way the spawn loop looks them up.
+//
+// Sessions created before the spawn boundary canonicalised issue ids (#298), or
+// by an operator typing a bare `--issue 243`, hold whatever was supplied. Those
+// rows are resolved here through the same domain.ParseIssueRef the spawn path
+// canonicalises with, against their own project's tracker scope, so a legacy
+// row covers its issue exactly as a canonical one does. Scoping per project is
+// what keeps project A's bare "12" from suppressing project B's issue 12.
+//
+// This is transitional: it stops covering anything once the last pre-fix
+// session terminates. It is deliberately not a migration, because the rows that
+// matter belong to sessions that are mid-work, and rewriting a running
+// session's issue_id would detach it from the worktree state its owner is
+// holding.
+func seenIssueIDs(sessions []domain.SessionRecord, projects []domain.ProjectRecord) map[string]bool {
+	byID := make(map[domain.ProjectID]domain.ProjectRecord, len(projects))
+	for _, project := range projects {
+		byID[domain.ProjectID(project.ID)] = project
+	}
+	seen := make(map[string]bool, len(sessions))
 	for _, sess := range sessions {
-		if sess.IssueID != "" && !sess.IsTerminated {
-			seen[sess.IssueID] = true
+		if sess.IssueID == "" || sess.IsTerminated {
+			continue
 		}
+		if project, known := byID[sess.ProjectID]; known {
+			if scope, ok := sessionTrackerScope(project, sess.IssueID); ok {
+				if id, ok := domain.ParseIssueRef(string(sess.IssueID), scope); ok {
+					if key := dedupKey(id); key != "" {
+						seen[key] = true
+						continue
+					}
+				}
+			}
+		}
+		// Without its project's scope there is no way to know which instance a
+		// stored id belongs to: `gitlab:group/proj#7` would read as gitlab.com
+		// and suppress an unrelated project's issue while still missing its
+		// own. Such a row is parked in a namespace no coverage key can equal,
+		// so it suppresses nothing. It costs no coverage either: a project
+		// whose scope will not resolve is one intake already skips, so its
+		// issues are never dispatched in the first place.
+		seen[unscopedKey(sess.IssueID)] = true
 	}
 	return seen
 }
 
-// CanonicalIssueID stores tracker issue ids in sessions.issue_id with the
-// provider included, so future providers cannot collide on native ids.
-func CanonicalIssueID(id domain.TrackerID) domain.IssueID {
-	provider := id.Provider
-	if provider == "" {
-		provider = domain.TrackerProviderGitHub
+// sessionTrackerScope resolves the repository a session's stored issue id is
+// interpreted against.
+//
+// A project that has not configured intake names no provider, so the shared
+// resolver would default to GitHub and fail to parse a GitLab origin — parking
+// a perfectly resolvable session and letting another project polling that same
+// repository spawn a duplicate. The stored canonical id already names its
+// provider, so it supplies the hint, exactly as the session manager does when
+// it renders a prompt.
+func sessionTrackerScope(project domain.ProjectRecord, issueID domain.IssueID) (domain.TrackerRepo, bool) {
+	var fallback domain.TrackerProvider
+	if provider, _, ok := domain.SplitCanonicalIssueID(issueID); ok {
+		fallback = provider
 	}
-	native := strings.TrimSpace(id.Native)
-	if native == "" {
-		return ""
-	}
-	return domain.IssueID(string(provider) + ":" + native)
+	return domain.TrackerScope(project.RepoOriginURL, project.Config.TrackerIntake.WithDefaults(), fallback)
+}
+
+// unscopedKey namespaces a session whose issue could not be resolved against a
+// tracker scope, so it can never collide with a dedupKey.
+func unscopedKey(id domain.IssueID) string {
+	return "unscoped:" + string(id)
 }
 
 // BuildIssuePrompt turns normalized issue facts into the worker's initial task.
-func BuildIssuePrompt(issue domain.Issue) string {
+//
+// scope is the repository intake is polling, so the issue is addressed the way
+// the configured-template path addresses it: a bare number for the project's
+// own repo, qualified otherwise. Rendering the canonical id here would hand the
+// agent a storage key no tracker CLI accepts.
+func BuildIssuePrompt(issue domain.Issue, scope domain.TrackerRepo) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "Work on tracker issue %s.\n\n", CanonicalIssueID(issue.ID))
+	fmt.Fprintf(&b, "Work on tracker issue %s.\n\n", domain.NativeIssueRef(domain.CanonicalIssueID(issue.ID), scope))
 	if issue.Title != "" {
 		fmt.Fprintf(&b, "Title: %s\n", issue.Title)
 	}
@@ -393,99 +477,5 @@ func truncateUTF8(s string, maxBytes int) string {
 }
 
 func trackerRepo(project domain.ProjectRecord, cfg domain.TrackerIntakeConfig) (domain.TrackerRepo, bool) {
-	provider := cfg.Provider
-	if provider == "" {
-		provider = domain.TrackerProviderGitHub
-	}
-	native := strings.TrimSpace(cfg.Repo)
-	if native == "" {
-		native, _ = parseRepoNative(project.RepoOriginURL, provider)
-	}
-	if native == "" {
-		return domain.TrackerRepo{}, false
-	}
-	host := repoHostFromOrigin(project.RepoOriginURL, provider)
-	return domain.TrackerRepo{Provider: provider, Native: native, Host: host}, true
-}
-
-// parseRepoNative extracts the provider-native repo identifier ("owner/repo"
-// or "group/subgroup/repo") from a remote URL. For GitHub it accepts
-// github.com, *.github.com, and *.ghe.io hosts. For GitLab it accepts any
-// host (self-managed hosts are validated by the SCM provider at fetch time).
-func parseRepoNative(remote string, provider domain.TrackerProvider) (string, bool) {
-	remote = strings.TrimSpace(remote)
-	if remote == "" {
-		return "", false
-	}
-	if strings.HasPrefix(remote, "git@") {
-		if _, rest, ok := strings.Cut(remote, ":"); ok {
-			return cleanRepoPath(rest), true
-		}
-		return "", false
-	}
-	if u, err := url.Parse(remote); err == nil && u.Host != "" {
-		if provider == domain.TrackerProviderGitHub {
-			host := strings.TrimPrefix(strings.ToLower(u.Host), "www.")
-			if host == "github.com" || strings.HasSuffix(host, ".github.com") || strings.HasSuffix(host, ".ghe.io") {
-				return cleanRepoPath(u.Path), true
-			}
-			return "", false
-		}
-		// GitLab: accept any host.
-		return cleanRepoPath(u.Path), true
-	}
-	return cleanRepoPath(remote), true
-}
-
-// repoHostFromOrigin extracts the host from the SCM origin URL for the given
-// provider. For GitHub the host is always "" (GitHub tracker IDs don't use
-// Host). For GitLab, "gitlab.com" and "www.gitlab.com" normalize to ""
-// (zero value = gitlab.com); self-managed hosts pass through unchanged.
-func repoHostFromOrigin(remote string, provider domain.TrackerProvider) string {
-	if provider != domain.TrackerProviderGitLab {
-		return ""
-	}
-	host := hostFromRemote(remote)
-	host = strings.ToLower(strings.TrimSpace(host))
-	if host == "gitlab.com" || host == "www.gitlab.com" {
-		return ""
-	}
-	return host
-}
-
-// hostFromRemote extracts the hostname (with port) from a git remote URL,
-// supporting both HTTPS and SSH scp-like forms.
-func hostFromRemote(remote string) string {
-	remote = strings.TrimSpace(remote)
-	if remote == "" {
-		return ""
-	}
-	if strings.HasPrefix(remote, "git@") {
-		rest := strings.TrimPrefix(remote, "git@")
-		if colonIdx := strings.Index(rest, ":"); colonIdx > 0 {
-			return rest[:colonIdx]
-		}
-		return ""
-	}
-	if u, err := url.Parse(remote); err == nil && u.Host != "" {
-		return u.Host // includes port if present
-	}
-	return ""
-}
-
-func cleanRepoPath(path string) string {
-	path = strings.Trim(strings.TrimSpace(path), "/")
-	path = strings.TrimSuffix(path, ".git")
-	parts := strings.Split(path, "/")
-	if len(parts) < 2 {
-		return ""
-	}
-	// For nested namespaces (GitLab group/subgroup/repo), take the last two
-	// segments — the tracker's List endpoint only needs owner/repo.
-	owner := strings.TrimSpace(parts[len(parts)-2])
-	repo := strings.TrimSpace(parts[len(parts)-1])
-	if owner == "" || repo == "" {
-		return ""
-	}
-	return owner + "/" + repo
+	return domain.TrackerScope(project.RepoOriginURL, cfg, "")
 }

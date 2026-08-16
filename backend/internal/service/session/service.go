@@ -266,6 +266,10 @@ func (s *Service) spawn(ctx context.Context, cfg ports.SpawnConfig, allowPrime b
 		return domain.Session{}, 0, 0, fmt.Errorf("count sessions: %w", err)
 	}
 	if !projectlessPrime {
+		// Canonicalise before enrichment: withIssueDetails gives up when no
+		// tracker is configured, and a record written with a non-canonical id
+		// would still be invisible to intake's dedup.
+		cfg = s.withCanonicalIssueID(cfg, project)
 		cfg = s.withIssueDetails(ctx, cfg, project)
 	}
 	rec, promptBytes, systemPromptBytes, err := s.manager.Spawn(ctx, cfg)

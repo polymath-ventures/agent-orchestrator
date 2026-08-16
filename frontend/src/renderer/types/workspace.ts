@@ -129,16 +129,20 @@ export type WorkspaceSession = {
 	prs: PullRequestFacts[];
 };
 
-// Tracker providers whose ids the intake daemon stamps sessions with, in
+// Tracker providers whose ids the daemon stamps sessions with, in
 // "<provider>:<native>" form. Adding a provider (Linear, Jira, ...) later is
 // just another prefix in this list — no caller of canonicalTrackerIssueId
 // needs to change.
-const TRACKER_PROVIDER_PREFIXES = ["github:"] as const;
+const TRACKER_PROVIDER_PREFIXES = ["github:", "gitlab:"] as const;
 
 /**
- * The provider-prefixed issue id if `issueId` came from tracker intake, or
- * undefined for manually created sessions (whose issueId, if any, is a plain
- * task title with no provider prefix).
+ * The provider-prefixed issue id if `issueId` names a tracker issue, or
+ * undefined when it does not (a manually created session's issueId may be a
+ * plain task title with no provider prefix).
+ *
+ * The daemon canonicalises every issue id it can resolve at spawn time, so a
+ * session started with `ao spawn --issue 42` carries a prefix here too — not
+ * only the ones tracker intake created.
  */
 export function canonicalTrackerIssueId(issueId?: string): string | undefined {
 	if (!issueId) return undefined;

@@ -10,19 +10,25 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/t
 type TrackerIntakeConfig = components["schemas"]["TrackerIntakeConfig"];
 
 // IntakeForm is the flat, string-backed shape both the create sheet and the
-// project settings form edit. repo has no input today (it's derived from the
-// git origin server-side) but is plumbed so a value set via the CLI
-// (--tracker-repo) survives a UI save instead of being wiped.
+// project settings form edit. provider, repo and optOutLabel have no input
+// today (provider and repo are derived server-side; optOutLabel defaults to
+// "no-ao") but all three are plumbed so a value set via the CLI survives a UI
+// save instead of being wiped.
 export type IntakeForm = {
 	enabled: boolean;
+	provider: string;
 	repo: string;
 	assignee: string;
+	optOutLabel: string;
 };
 
-// Only "github" is a valid TrackerIntakeConfig["provider"] today (see the
-// backend's openapi enum). Adding Linear/Jira later means: the backend enum
-// grows, IntakeFields gains a provider <Select> + per-provider scope fields,
-// and buildIntake switches the scope field it emits.
+// The backend's openapi enum accepts "github" and "gitlab". This form has no
+// provider control, so it carries whatever the project already had and falls
+// back to "github" only for an intake being turned on for the first time —
+// rewriting a GitLab project to GitHub on an unrelated settings save is how a
+// project silently stops matching its own tracker. Adding Linear/Jira later
+// means: the backend enum grows, IntakeFields gains a provider <Select> +
+// per-provider scope fields, and buildIntake switches the scope field it emits.
 
 // intakeNeedsRule mirrors the backend guard (TrackerIntakeConfig.Validate):
 // enabling intake requires an assignee so it cannot drain an entire issue
@@ -35,28 +41,44 @@ export function intakeNeedsRule(form: IntakeForm): boolean {
 // blank intake serializes to `undefined` (omit) rather than an empty object the
 // daemon would persist.
 export function buildIntake(form: IntakeForm): TrackerIntakeConfig | undefined {
+	// A configured provider is kept whether or not intake is currently enabled:
+	// dropping it while disabled loses the setting quietly, so re-enabling later
+	// would fall back to GitHub on a GitLab project. "github" is the default only
+	// for an intake that has never named one.
+	const provider = form.provider.trim() || (form.enabled ? "github" : "");
 	const next: TrackerIntakeConfig = {
 		enabled: form.enabled || undefined,
-		provider: form.enabled ? "github" : undefined,
+		provider: (provider || undefined) as TrackerIntakeConfig["provider"],
 		repo: form.repo.trim() || undefined,
 		assignee: form.assignee.trim() || undefined,
+		optOutLabel: form.optOutLabel.trim() || undefined,
 	};
 	return Object.values(next).some((v) => v !== undefined) ? next : undefined;
 }
 
-// deriveGitHubRepo mirrors the daemon's parseGitHubRepoNative (observer.go):
-// derive "owner/repo" from a git origin URL for display only. The daemon does
-// the authoritative derivation server-side at poll time; this is purely so a
-// settings card can show which repo intake will actually poll.
-export function deriveGitHubRepo(remote?: string): string | undefined {
+// deriveIntakeRepo mirrors the daemon's own derivation (domain.TrackerScope):
+// work out which repository intake will poll, and where to browse it, from the
+// project's git origin. Display only — the daemon does the authoritative
+// derivation server-side at poll time.
+//
+// The provider matters twice: a GitHub repo is always owner/repo, while a
+// GitLab project path keeps its full namespace (truncating it names a different
+// project), and the link has to go to the origin's own host rather than
+// github.com.
+export function deriveIntakeRepo(remote?: string, provider?: string): { path: string; url?: string } | undefined {
 	const trimmed = remote?.trim();
 	if (!trimmed) return undefined;
+	let host: string | undefined;
 	let path: string | undefined;
 	if (trimmed.startsWith("git@")) {
-		path = trimmed.split(":")[1];
+		const [hostPart, pathPart] = trimmed.slice("git@".length).split(":");
+		host = hostPart;
+		path = pathPart;
 	} else {
 		try {
-			path = new URL(trimmed).pathname;
+			const url = new URL(trimmed);
+			host = url.host;
+			path = url.pathname;
 		} catch {
 			path = trimmed;
 		}
@@ -65,11 +87,23 @@ export function deriveGitHubRepo(remote?: string): string | undefined {
 	const parts = path
 		.replace(/\.git$/, "")
 		.replace(/^\/+|\/+$/g, "")
-		.split("/");
-	if (parts.length < 2) return undefined;
-	const owner = parts[parts.length - 2].trim();
-	const repo = parts[parts.length - 1].trim();
-	return owner && repo ? `${owner}/${repo}` : undefined;
+		.split("/")
+		.map((part) => part.trim());
+	if (parts.length < 2 || parts.some((part) => part === "")) return undefined;
+	// With no configured provider, infer from the host the same way the daemon's
+	// parseRepoNative does: only GitHub's hosts get the owner/repo rule, because
+	// truncating anything else can name a different project.
+	const looksGitHub = (() => {
+		const h = (host ?? "")
+			.toLowerCase()
+			.replace(/^www\./, "")
+			.split(":")[0];
+		return h === "github.com" || h.endsWith(".github.com") || h.endsWith(".ghe.io");
+	})();
+	const twoSegmentRule = provider === "gitlab" ? false : provider === "github" || looksGitHub;
+	const kept = twoSegmentRule ? parts.slice(-2) : parts;
+	const repoPath = kept.join("/");
+	return { path: repoPath, url: host ? `https://${host}/${repoPath}` : undefined };
 }
 
 // IntakeFields renders the shared "Tracker intake" controls: an enable checkbox
@@ -92,7 +126,7 @@ export function IntakeFields({
 }: {
 	form: IntakeForm;
 	onChange: (patch: Partial<IntakeForm>) => void;
-	repoPreview?: { value?: string };
+	repoPreview?: { value?: string; href?: string };
 	// compact drops the descriptive/help prose and folds the explanation into an
 	// info-icon tooltip — used by the create-project sheet, which stays minimal.
 	compact?: boolean;
@@ -116,15 +150,17 @@ export function IntakeFields({
 					<>
 						{repoPreview && (
 							<SettingsRow label={t("settings.project.repository")}>
-								{repoPreview.value ? (
+								{repoPreview.value && repoPreview.href ? (
 									<a
-										href={`https://github.com/${repoPreview.value}`}
+										href={repoPreview.href}
 										target="_blank"
 										rel="noopener noreferrer"
 										className="settings-row-value text-settings-accent hover:underline"
 									>
 										{repoPreview.value}
 									</a>
+								) : repoPreview.value ? (
+									<span className="settings-row-value">{repoPreview.value}</span>
 								) : (
 									<span className="settings-row-value">{t("settings.project.repoNotDetected")}</span>
 								)}

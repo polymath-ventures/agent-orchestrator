@@ -43,7 +43,7 @@ export type CreateProjectAgentSelection = {
 	trackerIntake?: TrackerIntakeConfig;
 };
 
-const EMPTY_INTAKE: IntakeForm = { enabled: false, repo: "", assignee: "" };
+const EMPTY_INTAKE: IntakeForm = { enabled: false, provider: "", repo: "", assignee: "", optOutLabel: "" };
 const AUTOMATIC_REVIEWER = "__automatic_independent_reviewer__";
 const DEFAULT_AGENT_PRIORITY = ["claude-code", "codex", "cursor", "opencode", "aider"] as const;
 const DEFAULT_AGENT_PRIORITY_RANK = new Map<string, number>(
