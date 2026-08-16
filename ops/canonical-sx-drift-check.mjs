@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { existsSync } from "node:fs";
 import { spawnSync } from "node:child_process";
+import { pathToFileURL } from "node:url";
 
 // Keep these needles constructed so the guard and its tests do not become
 // the tracked drift they are meant to forbid.
@@ -10,7 +11,7 @@ const FORBIDDEN_TRACKED_PATHS = ["AGENTS.shared.md"];
 const FORBIDDEN_BASENAMES = ["polyscribe.sh"];
 const GENERATED_BANNER =
 	"<!-- GENERATED — DO NOT EDIT. Edit agent-instructions/{source,agent-overrides,system}/, then rebuild with polyscribe (system scope adds --system) -->";
-const FAIL_OPEN_STUBS = {
+export const FAIL_OPEN_STUBS = {
 	"AGENTS.md": renderFailOpenStub("Codex", "codex"),
 	"CLAUDE.md": renderFailOpenStub("Claude", "claude"),
 };
@@ -53,6 +54,9 @@ function workingTreeBasenameMatches(names) {
 			"-o",
 			"-path",
 			"./node_modules",
+			"-o",
+			"-path",
+			"./.claude/worktrees",
 			")",
 			"-prune",
 			"-o",
@@ -129,7 +133,6 @@ function main() {
 		FORBIDDEN_BASENAMES.some((name) => path === name || path.endsWith(`/${name}`)),
 	);
 	const workingTreePolyscribeCopies = workingTreeBasenameMatches(FORBIDDEN_BASENAMES);
-	const explicitScriptsCopy = existsSync("scripts/polyscribe.sh") ? ["scripts/polyscribe.sh"] : [];
 	const staleOutputs = staleFailOpenOutputs(files);
 
 	const failures = [];
@@ -145,10 +148,10 @@ function main() {
 			items: forbiddenTrackedPaths,
 		});
 	}
-	if (trackedPolyscribeCopies.length > 0 || workingTreePolyscribeCopies.length > 0 || explicitScriptsCopy.length > 0) {
+	if (trackedPolyscribeCopies.length > 0 || workingTreePolyscribeCopies.length > 0) {
 		failures.push({
 			title: "repo-local polyscribe copy is forbidden",
-			items: [...new Set([...trackedPolyscribeCopies, ...workingTreePolyscribeCopies, ...explicitScriptsCopy])],
+			items: [...new Set([...trackedPolyscribeCopies, ...workingTreePolyscribeCopies])],
 		});
 	}
 	if (managedOutsideGithub.length > 0) {
@@ -175,9 +178,11 @@ function main() {
 	console.log("canonical sx drift: clean");
 }
 
-try {
-	main();
-} catch (error) {
-	console.error(`canonical sx drift: ${error.message}`);
-	process.exit(1);
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+	try {
+		main();
+	} catch (error) {
+		console.error(`canonical sx drift: ${error.message}`);
+		process.exit(1);
+	}
 }

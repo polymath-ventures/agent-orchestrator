@@ -6,6 +6,9 @@ import { fileURLToPath } from "node:url";
 const read = (rel) => readFileSync(fileURLToPath(new URL(`../${rel}`, import.meta.url)), "utf8");
 const readJson = (rel) => JSON.parse(read(rel));
 const exists = (rel) => existsSync(fileURLToPath(new URL(`../${rel}`, import.meta.url)));
+// Mirrors the comment-stripping/blank-trimming canonicalization in the current
+// user-level polyscribe hook; assets#255 records that this local manifest is an
+// interim marker-free pin until hook-side regeneration is fixed upstream.
 const stripHtmlComments = (text) => text.replace(/<!--[\s\S]*?-->/g, "");
 const trimBlankRuns = (text) => {
 	const out = [];
@@ -100,7 +103,8 @@ test("agent-instruction inputs stay tracked but marker-free until hook regenerat
 		manifest.modules.some((module) => module.path === "scripts/polyscribe.sh"),
 		false,
 	);
-	for (const module of manifest.modules.filter((entry) => exists(entry.path))) {
+	for (const module of manifest.modules) {
+		assert.equal(exists(module.path), true, `${module.path} should be present when pinned`);
 		assert.equal(sha256(trimBlankRuns(stripHtmlComments(read(module.path)))), module.sha256, module.path);
 	}
 });

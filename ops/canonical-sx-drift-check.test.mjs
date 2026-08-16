@@ -5,33 +5,13 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { FAIL_OPEN_STUBS } from "./canonical-sx-drift-check.mjs";
 
 const scriptPath = fileURLToPath(new URL("./canonical-sx-drift-check.mjs", import.meta.url));
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 const formerVaultSlug = ["agent", "vault"].join("-");
 const currentVaultSlug = ["polymath", "agent", "assets"].join("-");
 const managedMarker = ["@sx", "managed"].join("-");
-const generatedBanner =
-	"<!-- GENERATED — DO NOT EDIT. Edit agent-instructions/{source,agent-overrides,system}/, then rebuild with polyscribe (system scope adds --system) -->";
-
-function failOpenStub(client, override) {
-	return `${generatedBanner}
-
-# Agent instructions — fail-open baseline (${client})
-
-SessionStart normally injects the current vault rules plus this repository’s local context. If that context is absent, use this safety baseline only.
-
-Before acting, read the ordered Markdown fragments under \`agent-instructions/source/\` and \`agent-instructions/agent-overrides/${override}.md\`.
-
-1. GitHub Issues are the sole durable tracker.
-2. Make every mutation in an agent-owned worktree, never the shared checkout.
-3. For behavior changes, write a failing test first, then implement and verify the fix.
-4. Verify the result with the repository’s real checks before claiming success.
-5. Use an independent reviewer; do not self-review merge readiness.
-6. Never merge without explicit authorization from the user. In autonomous mode, merge only after final-review is clean, CI is green, and all current-head review threads are resolved.
-`;
-}
-
 function git(cwd, ...args) {
 	const result = spawnSync("git", args, { cwd, encoding: "utf8" });
 	if (result.status !== 0) throw new Error(`git ${args.join(" ")} failed: ${result.stderr}`);
@@ -148,8 +128,8 @@ test("canonical sx guard rejects stale tracked fail-open instruction outputs", (
 
 test("canonical sx guard accepts current tracked fail-open instruction outputs", () => {
 	const root = setupRepo({
-		"AGENTS.md": failOpenStub("Codex", "codex"),
-		"CLAUDE.md": failOpenStub("Claude", "claude"),
+		"AGENTS.md": FAIL_OPEN_STUBS["AGENTS.md"],
+		"CLAUDE.md": FAIL_OPEN_STUBS["CLAUDE.md"],
 	});
 	try {
 		const result = runGuard(root);
@@ -161,7 +141,7 @@ test("canonical sx guard accepts current tracked fail-open instruction outputs",
 
 test("canonical sx guard rejects missing tracked fail-open instruction outputs", () => {
 	const root = setupRepo({
-		"AGENTS.md": failOpenStub("Codex", "codex"),
+		"AGENTS.md": FAIL_OPEN_STUBS["AGENTS.md"],
 	});
 	try {
 		git(root, "rm", "-q", "--cached", "AGENTS.md");
