@@ -180,8 +180,8 @@ test("fork UI features stay mounted from the application shell", async ({ page }
 	await expect
 		.poll(() => savedProjectConfig)
 		.toMatchObject({
-			worker: { agentConfig: { modelByHarness: { codex: { model: "gpt-5.5", effort: "medium" } } } },
-			orchestrator: { agentConfig: { modelByHarness: { codex: { model: "gpt-5.5", effort: "high" } } } },
+			worker: { agentConfig: { model: "gpt-5.5", modelByHarness: { codex: { effort: "medium" } } } },
+			orchestrator: { agentConfig: { model: "gpt-5.5", modelByHarness: { codex: { effort: "high" } } } },
 		});
 
 	await projectSettings.getByRole("button", { name: "Instructions", exact: true }).click();
