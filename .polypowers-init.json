@@ -1,0 +1,48 @@
+{
+	"schema": 1,
+	"runs": [
+		{
+			"date": "2026-07-20",
+			"scope": "repo",
+			"nickify_version": "11",
+			"sx_version": "2.2.8",
+			"steps": {
+				"R1": "ok",
+				"R2": "ok",
+				"R3": "ok:dolt-server-shared",
+				"R4": "ok",
+				"R5": "n/a:no-extra-tools",
+				"R6": "ok"
+			}
+		},
+		{
+			"date": "2026-08-02",
+			"scope": "repo",
+			"nickify_version": "40",
+			"sx_version": "2.3.1",
+			"steps": {
+				"R1": "ok",
+				"R2": "ok",
+				"R3": "ok:dolt-server-shared",
+				"R4": "ok",
+				"R5": "n/a:no-extra-tools",
+				"R6": "ok"
+			}
+		},
+		{
+			"date": "2026-08-16",
+			"scope": "repo",
+			"polypowers_init_version": "1",
+			"state_sha256": "e30fc85c43330330534ef7a2d9a7f28e6c4edf513203bd95ec5c7b9bc0465c77",
+			"sx_version": "2.3.4",
+			"steps": {
+				"R1": "ok",
+				"R2": "ok",
+				"R3": "ok",
+				"R4": "n/a:no-extra-tools",
+				"R5": "pending:admin-required",
+				"R6": "n/a:no-repo-hooks"
+			}
+		}
+	]
+}

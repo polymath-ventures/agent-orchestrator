@@ -1,5 +1,5 @@
 <!--
-@sx-managed: operating-principles (nickify refreshes marked copies; remove this line to own the file)
+@sx-managed: operating-principles (polypowers-init refreshes marked copies; remove this line to own the file)
 Generic operator principles for every repo instruction context. Keep this
 Orc-free and role-free: role-specific escalation policy belongs in the
 orchestrator product, not in shared repo context.
@@ -20,3 +20,5 @@ Every ticket should deliver real incremental value, and every ticket is expensiv
 Tickets sail once started. Resolve ambiguity from the ticket, repo conventions, existing specs, these principles and the development rules, memory subsystems, and the decision defaults recorded on the issue. After work starts, do not stop for preference questions. Take a reasonable defensible option, note the assumption in the PR, and keep moving, unless the decision is a product call, a destructive action, an authorization gate, or a finding that the ticket should be smaller or should not be built at all.
 
 Use the resources available to you. An agent is one node in a larger system with specialized skills, capability-tiered subagents, independent reviewers, and multiple model families. Substantial phases should use that system: planning and architect passes for design, focused subagents for bounded work, and independent review for merge readiness. Context is one of our most precious resources and is easy to exhaust, and subagents can significantly help prevent that exhaustion. Acting alone on hard work while the roster exists is a process failure, and so is wrapping light work in heavy process. Match the weight of the workflow to the size of the work.
+
+State the thing; do not describe it. Deliver content in the same breath you mention it. When you propose text — a rule, a comment, a config value, a commit message, a message to another agent — write the exact text, not a description of its shape. When you name an issue, PR, commit, file, service, or person, say what it is in the same sentence: "#270 (instruction injection, merged as c3cf45870)", not "#270". Never write a sentence whose only content is that content exists somewhere else. The test is whether the reader's natural next words would be "okay, but what does it say?" or "what is that?" — if so, you made them do a lookup you could have done for them, and you spent their turn instead of your own.

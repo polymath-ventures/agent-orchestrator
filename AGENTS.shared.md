@@ -211,6 +211,8 @@ Tickets sail once started. Resolve ambiguity from the ticket, repo conventions, 
 
 Use the resources available to you. An agent is one node in a larger system with specialized skills, capability-tiered subagents, independent reviewers, and multiple model families. Substantial phases should use that system: planning and architect passes for design, focused subagents for bounded work, and independent review for merge readiness. Context is one of our most precious resources and is easy to exhaust, and subagents can significantly help prevent that exhaustion. Acting alone on hard work while the roster exists is a process failure, and so is wrapping light work in heavy process. Match the weight of the workflow to the size of the work.
 
+State the thing; do not describe it. Deliver content in the same breath you mention it. When you propose text — a rule, a comment, a config value, a commit message, a message to another agent — write the exact text, not a description of its shape. When you name an issue, PR, commit, file, service, or person, say what it is in the same sentence: "#270 (instruction injection, merged as c3cf45870)", not "#270". Never write a sentence whose only content is that content exists somewhere else. The test is whether the reader's natural next words would be "okay, but what does it say?" or "what is that?" — if so, you made them do a lookup you could have done for them, and you spent their turn instead of your own.
+
 # Repo-Specific Guidance
 
 ## Repo layout
@@ -364,10 +366,13 @@ only behind bearer-password auth, as documented in
 All app state belongs under `~/.ao` unless explicitly overridden by
 `AO_DATA_DIR` or `AO_RUN_FILE`. Do not rely on Electron default app-data paths.
 
+## GitHub PR closure contract
+
+Every non-archive work PR must close exactly one issue with GitHub closing keyword syntax in the PR body. Ministerial post-merge OpenSpec archive PRs are the only standalone exception: apply the `no-close` label to those PRs so the `one-closing-issue` status records that the missing close reference is intentional.
+
 ## Final-review status contract
 
-The clean status is the only machine-readable final-review verdict the merge
-gate may consume.
+The clean status is the only machine-readable final-review verdict the merge gate may consume.
 
 `/final-review` emits its verdict as a GitHub commit status on the reviewed head
 SHA, using context `final-review`. A clean review writes `state=success`; a
@@ -386,10 +391,7 @@ a new push, the old statuses are tied to the old SHA and no longer count. This
 replaces any PR-comment protocol; do not use comments or free-form summaries as
 the gate.
 
-AO's native review API (`GET /sessions/{id}/reviews`, with states such as
-`ineligible` or `needs_review`) is a separate AO reviewer system. It is useful
-for AO's own review UI, but it is **not** `/final-review` and must never be read
-as the final-review merge verdict.
+AO's native review API (`GET /sessions/{id}/reviews`, with states such as `ineligible` or `needs_review`) is a separate AO reviewer system; it is useful for AO's own review UI, but it is **not** `/final-review` and must never be read as the final-review merge verdict.
 
 Repos that carry `ops/final-review-status.mjs` use it as the status helper:
 `node ops/final-review-status.mjs set --repo <owner/repo> --sha
@@ -409,9 +411,7 @@ cannot see per-session harness provenance, is never bricked.
 
 ## Agent reviewers run in the foreground — AO clarification
 
-The shared "Agent reviewers run in the foreground" rule binds AO unchanged. One
-AO-specific clarification: AO's own daemon launch of worker sessions into a TTY
-is already blocking/attached and stays that way.
+The shared "Agent reviewers run in the foreground" rule binds AO unchanged; AO's own daemon launch of worker sessions into a TTY is already blocking/attached and stays that way.
 
 ## Agent Identity Contract
 

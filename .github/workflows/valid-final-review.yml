@@ -1,0 +1,28 @@
+# @sx-managed: polypowers-init-valid-final-review
+name: Valid final review
+
+on:
+  status:
+
+permissions:
+  contents: read
+  pull-requests: read
+  statuses: write
+
+jobs:
+  publish-status:
+    name: Publish valid-final-review status
+    if: github.event.context == 'final-review'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: valid-final-review-${{ github.repository }}-${{ github.event.sha }}-${{ github.event.context }}
+    steps:
+      - name: Check out trusted default-branch policy
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - name: Validate final-review status
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node .github/scripts/valid-final-review.cjs

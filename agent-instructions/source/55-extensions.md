@@ -151,10 +151,13 @@ only behind bearer-password auth, as documented in
 All app state belongs under `~/.ao` unless explicitly overridden by
 `AO_DATA_DIR` or `AO_RUN_FILE`. Do not rely on Electron default app-data paths.
 
+## GitHub PR closure contract
+
+Every non-archive work PR must close exactly one issue with GitHub closing keyword syntax in the PR body. Ministerial post-merge OpenSpec archive PRs are the only standalone exception: apply the `no-close` label to those PRs so the `one-closing-issue` status records that the missing close reference is intentional.
+
 ## Final-review status contract
 
-The clean status is the only machine-readable final-review verdict the merge
-gate may consume.
+The clean status is the only machine-readable final-review verdict the merge gate may consume.
 
 `/final-review` emits its verdict as a GitHub commit status on the reviewed head
 SHA, using context `final-review`. A clean review writes `state=success`; a
@@ -173,10 +176,7 @@ a new push, the old statuses are tied to the old SHA and no longer count. This
 replaces any PR-comment protocol; do not use comments or free-form summaries as
 the gate.
 
-AO's native review API (`GET /sessions/{id}/reviews`, with states such as
-`ineligible` or `needs_review`) is a separate AO reviewer system. It is useful
-for AO's own review UI, but it is **not** `/final-review` and must never be read
-as the final-review merge verdict.
+AO's native review API (`GET /sessions/{id}/reviews`, with states such as `ineligible` or `needs_review`) is a separate AO reviewer system; it is useful for AO's own review UI, but it is **not** `/final-review` and must never be read as the final-review merge verdict.
 
 Repos that carry `ops/final-review-status.mjs` use it as the status helper:
 `node ops/final-review-status.mjs set --repo <owner/repo> --sha
@@ -196,6 +196,4 @@ cannot see per-session harness provenance, is never bricked.
 
 ## Agent reviewers run in the foreground — AO clarification
 
-The shared "Agent reviewers run in the foreground" rule binds AO unchanged. One
-AO-specific clarification: AO's own daemon launch of worker sessions into a TTY
-is already blocking/attached and stays that way.
+The shared "Agent reviewers run in the foreground" rule binds AO unchanged; AO's own daemon launch of worker sessions into a TTY is already blocking/attached and stays that way.
