@@ -530,7 +530,6 @@ function SettingsBody({
 								installed={agentCatalog?.installed}
 								supported={agentCatalog?.supported}
 								disabled={agentsQuery.isFetching && agentCatalog === undefined}
-								invalid={validationError !== null && form.workerAgent === ""}
 								onChange={resetWorkerAgent}
 							/>
 						}
@@ -963,7 +962,6 @@ function AgentEffortField({
 	const effortOptions =
 		trimmedEffort && !catalogEfforts.includes(trimmedEffort) ? [...catalogEfforts, trimmedEffort] : catalogEfforts;
 	const manualEffort = (model.trim() !== "" && shouldUseManualEffort(modelOption)) || effortOptions.length === 0;
-	if (agentId === "") return null;
 	const label = t(`settings.models.${role}Effort`);
 	const id = `${role}-effort`;
 	return (
@@ -977,6 +975,7 @@ function AgentEffortField({
 						value={effort}
 						list={`${id}-options`}
 						placeholder={t("settings.models.agentDefault")}
+						disabled={agentId === ""}
 						onChange={(event) => onChange(event.target.value)}
 					/>
 					<datalist id={`${id}-options`}>
@@ -991,6 +990,7 @@ function AgentEffortField({
 					aria-label={label}
 					className="settings-inline-input settings-model-control"
 					value={effort}
+					disabled={agentId === ""}
 					onChange={(event) => onChange(event.target.value)}
 				>
 					<option value="">{t("settings.models.agentDefault")}</option>
@@ -1318,8 +1318,8 @@ function hasModelFamily(model: string, fragment: string): boolean {
 	const index = model.indexOf(fragment);
 	if (index === -1) return false;
 	for (let start = index; start >= 0; start = model.indexOf(fragment, start + 1)) {
-		const before = start === 0 ? "" : model[start - 1];
-		const after = start + fragment.length >= model.length ? "" : model[start + fragment.length];
+		const before = Array.from(model.slice(0, start)).at(-1) ?? "";
+		const after = Array.from(model.slice(start + fragment.length)).at(0) ?? "";
 		if (!/\p{L}/u.test(before) && !/\p{L}/u.test(after)) return true;
 	}
 	return false;

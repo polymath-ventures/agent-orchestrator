@@ -876,6 +876,26 @@ describe("ProjectSettingsForm", () => {
 		);
 	});
 
+	it("keeps model family fragments adjacent to Unicode letters compatible with the selected harness", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "",
+			defaultBranch: "main",
+			config: {
+				worker: { agent: "codex" },
+				orchestrator: { agent: "claude-code" },
+				agentConfig: { model: "𐐀opus", permissions: "auto" },
+			},
+		});
+
+		renderSettings("proj-1", undefined, "agents");
+
+		expect(await screen.findByLabelText("Worker model")).toHaveValue("𐐀opus");
+	});
+
 	it("preserves shared scalar model that is incompatible with the selected harness", async () => {
 		mockProject({
 			id: "proj-1",
@@ -1547,6 +1567,7 @@ describe("ProjectSettingsForm", () => {
 
 		expect(await screen.findByText("Orchestrator agent is required.")).toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "Default worker agent" })).toHaveTextContent("Automatic even split");
+		expect(screen.getByLabelText("Worker effort")).toBeDisabled();
 		expect(screen.getByRole("button", { name: "Default orchestrator agent" })).toHaveTextContent(
 			"Select orchestrator agent",
 		);
@@ -1554,6 +1575,8 @@ describe("ProjectSettingsForm", () => {
 		submitSettings();
 
 		expect(await screen.findAllByText("Orchestrator agent is required.")).toHaveLength(2);
+		expect(screen.getByRole("button", { name: "Default worker agent" })).not.toHaveClass("text-error");
+		expect(screen.getByRole("button", { name: "Default orchestrator agent" })).toHaveClass("text-error");
 		expect(putMock).not.toHaveBeenCalled();
 	});
 
