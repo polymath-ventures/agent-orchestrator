@@ -75,14 +75,7 @@ export function ModelAvailabilityField({
 	);
 	const harness = harnesses.find((option) => option.id === value.harness);
 	const model = harness?.models.find((option) => option.model === value.model);
-	const manualEffort = shouldUseManualEffort(model);
-	const efforts = buildEffortOptions(
-		model?.synthetic
-			? [...(model.efforts ?? []), ...harnessEfforts(harness)]
-			: model
-				? (model.efforts ?? [])
-				: harnessEfforts(harness),
-	);
+	const effortControl = buildEffortControlState(harness, value.model);
 	const provenance = harness ? catalogProvenanceLabel(harness) : "";
 	// Only an actionable status is rendered. A non-actionable one — "not probed;
 	// only configured pins are live-validated" — is noise a user cannot act on.
@@ -204,39 +197,16 @@ export function ModelAvailabilityField({
 						>
 							Effort
 						</Label>
-						{manualEffort ? (
-							<>
-								<input
-									id={`${id}-effort`}
-									type="text"
-									className={selectClassName}
-									value={value.effort}
-									list={`${id}-effort-options`}
-									placeholder={allowEmpty ? effortEmptyLabel : undefined}
-									required={!allowEmpty}
-									onChange={(event) => onChange({ ...value, effort: event.target.value })}
-								/>
-								<datalist id={`${id}-effort-options`}>
-									{efforts.map((effort) => (
-										<option key={effort} value={effort} />
-									))}
-								</datalist>
-							</>
-						) : (
-							<select
-								id={`${id}-effort`}
-								className={selectClassName}
-								value={value.effort}
-								onChange={(event) => onChange({ ...value, effort: event.target.value })}
-							>
-								{allowEmpty && <option value="">{effortEmptyLabel}</option>}
-								{efforts.map((effort) => (
-									<option key={effort} value={effort}>
-										{effort}
-									</option>
-								))}
-							</select>
-						)}
+						<EffortControl
+							id={`${id}-effort`}
+							value={value.effort}
+							options={effortControl.options}
+							manual={effortControl.manual}
+							className={selectClassName}
+							allowEmpty={allowEmpty}
+							emptyLabel={effortEmptyLabel}
+							onChange={(effort) => onChange({ ...value, effort })}
+						/>
 					</div>
 				)}
 			</div>
@@ -246,7 +216,7 @@ export function ModelAvailabilityField({
 					<TriangleAlert className="mt-0.5 size-3.5 shrink-0 text-warning" aria-hidden="true" />
 					<span>
 						Manual model IDs are allowed; launch may fail if the harness rejects the model.
-						{showEffort && manualEffort
+						{showEffort && effortControl.manual
 							? " Manual effort values are allowed; AO may reject the effort when saving."
 							: ""}
 					</span>
@@ -364,7 +334,7 @@ function preferredEffort(model?: Pick<AgentModelAvailability, "defaultEffort" | 
 	return model?.defaultEffort ?? model?.efforts?.[0] ?? "";
 }
 
-export function shouldUseManualEffort(
+function shouldUseManualEffort(
 	model: Pick<ModelCatalogOption, "catalogEffortCount" | "efforts" | "synthetic"> | undefined,
 ): boolean {
 	if (!model) return true;
@@ -372,7 +342,7 @@ export function shouldUseManualEffort(
 	return (model.catalogEffortCount ?? model.efforts?.length ?? 0) === 0;
 }
 
-export function harnessEfforts(harness: HarnessCatalogOption | undefined): string[] {
+function harnessEfforts(harness: HarnessCatalogOption | undefined): string[] {
 	const efforts = new Set<string>();
 	for (const model of harness?.models ?? []) {
 		for (const effort of model.efforts ?? []) {
@@ -382,7 +352,7 @@ export function harnessEfforts(harness: HarnessCatalogOption | undefined): strin
 	return [...efforts];
 }
 
-export function buildEffortOptions(efforts: string[] | undefined): string[] {
+function buildEffortOptions(efforts: string[] | undefined): string[] {
 	const options = new Set<string>();
 	for (const effort of efforts ?? []) {
 		const trimmed = effort.trim();
@@ -390,6 +360,84 @@ export function buildEffortOptions(efforts: string[] | undefined): string[] {
 		options.add(trimmed);
 	}
 	return [...options];
+}
+
+export function buildEffortControlState(
+	harness: HarnessCatalogOption | undefined,
+	modelId: string,
+): { manual: boolean; options: string[] } {
+	const model = harness?.models.find((option) => option.model === modelId);
+	return {
+		manual: shouldUseManualEffort(model),
+		options: buildEffortOptions(
+			model?.synthetic
+				? [...(model.efforts ?? []), ...harnessEfforts(harness)]
+				: model
+					? (model.efforts ?? [])
+					: harnessEfforts(harness),
+		),
+	};
+}
+
+export function EffortControl({
+	id,
+	value,
+	options,
+	manual,
+	className,
+	allowEmpty = true,
+	emptyLabel = "Agent default",
+	ariaLabel,
+	onChange,
+}: {
+	id: string;
+	value: string;
+	options: string[];
+	manual: boolean;
+	className: string;
+	allowEmpty?: boolean;
+	emptyLabel?: string;
+	ariaLabel?: string;
+	onChange: (value: string) => void;
+}) {
+	if (manual) {
+		return (
+			<>
+				<input
+					id={id}
+					type="text"
+					aria-label={ariaLabel}
+					className={className}
+					value={value}
+					list={`${id}-options`}
+					placeholder={allowEmpty ? emptyLabel : undefined}
+					required={!allowEmpty}
+					onChange={(event) => onChange(event.target.value)}
+				/>
+				<datalist id={`${id}-options`}>
+					{options.map((option) => (
+						<option key={option} value={option} />
+					))}
+				</datalist>
+			</>
+		);
+	}
+	return (
+		<select
+			id={id}
+			aria-label={ariaLabel}
+			className={className}
+			value={value}
+			onChange={(event) => onChange(event.target.value)}
+		>
+			{allowEmpty && <option value="">{emptyLabel}</option>}
+			{options.map((option) => (
+				<option key={option} value={option}>
+					{option}
+				</option>
+			))}
+		</select>
+	);
 }
 
 function formatCheckedAt(value: string): string {

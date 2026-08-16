@@ -34,12 +34,7 @@ import { cn } from "../lib/utils";
 import { newestActiveOrchestrator } from "../types/workspace";
 import { RequiredAgentField } from "./CreateProjectAgentSheet";
 import { buildIntake, deriveIntakeRepo, IntakeFields, type IntakeForm } from "./IntakeFields";
-import {
-	buildEffortOptions,
-	buildModelCatalogView,
-	harnessEfforts,
-	shouldUseManualEffort,
-} from "./ModelAvailabilityField";
+import { buildEffortControlState, buildModelCatalogView, EffortControl } from "./ModelAvailabilityField";
 import { ProductExternalLink } from "./ProductExternalLink";
 import { ReviewerSelect, reviewerTrustWarning } from "./ReviewerSelect";
 import { AgentModelCombobox } from "./settings/AgentModelCombobox";
@@ -453,7 +448,6 @@ function SettingsBody({
 								installed={agentCatalog?.installed}
 								supported={agentCatalog?.supported}
 								disabled={agentsQuery.isFetching && agentCatalog === undefined}
-								invalid={validationError !== null && form.workerAgent === ""}
 								onChange={(v) =>
 									setForm((f) => ({
 										...f,
@@ -789,7 +783,6 @@ function AgentModelField({
 					model={model}
 					effort={effort}
 					availability={availability}
-					disabled={agentId === ""}
 					onChange={onEffortChange}
 				/>
 				{warning && <p className="px-1 text-xs leading-row text-warning">{warning}</p>}
@@ -866,7 +859,6 @@ function AgentModelField({
 				model={model}
 				effort={effort}
 				availability={availability}
-				disabled={agentId === ""}
 				onChange={onEffortChange}
 			/>
 			{warning && <p className="px-1 text-xs leading-row text-warning">{warning}</p>}
@@ -880,7 +872,6 @@ function AgentEffortField({
 	model,
 	effort,
 	availability,
-	disabled,
 	onChange,
 }: {
 	role: "worker" | "orchestrator";
@@ -888,68 +879,27 @@ function AgentEffortField({
 	model: string;
 	effort: string;
 	availability?: AgentModelAvailabilityResponse;
-	disabled: boolean;
 	onChange: (value: string) => void;
 }) {
 	const { t } = useTranslation();
 	const catalogValue = useMemo(() => ({ harness: agentId, model, effort }), [agentId, effort, model]);
-	const harnesses = useMemo(
-		() => buildModelCatalogView(availability, catalogValue, [catalogValue]),
-		[availability, catalogValue],
-	);
+	const harnesses = useMemo(() => buildModelCatalogView(availability, catalogValue), [availability, catalogValue]);
 	const harness = harnesses.find((option) => option.id === agentId);
-	const modelOption = harness?.models.find((option) => option.model === model);
-	const catalogEfforts = buildEffortOptions(
-		modelOption?.synthetic
-			? [...(modelOption.efforts ?? []), ...harnessEfforts(harness)]
-			: modelOption
-				? (modelOption.efforts ?? [])
-				: harnessEfforts(harness),
-	);
-	const effortOptions =
-		effort.trim() && !catalogEfforts.includes(effort) ? [...catalogEfforts, effort] : catalogEfforts;
-	const manualEffort = model.trim() !== "" && shouldUseManualEffort(modelOption);
-	const showEffort = agentId !== "" && (manualEffort || effortOptions.length > 0);
-	if (!showEffort) return null;
+	const control = buildEffortControlState(harness, model);
+	if (agentId === "") return null;
 	const label = t(`settings.models.${role}Effort`);
-	const id = `${role}-effort`;
 	return (
 		<SettingsRow label={label}>
-			{manualEffort ? (
-				<>
-					<input
-						id={id}
-						aria-label={label}
-						className="settings-inline-input settings-model-control"
-						value={effort}
-						list={`${id}-options`}
-						disabled={disabled}
-						placeholder={t("settings.models.agentDefault")}
-						onChange={(event) => onChange(event.target.value)}
-					/>
-					<datalist id={`${id}-options`}>
-						{effortOptions.map((option) => (
-							<option key={option} value={option} />
-						))}
-					</datalist>
-				</>
-			) : (
-				<select
-					id={id}
-					aria-label={label}
-					className="settings-inline-input settings-model-control"
-					value={effort}
-					disabled={disabled}
-					onChange={(event) => onChange(event.target.value)}
-				>
-					<option value="">{t("settings.models.agentDefault")}</option>
-					{effortOptions.map((option) => (
-						<option key={option} value={option}>
-							{option}
-						</option>
-					))}
-				</select>
-			)}
+			<EffortControl
+				id={`${role}-effort`}
+				value={effort}
+				options={control.options}
+				manual={control.manual}
+				className="settings-inline-input settings-model-control"
+				emptyLabel={t("settings.models.agentDefault")}
+				ariaLabel={label}
+				onChange={onChange}
+			/>
 		</SettingsRow>
 	);
 }
@@ -1220,7 +1170,6 @@ function buildRoleAgentConfig(
 		const entry = { ...(modelByHarness[agentId] ?? {}) };
 		if (trimmedEffort) entry.effort = trimmedEffort;
 		else {
-			delete next.effort;
 			delete entry.effort;
 		}
 		if (Object.keys(entry).length > 0) modelByHarness[agentId] = entry;

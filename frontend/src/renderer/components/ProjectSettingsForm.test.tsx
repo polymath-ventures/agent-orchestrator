@@ -570,7 +570,10 @@ describe("ProjectSettingsForm", () => {
 			config: {
 				worker: {
 					agent: "codex",
-					agentConfig: { model: "gpt-5.4", modelByHarness: { codex: { effort: "high" } } },
+					agentConfig: {
+						model: "gpt-5.4",
+						modelByHarness: { codex: { effort: "high" } },
+					},
 				},
 				orchestrator: {
 					agent: "claude-code",
@@ -677,7 +680,11 @@ describe("ProjectSettingsForm", () => {
 			config: {
 				worker: {
 					agent: "codex",
-					agentConfig: { model: "gpt-5.4", modelByHarness: { codex: { effort: "high" } } },
+					agentConfig: {
+						model: "gpt-5.4",
+						effort: "low",
+						modelByHarness: { codex: { effort: "high" } },
+					},
 				},
 				orchestrator: { agent: "claude-code" },
 				agentConfig: { effort: "low", modelByHarness: { codex: { effort: "medium" } } },
@@ -699,7 +706,7 @@ describe("ProjectSettingsForm", () => {
 				body: {
 					displayName: "Project One",
 					config: expect.objectContaining({
-						worker: { agent: "codex", agentConfig: { model: "gpt-5.4" } },
+						worker: { agent: "codex", agentConfig: { model: "gpt-5.4", effort: "low" } },
 						agentConfig: { effort: "low", modelByHarness: { codex: { effort: "medium" } } },
 					}),
 				},
@@ -1005,6 +1012,7 @@ describe("ProjectSettingsForm", () => {
 		submitSettings();
 
 		expect(await screen.findAllByText("Orchestrator agent is required.")).toHaveLength(2);
+		expect(screen.getByRole("button", { name: "Default worker agent" })).not.toHaveClass("text-error");
 		expect(putMock).not.toHaveBeenCalled();
 	});
 
