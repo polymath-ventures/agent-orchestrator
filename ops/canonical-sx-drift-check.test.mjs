@@ -76,7 +76,7 @@ test("canonical sx guard rejects former and current vault slug references", () =
 	try {
 		const result = runGuard(root);
 		assert.notEqual(result.status, 0, `expected failure\nstdout:${result.stdout}\nstderr:${result.stderr}`);
-		assert.match(result.stderr, /vault slug reference outside bootstrap allowlist/);
+		assert.match(result.stderr, /vault slug reference in tracked file/);
 		assert.match(result.stderr, /docs\/old\.md/);
 		assert.match(result.stderr, /docs\/current\.md/);
 	} finally {

@@ -134,3 +134,6 @@ pnpm-lock.yaml
 /agent-instructions/source/35-worktree-recipe.ref.md
 /agent-instructions/source/40-operating-principles.md
 /agent-instructions/source/65-agent-identity.md
+
+# Local/generated agent instruction outputs.
+/AGENTS.shared.md

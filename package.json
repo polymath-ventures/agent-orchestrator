@@ -16,7 +16,7 @@
 		"api:ts": "openapi-typescript backend/internal/httpd/apispec/openapi.yaml -o frontend/src/api/schema.ts",
 		"api": "npm run api:spec && npm run api:ts",
 		"agents": "bash \"$HOME/.claude/hooks/polyscribe/polyscribe.sh\"",
-		"agents:check": "bash \"$HOME/.claude/hooks/polyscribe/polyscribe.sh\" --check",
+		"agents:check": "if [ -x \"$HOME/.claude/hooks/polyscribe/polyscribe.sh\" ]; then bash \"$HOME/.claude/hooks/polyscribe/polyscribe.sh\" --check; else echo \"polyscribe hook not installed; skipping agents:check\"; fi",
 		"agents:system": "bash \"$HOME/.claude/hooks/polyscribe/polyscribe.sh\" --system"
 	},
 	"devDependencies": {

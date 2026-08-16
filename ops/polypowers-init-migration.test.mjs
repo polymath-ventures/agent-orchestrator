@@ -47,7 +47,8 @@ test("polyscribe callers use the user-level hook, not a repo-local managed copy"
 	assert.equal(exists("scripts/polyscribe.sh"), false);
 
 	const packageJson = readJson("package.json");
-	assert.equal(packageJson.scripts.agents, 'bash "$HOME/.claude/hooks/polyscribe/polyscribe.sh"');
-	assert.equal(packageJson.scripts["agents:check"], 'bash "$HOME/.claude/hooks/polyscribe/polyscribe.sh" --check');
-	assert.equal(packageJson.scripts["agents:system"], 'bash "$HOME/.claude/hooks/polyscribe/polyscribe.sh" --system');
+	for (const name of ["agents", "agents:check", "agents:system"]) {
+		assert.match(packageJson.scripts[name], /\$HOME\/.claude\/hooks\/polyscribe\/polyscribe\.sh/);
+		assert.doesNotMatch(packageJson.scripts[name], /scripts\/polyscribe\.sh/);
+	}
 });

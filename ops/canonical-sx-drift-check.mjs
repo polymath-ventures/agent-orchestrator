@@ -1,57 +1,40 @@
 #!/usr/bin/env node
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 
 const SX_MANAGED = ["@sx", "managed"].join("-");
 const VAULT_SLUGS = [["agent", "vault"].join("-"), ["polymath", "agent", "assets"].join("-")];
 const REPO_LOCAL_POLYSCRIBE = "scripts/polyscribe.sh";
 
-function git(args) {
-	const result = spawnSync("git", args, { encoding: "utf8" });
-	if (result.status !== 0) {
+function git(args, options = {}) {
+	const result = spawnSync("git", args, { encoding: "utf8", ...options });
+	if (result.status !== 0 && !options.allowNoMatches) {
 		throw new Error(`git ${args.join(" ")} failed: ${result.stderr || result.stdout}`);
 	}
-	return result.stdout;
+	return result;
 }
 
-function trackedFiles() {
-	return git(["ls-files", "-z"]).split("\0").filter(Boolean).sort();
+function repoRoot() {
+	const result = git(["rev-parse", "--show-toplevel"]);
+	return result.stdout.trim();
 }
 
-function trackedText(rel) {
-	let contents;
-	try {
-		contents = readFileSync(rel);
-	} catch (error) {
-		if (["EISDIR", "ENOENT"].includes(error.code)) return null;
-		throw error;
-	}
-	if (contents.includes(0)) return null;
-	return contents.toString("utf8");
-}
-
-function isGithubManagedException(rel) {
-	return rel.startsWith(".github/");
+function grepTracked(pattern, pathspecs = []) {
+	const result = git(["grep", "--cached", "-Il", "-e", pattern, "--", ...pathspecs], {
+		allowNoMatches: true,
+	});
+	if (result.status === 1) return [];
+	if (result.status !== 0) throw new Error(result.stderr || result.stdout);
+	return result.stdout.split("\n").filter(Boolean).sort();
 }
 
 function main() {
-	const files = trackedFiles();
-	const managedOutsideGithub = [];
-	const vaultSlugReferences = [];
+	process.chdir(repoRoot());
 
-	for (const rel of files) {
-		const text = trackedText(rel);
-		if (text === null) continue;
-
-		if (text.includes(SX_MANAGED) && !isGithubManagedException(rel)) {
-			managedOutsideGithub.push(rel);
-		}
-
-		const matchedSlugs = VAULT_SLUGS.filter((slug) => text.includes(slug));
-		if (matchedSlugs.length > 0) {
-			vaultSlugReferences.push(`${rel} (${matchedSlugs.join(", ")})`);
-		}
-	}
+	const managedOutsideGithub = grepTracked(SX_MANAGED, [":!.github"]);
+	const vaultSlugReferences = VAULT_SLUGS.flatMap((slug) =>
+		grepTracked(slug).map((path) => `${path} (${slug})`),
+	).sort();
 
 	const failures = [];
 	if (existsSync(REPO_LOCAL_POLYSCRIBE)) {
@@ -68,7 +51,7 @@ function main() {
 	}
 	if (vaultSlugReferences.length > 0) {
 		failures.push({
-			title: "vault slug reference outside bootstrap allowlist",
+			title: "vault slug reference in tracked file",
 			items: vaultSlugReferences,
 		});
 	}
